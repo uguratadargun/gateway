@@ -50,7 +50,7 @@ export function detectClients(baseUrl: string): ClientInfo[] {
       configPath: CLAUDE_SETTINGS,
       configured: claudeEnv.ANTHROPIC_BASE_URL === anthropicBase,
       canApply: true,
-      snippet: `# one-off\nANTHROPIC_BASE_URL=${anthropicBase} claude\n\n# persistent (~/.claude/settings.json)\n{ "env": { "ANTHROPIC_BASE_URL": "${anthropicBase}" } }`,
+      snippet: `# one-off\nANTHROPIC_BASE_URL=${anthropicBase} ANTHROPIC_MODEL=auto ANTHROPIC_SMALL_FAST_MODEL=haiku claude\n\n# persistent (~/.claude/settings.json) — "auto" lets gate route by difficulty;\n# a concrete model id would bypass routing.\n{ "env": {\n  "ANTHROPIC_BASE_URL": "${anthropicBase}",\n  "ANTHROPIC_MODEL": "auto",\n  "ANTHROPIC_SMALL_FAST_MODEL": "haiku"\n} }`,
     },
     {
       id: "cursor",
@@ -104,6 +104,10 @@ export function applyClaudeCode(baseUrl: string, apiKey?: string): { ok: true; b
   }
   const env = { ...((cfg.env as Record<string, string> | undefined) ?? {}) };
   env.ANTHROPIC_BASE_URL = anthropicBase;
+  // Claude Code always sends a concrete model id, which gate passes through
+  // untouched; "auto" is what makes its traffic go through difficulty routing.
+  env.ANTHROPIC_MODEL = "auto";
+  env.ANTHROPIC_SMALL_FAST_MODEL = "haiku";
   if (apiKey) env.ANTHROPIC_AUTH_TOKEN = apiKey;
   cfg.env = env;
   writeFileSync(CLAUDE_SETTINGS, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
@@ -118,6 +122,8 @@ export function revertClaudeCode(): { ok: true; backup: string | null } {
   const env = { ...((cfg.env as Record<string, string> | undefined) ?? {}) };
   delete env.ANTHROPIC_BASE_URL;
   delete env.ANTHROPIC_AUTH_TOKEN;
+  if (env.ANTHROPIC_MODEL === "auto") delete env.ANTHROPIC_MODEL;
+  if (env.ANTHROPIC_SMALL_FAST_MODEL === "haiku") delete env.ANTHROPIC_SMALL_FAST_MODEL;
   if (Object.keys(env).length) cfg.env = env;
   else delete cfg.env;
   writeFileSync(CLAUDE_SETTINGS, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });

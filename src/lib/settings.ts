@@ -82,7 +82,9 @@ export const DEFAULT_SETTINGS: GateSettings = {
     },
   },
   reasoning: { defaultEffort: "none" },
-  promptCache: { enabled: true, ttl: "5m" },
+  // 1h keeps the cache warm across pauses in a working session; on a
+  // subscription the higher write multiplier is irrelevant.
+  promptCache: { enabled: true, ttl: "1h" },
   concurrency: { maxInFlight: 4, queueTimeoutMs: 60_000 },
   throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },

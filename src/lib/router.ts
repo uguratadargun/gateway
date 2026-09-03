@@ -82,17 +82,11 @@ const DEFAULT_CONFIG: RoutingConfig = {
     // "auto" is a sentinel: fall through to context-based heuristics.
     auto: "auto",
   },
-  thresholds: { largeContext: 180_000, trivial: 900 },
-  heavyKeywords: [
-    "think hard",
-    "think deeply",
-    "ultrathink",
-    "deep dive",
-    "step by step",
-    "prove",
-    "architect",
-    "refactor the entire",
-  ],
+  thresholds: { largeContext: 180_000, trivial: 500 },
+  // Only explicit intent phrases. Generic words ("step by step", "prove",
+  // "architect" — which also matches "architecture") leaked ordinary prompts
+  // onto the top tier with maximum thinking.
+  heavyKeywords: ["think hard", "think deeply", "ultrathink", "deep dive"],
   backgroundKeywords: [
     "generate a title",
     "conversation title",

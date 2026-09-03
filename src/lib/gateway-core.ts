@@ -138,6 +138,9 @@ export async function sendWithFallback(opts: {
     };
 
     let cls: ErrorClass = "network";
+    // An account-wide (unified) rejection applies to every model: neither
+    // retrying nor switching tier can help, so we return it immediately.
+    let accountLimited = false;
     for (let attempt = 0; ; attempt++) {
       attempts++;
       try {
@@ -162,19 +165,25 @@ export async function sendWithFallback(opts: {
         await sleep(backoffMs(attempt));
         continue;
       }
-      if (cls === "rate_limit" && attempt < settings.retry.maxRetries) {
+      if (cls === "rate_limit") {
+        accountLimited = upstream?.headers.get("anthropic-ratelimit-unified-status") === "rejected";
         const ra = Number(upstream?.headers.get("retry-after") ?? NaN);
-        const waitMs = Number.isFinite(ra) ? ra * 1000 : backoffMs(attempt);
-        if (waitMs <= settings.retry.maxRateLimitWaitMs) {
-          await sleep(waitMs);
-          continue;
+        // A short retry-after is worth waiting out even when account-limited
+        // (the window may be about to reset); otherwise stop right away.
+        if (attempt < settings.retry.maxRetries) {
+          const waitMs = Number.isFinite(ra) ? ra * 1000 : accountLimited ? Infinity : backoffMs(attempt);
+          if (waitMs <= settings.retry.maxRateLimitWaitMs) {
+            await sleep(waitMs);
+            continue;
+          }
         }
       }
       break;
     }
 
-    // Only walk the fallback chain for rate-limit/overload outcomes.
-    const fallbackable = cls === "rate_limit" || cls === "overloaded" || cls === "network";
+    // Only walk the fallback chain for model-specific rate-limit/overload
+    // outcomes; an account-wide rejection ends the attempt.
+    const fallbackable = !accountLimited && (cls === "rate_limit" || cls === "overloaded" || cls === "network");
     if (!fallbackable || i === chain.length - 1) break;
     if (i < chain.length - 1) {
       publishActivity({ ts: Date.now(), kind: "fallback", tier: usedTier, note: `${usedTier} → ${chain[i + 1]} (${cls})` });
