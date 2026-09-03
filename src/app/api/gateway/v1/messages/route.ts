@@ -1,5 +1,5 @@
 import { gateAuthOk } from "@/lib/gate-auth";
-import { executeMessages, jsonError } from "@/lib/gateway-core";
+import { executeMessages, jsonError, sessionFromRequest } from "@/lib/gateway-core";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -18,9 +18,12 @@ export async function POST(req: Request) {
     return jsonError(400, "Invalid JSON body");
   }
 
+  const requestPreview = JSON.stringify(body);
   return executeMessages(body, {
     stream: body.stream === true,
     clientBeta: req.headers.get("anthropic-beta"),
     effortHeader: req.headers.get("x-gate-effort"),
+    session: sessionFromRequest(req.headers, body),
+    requestPreview,
   });
 }

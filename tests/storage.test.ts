@@ -89,6 +89,6 @@ describe("traffic + ratelimit (sqlite)", () => {
     recordRateLimit(new Headers({ "anthropic-ratelimit-unified-status": "allowed", "anthropic-ratelimit-tokens-remaining": "1234" }));
     const rl = readRateLimit();
     expect(rl?.unifiedStatus).toBe("allowed");
-    expect(rl?.tokensRemaining).toBe(1234);
+    expect(rl?.raw["anthropic-ratelimit-tokens-remaining"]).toBe("1234");
   });
 });

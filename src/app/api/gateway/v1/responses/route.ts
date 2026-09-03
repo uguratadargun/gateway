@@ -2,12 +2,14 @@ import { after } from "next/server";
 
 import { gateAuthOk } from "@/lib/gate-auth";
 import { dispatch, jsonError, sessionFromRequest } from "@/lib/gateway-core";
-import { anthropicStreamToOpenAI, anthropicToOpenAI, openaiToAnthropic } from "@/lib/openai-compat";
+import { anthropicStreamToResponses, anthropicToResponses, responsesToAnthropic } from "@/lib/openai-responses";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-/** OpenAI Chat Completions-compatible endpoint backed by Claude. */
+const EFFORT_MAP: Record<string, string> = { minimal: "low", low: "low", medium: "medium", high: "high" };
+
+/** OpenAI Responses API-compatible endpoint (Codex CLI, new OpenAI SDKs). */
 export async function POST(req: Request) {
   if (!gateAuthOk(req)) return jsonError(401, "Invalid gate API key");
 
@@ -19,12 +21,12 @@ export async function POST(req: Request) {
   }
 
   const stream = oaiReq.stream === true;
-  const body = openaiToAnthropic(oaiReq);
+  const { body, effort } = responsesToAnthropic(oaiReq);
   const d = await dispatch(body, {
-    endpoint: "chat/completions",
+    endpoint: "responses",
     stream,
     clientBeta: req.headers.get("anthropic-beta"),
-    effortHeader: req.headers.get("x-gate-effort"),
+    effortHeader: req.headers.get("x-gate-effort") ?? (effort ? EFFORT_MAP[effort] ?? null : null),
     session: sessionFromRequest(req.headers, body),
     requestPreview: JSON.stringify(oaiReq),
   });
@@ -54,7 +56,7 @@ export async function POST(req: Request) {
     } catch {
       // leave empty
     }
-    return Response.json(anthropicToOpenAI(anthropicJson, d.usedModel), { headers: gateHeaders });
+    return Response.json(anthropicToResponses(anthropicJson, d.usedModel), { headers: gateHeaders });
   }
 
   const [toClient, toParse] = d.upstream.body.tee();
@@ -62,7 +64,7 @@ export async function POST(req: Request) {
     const text = await new Response(toParse).text();
     await d.finalize(text, ct);
   });
-  return new Response(anthropicStreamToOpenAI(toClient, d.usedModel), {
+  return new Response(anthropicStreamToResponses(toClient, d.usedModel), {
     status: 200,
     headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", ...gateHeaders },
   });

@@ -27,6 +27,28 @@ export function costFor(tier: Tier, inputTokens: number, outputTokens: number): 
   return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
 }
 
+export interface TokenUsage {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheCreation?: number;
+}
+
+/**
+ * Cost including prompt-cache pricing: cache reads bill at 10% of input and
+ * cache writes at 125% (Anthropic's published multipliers).
+ */
+export function costForUsage(tier: Tier, u: TokenUsage): number {
+  const p = PRICE_PER_MTOK[tier];
+  return (
+    (u.input * p.input +
+      (u.cacheRead ?? 0) * p.input * 0.1 +
+      (u.cacheCreation ?? 0) * p.input * 1.25 +
+      u.output * p.output) /
+    1_000_000
+  );
+}
+
 /**
  * Savings vs. serving everything on the top tier (Opus): the difference between
  * what the same tokens would cost on Opus and what the routed tier actually cost.

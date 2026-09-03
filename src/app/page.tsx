@@ -1,3 +1,4 @@
+import { ClientsPanel } from "@/components/clients-panel";
 import { ConnectionPanel } from "@/components/connection-panel";
 import { GatewayInfo } from "@/components/gateway-info";
 import { KeysPanel } from "@/components/keys-panel";
@@ -13,14 +14,17 @@ export default function Home() {
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          One Claude login. Context-aware routing across Haiku, Sonnet, and Opus.
+          One Claude login. Context-aware routing across Haiku, Sonnet, Opus, and Fable.
         </p>
       </header>
 
       <div className="grid gap-6">
         <ConnectionPanel />
         <OverviewPanel />
-        <GatewayInfo />
+        <div className="grid gap-6 md:grid-cols-2">
+          <GatewayInfo />
+          <ClientsPanel />
+        </div>
         <div className="grid gap-6 md:grid-cols-2">
           <RoutingRulesPanel />
           <RoutingSimulator />

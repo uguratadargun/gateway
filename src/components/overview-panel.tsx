@@ -2,29 +2,28 @@
 
 import type React from "react";
 import { useEffect, useState } from "react";
-import { Activity, AlertTriangle, Database, Wallet } from "lucide-react";
+import { Activity, AlertTriangle, Database, Gauge, Layers, Wallet } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface Overview {
-  rateLimit: {
-    updatedAt: number;
-    unifiedStatus: string | null;
-    requestsRemaining: number | null;
-    tokensRemaining: number | null;
-    resetsAt: string | null;
-    retryAfter: number | null;
-  } | null;
-  budget: {
-    enabled: boolean;
-    today: number;
-    month: number;
-    dailyUsd: number;
-    monthlyUsd: number;
-    exceeded: boolean;
+  rateLimit: { unifiedStatus: string | null; resetAt: number | null; retryAfter: number | null } | null;
+  forecast: {
+    utilization: number | null;
+    status: string | null;
+    resetAt: number | null;
+    etaToLimitMs: number | null;
+    level: "ok" | "warning" | "critical";
   };
+  budget: { enabled: boolean; today: number; month: number; dailyUsd: number; exceeded: boolean };
   cache: { hits: number; misses: number; entries: number; hitRate: number };
+  limiter: { inFlight: number; queued: number; max: number; queuedTotal: number; coalescedTotal: number };
+}
+
+function fmtEta(ms: number): string {
+  const m = Math.round(ms / 60_000);
+  if (m < 60) return `~${m}m`;
+  return `~${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
 }
 
 function Tile({
@@ -32,23 +31,22 @@ function Tile({
   label,
   value,
   hint,
-  warn,
+  tone,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   hint?: string;
-  warn?: boolean;
+  tone?: "ok" | "warning" | "critical";
 }) {
+  const color = tone === "critical" ? "text-destructive" : tone === "warning" ? "text-amber-500" : "";
   return (
     <div className="rounded-lg border bg-muted/40 p-3">
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         {icon}
         {label}
       </div>
-      <div className={`mt-1 text-lg font-semibold tabular-nums ${warn ? "text-destructive" : ""}`}>
-        {value}
-      </div>
+      <div className={`mt-1 text-lg font-semibold ${color}`}>{value}</div>
       {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
     </div>
   );
@@ -64,9 +62,10 @@ export function OverviewPanel() {
     return () => clearInterval(t);
   }, []);
 
+  const f = data?.forecast;
   const rl = data?.rateLimit;
-  const rlStatus = rl?.unifiedStatus;
-  const rlWarn = rlStatus === "allowed_warning" || rlStatus === "rejected";
+  const util = f?.utilization;
+  const resetAt = f?.resetAt ?? rl?.resetAt ?? null;
 
   return (
     <Card>
@@ -75,25 +74,37 @@ export function OverviewPanel() {
           <Activity className="size-4" /> Live status
         </CardTitle>
       </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Tile
           icon={<AlertTriangle className="size-3.5" />}
           label="Rate limit"
-          value={rlStatus ?? "—"}
-          hint={
-            rl?.resetsAt
-              ? `resets ${new Date(rl.resetsAt).toLocaleTimeString()}`
-              : rl?.retryAfter
-                ? `retry in ${rl.retryAfter}s`
-                : "from last response"
-          }
-          warn={rlWarn}
+          value={f?.status ?? rl?.unifiedStatus ?? "—"}
+          hint={resetAt ? `window resets ${new Date(resetAt).toLocaleTimeString()}` : rl?.retryAfter ? `retry in ${rl.retryAfter}s` : "from last response"}
+          tone={f?.level}
         />
         <Tile
-          icon={<Activity className="size-3.5" />}
-          label="Tokens left"
-          value={rl?.tokensRemaining != null ? Intl.NumberFormat().format(rl.tokensRemaining) : "—"}
-          hint={rl?.requestsRemaining != null ? `${rl.requestsRemaining} requests` : "current window"}
+          icon={<Gauge className="size-3.5" />}
+          label="5h window"
+          value={util != null ? `${Math.round(util * 100)}%` : "—"}
+          hint={
+            util == null
+              ? "utilization not reported"
+              : f?.etaToLimitMs != null
+                ? `${fmtEta(f.etaToLimitMs)} to limit at this pace`
+                : "pace flat / unknown"
+          }
+          tone={f?.level}
+        />
+        <Tile
+          icon={<Layers className="size-3.5" />}
+          label="In flight"
+          value={data ? `${data.limiter.inFlight}/${data.limiter.max}` : "—"}
+          hint={
+            data
+              ? `${data.limiter.queued} queued · ${data.limiter.coalescedTotal} coalesced`
+              : "concurrency"
+          }
+          tone={data && data.limiter.queued > 0 ? "warning" : undefined}
         />
         <Tile
           icon={<Wallet className="size-3.5" />}
@@ -104,11 +115,11 @@ export function OverviewPanel() {
               ? `of $${data.budget.dailyUsd} · $${(data.budget.month ?? 0).toFixed(2)}/mo`
               : `$${(data?.budget.month ?? 0).toFixed(2)} this month`
           }
-          warn={data?.budget.exceeded}
+          tone={data?.budget.exceeded ? "critical" : undefined}
         />
         <Tile
           icon={<Database className="size-3.5" />}
-          label="Cache"
+          label="Response cache"
           value={`${Math.round((data?.cache.hitRate ?? 0) * 100)}%`}
           hint={`${data?.cache.hits ?? 0} hits · ${data?.cache.entries ?? 0} stored`}
         />

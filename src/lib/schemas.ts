@@ -3,6 +3,7 @@ import { z } from "zod";
 /** Request-body schemas for the management API. Invalid input → 400. */
 
 const tier = z.enum(["haiku", "sonnet", "opus", "fable"]);
+const effort = z.enum(["none", "low", "medium", "high"]);
 
 /** Object keyed by tier with every key optional (a partial Record<Tier, V>). */
 const perTier = <T extends z.ZodTypeAny>(v: T) =>
@@ -43,7 +44,28 @@ export const settingsPatchSchema = z
         chains: perTier(z.array(tier)),
       })
       .partial(),
-    reasoning: z.object({ defaultEffort: z.enum(["none", "low", "medium", "high"]) }).partial(),
+    reasoning: z.object({ defaultEffort: effort }).partial(),
+    promptCache: z.object({ enabled: z.boolean(), ttl: z.enum(["5m", "1h"]) }).partial(),
+    concurrency: z
+      .object({
+        maxInFlight: z.number().int().min(1).max(64),
+        queueTimeoutMs: z.number().int().min(1000).max(600_000),
+      })
+      .partial(),
+    throttle: z
+      .object({
+        enabled: z.boolean(),
+        downgradeAt: z.number().min(0).max(1),
+        blockAt: z.number().min(0).max(1),
+      })
+      .partial(),
+    retry: z
+      .object({
+        maxRetries: z.number().int().min(0).max(5),
+        maxRateLimitWaitMs: z.number().int().min(0).max(60_000),
+      })
+      .partial(),
+    routingPrecision: z.object({ countTokens: z.boolean() }).partial(),
   })
   .partial()
   .strict();
@@ -62,6 +84,7 @@ export const routingPatchSchema = z
     backgroundKeywords: z.array(z.string().min(1).max(200)).max(200),
     default: tier,
     categories: perCategory(tier),
+    effort: perCategory(effort),
     overrideExplicit: z.boolean(),
   })
   .partial()
@@ -70,3 +93,9 @@ export const routingPatchSchema = z
 export const createKeySchema = z.object({ name: z.string().min(1).max(64) });
 
 export const adminLoginSchema = z.object({ secret: z.string().min(1).max(512) });
+
+export const clientApplySchema = z.object({
+  client: z.enum(["claude-code"]),
+  action: z.enum(["apply", "revert"]),
+  apiKey: z.string().max(200).optional(),
+});

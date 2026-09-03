@@ -6,9 +6,6 @@ import { join } from "node:path";
  * SQLite persistence via Node's built-in `node:sqlite`. Loaded through
  * process.getBuiltinModule so the bundler leaves it alone and no native
  * module build is needed. One DB at ~/.gate/gate.db (WAL mode).
- *
- * Replaces the earlier per-request JSON read/rewrite files, which raced under
- * concurrency and made every request O(log size).
  */
 
 export interface SqlStatement {
@@ -76,7 +73,31 @@ CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  first_ts INTEGER NOT NULL,
+  last_ts INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ratelimit_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  util_5h REAL,
+  util_7d REAL,
+  status TEXT,
+  reset_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS rl_ts ON ratelimit_history(ts);
 `;
+
+/** Columns added after the first schema; applied idempotently on open. */
+const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
+  ["usage", "cache_read_tokens", "cache_read_tokens INTEGER NOT NULL DEFAULT 0"],
+  ["usage", "cache_creation_tokens", "cache_creation_tokens INTEGER NOT NULL DEFAULT 0"],
+  ["usage", "session_id", "session_id TEXT"],
+];
 
 let db: SqlDatabase | null = null;
 
@@ -89,6 +110,11 @@ export function getDb(): SqlDatabase {
   const d = new DatabaseSync(join(GATE_DIR, "gate.db"));
   d.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 3000;");
   d.exec(SCHEMA);
+  for (const [table, column, ddl] of COLUMN_MIGRATIONS) {
+    const cols = (d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name);
+    if (!cols.includes(column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+  d.exec("CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id)");
   db = d;
   importLegacyFiles(d);
   return d;
@@ -163,7 +189,6 @@ function importLegacyFiles(d: SqlDatabase): void {
     }
   }
 
-  // Old cache/ratelimit snapshots are disposable — just move them aside.
   for (const f of ["cache.json", "ratelimit.json"]) {
     const p = join(GATE_DIR, f);
     if (existsSync(p)) {

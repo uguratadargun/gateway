@@ -9,11 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type Tier = "haiku" | "sonnet" | "opus" | "fable";
+type Effort = "none" | "low" | "medium" | "high";
 
 interface RoutingConfig {
   tiers: Record<Tier, string>;
   thresholds: { largeContext: number; trivial: number };
   categories: Record<string, Tier>;
+  effort: Record<string, Effort>;
 }
 
 const CATEGORIES: { key: string; label: string; hint: string }[] = [
@@ -26,22 +28,9 @@ const CATEGORIES: { key: string; label: string; hint: string }[] = [
 ];
 
 const TIERS: Tier[] = ["haiku", "sonnet", "opus", "fable"];
+const EFFORTS: Effort[] = ["none", "low", "medium", "high"];
 
-function TierSelect({ value, onChange }: { value: Tier; onChange: (t: Tier) => void }) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value as Tier)}
-      className="h-8 rounded-md border border-input bg-transparent px-2 text-sm capitalize"
-    >
-      {TIERS.map((t) => (
-        <option key={t} value={t}>
-          {t}
-        </option>
-      ))}
-    </select>
-  );
-}
+const selectCls = "h-8 rounded-md border border-input bg-transparent px-2 text-sm";
 
 export function RoutingRulesPanel() {
   const [cfg, setCfg] = useState<RoutingConfig | null>(null);
@@ -65,7 +54,7 @@ export function RoutingRulesPanel() {
     await fetch("/api/routing", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categories: cfg.categories, tiers: cfg.tiers, thresholds: cfg.thresholds }),
+      body: JSON.stringify({ categories: cfg.categories, effort: cfg.effort, tiers: cfg.tiers, thresholds: cfg.thresholds }),
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
@@ -79,20 +68,48 @@ export function RoutingRulesPanel() {
         <CardTitle className="flex items-center gap-2">
           <Route className="size-4" /> Model routing rules
         </CardTitle>
-        <CardDescription>Choose which model handles each difficulty.</CardDescription>
+        <CardDescription>Which model — and how much thinking — for each difficulty.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="space-y-1.5">
+          <div className="flex items-center justify-between px-2.5 text-[11px] text-muted-foreground">
+            <span>Difficulty</span>
+            <span className="flex gap-2">
+              <span className="w-24">Model</span>
+              <span className="w-20">Thinking</span>
+            </span>
+          </div>
           {CATEGORIES.map((c) => (
-            <div key={c.key} className="flex items-center justify-between gap-4 rounded-md border p-2.5">
-              <div>
+            <div key={c.key} className="flex items-center justify-between gap-3 rounded-md border p-2.5">
+              <div className="min-w-0">
                 <div className="text-sm font-medium">{c.label}</div>
-                <div className="text-xs text-muted-foreground">{c.hint}</div>
+                <div className="truncate text-xs text-muted-foreground">{c.hint}</div>
               </div>
-              <TierSelect
-                value={cfg.categories[c.key]}
-                onChange={(t) => setCfg({ ...cfg, categories: { ...cfg.categories, [c.key]: t } })}
-              />
+              <div className="flex shrink-0 gap-2">
+                <select
+                  value={cfg.categories[c.key]}
+                  onChange={(e) => setCfg({ ...cfg, categories: { ...cfg.categories, [c.key]: e.target.value as Tier } })}
+                  className={`${selectCls} w-24 capitalize`}
+                >
+                  {TIERS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={cfg.effort?.[c.key] ?? "none"}
+                  onChange={(e) => setCfg({ ...cfg, effort: { ...cfg.effort, [c.key]: e.target.value as Effort } })}
+                  className={`${selectCls} w-20 capitalize`}
+                  title="Extended-thinking effort for this difficulty"
+                >
+                  {EFFORTS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           ))}
         </div>
@@ -101,15 +118,12 @@ export function RoutingRulesPanel() {
           <div className="flex items-center justify-between">
             <Label className="text-xs text-muted-foreground">Model version per tier</Label>
             {modelsSource && (
-              <span className="text-[11px] text-muted-foreground">
-                {modelsSource === "live" ? "from your account" : "known list"}
-              </span>
+              <span className="text-[11px] text-muted-foreground">{modelsSource === "live" ? "from your account" : "known list"}</span>
             )}
           </div>
           <div className="mt-2 grid gap-2">
             {TIERS.map((t) => {
               const current = cfg.tiers[t];
-              // Keep the saved value selectable even if it's not in the fetched list.
               const options = models.includes(current) ? models : [current, ...models];
               return (
                 <div key={t} className="flex items-center gap-2">
@@ -117,7 +131,7 @@ export function RoutingRulesPanel() {
                   <select
                     value={current}
                     onChange={(e) => setCfg({ ...cfg, tiers: { ...cfg.tiers, [t]: e.target.value } })}
-                    className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 font-mono text-xs"
+                    className={`${selectCls} flex-1 font-mono text-xs`}
                   >
                     {options.map((m) => (
                       <option key={m} value={m}>
@@ -138,9 +152,7 @@ export function RoutingRulesPanel() {
               type="number"
               className="mt-1 h-8"
               value={cfg.thresholds.largeContext}
-              onChange={(e) =>
-                setCfg({ ...cfg, thresholds: { ...cfg.thresholds, largeContext: Number(e.target.value) } })
-              }
+              onChange={(e) => setCfg({ ...cfg, thresholds: { ...cfg.thresholds, largeContext: Number(e.target.value) } })}
             />
           </div>
           <div>
@@ -149,9 +161,7 @@ export function RoutingRulesPanel() {
               type="number"
               className="mt-1 h-8"
               value={cfg.thresholds.trivial}
-              onChange={(e) =>
-                setCfg({ ...cfg, thresholds: { ...cfg.thresholds, trivial: Number(e.target.value) } })
-              }
+              onChange={(e) => setCfg({ ...cfg, thresholds: { ...cfg.thresholds, trivial: Number(e.target.value) } })}
             />
           </div>
         </div>

@@ -84,6 +84,17 @@ OpenAI SDK clients work too — point them at the same base URL and call
 - **Playground** — `/playground`, a chat UI over the gateway.
 - **Traffic inspector** — `/traffic`, local request/response log.
 - **Health daemon** — keeps the token warm; `/api/health` reports expiry.
+- **Prompt-cache optimizer** — auto `cache_control` breakpoints on system/tools/last turn; cache reads tracked and priced at 10%.
+- **Concurrency limiter** — max in-flight upstream requests, FIFO queue with timeout.
+- **Rate-limit forecast + soft throttle** — reads the unified 5h/7d utilization headers, estimates time-to-limit, downgrades a tier at 85% and refuses at 98% (configurable).
+- **Retries + in-flight dedup** — backoff on network/5xx/529, short waits on 429, identical deterministic requests coalesced.
+- **Adaptive thinking** — extended-thinking effort per difficulty category.
+- **`/v1/models` + `count_tokens`** — model list for SDKs/tools; exact-token routing optional.
+- **OpenAI Responses API** — `/v1/responses` (Codex CLI, new SDKs), streaming included.
+- **One-click client setup** — configure Claude Code from the dashboard; snippets for Cursor, Cline, OpenCode, Codex.
+- **Sessions** — `/sessions`, requests grouped by conversation with cost per session.
+- **Analytics** — `/analytics`, tokens/cost/requests over time by tier, per-model breakdown, table view.
+- **Live tail + export** — SSE activity feed on `/traffic`; usage/traffic export as CSV/JSON.
 
 Everything is configurable from the dashboard (persisted to `~/.gate/settings.json`).
 

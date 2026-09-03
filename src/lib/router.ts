@@ -35,9 +35,13 @@ export interface RoutingConfig {
    * "which model for which difficulty" mapping.
    */
   categories: Record<RouteCategory, Tier>;
+  /** Extended-thinking effort per difficulty category (adaptive thinking). */
+  effort: Record<RouteCategory, RouteEffort>;
   /** When false, an explicit concrete `claude-*` model is always passed through. */
   overrideExplicit: boolean;
 }
+
+export type RouteEffort = "none" | "low" | "medium" | "high";
 
 export type RouteCategory =
   | "background"
@@ -109,6 +113,15 @@ const DEFAULT_CONFIG: RoutingConfig = {
     heavy: "fable",
     default: "sonnet",
   },
+  // Adaptive thinking: spend reasoning budget only where difficulty warrants it.
+  effort: {
+    background: "none",
+    trivial: "none",
+    agentic: "none",
+    default: "none",
+    largeContext: "low",
+    heavy: "high",
+  },
   overrideExplicit: true,
 };
 
@@ -127,6 +140,7 @@ export function loadRoutingConfig(): RoutingConfig {
         aliases: { ...DEFAULT_CONFIG.aliases, ...parsed.aliases },
         thresholds: { ...DEFAULT_CONFIG.thresholds, ...parsed.thresholds },
         categories: { ...DEFAULT_CONFIG.categories, ...parsed.categories },
+        effort: { ...DEFAULT_CONFIG.effort, ...parsed.effort },
       };
       return cached;
     } catch {
@@ -185,6 +199,15 @@ export interface RouteResult {
   model: string;
   tier: Tier;
   reason: string;
+  /** Difficulty category that drove the decision; null for explicit/alias routes. */
+  category: RouteCategory | null;
+  /** Estimated (or exact, when count_tokens is on) prompt tokens. */
+  tokens: number;
+}
+
+export interface RouteOptions {
+  /** Exact prompt token count (from count_tokens) to use instead of the estimate. */
+  tokenOverride?: number;
 }
 
 function tierToModel(cfg: RoutingConfig, tier: Tier): string {
@@ -198,30 +221,31 @@ function tierToModel(cfg: RoutingConfig, tier: Tier): string {
 export function routeModel(
   requested: string | undefined,
   body: Record<string, unknown>,
+  opts: RouteOptions = {},
 ): RouteResult {
   const cfg = loadRoutingConfig();
   const req = (requested || "").trim();
   const reqLower = req.toLowerCase();
+  const tokens = opts.tokenOverride ?? estimateTokens(body);
 
   // 1. Explicit concrete Claude model → pass through unless configured otherwise.
   if (cfg.overrideExplicit && reqLower.startsWith("claude-")) {
-    return { model: req, tier: inferTier(cfg, req), reason: "explicit model" };
+    return { model: req, tier: inferTier(cfg, req), reason: "explicit model", category: null, tokens };
   }
 
   // 2. Alias mapping.
   const alias = cfg.aliases[reqLower];
   if (alias && alias !== "auto") {
     if (alias in cfg.tiers) {
-      return { model: tierToModel(cfg, alias as any), tier: alias as any, reason: `alias:${reqLower}` };
+      return { model: tierToModel(cfg, alias as any), tier: alias as any, reason: `alias:${reqLower}`, category: null, tokens };
     }
     if (alias.toLowerCase().startsWith("claude-")) {
-      return { model: alias, tier: inferTier(cfg, alias), reason: `alias:${reqLower}` };
+      return { model: alias, tier: inferTier(cfg, alias), reason: `alias:${reqLower}`, category: null, tokens };
     }
   }
 
   // 3. Heuristic routing: classify the request into a difficulty category, then
   //    map that category to the tier the user configured for it.
-  const tokens = estimateTokens(body);
   const text = lastUserText(body).toLowerCase();
   const sysText = systemText(body).toLowerCase();
   const hasTools = Array.isArray(body.tools) && (body.tools as unknown[]).length > 0;
@@ -255,7 +279,14 @@ export function routeModel(
   }
 
   const tier = cfg.categories[category] ?? cfg.default;
-  return { model: tierToModel(cfg, tier), tier, reason: detail };
+  return { model: tierToModel(cfg, tier), tier, reason: detail, category, tokens };
+}
+
+/** Next cheaper tier, used by the rate-limit throttle. */
+export function cheaperTier(tier: Tier): Tier | null {
+  const order: Tier[] = ["fable", "opus", "sonnet", "haiku"];
+  const i = order.indexOf(tier);
+  return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
 }
 
 function inferTier(cfg: RoutingConfig, model: string): Tier {

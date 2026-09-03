@@ -31,6 +31,7 @@ export async function PUT(req: Request) {
     tiers: { ...current.tiers, ...patch.tiers },
     thresholds: { ...current.thresholds, ...patch.thresholds },
     categories: { ...current.categories, ...patch.categories },
+    effort: { ...current.effort, ...patch.effort },
   };
   if (!existsSync(GATE_DIR)) mkdirSync(GATE_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(ROUTING_FILE, JSON.stringify(merged, null, 2), { mode: 0o600 });

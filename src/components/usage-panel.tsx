@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Download, RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,14 +16,17 @@ interface UsageEvent {
   status: number;
   inputTokens?: number;
   outputTokens?: number;
+  cacheReadTokens?: number;
 }
 
 interface Usage {
   total: number;
   byTier: Record<string, number>;
-  byModel: Record<string, number>;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cacheHitRatio: number;
   cost: number;
   costAllOpus: number;
   savings: number;
@@ -44,7 +47,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   return (
     <div className="rounded-lg border bg-muted/40 p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-0.5 text-lg font-semibold tabular-nums">{value}</div>
+      <div className="mt-0.5 text-lg font-semibold">{value}</div>
       {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
     </div>
   );
@@ -64,6 +67,8 @@ export function UsagePanel() {
     return () => clearInterval(t);
   }, []);
 
+  const promptTotal = (usage?.inputTokens ?? 0) + (usage?.cacheReadTokens ?? 0) + (usage?.cacheCreationTokens ?? 0);
+
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between space-y-0">
@@ -71,31 +76,36 @@ export function UsagePanel() {
           <CardTitle>Usage</CardTitle>
           <CardDescription>{usage?.total ?? 0} requests routed through gate.</CardDescription>
         </div>
-        <Button variant="ghost" size="icon" onClick={refresh} aria-label="Refresh">
-          <RefreshCw />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => (window.location.href = "/api/export?what=usage&format=csv")}>
+            <Download /> CSV
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => (window.location.href = "/api/export?what=usage&format=json")}>
+            <Download /> JSON
+          </Button>
+          <Button variant="ghost" size="icon" onClick={refresh} aria-label="Refresh">
+            <RefreshCw />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <Stat label="Requests" value={String(usage?.total ?? 0)} />
           <Stat
             label="Tokens"
-            value={fmtTokens((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0))}
-            hint={`${fmtTokens(usage?.inputTokens ?? 0)} in · ${fmtTokens(usage?.outputTokens ?? 0)} out`}
+            value={fmtTokens(promptTotal + (usage?.outputTokens ?? 0))}
+            hint={`${fmtTokens(promptTotal)} in · ${fmtTokens(usage?.outputTokens ?? 0)} out`}
           />
           <Stat
-            label="Est. cost"
-            value={fmtUsd(usage?.cost ?? 0)}
-            hint="API-equivalent"
+            label="Prompt cache"
+            value={`${Math.round((usage?.cacheHitRatio ?? 0) * 100)}%`}
+            hint={`${fmtTokens(usage?.cacheReadTokens ?? 0)} read from cache`}
           />
+          <Stat label="Est. cost" value={fmtUsd(usage?.cost ?? 0)} hint="API-equivalent" />
           <Stat
             label="Saved vs Opus"
             value={fmtUsd(usage?.savings ?? 0)}
-            hint={
-              usage && usage.costAllOpus > 0
-                ? `${Math.round((usage.savings / usage.costAllOpus) * 100)}% cheaper`
-                : "from routing"
-            }
+            hint={usage && usage.costAllOpus > 0 ? `${Math.round((usage.savings / usage.costAllOpus) * 100)}% cheaper` : "from routing"}
           />
         </div>
 
@@ -107,11 +117,10 @@ export function UsagePanel() {
               </Badge>
             ))}
           {usage && usage.total === 0 && (
-            <p className="text-sm text-muted-foreground">
-              No requests yet — send one through the gateway to see usage.
-            </p>
+            <p className="text-sm text-muted-foreground">No requests yet — send one through the gateway to see usage.</p>
           )}
         </div>
+
         {usage && usage.recent.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -121,26 +130,24 @@ export function UsagePanel() {
                   <th className="pb-2 font-medium">Requested</th>
                   <th className="pb-2 font-medium">Routed</th>
                   <th className="pb-2 font-medium">Tokens</th>
+                  <th className="pb-2 font-medium">Cached</th>
                   <th className="pb-2 font-medium">Reason</th>
                   <th className="pb-2 font-medium">Status</th>
                 </tr>
               </thead>
-              <tbody className="font-mono">
+              <tbody className="font-mono tabular-nums">
                 {usage.recent.slice(0, 12).map((e, i) => (
                   <tr key={i} className="border-t">
                     <td className="py-1.5 pr-2">{new Date(e.ts).toLocaleTimeString()}</td>
                     <td className="py-1.5 pr-2 text-muted-foreground">{e.requested}</td>
                     <td className="py-1.5 pr-2">{e.tier}</td>
                     <td className="py-1.5 pr-2 text-muted-foreground">
-                      {(e.inputTokens ?? 0) + (e.outputTokens ?? 0) > 0
-                        ? `${fmtTokens(e.inputTokens ?? 0)}/${fmtTokens(e.outputTokens ?? 0)}`
-                        : "—"}
+                      {(e.inputTokens ?? 0) + (e.outputTokens ?? 0) > 0 ? `${fmtTokens(e.inputTokens ?? 0)}/${fmtTokens(e.outputTokens ?? 0)}` : "—"}
                     </td>
+                    <td className="py-1.5 pr-2 text-muted-foreground">{e.cacheReadTokens ? fmtTokens(e.cacheReadTokens) : "—"}</td>
                     <td className="py-1.5 pr-2 text-muted-foreground">{e.reason}</td>
                     <td className="py-1.5">
-                      <span className={e.status < 300 ? "text-emerald-500" : "text-destructive"}>
-                        {e.status}
-                      </span>
+                      <span className={e.status < 300 ? "text-emerald-500" : "text-destructive"}>{e.status}</span>
                     </td>
                   </tr>
                 ))}

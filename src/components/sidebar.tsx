@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, MessagesSquare, ScrollText } from "lucide-react";
+import { BarChart3, LayoutDashboard, ListTree, LogOut, MessagesSquare, ScrollText } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/playground", label: "Playground", icon: MessagesSquare },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/sessions", label: "Sessions", icon: ListTree },
   { href: "/traffic", label: "Traffic", icon: ScrollText },
+  { href: "/playground", label: "Playground", icon: MessagesSquare },
 ];
 
 export function Sidebar() {
