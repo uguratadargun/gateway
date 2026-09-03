@@ -50,7 +50,7 @@ export function detectClients(baseUrl: string): ClientInfo[] {
       configPath: CLAUDE_SETTINGS,
       configured: claudeEnv.ANTHROPIC_BASE_URL === anthropicBase,
       canApply: true,
-      snippet: `# one-off\nANTHROPIC_BASE_URL=${anthropicBase} ANTHROPIC_MODEL=auto ANTHROPIC_SMALL_FAST_MODEL=haiku claude\n\n# persistent (~/.claude/settings.json) — "auto" lets gate route by difficulty;\n# a concrete model id would bypass routing.\n{ "env": {\n  "ANTHROPIC_BASE_URL": "${anthropicBase}",\n  "ANTHROPIC_MODEL": "auto",\n  "ANTHROPIC_SMALL_FAST_MODEL": "haiku",\n  "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"\n} }`,
+      snippet: `# one-off\nANTHROPIC_BASE_URL=${anthropicBase} ANTHROPIC_MODEL=auto ANTHROPIC_SMALL_FAST_MODEL=haiku claude\n\n# persistent (~/.claude/settings.json) — "auto" lets gate route by difficulty;\n# a concrete model id would bypass routing.\n{ "env": {\n  "ANTHROPIC_BASE_URL": "${anthropicBase}",\n  "ANTHROPIC_MODEL": "auto",\n  "ANTHROPIC_SMALL_FAST_MODEL": "haiku",\n  "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"\n},\n  "modelPicker": { "options": [ { "model": "auto", "label": "Auto (gate)", "behavesAs": "claude-sonnet-5" } ] }\n}`,
     },
     {
       id: "cursor",
@@ -113,6 +113,20 @@ export function applyClaudeCode(baseUrl: string, apiKey?: string): { ok: true; b
   env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "1000000";
   if (apiKey) env.ANTHROPIC_AUTH_TOKEN = apiKey;
   cfg.env = env;
+  // Offer "auto" in Claude Code's /model picker. `behavesAs` gives an unknown
+  // model id the client-side profile of a known one (context window, effort
+  // defaults) without changing the id that is sent — gate still routes it.
+  const picker = (cfg.modelPicker as Record<string, unknown> | undefined) ?? {};
+  const options = (Array.isArray(picker.options) ? (picker.options as Array<Record<string, unknown>>) : []).filter(
+    (row) => row.model !== "auto",
+  );
+  options.unshift({
+    model: "auto",
+    label: "Auto (gate)",
+    description: "gate routes each request to Haiku/Sonnet/Opus/Fable by difficulty",
+    behavesAs: "claude-sonnet-5",
+  });
+  cfg.modelPicker = { ...picker, options };
   writeFileSync(CLAUDE_SETTINGS, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
   return { ok: true, backup };
 }
@@ -130,6 +144,12 @@ export function revertClaudeCode(): { ok: true; backup: string | null } {
   if (env.CLAUDE_CODE_MAX_CONTEXT_TOKENS === "1000000") delete env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
   if (Object.keys(env).length) cfg.env = env;
   else delete cfg.env;
+  const picker = cfg.modelPicker as Record<string, unknown> | undefined;
+  if (picker && Array.isArray(picker.options)) {
+    const rest = (picker.options as Array<Record<string, unknown>>).filter((row) => row.model !== "auto");
+    if (rest.length) cfg.modelPicker = { ...picker, options: rest };
+    else delete cfg.modelPicker;
+  }
   writeFileSync(CLAUDE_SETTINGS, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
   return { ok: true, backup };
 }
