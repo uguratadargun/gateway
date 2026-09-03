@@ -47,7 +47,20 @@ export interface PromptCacheResult {
   breakpoints: number;
 }
 
+/** True when the client placed cache_control anywhere in the request. */
+export function clientManagesCache(body: Record<string, unknown>): boolean {
+  if (hasCacheControl(body.system) || hasCacheControl(body.tools)) return true;
+  const messages = body.messages;
+  return Array.isArray(messages) && messages.some((m) => hasCacheControl((m as Block)?.content));
+}
+
 export function applyPromptCaching(body: Record<string, unknown>, ttl: CacheTtl = "5m"): PromptCacheResult {
+  // A client that already places breakpoints (Claude Code does, with a 1h TTL)
+  // manages caching itself. Adding ours would mix TTLs across sections, and
+  // Anthropic rejects a 1h block after a 5m one (order: tools, system,
+  // messages). So the whole request is left alone.
+  if (clientManagesCache(body)) return { applied: false, breakpoints: 0 };
+
   let breakpoints = 0;
 
   // 1. System prompt.

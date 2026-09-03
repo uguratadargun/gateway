@@ -119,3 +119,120 @@ function applyBudget(body: Record<string, unknown>, budget: number): void {
   if (maxTokens > 0 && maxTokens <= budget) body.max_tokens = budget + 4096;
   if (body.temperature != null && body.temperature !== 1) delete body.temperature;
 }
+
+/**
+ * Translate a client's reasoning parameters to what the *target* model
+ * accepts. A router that swaps the model underneath a client (Claude Code
+ * sends `output_config.effort` + `thinking: adaptive` on every request) must
+ * do this, or Haiku answers 400 "does not support the effort parameter" and
+ * Claude 5 rejects `thinking.enabled`. Mutates and returns `body`.
+ */
+export function sanitizeForModel(body: Record<string, unknown>, model: string): Record<string, unknown> {
+  const m = model.toLowerCase();
+  const mode = thinkingModeFor(model);
+  const thinking = body.thinking as Record<string, unknown> | undefined;
+  const outputConfig = body.output_config as Record<string, unknown> | undefined;
+
+  if (!effortSupported(model) && outputConfig && "effort" in outputConfig) {
+    const { effort: _drop, ...rest } = outputConfig;
+    if (Object.keys(rest).length) body.output_config = rest;
+    else delete body.output_config;
+  }
+
+  if (mode === "extended") {
+    // No adaptive mode here; "disabled" is the default anyway.
+    if (thinking && (thinking.type === "adaptive" || thinking.type === "disabled")) delete body.thinking;
+  } else if (mode === "adaptive") {
+    const alwaysOn = /fable|mythos/.test(m);
+    const rejectsEnabled = alwaysOn || /opus-5|opus-4-[78]|sonnet-5/.test(m);
+    if (thinking?.type === "enabled" && rejectsEnabled) {
+      // budget_tokens → effort, then adaptive.
+      const budget = Number(thinking.budget_tokens ?? 0);
+      const oc = (body.output_config as Record<string, unknown> | undefined) ?? {};
+      if (oc.effort == null) {
+        body.output_config = { ...oc, effort: budget <= 2048 ? "low" : budget <= 8192 ? "medium" : "high" };
+      }
+      body.thinking = { type: "adaptive" };
+    }
+    if (thinking?.type === "disabled") {
+      const effort = String((body.output_config as Record<string, unknown> | undefined)?.effort ?? "high");
+      // Always-on models reject "disabled"; Opus 5+ rejects it at xhigh/max.
+      if (alwaysOn || effort === "xhigh" || effort === "max") delete body.thinking;
+    }
+  }
+
+  foldSystemMessages(body, model);
+
+  // Context-management edits that require thinking (clear_thinking_*) are
+  // invalid once thinking is absent or disabled on the target model.
+  const t = body.thinking as Record<string, unknown> | undefined;
+  const thinkingOn = mode === "adaptive" ? t?.type !== "disabled" : t?.type === "enabled";
+  const cm = body.context_management as Record<string, unknown> | undefined;
+  if (!thinkingOn && cm && Array.isArray(cm.edits)) {
+    const edits = (cm.edits as Array<Record<string, unknown>>).filter((e) => !String(e.type ?? "").startsWith("clear_thinking"));
+    if (edits.length) body.context_management = { ...cm, edits };
+    else delete body.context_management;
+  }
+  return body;
+}
+
+/** Models that accept a per-message `output_config` on a system message. */
+const PER_MESSAGE_EFFORT_RE = /fable-5-1|mythos-5-1|opus-5/;
+
+function textBlocks(content: unknown): Array<Record<string, unknown>> {
+  if (typeof content === "string") return content ? [{ type: "text", text: content }] : [];
+  return Array.isArray(content) ? (content as Array<Record<string, unknown>>) : [];
+}
+
+/**
+ * Mid-conversation `role: "system"` messages (Claude Code sends them for
+ * reminders and per-message effort). Extended-only models reject the role
+ * outright, so their text is folded into the next user turn; models without
+ * per-message effort get the `output_config` stripped.
+ */
+function foldSystemMessages(body: Record<string, unknown>, model: string): void {
+  if (!Array.isArray(body.messages)) return;
+  const msgs = body.messages as Array<Record<string, unknown>>;
+  if (!msgs.some((m) => m.role === "system")) return;
+  const m = model.toLowerCase();
+  const supportsRole = thinkingModeFor(model) === "adaptive";
+  const supportsPerMsgEffort = PER_MESSAGE_EFFORT_RE.test(m);
+
+  const out: Array<Record<string, unknown>> = [];
+  let pending: Array<Record<string, unknown>> = [];
+  const flushInto = (target: Record<string, unknown> | null) => {
+    if (!pending.length) return;
+    if (target && target.role === "user") {
+      target.content = [...pending, ...textBlocks(target.content)];
+    } else {
+      out.push({ role: "user", content: pending });
+    }
+    pending = [];
+  };
+
+  for (const msg of msgs) {
+    if (msg.role !== "system") {
+      if (pending.length) {
+        if (msg.role === "user") {
+          const merged = { ...msg };
+          flushInto(merged);
+          out.push(merged);
+          continue;
+        }
+        flushInto(null);
+      }
+      out.push(msg);
+      continue;
+    }
+    const cleaned = { ...msg };
+    if (!supportsPerMsgEffort) delete cleaned.output_config;
+    const blocks = textBlocks(cleaned.content);
+    if (supportsRole) {
+      if (blocks.length || cleaned.output_config) out.push(cleaned);
+      continue;
+    }
+    pending.push(...blocks);
+  }
+  flushInto(null);
+  body.messages = out;
+}

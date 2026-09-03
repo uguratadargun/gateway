@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyReasoning, effortSupported, normalizeEffort, thinkingModeFor } from "@/lib/reasoning";
+import { applyReasoning, effortSupported, normalizeEffort, sanitizeForModel, thinkingModeFor } from "@/lib/reasoning";
 
 describe("model capability detection", () => {
   it("classifies thinking modes per Anthropic's table", () => {
@@ -87,5 +87,110 @@ describe("applyReasoning", () => {
     const big: Record<string, unknown> = { max_tokens: 32000 };
     applyReasoning(big, null, "max", "claude-opus-5");
     expect(big.max_tokens).toBe(32000);
+  });
+});
+
+describe("sanitizeForModel (client params → target model)", () => {
+  it("strips effort and adaptive thinking when the router lands on Haiku", () => {
+    const body: Record<string, unknown> = { output_config: { effort: "medium" }, thinking: { type: "adaptive" }, max_tokens: 1 };
+    sanitizeForModel(body, "claude-haiku-4-5-20251001");
+    expect(body.output_config).toBeUndefined();
+    expect(body.thinking).toBeUndefined();
+  });
+
+  it("keeps other output_config keys on Haiku", () => {
+    const body: Record<string, unknown> = { output_config: { effort: "low", format: { type: "json_schema" } } };
+    sanitizeForModel(body, "claude-haiku-4-5-20251001");
+    expect(body.output_config).toEqual({ format: { type: "json_schema" } });
+  });
+
+  it("converts thinking.enabled budgets to adaptive + effort on Claude 5", () => {
+    const body: Record<string, unknown> = { thinking: { type: "enabled", budget_tokens: 10000 } };
+    sanitizeForModel(body, "claude-sonnet-5");
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect(body.output_config).toEqual({ effort: "high" });
+  });
+
+  it("drops thinking.disabled where the model rejects it", () => {
+    const fable: Record<string, unknown> = { thinking: { type: "disabled" } };
+    sanitizeForModel(fable, "claude-fable-5-1");
+    expect(fable.thinking).toBeUndefined();
+    const opusMax: Record<string, unknown> = { thinking: { type: "disabled" }, output_config: { effort: "max" } };
+    sanitizeForModel(opusMax, "claude-opus-5");
+    expect(opusMax.thinking).toBeUndefined();
+    const opusHigh: Record<string, unknown> = { thinking: { type: "disabled" } };
+    sanitizeForModel(opusHigh, "claude-opus-5");
+    expect(opusHigh.thinking).toEqual({ type: "disabled" });
+  });
+
+  it("leaves a well-formed adaptive request untouched", () => {
+    const body: Record<string, unknown> = { thinking: { type: "adaptive" }, output_config: { effort: "low" } };
+    sanitizeForModel(body, "claude-opus-5");
+    expect(body).toEqual({ thinking: { type: "adaptive" }, output_config: { effort: "low" } });
+  });
+});
+
+describe("mid-conversation system messages", () => {
+  it("folds them into the next user turn on Haiku and drops effort-only markers", () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "ok" },
+        { role: "system", content: [], output_config: { effort: "low" } },
+        { role: "system", content: [{ type: "text", text: "reminder: be terse" }] },
+        { role: "user", content: "second" },
+      ],
+    };
+    sanitizeForModel(body, "claude-haiku-4-5-20251001");
+    const msgs = body.messages as any[];
+    expect(msgs.map((x) => x.role)).toEqual(["user", "assistant", "user"]);
+    expect(msgs[2].content).toEqual([{ type: "text", text: "reminder: be terse" }, { type: "text", text: "second" }]);
+  });
+
+  it("keeps the role on adaptive models but strips per-message effort where unsupported", () => {
+    const body: Record<string, unknown> = {
+      messages: [
+        { role: "user", content: "a" },
+        { role: "assistant", content: "b" },
+        { role: "system", content: [{ type: "text", text: "note" }], output_config: { effort: "low" } },
+        { role: "user", content: "c" },
+      ],
+    };
+    sanitizeForModel(structuredClone(body), "claude-opus-5");
+    const sonnet = structuredClone(body);
+    sanitizeForModel(sonnet, "claude-sonnet-5");
+    const sys = (sonnet.messages as any[]).find((x) => x.role === "system");
+    expect(sys.output_config).toBeUndefined();
+    expect(sys.content[0].text).toBe("note");
+    const opus = structuredClone(body);
+    sanitizeForModel(opus, "claude-opus-5");
+    expect((opus.messages as any[]).find((x) => x.role === "system").output_config).toEqual({ effort: "low" });
+  });
+
+  it("turns a trailing system message into a user turn on Haiku", () => {
+    const body: Record<string, unknown> = { messages: [{ role: "user", content: "a" }, { role: "assistant", content: "b" }, { role: "system", content: "wrap up" }] };
+    sanitizeForModel(body, "claude-haiku-4-5-20251001");
+    expect((body.messages as any[]).at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "wrap up" }] });
+  });
+});
+
+describe("context_management vs thinking", () => {
+  it("drops clear_thinking edits when thinking is gone on Haiku", () => {
+    const body: Record<string, unknown> = {
+      thinking: { type: "adaptive" },
+      context_management: { edits: [{ type: "clear_thinking_20251015" }, { type: "clear_tool_uses_20250919" }] },
+    };
+    sanitizeForModel(body, "claude-haiku-4-5-20251001");
+    expect(body.thinking).toBeUndefined();
+    expect(body.context_management).toEqual({ edits: [{ type: "clear_tool_uses_20250919" }] });
+    const only: Record<string, unknown> = { context_management: { edits: [{ type: "clear_thinking_20251015" }] } };
+    sanitizeForModel(only, "claude-haiku-4-5-20251001");
+    expect(only.context_management).toBeUndefined();
+  });
+
+  it("keeps clear_thinking on adaptive models with thinking on", () => {
+    const body: Record<string, unknown> = { thinking: { type: "adaptive" }, context_management: { edits: [{ type: "clear_thinking_20251015" }] } };
+    sanitizeForModel(body, "claude-sonnet-5");
+    expect(body.context_management).toEqual({ edits: [{ type: "clear_thinking_20251015" }] });
   });
 });

@@ -14,7 +14,7 @@ import { coalesce } from "./inflight";
 import { getLimiter } from "./limiter";
 import { applyPromptCaching } from "./prompt-cache";
 import { currentUtilization, readRateLimit, recordRateLimit } from "./ratelimit";
-import { applyReasoning, normalizeEffort, type Effort } from "./reasoning";
+import { applyReasoning, normalizeEffort, sanitizeForModel, type Effort } from "./reasoning";
 import { cheaperTier, gradeToRoute, loadRoutingConfig, routeModel, TIER_RANK, type RouteResult } from "./router";
 import { loadSettings, type Tier } from "./settings";
 import type { StoredCredentials } from "./store";
@@ -154,17 +154,21 @@ export async function sendWithFallback(opts: {
     body.model = usedModel;
 
     const send = async (): Promise<Response> => {
-      const headers = applyClaudeCodeIdentity(body, {
+      // Serialize a per-attempt copy: the target model differs per tier and
+      // its capabilities decide which reasoning params may go on the wire.
+      const wire = structuredClone(body) as Record<string, unknown>;
+      const headers = applyClaudeCodeIdentity(wire, {
         accessToken: creds.accessToken,
         cliUserID: creds.cliUserID,
         accountUUID: creds.account?.account_uuid ?? null,
         model: usedModel,
       });
+      sanitizeForModel(wire, usedModel);
       const set = new Set(headers["anthropic-beta"].split(",").map((s) => s.trim()));
       for (const f of clientBeta?.split(",").map((s) => s.trim()).filter(Boolean) ?? []) set.add(f);
       for (const f of extraBeta) set.add(f);
       headers["anthropic-beta"] = [...set].join(",");
-      return fetch(ANTHROPIC_MESSAGES_URL, { method: "POST", headers, body: JSON.stringify(body) });
+      return fetch(ANTHROPIC_MESSAGES_URL, { method: "POST", headers, body: JSON.stringify(wire) });
     };
 
     let cls: ErrorClass = "network";

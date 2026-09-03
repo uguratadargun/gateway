@@ -268,7 +268,8 @@ export function routeModel(
   opts: RouteOptions = {},
 ): RouteResult {
   const cfg = loadRoutingConfig();
-  const req = (requested || "").trim();
+  // Claude Code may append "[1m]" to mark a 1M window; it is not part of the id.
+  const req = (requested || "").trim().replace(/\[1m\]$/i, "");
   const reqLower = req.toLowerCase();
   const tokens = opts.tokenOverride ?? estimateTokens(body);
 
@@ -295,9 +296,13 @@ export function routeModel(
   const hasTools = Array.isArray(body.tools) && (body.tools as unknown[]).length > 0;
   const maxTokens = Number(body.max_tokens ?? body.max_completion_tokens ?? 0);
 
+  // Keyword detection looks at the user's request and at *short* system
+  // prompts only: a dedicated title/summary job has a small system prompt,
+  // while an agent's 30k-token system prompt mentions everything.
+  const sysForKeywords = sysText.length <= 2000 ? sysText : "";
   const isBackground =
     (!hasTools && maxTokens > 0 && maxTokens < 50) ||
-    cfg.backgroundKeywords.some((k) => sysText.includes(k) || text.includes(k));
+    cfg.backgroundKeywords.some((k) => sysForKeywords.includes(k) || text.includes(k));
   const heavy = cfg.heavyKeywords.some((k) => text.includes(k));
 
   let category: RouteCategory;

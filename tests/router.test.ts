@@ -64,6 +64,15 @@ describe("routeModel", () => {
     expect(r.reason).toContain("large context");
   });
 
+  it("ignores background keywords buried in a long agent system prompt", () => {
+    const longSystem = "You are an agent. When asked, summarize this conversation. " + "Rules. ".repeat(600);
+    const r = routeModel("auto", { system: longSystem, tools: [{ name: "Bash" }], messages: user("fix the failing build") });
+    expect(r.tier).toBe("sonnet");
+    expect(r.reason).toContain("agentic");
+    const short = routeModel("auto", { system: "Summarize this conversation in one line.", messages: user("...") });
+    expect(short.tier).toBe("haiku");
+  });
+
   it("background beats heavy-intent when both match", () => {
     const r = routeModel("auto", { messages: user("generate a title, think hard") });
     expect(r.tier).toBe("haiku");

@@ -49,3 +49,21 @@ describe("applyPromptCaching", () => {
     expect(applyPromptCaching(body).applied).toBe(false);
   });
 });
+
+describe("client-managed caching (Claude Code)", () => {
+  it("adds nothing when the client caches any section — no mixed TTLs", () => {
+    const body: Record<string, unknown> = {
+      tools: [{ name: "Bash" }, { name: "Read" }],
+      system: [
+        { type: "text", text: "billing" },
+        { type: "text", text: "sentinel" },
+        { type: "text", text: "You are Claude Code", cache_control: { type: "ephemeral", ttl: "1h" } },
+      ],
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const r = applyPromptCaching(body, "5m");
+    expect(r.breakpoints).toBe(0);
+    expect((body.tools as any[]).every((t) => !t.cache_control)).toBe(true);
+    expect(typeof (body.messages as any[])[0].content).toBe("string");
+  });
+});
