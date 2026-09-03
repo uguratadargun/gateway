@@ -81,22 +81,40 @@ function lastUserText(body: Record<string, unknown>): string {
  * (Claude Code sends X-Claude-Code-Session-Id) or a fingerprint of the stable
  * prefix (system + first user message).
  */
-export function sessionFromRequest(
-  headers: Headers,
-  body: Record<string, unknown>,
-): { id: string | null; title: string | null } {
+export interface SessionInfo {
+  /** Conversation id for grouping/cost attribution (header or prompt fingerprint). */
+  id: string | null;
+  title: string | null;
+  /**
+   * Key for sticky routing. A prompt cache is keyed by tools → system →
+   * messages, so a Claude Code subagent (same session header, different
+   * system prompt and tools) shares no cache with its parent and must get its
+   * own baseline instead of inheriting the parent's tier.
+   */
+  stickyKey: string | null;
+}
+
+export function sessionFromRequest(headers: Headers, body: Record<string, unknown>): SessionInfo {
   const messages = Array.isArray(body.messages) ? (body.messages as Array<Record<string, unknown>>) : [];
   const firstUser = messages.find((m) => m.role === "user");
   const firstText = textOf(firstUser?.content).trim();
   const title = firstText ? firstText.slice(0, 80) : null;
 
-  const explicit = headers.get("x-gate-session") || headers.get("x-claude-code-session-id");
-  if (explicit && explicit.trim()) return { id: explicit.trim().slice(0, 64), title };
+  const sys = textOf(body.system).slice(0, 4000);
+  const toolNames = Array.isArray(body.tools)
+    ? (body.tools as Array<Record<string, unknown>>).map((t) => String(t.name ?? "")).join(",")
+    : "";
+  const prefixHash = createHash("sha256").update(`${sys}\n\n${toolNames}`).digest("hex").slice(0, 12);
 
-  const sys = textOf(body.system).slice(0, 2000);
-  if (!sys && !firstText) return { id: null, title };
-  const id = createHash("sha256").update(`${sys}\n\n${firstText.slice(0, 500)}`).digest("hex").slice(0, 16);
-  return { id, title };
+  const explicit = headers.get("x-gate-session") || headers.get("x-claude-code-session-id");
+  if (explicit && explicit.trim()) {
+    const id = explicit.trim().slice(0, 64);
+    return { id, title, stickyKey: `${id}:${prefixHash}` };
+  }
+
+  if (!sys && !firstText) return { id: null, title, stickyKey: null };
+  const id = createHash("sha256").update(`${sys.slice(0, 2000)}\n\n${firstText.slice(0, 500)}`).digest("hex").slice(0, 16);
+  return { id, title, stickyKey: `${id}:${prefixHash}` };
 }
 
 // ---- Upstream send with refresh, retries, and tier fallback -----------------
@@ -264,7 +282,7 @@ export interface DispatchOptions {
   stream: boolean;
   clientBeta?: string | null;
   effortHeader?: string | null;
-  session: { id: string | null; title: string | null };
+  session: SessionInfo;
   /** Original client request, for the traffic log. */
   requestPreview: string;
 }
@@ -331,22 +349,23 @@ export async function dispatch(
   // them, so within a conversation we never move *down* and we hold effort.
   // Background traffic (separate small prompts) and explicit heavy escalations
   // are exempt; upgrades become the new baseline.
+  const stickyKey = opts.session.stickyKey;
   const sticky =
     cfg.sticky.enabled &&
-    !!opts.session.id &&
+    !!stickyKey &&
     route.category !== null &&
     route.category !== "background" &&
     route.category !== "heavy" &&
     route.tokens >= cfg.sticky.minTokens;
   if (sticky) {
-    const prev = getSessionRoute(opts.session.id!);
+    const prev = getSessionRoute(stickyKey!);
     if (prev?.tier && prev.tier in TIER_RANK && TIER_RANK[prev.tier as Tier] > TIER_RANK[route.tier]) {
       const t = prev.tier as Tier;
       route = { ...route, tier: t, model: cfg.tiers[t], reason: `${route.reason} (sticky ${t})` };
     }
     if (prev?.effort) categoryEffort = normalizeEffort(prev.effort);
     if (!prev?.tier || TIER_RANK[route.tier] > TIER_RANK[prev.tier as Tier]) {
-      setSessionRoute(opts.session.id!, route.tier, categoryEffort);
+      setSessionRoute(stickyKey!, route.tier, categoryEffort);
     }
   }
   body.model = route.model;

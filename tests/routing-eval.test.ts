@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { sessionFromRequest } from "@/lib/gateway-core";
 import { gradeToRoute, loadRoutingConfig, PRESETS, routeModel, TIER_RANK } from "@/lib/router";
 import { getSessionRoute, setSessionRoute } from "@/lib/usage";
 
@@ -51,6 +52,26 @@ describe("grade → route with the cost/quality dial", () => {
     expect(gradeToRoute(5, { ...cfg, preset: "economy" }).tier).toBe("opus");
     expect(gradeToRoute(3, { ...cfg, preset: "quality" }).tier).toBe("opus");
     expect(gradeToRoute(1, { ...cfg, preset: "economy" }).tier).toBe("haiku");
+  });
+});
+
+describe("session identity vs sticky key", () => {
+  it("a subagent (same session header, different system/tools) gets its own sticky baseline", () => {
+    const h = new Headers({ "x-claude-code-session-id": "cc-session-1" });
+    const parent = sessionFromRequest(h, { system: "You are the orchestrator", tools: [{ name: "Agent" }, { name: "Bash" }], messages: [{ role: "user", content: "refactor the auth module" }] });
+    const sub = sessionFromRequest(h, { system: "You are an Explore subagent", tools: [{ name: "Read" }, { name: "Grep" }], messages: [{ role: "user", content: "find callers of login()" }] });
+    const parentAgain = sessionFromRequest(h, { system: "You are the orchestrator", tools: [{ name: "Agent" }, { name: "Bash" }], messages: [{ role: "user", content: "refactor the auth module" }, { role: "assistant", content: "ok" }, { role: "user", content: "now tests" }] });
+    expect(parent.id).toBe("cc-session-1");
+    expect(sub.id).toBe("cc-session-1"); // same conversation for cost attribution
+    expect(sub.stickyKey).not.toBe(parent.stickyKey); // but its own routing baseline
+    expect(parentAgain.stickyKey).toBe(parent.stickyKey); // stable across turns
+  });
+
+  it("falls back to a prompt fingerprint without a session header", () => {
+    const s = sessionFromRequest(new Headers(), { system: "sys", messages: [{ role: "user", content: "hello" }] });
+    expect(s.id).toHaveLength(16);
+    expect(s.stickyKey).toContain(":");
+    expect(sessionFromRequest(new Headers(), { messages: [] }).id).toBeNull();
   });
 });
 
