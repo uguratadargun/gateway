@@ -15,7 +15,7 @@ interface Settings {
   cache: { enabled: boolean; ttlSeconds: number };
   budget: { enabled: boolean; mode: "warn" | "block"; dailyUsd: number; monthlyUsd: number };
   fallback: { enabled: boolean; chains: Record<string, string[]> };
-  reasoning: { defaultEffort: "none" | "low" | "medium" | "high" };
+  reasoning: { defaultEffort: "default" | "low" | "medium" | "high" | "xhigh" | "max" };
   promptCache: { enabled: boolean; ttl: "5m" | "1h" };
   concurrency: { maxInFlight: number; queueTimeoutMs: number };
   throttle: { enabled: boolean; downgradeAt: number; blockAt: number };
@@ -76,9 +76,9 @@ export function SettingsPanel() {
           {s.promptCache.enabled && (
             <Row>
               <Label className="text-xs text-muted-foreground">Cache TTL</Label>
-              <select value={s.promptCache.ttl} onChange={(e) => setS({ ...s, promptCache: { ...s.promptCache, ttl: e.target.value as "5m" | "1h" } })} className={selectCls}>
-                <option value="5m">5 minutes</option>
-                <option value="1h">1 hour</option>
+              <select value={s.promptCache.ttl} onChange={(e) => setS({ ...s, promptCache: { ...s.promptCache, ttl: e.target.value as "5m" | "1h" } })} className={selectCls} title="5m: writes 1.25×, refreshed free while active. 1h: writes 2×, for sessions with long pauses.">
+                <option value="5m">5 min (active sessions)</option>
+                <option value="1h">1 hour (long pauses)</option>
               </select>
             </Row>
           )}
@@ -168,10 +168,12 @@ export function SettingsPanel() {
           <Row>
             <Head label="Fallback reasoning effort" hint="Used when routing rules don't set one." />
             <select value={s.reasoning.defaultEffort} onChange={(e) => setS({ ...s, reasoning: { defaultEffort: e.target.value as Settings["reasoning"]["defaultEffort"] } })} className={selectCls}>
-              <option value="none">None</option>
+              <option value="default">API default (high)</option>
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
+              <option value="xhigh">xhigh</option>
+              <option value="max">Max</option>
             </select>
           </Row>
         </div>

@@ -9,17 +9,18 @@ import { checkBudget } from "./budget";
 import { cacheGet, cacheKey, cacheSet } from "./cache";
 import { compressBody } from "./compress";
 import { countTokens } from "./count-tokens";
+import { gradeDifficulty } from "./grader";
 import { coalesce } from "./inflight";
 import { getLimiter } from "./limiter";
 import { applyPromptCaching } from "./prompt-cache";
 import { currentUtilization, readRateLimit, recordRateLimit } from "./ratelimit";
-import { applyReasoning } from "./reasoning";
-import { cheaperTier, loadRoutingConfig, routeModel, type RouteResult } from "./router";
+import { applyReasoning, normalizeEffort, type Effort } from "./reasoning";
+import { cheaperTier, gradeToRoute, loadRoutingConfig, routeModel, TIER_RANK, type RouteResult } from "./router";
 import { loadSettings, type Tier } from "./settings";
 import type { StoredCredentials } from "./store";
 import { forceRefresh, getValidCredentials } from "./token-manager";
 import { recordTraffic, truncatePreview } from "./traffic";
-import { recordUsage } from "./usage";
+import { getSessionRoute, recordUsage, setSessionRoute } from "./usage";
 
 const FALLBACK_STATUSES = new Set([429, 529]);
 
@@ -60,6 +61,17 @@ function textOf(content: unknown): string {
     return content
       .map((b) => (b && typeof b === "object" && typeof (b as any).text === "string" ? (b as any).text : ""))
       .join(" ");
+  }
+  return "";
+}
+
+function lastUserText(body: Record<string, unknown>): string {
+  const messages = Array.isArray(body.messages) ? (body.messages as Array<Record<string, unknown>>) : [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      const t = textOf(messages[i].content).trim();
+      if (t) return t;
+    }
   }
   return "";
 }
@@ -141,6 +153,7 @@ export async function sendWithFallback(opts: {
     // An account-wide (unified) rejection applies to every model: neither
     // retrying nor switching tier can help, so we return it immediately.
     let accountLimited = false;
+    let windowFallback = false;
     for (let attempt = 0; ; attempt++) {
       attempts++;
       try {
@@ -159,6 +172,15 @@ export async function sendWithFallback(opts: {
         cls = "network";
       }
 
+      // Context-window fallback (LiteLLM's context_window_fallbacks): a 400
+      // for an oversized prompt on Haiku is retried on the 1M-window tier.
+      if (cls === "invalid" && usedTier === "haiku" && upstream) {
+        const errText = await upstream.clone().text().catch(() => "");
+        if (/too long|too many tokens|context window|exceed/i.test(errText)) {
+          if (chain[i + 1] !== "sonnet") chain.splice(i + 1, 0, "sonnet");
+          windowFallback = true;
+        }
+      }
       if (cls === "ok" || cls === "auth" || cls === "invalid") break;
 
       if (RETRYABLE.has(cls) && attempt < settings.retry.maxRetries) {
@@ -183,7 +205,8 @@ export async function sendWithFallback(opts: {
 
     // Only walk the fallback chain for model-specific rate-limit/overload
     // outcomes; an account-wide rejection ends the attempt.
-    const fallbackable = !accountLimited && (cls === "rate_limit" || cls === "overloaded" || cls === "network");
+    const fallbackable =
+      windowFallback || (!accountLimited && (cls === "rate_limit" || cls === "overloaded" || cls === "network"));
     if (!fallbackable || i === chain.length - 1) break;
     if (i < chain.length - 1) {
       publishActivity({ ts: Date.now(), kind: "fallback", tier: usedTier, note: `${usedTier} → ${chain[i + 1]} (${cls})` });
@@ -291,10 +314,45 @@ export async function dispatch(
     tokenOverride = (await countTokens(body, preliminary.model)) ?? undefined;
   }
   let route = routeModel(requested, body, { tokenOverride });
+  let categoryEffort: Effort | null = route.category ? normalizeEffort(cfg.effort[route.category]) : null;
+
+  // LLM difficulty judge for the ambiguous middle (RouteLLM-style). Only the
+  // query text is graded; the grade is cached by content hash.
+  if (cfg.classifier.enabled && route.category === "default" && route.tokens >= cfg.classifier.minTokens) {
+    const grade = await gradeDifficulty(lastUserText(body));
+    if (grade != null) {
+      const g = gradeToRoute(grade, cfg);
+      route = { ...route, tier: g.tier, model: cfg.tiers[g.tier], reason: `graded ${grade}/5` };
+      categoryEffort = g.effort;
+    }
+  }
+
+  // Sticky session: prompt caches are per-model and effort changes invalidate
+  // them, so within a conversation we never move *down* and we hold effort.
+  // Background traffic (separate small prompts) and explicit heavy escalations
+  // are exempt; upgrades become the new baseline.
+  const sticky =
+    cfg.sticky.enabled &&
+    !!opts.session.id &&
+    route.category !== null &&
+    route.category !== "background" &&
+    route.category !== "heavy" &&
+    route.tokens >= cfg.sticky.minTokens;
+  if (sticky) {
+    const prev = getSessionRoute(opts.session.id!);
+    if (prev?.tier && prev.tier in TIER_RANK && TIER_RANK[prev.tier as Tier] > TIER_RANK[route.tier]) {
+      const t = prev.tier as Tier;
+      route = { ...route, tier: t, model: cfg.tiers[t], reason: `${route.reason} (sticky ${t})` };
+    }
+    if (prev?.effort) categoryEffort = normalizeEffort(prev.effort);
+    if (!prev?.tier || TIER_RANK[route.tier] > TIER_RANK[prev.tier as Tier]) {
+      setSessionRoute(opts.session.id!, route.tier, categoryEffort);
+    }
+  }
   body.model = route.model;
 
-  // Adaptive thinking by category.
-  applyReasoning(body, opts.effortHeader, route.category ? cfg.effort[route.category] : null);
+  // Effort (capability-aware): the primary cost lever.
+  applyReasoning(body, opts.effortHeader, categoryEffort, route.model);
 
   // Soft throttle as the 5h window fills.
   let throttled = false;

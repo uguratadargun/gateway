@@ -1,5 +1,10 @@
 import { getDb } from "./db";
 import { costForUsage, tierOf, type TokenUsage } from "./pricing";
+import { loadSettings } from "./settings";
+
+function costOfModel(model: string, u: TokenUsage): number {
+  return costForUsage(tierOf(model), u, { model, cacheTtl: loadSettings().promptCache.ttl });
+}
 
 export interface UsageEvent {
   ts: number;
@@ -84,7 +89,24 @@ function aggregateByModel(sinceTs: number): ModelAgg[] {
 }
 
 function costOf(rows: ModelAgg[]): number {
-  return rows.reduce((sum, r) => sum + costForUsage(tierOf(r.model), usageOf(r)), 0);
+  return rows.reduce((sum, r) => sum + costOfModel(r.model, usageOf(r)), 0);
+}
+
+// ---- Sticky sessions (model + effort held stable for prompt-cache hits) ----
+
+export function getSessionRoute(id: string): { tier: string | null; effort: string | null } | null {
+  const row = getDb().prepare("SELECT base_tier, effort FROM sessions WHERE id = ?").get(id);
+  if (!row) return null;
+  return { tier: row.base_tier ?? null, effort: row.effort ?? null };
+}
+
+export function setSessionRoute(id: string, tier: string, effort: string | null): void {
+  const now = Date.now();
+  getDb()
+    .prepare(
+      "INSERT INTO sessions (id, title, first_ts, last_ts, base_tier, effort) VALUES (?,NULL,?,?,?,?) ON CONFLICT(id) DO UPDATE SET base_tier = excluded.base_tier, effort = excluded.effort, last_ts = excluded.last_ts",
+    )
+    .run(id, now, now, tier, effort);
 }
 
 /** Total est. cost (USD) spent today and this calendar month. O(models), not O(rows). */
@@ -142,8 +164,8 @@ export function readUsage(limit = 50): UsageSummary {
     summary.outputTokens += u.output;
     summary.cacheReadTokens += u.cacheRead ?? 0;
     summary.cacheCreationTokens += u.cacheCreation ?? 0;
-    summary.cost += costForUsage(tierOf(r.model), u);
-    summary.costAllOpus += costForUsage("opus", u);
+    summary.cost += costOfModel(r.model, u);
+    summary.costAllOpus += costForUsage("opus", u, { cacheTtl: loadSettings().promptCache.ttl });
   }
   summary.savings = summary.costAllOpus - summary.cost;
   const promptTotal = summary.inputTokens + summary.cacheReadTokens + summary.cacheCreationTokens;
@@ -200,7 +222,7 @@ export function listSessions(limit = 50): SessionSummary[] {
     s.inputTokens += u.input;
     s.outputTokens += u.output;
     s.cacheReadTokens += u.cacheRead ?? 0;
-    s.cost += costForUsage(tierOf(r.model), u);
+    s.cost += costOfModel(r.model, u);
     if (!s.models.includes(r.model)) s.models.push(r.model);
     map.set(r.session_id, s);
   }
@@ -261,7 +283,7 @@ export function getAnalytics(range: AnalyticsRange): Analytics {
   for (const r of rows) {
     const u = usageOf(r);
     const tokens = u.input + u.output + (u.cacheRead ?? 0) + (u.cacheCreation ?? 0);
-    const cost = costForUsage(tierOf(r.model), u);
+    const cost = costOfModel(r.model, u);
     const b = buckets.get(Number(r.bucket)) ?? { ts: Number(r.bucket), requests: 0, tokens: 0, cost: 0, byTier: {} };
     b.requests += Number(r.n);
     b.tokens += tokens;

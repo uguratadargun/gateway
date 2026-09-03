@@ -34,8 +34,8 @@ export interface GateSettings {
     chains: Record<Tier, Tier[]>;
   };
   reasoning: {
-    /** Effort used when neither the request nor the routed category sets one. */
-    defaultEffort: "none" | "low" | "medium" | "high";
+    /** Effort used when neither the request nor the routed category sets one ("default" = API default, high). */
+    defaultEffort: "default" | "low" | "medium" | "high" | "xhigh" | "max";
   };
   /** Anthropic prompt caching: auto-place cache_control breakpoints. */
   promptCache: {
@@ -81,10 +81,10 @@ export const DEFAULT_SETTINGS: GateSettings = {
       haiku: [],
     },
   },
-  reasoning: { defaultEffort: "none" },
-  // 1h keeps the cache warm across pauses in a working session; on a
-  // subscription the higher write multiplier is irrelevant.
-  promptCache: { enabled: true, ttl: "1h" },
+  reasoning: { defaultEffort: "default" },
+  // 5m per Anthropic's guidance: active sessions refresh it for free, while a
+  // 1h TTL doubles the cost of every cache write (2× vs 1.25×).
+  promptCache: { enabled: true, ttl: "5m" },
   concurrency: { maxInFlight: 4, queueTimeoutMs: 60_000 },
   throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
@@ -117,7 +117,8 @@ export interface SettingsPatch {
   cache?: Partial<GateSettings["cache"]>;
   budget?: Partial<GateSettings["budget"]>;
   fallback?: { enabled?: boolean; chains?: Partial<Record<Tier, Tier[]>> };
-  reasoning?: Partial<GateSettings["reasoning"]>;
+  /** "none" is the pre-v2 spelling of "default" and is normalized on merge. */
+  reasoning?: { defaultEffort?: GateSettings["reasoning"]["defaultEffort"] | "none" };
   promptCache?: Partial<GateSettings["promptCache"]>;
   concurrency?: Partial<GateSettings["concurrency"]>;
   throttle?: Partial<GateSettings["throttle"]>;
@@ -134,6 +135,10 @@ export function saveSettings(patch: SettingsPatch): GateSettings {
 }
 
 function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
+  // pre-v2 configs stored "none"; it meant "leave the API default".
+  const rawEffort = patch.reasoning?.defaultEffort;
+  const defaultEffort: GateSettings["reasoning"]["defaultEffort"] =
+    rawEffort == null ? base.reasoning.defaultEffort : rawEffort === "none" ? "default" : rawEffort;
   return {
     compression: { ...base.compression, ...patch.compression },
     cache: { ...base.cache, ...patch.cache },
@@ -142,7 +147,7 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
       enabled: patch.fallback?.enabled ?? base.fallback.enabled,
       chains: { ...base.fallback.chains, ...patch.fallback?.chains },
     },
-    reasoning: { ...base.reasoning, ...patch.reasoning },
+    reasoning: { defaultEffort },
     promptCache: { ...base.promptCache, ...patch.promptCache },
     concurrency: { ...base.concurrency, ...patch.concurrency },
     throttle: { ...base.throttle, ...patch.throttle },

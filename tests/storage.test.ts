@@ -16,9 +16,10 @@ describe("pricing", () => {
     expect(tierOf("claude-fable-5-1")).toBe("fable");
   });
   it("computes cost and savings vs opus", () => {
+    // Sept-2026 list prices: haiku 1/5, opus 5/25 per MTok.
     expect(costFor("haiku", 10_000, 2_000)).toBeCloseTo(0.02);
-    expect(costFor("opus", 10_000, 2_000)).toBeCloseTo(0.3);
-    expect(savingsVsOpus("haiku", 10_000, 2_000)).toBeCloseTo(0.28);
+    expect(costFor("opus", 10_000, 2_000)).toBeCloseTo(0.1);
+    expect(savingsVsOpus("haiku", 10_000, 2_000)).toBeCloseTo(0.08);
   });
 });
 
@@ -30,7 +31,7 @@ describe("usage (sqlite)", () => {
     expect(u.total).toBe(2);
     expect(u.byTier).toEqual({ haiku: 1, opus: 1 });
     expect(u.inputTokens).toBe(11_000);
-    expect(u.cost).toBeCloseTo(0.02 + 0.0225);
+    expect(u.cost).toBeCloseTo(0.02 + 0.0075);
     expect(u.recent[0].model).toBeDefined();
     const spend = getSpend();
     expect(spend.today).toBeCloseTo(u.cost);

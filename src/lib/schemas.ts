@@ -3,7 +3,8 @@ import { z } from "zod";
 /** Request-body schemas for the management API. Invalid input → 400. */
 
 const tier = z.enum(["haiku", "sonnet", "opus", "fable"]);
-const effort = z.enum(["none", "low", "medium", "high"]);
+// "none" accepted for pre-v2 clients; normalized to "default" on load.
+const effort = z.enum(["default", "none", "low", "medium", "high", "xhigh", "max"]);
 
 /** Object keyed by tier with every key optional (a partial Record<Tier, V>). */
 const perTier = <T extends z.ZodTypeAny>(v: T) =>
@@ -78,6 +79,7 @@ export const routingPatchSchema = z
       .object({
         largeContext: z.number().int().min(1),
         trivial: z.number().int().min(0),
+        haikuContextMax: z.number().int().min(1000).max(200_000),
       })
       .partial(),
     heavyKeywords: z.array(z.string().min(1).max(200)).max(200),
@@ -85,6 +87,9 @@ export const routingPatchSchema = z
     default: tier,
     categories: perCategory(tier),
     effort: perCategory(effort),
+    preset: z.enum(["economy", "balanced", "quality"]),
+    classifier: z.object({ enabled: z.boolean(), minTokens: z.number().int().min(0).max(100_000) }).partial(),
+    sticky: z.object({ enabled: z.boolean(), minTokens: z.number().int().min(0).max(1_000_000) }).partial(),
     overrideExplicit: z.boolean(),
   })
   .partial()

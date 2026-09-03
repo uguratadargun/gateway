@@ -58,9 +58,9 @@ describe("routeModel", () => {
     expect(r.model).toBe("claude-fable-5-1");
   });
 
-  it("escalates very large contexts to the large-context tier", () => {
+  it("keeps very large contexts on the 1M-window daily driver (Sonnet)", () => {
     const r = routeModel("auto", { messages: user("x".repeat(800_000)) });
-    expect(r.tier).toBe("opus");
+    expect(r.tier).toBe("sonnet");
     expect(r.reason).toContain("large context");
   });
 

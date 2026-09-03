@@ -16,10 +16,23 @@ efficiently. Dashboard built with Next.js + shadcn/ui.
 2. **Gateway** — `POST /api/gateway/v1/messages` proxies to Anthropic on your
    OAuth token, presenting the Claude Code request shape the `claude_code` scope
    requires (identity headers + `"You are Claude Code…"` system sentinel).
-3. **Routing** — `src/lib/router.ts` picks a model from context: alias mapping,
-   background/utility detection (title & summary generation → Haiku), large
-   context (→ Opus), heavy-intent keywords (→ Opus), agentic/tool requests
-   (→ Sonnet). Fully overridable via `~/.gate/routing.json` or the dashboard.
+3. **Routing** — `src/lib/router.ts` classifies each request into a difficulty
+   category (background / trivial / agentic / default / large context / heavy)
+   from its shape, then maps the category to a **model tier and an effort
+   level**. Grounded in Anthropic's Sept-2026 guidance and the RouteLLM line of
+   work:
+   - **Effort is the primary cost lever** (API default is `high`): low for
+     utility traffic, medium as the daily driver, high only for explicit heavy
+     intent. Applied capability-aware — `output_config.effort` on adaptive
+     models, `thinking` budgets on Haiku — and never over a client's own setting.
+   - **Haiku difficulty grader** (RouteLLM's "LLM judge"): ambiguous "default"
+     requests get a 1–5 grade from one tiny cached Haiku call.
+   - **Cost/quality presets** (economy / balanced / quality) shift the mapping.
+   - **Sticky sessions**: prompt caches are per-model and effort changes
+     invalidate them, so a conversation never moves down a tier and holds effort.
+   - Sonnet 5 has a 1M window at standard pricing, so large context stays on
+     Sonnet; Haiku (200K) has a hard guard plus a "prompt too long" fallback.
+   Fully overridable via `~/.gate/routing.json` or the dashboard.
 
 ## Setup
 

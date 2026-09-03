@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { normalizeEffort, type Effort } from "./reasoning";
+
 /**
  * Context-aware model router.
  *
@@ -23,7 +25,15 @@ export interface RoutingConfig {
     largeContext: number;
     /** At or below this many tokens with no tools, downgrade to the cheap tier. */
     trivial: number;
+    /** Haiku's window is 200K; never send it more than this. */
+    haikuContextMax: number;
   };
+  /** Cost/quality dial (RouteLLM-style threshold): shifts the grader mapping. */
+  preset: RoutingPreset;
+  /** LLM difficulty grader for the ambiguous "default" category. */
+  classifier: { enabled: boolean; minTokens: number };
+  /** Keep model + effort stable within a session (prompt caches are per-model). */
+  sticky: { enabled: boolean; minTokens: number };
   /** Lowercased substrings that force the top tier when found in the prompt. */
   heavyKeywords: string[];
   /** Lowercased system/prompt substrings that mark cheap utility traffic. */
@@ -35,13 +45,55 @@ export interface RoutingConfig {
    * "which model for which difficulty" mapping.
    */
   categories: Record<RouteCategory, Tier>;
-  /** Extended-thinking effort per difficulty category (adaptive thinking). */
+  /** Reasoning effort per difficulty category (see reasoning.ts). */
   effort: Record<RouteCategory, RouteEffort>;
   /** When false, an explicit concrete `claude-*` model is always passed through. */
   overrideExplicit: boolean;
 }
 
-export type RouteEffort = "none" | "low" | "medium" | "high";
+export type RouteEffort = Effort;
+export type RoutingPreset = "economy" | "balanced" | "quality";
+
+/**
+ * Presets = the cost/quality dial. Balanced follows Anthropic's Sept-2026
+ * guidance for an efficiency-first gateway: Sonnet as the daily driver at
+ * medium effort, Haiku for utility traffic at low, the top tier only for
+ * explicit heavy intent. Quality moves the daily driver up; Economy keeps
+ * everything on Sonnet or below.
+ */
+export const PRESETS: Record<RoutingPreset, { categories: Record<RouteCategory, Tier>; effort: Record<RouteCategory, RouteEffort> }> = {
+  economy: {
+    categories: { background: "haiku", trivial: "haiku", agentic: "sonnet", default: "sonnet", largeContext: "sonnet", heavy: "opus" },
+    effort: { background: "low", trivial: "low", agentic: "low", default: "low", largeContext: "low", heavy: "medium" },
+  },
+  balanced: {
+    categories: { background: "haiku", trivial: "haiku", agentic: "sonnet", default: "sonnet", largeContext: "sonnet", heavy: "fable" },
+    effort: { background: "low", trivial: "low", agentic: "medium", default: "medium", largeContext: "medium", heavy: "high" },
+  },
+  quality: {
+    categories: { background: "haiku", trivial: "sonnet", agentic: "opus", default: "sonnet", largeContext: "sonnet", heavy: "fable" },
+    effort: { background: "low", trivial: "medium", agentic: "high", default: "high", largeContext: "high", heavy: "xhigh" },
+  },
+};
+
+export const TIER_RANK: Record<Tier, number> = { haiku: 0, sonnet: 1, opus: 2, fable: 3 };
+
+/**
+ * Map a 1–5 difficulty grade (from the Haiku judge) to a tier + effort, shifted
+ * by the preset: Economy grades one step easier, Quality one step harder.
+ */
+export function gradeToRoute(grade: number, cfg: RoutingConfig): { tier: Tier; effort: RouteEffort } {
+  const bias = cfg.preset === "economy" ? -1 : cfg.preset === "quality" ? 1 : 0;
+  const g = Math.max(1, Math.min(5, Math.round(grade) + bias));
+  const table: Record<number, { tier: Tier; effort: RouteEffort }> = {
+    1: { tier: "haiku", effort: "low" },
+    2: { tier: "haiku", effort: "medium" },
+    3: { tier: "sonnet", effort: "medium" },
+    4: { tier: "opus", effort: "high" },
+    5: { tier: "fable", effort: "high" },
+  };
+  return table[g];
+}
 
 export type RouteCategory =
   | "background"
@@ -82,7 +134,10 @@ const DEFAULT_CONFIG: RoutingConfig = {
     // "auto" is a sentinel: fall through to context-based heuristics.
     auto: "auto",
   },
-  thresholds: { largeContext: 180_000, trivial: 500 },
+  thresholds: { largeContext: 180_000, trivial: 500, haikuContextMax: 150_000 },
+  preset: "balanced",
+  classifier: { enabled: true, minTokens: 300 },
+  sticky: { enabled: true, minTokens: 2000 },
   // Only explicit intent phrases. Generic words ("step by step", "prove",
   // "architect" — which also matches "architecture") leaked ordinary prompts
   // onto the top tier with maximum thinking.
@@ -96,26 +151,13 @@ const DEFAULT_CONFIG: RoutingConfig = {
     "suggest a name",
   ],
   default: "sonnet",
-  // Best practice: cheapest model that does the job, escalating by difficulty.
-  // haiku → sonnet → opus → fable. Heavy reasoning is where the top model
-  // earns its cost; large context goes to Opus for its native 1M window.
-  categories: {
-    background: "haiku",
-    trivial: "haiku",
-    agentic: "sonnet",
-    largeContext: "opus",
-    heavy: "fable",
-    default: "sonnet",
-  },
-  // Adaptive thinking: spend reasoning budget only where difficulty warrants it.
-  effort: {
-    background: "none",
-    trivial: "none",
-    agentic: "none",
-    default: "none",
-    largeContext: "low",
-    heavy: "high",
-  },
+  // Best practice: cheapest model that does the job, escalating by difficulty
+  // (haiku → sonnet → opus → fable). Sonnet 5 has a 1M window at standard
+  // pricing, so large context stays on Sonnet; only Haiku (200K) needs a guard.
+  categories: { ...PRESETS.balanced.categories },
+  // Effort is the main cost lever (API default is `high`): low for utility
+  // traffic, medium as the daily driver, high only for explicit heavy intent.
+  effort: { ...PRESETS.balanced.effort },
   overrideExplicit: true,
 };
 
@@ -134,7 +176,9 @@ export function loadRoutingConfig(): RoutingConfig {
         aliases: { ...DEFAULT_CONFIG.aliases, ...parsed.aliases },
         thresholds: { ...DEFAULT_CONFIG.thresholds, ...parsed.thresholds },
         categories: { ...DEFAULT_CONFIG.categories, ...parsed.categories },
-        effort: { ...DEFAULT_CONFIG.effort, ...parsed.effort },
+        effort: normalizeEffortMap({ ...DEFAULT_CONFIG.effort, ...parsed.effort }),
+        classifier: { ...DEFAULT_CONFIG.classifier, ...parsed.classifier },
+        sticky: { ...DEFAULT_CONFIG.sticky, ...parsed.sticky },
       };
       return cached;
     } catch {
@@ -148,6 +192,12 @@ export function loadRoutingConfig(): RoutingConfig {
 /** Reset the in-process config cache (used after the UI writes routing.json). */
 export function resetRoutingCache(): void {
   cached = null;
+}
+
+function normalizeEffortMap(m: Record<string, unknown>): Record<RouteCategory, RouteEffort> {
+  const out = {} as Record<RouteCategory, RouteEffort>;
+  for (const k of Object.keys(m) as RouteCategory[]) out[k] = normalizeEffort(m[k]);
+  return out;
 }
 
 /** Rough token estimate: ~4 chars/token over the serialized prompt payload. */
@@ -272,7 +322,12 @@ export function routeModel(
     detail = "default";
   }
 
-  const tier = cfg.categories[category] ?? cfg.default;
+  let tier = cfg.categories[category] ?? cfg.default;
+  // Haiku's 200K window: never route an oversized prompt to it.
+  if (tier === "haiku" && tokens > cfg.thresholds.haikuContextMax) {
+    tier = "sonnet";
+    detail += " (haiku window guard)";
+  }
   return { model: tierToModel(cfg, tier), tier, reason: detail, category, tokens };
 }
 

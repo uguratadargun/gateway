@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   last_ts INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS grades (
+  hash TEXT PRIMARY KEY,
+  grade INTEGER NOT NULL,
+  ts INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ratelimit_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
@@ -97,6 +103,8 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["usage", "cache_read_tokens", "cache_read_tokens INTEGER NOT NULL DEFAULT 0"],
   ["usage", "cache_creation_tokens", "cache_creation_tokens INTEGER NOT NULL DEFAULT 0"],
   ["usage", "session_id", "session_id TEXT"],
+  ["sessions", "base_tier", "base_tier TEXT"],
+  ["sessions", "effort", "effort TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

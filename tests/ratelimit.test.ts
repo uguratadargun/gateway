@@ -45,7 +45,7 @@ describe("adaptive thinking + throttle helpers", () => {
   it("has per-category effort defaults and exposes the category on routes", () => {
     const cfg = loadRoutingConfig();
     expect(cfg.effort.heavy).toBe("high");
-    expect(cfg.effort.trivial).toBe("none");
+    expect(cfg.effort.trivial).toBe("low");
     const r = routeModel("auto", { messages: [{ role: "user", content: "think hard about it" }] });
     expect(r.category).toBe("heavy");
     expect(routeModel("claude-opus-5", { messages: [] }).category).toBeNull();
@@ -60,7 +60,7 @@ describe("adaptive thinking + throttle helpers", () => {
 
   it("honours a tokenOverride for thresholds", () => {
     const r = routeModel("auto", { messages: [{ role: "user", content: "short" }] }, { tokenOverride: 500_000 });
-    expect(r.tier).toBe("opus");
+    expect(r.tier).toBe("sonnet");
     expect(r.reason).toContain("large context");
   });
 });
