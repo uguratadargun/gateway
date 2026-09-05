@@ -24,6 +24,8 @@ export interface ExecutionRecord {
   workspace: ExecutionWorkspace | null;
   /** Where the account's rate-limit windows stood before and after the run. */
   quota: ExecutionQuota | null;
+  /** The execution this one continued from, if it was resumed rather than started fresh. */
+  resumedFrom: string | null;
 }
 
 export interface ExecutionStepRecord {

@@ -4,12 +4,16 @@ import type { WorkflowEdge, WorkflowNode } from "@/workflows/types";
 import { WorkflowError } from "../errors";
 import { conditionContext, type WorkflowState } from "../state";
 
+/** All selectEdge and its evaluator read from a state — resuming reconstructs
+ *  just this much rather than a full run in progress. */
+export type ConditionState = Pick<WorkflowState, "outputs" | "input">;
+
 /**
  * Edge selection — the only place the *next* node is decided, and it is pure
  * data: guarded edges in declaration order, then the single fallback edge.
  * A model never picks the next node.
  */
-export function selectEdge(node: WorkflowNode, state: WorkflowState): WorkflowEdge {
+export function selectEdge(node: WorkflowNode, state: ConditionState): WorkflowEdge {
   const ctx = conditionContext(state);
   let fallback: WorkflowEdge | null = null;
   for (const edge of node.edges) {

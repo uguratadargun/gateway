@@ -400,6 +400,26 @@ a running command node's child process is killed rather than abandoned. The run
 settles as `failed` with `RUN_CANCELLED`, and its worktree is kept — half-done
 work is still work, and `git diff` will show it.
 
+A stopped run offers two ways back, both on the execution page and as CLI
+commands: **Restart** (`gate-workflow.mjs restart <id>`) begins the workflow
+fresh — a new worktree from HEAD, the same input — and **Continue**
+(`gate-workflow.mjs resume <id>`) picks up in the *same* worktree, at the node
+it stopped on, without redoing what already ran. Where it resumes falls out of
+history alone: a step that failed is retried; a step that finished cleanly
+means the run stopped between nodes, so the node after it is re-derived with
+the same routing the engine itself uses. Nothing branches on *why* the run
+stopped — cancelled, hit a ceiling, an upstream hiccup, all reduce to the same
+two cases.
+
+The loop and step ceilings stay real ceilings across a Continue: the visit
+count carried into the resumed run is the *cumulative* count across every run
+in the chain, never reset. A run that hit `maxVisits` lands back on the very
+node that tripped it, already at the limit, and halts again immediately —
+at no cost — rather than a Continue click quietly buying the workflow another
+five tries. Continue refuses outright (with a plain reason) for a run that is
+still going, one that already finished at a terminal, or one whose worktree no
+longer exists on disk.
+
 ### What a run cost
 
 An execution shows what it used: its own tokens and API-equivalent cost, summed
@@ -469,6 +489,8 @@ plugins/gate/scripts/gate-workflow.mjs agents                        # what agen
 plugins/gate/scripts/gate-workflow.mjs run repo-dev-team --watch "…" # start one and follow it
 plugins/gate/scripts/gate-workflow.mjs watch <execution-id>          # follow one already going
 plugins/gate/scripts/gate-workflow.mjs cancel <execution-id>         # stop one (its worktree is kept)
+plugins/gate/scripts/gate-workflow.mjs resume <execution-id>         # continue it in the same worktree
+plugins/gate/scripts/gate-workflow.mjs restart <execution-id>        # start the same workflow fresh
 plugins/gate/scripts/gate-workflow.mjs save-agent <id> <file.md>     # create or replace an agent
 plugins/gate/scripts/gate-workflow.mjs save-workflow <id> <file.yaml> # create or replace a workflow
 plugins/gate/scripts/gate-workflow.mjs delete-agent <id>             # refused while a workflow names it

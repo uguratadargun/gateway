@@ -314,6 +314,47 @@ async function cmdWatch(argv) {
   return follow(rest[0], timeout);
 }
 
+function parseFollowArgs(usage, argv) {
+  const rest = [];
+  let watch = false;
+  let timeout = 1800;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--watch") watch = true;
+    else if (argv[i] === "--timeout") timeout = Number(argv[++i]) || timeout;
+    else rest.push(argv[i]);
+  }
+  if (!rest[0]) die(usage);
+  return { id: rest[0], watch, timeout };
+}
+
+/**
+ * Continues a stopped run in the same worktree, at the node it stopped on,
+ * instead of starting the workflow over. Refuses with a plain reason when
+ * that does not make sense — still running, nothing ran yet, already
+ * finished, or the worktree it used is gone.
+ */
+async function cmdResume(argv) {
+  const { id, watch, timeout } = parseFollowArgs("usage: gate-workflow resume <execution-id> [--watch]", argv);
+  const { executionId } = await api(`/api/executions/${id}/resume`, { method: "POST" });
+  console.log(`continuing ${id} as ${executionId}`);
+  console.log(`  ${BASE}/executions/${executionId}`);
+  return watch ? await follow(executionId, timeout) : 0;
+}
+
+/** Starts the same workflow fresh — a new worktree from HEAD, same input. */
+async function cmdRestart(argv) {
+  const { id, watch, timeout } = parseFollowArgs("usage: gate-workflow restart <execution-id> [--watch]", argv);
+  const { execution } = await api(`/api/executions/${id}`);
+  const { executionId } = await api("/api/executions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workflowId: execution.workflowId, input: execution.input }),
+  });
+  console.log(`restarted ${execution.workflowId} as ${executionId}`);
+  console.log(`  ${BASE}/executions/${executionId}`);
+  return watch ? await follow(executionId, timeout) : 0;
+}
+
 /** Polls the run until it stops, printing each step as it lands. */
 async function follow(executionId, timeoutSeconds) {
   const deadline = Date.now() + timeoutSeconds * 1000;
@@ -458,6 +499,8 @@ function usage() {
   run <id> [task] [--input k=v] [--watch] start a run
   watch <execution-id>                    follow a run to the end
   cancel <execution-id>                   stop a run (the worktree it made is kept)
+  resume <execution-id> [--watch]          continue a stopped run in its own worktree
+  restart <execution-id> [--watch]         start the same workflow fresh (a new worktree)
   save-agent <id> <file> [--replace]      create or replace an agent (the server validates it)
   save-workflow <id> <file> [--replace]   create or replace a workflow (the server validates it)
   delete-agent <id> [--force]             remove an agent (refused while a workflow names it)
@@ -480,6 +523,8 @@ const run =
   : command === "run" ? cmdRun(argv)
   : command === "watch" ? cmdWatch(argv)
   : command === "cancel" ? cmdCancel(argv)
+  : command === "resume" ? cmdResume(argv)
+  : command === "restart" ? cmdRestart(argv)
   : command === "login" ? cmdLogin()
   : command === "install" ? cmdInstall()
   : usage();

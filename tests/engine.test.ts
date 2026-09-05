@@ -405,3 +405,76 @@ describe("cancelling a command node", () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 });
+
+describe("resuming", () => {
+  it("starts at the given node instead of the entry, with the seeded state available to it", async () => {
+    const provider = new FakeModelProvider((req) => {
+      const node = req.context?.nodeId;
+      if (node === "implementation") return '{"diff":"from resume"}';
+      if (node === "tester") return '{"passed":true,"failures":0}';
+      return "unexpected node";
+    });
+
+    const state = await runWorkflow(workflow, {
+      provider,
+      loadAgent,
+      executionId: "exec-resume-1",
+      resume: {
+        outputs: { planner: { plan: "already planned" } },
+        visitCounts: { planner: 1 },
+        stepCount: 1,
+        history: [],
+        startNodeId: "implementation",
+      },
+    });
+
+    expect(state.status).toBe("completed");
+    // The planner never ran again; resuming picked up after it.
+    expect(provider.calls).toHaveLength(2);
+    expect(state.history.map((h) => h.nodeId)).toEqual(["implementation", "tester"]);
+    // stepIndex continues from the seeded count rather than restarting at 0.
+    expect(state.history[0].stepIndex).toBe(1);
+  });
+
+  it("halts immediately, at no cost, when the seeded visit count is already at the ceiling", async () => {
+    const provider = new FakeModelProvider(() => '{"diff":"y"}');
+
+    const state = await runWorkflow(workflow, {
+      provider,
+      loadAgent,
+      executionId: "exec-resume-2",
+      resume: {
+        outputs: {},
+        // maxVisits is 3 on this fixture; seeding it already there must not
+        // buy the node a fresh set of attempts.
+        visitCounts: { implementation: 3 },
+        stepCount: 10,
+        history: [],
+        startNodeId: "implementation",
+      },
+    });
+
+    expect(state.status).toBe("failed");
+    expect(state.error?.code).toBe("LOOP_LIMIT_EXCEEDED");
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it("keeps maxWorkflowSteps a real ceiling across a resume", async () => {
+    const provider = new FakeModelProvider(() => '{"diff":"y"}');
+    const state = await runWorkflow(workflow, {
+      provider,
+      loadAgent,
+      executionId: "exec-resume-3",
+      resume: {
+        outputs: {},
+        visitCounts: {},
+        stepCount: 10_000, // already over any workflow's maxWorkflowSteps
+        history: [],
+        startNodeId: "implementation",
+      },
+    });
+    expect(state.status).toBe("failed");
+    expect(state.error?.code).toBe("LOOP_LIMIT_EXCEEDED");
+    expect(provider.calls).toHaveLength(0);
+  });
+});

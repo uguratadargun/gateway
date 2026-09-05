@@ -1,17 +1,19 @@
+import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 import { getAgent } from "@/agents/registry";
 import { publishWorkflowEvent } from "@/events/bus";
 import { GateModelProvider } from "@/providers/gate-provider";
-import { runWorkflow } from "@/runtime/engine";
+import { runWorkflow, type RunWorkflowOptions } from "@/runtime/engine";
 import { WorkflowError } from "@/runtime/errors";
 import type { WorkflowState } from "@/runtime/state";
 import { createRunWorkspace, summarizeWorkspace, type ResolvedWorkspaceSpec, type RunWorkspace } from "@/runtime/workspace";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { getWorkflow } from "@/workflows/registry";
-import type { WorkspaceSpec } from "@/workflows/types";
+import type { WorkflowDefinition, WorkspaceSpec } from "@/workflows/types";
 
-import { createExecution, finishExecution, recordStep, setExecutionWorkspace } from "./store";
+import { assertResumable, planResume } from "./resume";
+import { createExecution, finishExecution, getExecution, getExecutionLineage, recordStep, setExecutionWorkspace } from "./store";
 import type { ExecutionWorkspace } from "./types";
 
 /**
@@ -82,8 +84,6 @@ export function startExecution(workflowId: string, input: Record<string, unknown
 
   const executionId = randomUUID();
   createExecution(executionId, workflow.id, input);
-  const controller = new AbortController();
-  inFlight.set(executionId, controller);
 
   // The worktree is created before the first node runs: a workflow that cannot
   // get its workspace fails immediately rather than half-way through a plan.
@@ -96,14 +96,77 @@ export function startExecution(workflowId: string, input: Record<string, unknown
       const message = (e as Error).message;
       const code = e instanceof WorkflowError ? e.code : "WORKSPACE_ERROR";
       const state = failedState(executionId, workflow.id, input, code, message);
-      inFlight.delete(executionId);
       finishExecution(state);
       publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: state.error!.code as never, message });
       return { executionId, done: Promise.resolve(state) };
     }
   }
 
-  const done = runWorkflow(workflow, {
+  return { executionId, done: launch(workflow, input, executionId, workspace) };
+}
+
+/**
+ * Continues an execution that stopped — cancelled, hit a ceiling, or refused —
+ * as a new one: same workflow, same input, the same worktree reused rather
+ * than recreated, and progress reconstructed from the full history it
+ * continues (its own steps plus every run it was itself resumed from).
+ *
+ * The node it resumes at falls out of that history alone (src/executions/
+ * resume.ts) — nothing here branches on why the parent stopped. A parent that
+ * hit maxVisits or maxWorkflowSteps lands back on the very node that tripped
+ * the ceiling, with the cumulative count already there: it halts again at no
+ * cost rather than buying the limit another five tries.
+ */
+export function resumeExecution(parentId: string): StartExecutionResult {
+  const parent = getExecution(parentId);
+  if (!parent) throw new WorkflowError("EXECUTION_NOT_RESUMABLE", `no execution "${parentId}"`);
+  assertResumable(parent);
+
+  const workflow = getWorkflow(parent.workflowId);
+  const lineage = getExecutionLineage(parentId);
+  if (!lineage) throw new WorkflowError("EXECUTION_NOT_RESUMABLE", "could not read this run's history");
+  const plan = planResume(workflow, lineage.steps, lineage.input);
+
+  const workspace = reuseWorkspace(lineage.workspace);
+
+  const executionId = randomUUID();
+  createExecution(executionId, parent.workflowId, lineage.input, Date.now(), parentId);
+  if (workspace) setExecutionWorkspace(executionId, workspaceSummary(workspace)!);
+
+  const resume: RunWorkflowOptions["resume"] = {
+    outputs: plan.outputs,
+    visitCounts: plan.visitCounts,
+    stepCount: plan.stepCount,
+    history: plan.history,
+    startNodeId: plan.startNodeId,
+  };
+  return { executionId, done: launch(workflow, lineage.input, executionId, workspace, resume) };
+}
+
+/** The worktree a resumed run reuses. Refuses cleanly if it is no longer there. */
+function reuseWorkspace(workspace: ExecutionWorkspace | null): RunWorkspace | null {
+  if (!workspace) return null;
+  if (!existsSync(workspace.root)) {
+    throw new WorkflowError(
+      "EXECUTION_NOT_RESUMABLE",
+      `the worktree this run used (${workspace.root}) no longer exists on disk; Restart instead`,
+    );
+  }
+  return { root: workspace.root, repo: workspace.repo, branch: workspace.branch, baseRef: workspace.baseRef };
+}
+
+/** Runs the engine, tracks it as cancellable, and settles the execution either way. */
+function launch(
+  workflow: WorkflowDefinition,
+  input: Record<string, unknown>,
+  executionId: string,
+  workspace: RunWorkspace | null,
+  resume?: RunWorkflowOptions["resume"],
+): Promise<WorkflowState> {
+  const controller = new AbortController();
+  inFlight.set(executionId, controller);
+
+  return runWorkflow(workflow, {
     provider,
     input,
     executionId,
@@ -111,6 +174,7 @@ export function startExecution(workflowId: string, input: Record<string, unknown
     emit: publishWorkflowEvent,
     onStep: (step) => recordStep(executionId, step),
     signal: controller.signal,
+    resume,
   })
     .then((state) => {
       inFlight.delete(executionId);
@@ -127,8 +191,6 @@ export function startExecution(workflowId: string, input: Record<string, unknown
       publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: "WORKFLOW_ROUTING_ERROR", message });
       return state;
     });
-
-  return { executionId, done };
 }
 
 function workspaceSummary(workspace: RunWorkspace | null): ExecutionWorkspace | null {

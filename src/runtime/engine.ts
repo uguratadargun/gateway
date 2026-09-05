@@ -10,7 +10,7 @@ import { WorkflowError, type WorkflowErrorCode } from "./errors";
 import { executeAgentNode } from "./executors/agent";
 import { runCommand, type CommandRunner } from "./executors/command";
 import { selectEdge } from "./executors/condition";
-import { createState, type NodeUsageRecord, type StepRecord, type ToolCallRecord, type WorkflowState } from "./state";
+import { createState, type NodeUsageRecord, type ResumeSeed, type StepRecord, type ToolCallRecord, type WorkflowState } from "./state";
 import type { RunWorkspace } from "./workspace";
 
 /**
@@ -42,6 +42,15 @@ export interface RunWorkflowOptions {
   maxToolIterations?: number;
   /** Called as each step lands in history, so a run can be persisted live. */
   onStep?: (step: StepRecord) => void;
+  /**
+   * Continues a stopped run instead of starting from the entry node: the
+   * caller has already worked out where it stopped and reconstructed its
+   * progress (src/executions/resume.ts does this from history). Ceilings stay
+   * cumulative — seeded visitCounts/stepCount are not reset — so resuming a
+   * run that hit maxVisits or maxWorkflowSteps re-enters at the same node and
+   * halts again immediately, at no cost, rather than bypassing the limit.
+   */
+  resume?: ResumeSeed & { startNodeId: string };
   /** Cancels the run. Checked before every node and inside an agent's tool
    *  loop, so a stop takes effect without waiting out the current step. */
   signal?: AbortSignal;
@@ -74,7 +83,8 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
   const now = opts.now ?? Date.now;
   const emit = (e: WorkflowEvent) => opts.emit?.(e);
   const executionId = opts.executionId ?? randomUUID();
-  const state = createState(executionId, workflow.id, opts.input ?? {});
+  const state = createState(executionId, workflow.id, opts.input ?? {}, opts.resume);
+  const startNodeId = opts.resume?.startNodeId ?? workflow.entry;
   const loadAgent = opts.loadAgent ?? getAgent;
   const execCommand = opts.runCommand ?? runCommand;
   const maxSteps = Math.min(workflow.maxWorkflowSteps, HARD_MAX_STEPS);
@@ -246,7 +256,7 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
     }
   }
 
-  emit({ type: "workflow.started", executionId, at: now(), workflowId: workflow.id, entry: workflow.entry });
-  await runFrom(workflow.entry, null);
+  emit({ type: "workflow.started", executionId, at: now(), workflowId: workflow.id, entry: startNodeId });
+  await runFrom(startNodeId, null);
   return state;
 }

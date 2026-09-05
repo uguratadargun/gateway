@@ -47,22 +47,37 @@ export interface WorkflowState {
   error: { code: string; message: string } | null;
 }
 
-export function createState(executionId: string, workflowId: string, input: Record<string, unknown> = {}): WorkflowState {
+/** Carries a resumed run's progress into a fresh state instead of starting empty. */
+export interface ResumeSeed {
+  outputs: Record<string, unknown>;
+  visitCounts: Record<string, number>;
+  stepCount: number;
+  history: StepRecord[];
+}
+
+export function createState(
+  executionId: string,
+  workflowId: string,
+  input: Record<string, unknown> = {},
+  seed?: ResumeSeed,
+): WorkflowState {
   return {
     executionId,
     workflowId,
     status: "running",
     input,
-    outputs: {},
-    visitCounts: {},
-    stepCount: 0,
-    history: [],
+    outputs: seed?.outputs ?? {},
+    visitCounts: seed?.visitCounts ?? {},
+    stepCount: seed?.stepCount ?? 0,
+    history: seed?.history ?? [],
     error: null,
   };
 }
 
 /** Context for condition evaluation: the two roots a workflow may read. */
-export function conditionContext(state: WorkflowState): { outputs: Record<string, unknown>; input: Record<string, unknown> } {
+export function conditionContext(
+  state: Pick<WorkflowState, "outputs" | "input">,
+): { outputs: Record<string, unknown>; input: Record<string, unknown> } {
   return { outputs: state.outputs, input: state.input };
 }
 

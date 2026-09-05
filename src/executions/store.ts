@@ -55,12 +55,20 @@ function reconcileOnce(): void {
   }
 }
 
-export function createExecution(id: string, workflowId: string, input: Record<string, unknown>, startedAt = Date.now()): void {
+export function createExecution(
+  id: string,
+  workflowId: string,
+  input: Record<string, unknown>,
+  startedAt = Date.now(),
+  resumedFrom: string | null = null,
+): void {
   // Sweep before this row exists, so it can never be swept.
   reconcileOnce();
   getDb()
-    .prepare("INSERT INTO workflow_executions (id, workflow_id, status, started_at, input_json) VALUES (?,?,?,?,?)")
-    .run(id, workflowId, "running", startedAt, json(input));
+    .prepare(
+      "INSERT INTO workflow_executions (id, workflow_id, status, started_at, input_json, resumed_from) VALUES (?,?,?,?,?,?)",
+    )
+    .run(id, workflowId, "running", startedAt, json(input), resumedFrom);
 }
 
 export function recordStep(executionId: string, step: StepRecord): void {
@@ -133,6 +141,7 @@ interface ExecutionRow {
   step_count: number;
   workspace_json: string | null;
   quota_json: string | null;
+  resumed_from: string | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -147,6 +156,7 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
     stepCount: r.step_count,
     workspace: parse<ExecutionWorkspace | null>(r.workspace_json, null),
     quota: parse<ExecutionQuota | null>(r.quota_json, null),
+    resumedFrom: r.resumed_from,
   };
 }
 
@@ -165,6 +175,48 @@ export function getExecution(id: string): ExecutionRecord | null {
   reconcileOnce();
   const row = getDb().prepare("SELECT * FROM workflow_executions WHERE id = ?").get(id);
   return row ? toExecution(row as unknown as ExecutionRow) : null;
+}
+
+/** Executions that resumed this one, most recent first. */
+export function getResumedAs(id: string): string[] {
+  const rows = getDb()
+    .prepare("SELECT id FROM workflow_executions WHERE resumed_from = ? ORDER BY started_at DESC")
+    .all(id) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Every step across the whole chain a resumed run continues, oldest first —
+ * this execution's own ancestors, walking `resumed_from` back to the run that
+ * started fresh, followed by this execution's own steps.
+ *
+ * Also returns the fields that stay constant across a chain: which workflow
+ * it is, what it was started with, and the worktree — reused as-is rather
+ * than recreated, since resuming is the point of keeping one.
+ */
+export function getExecutionLineage(
+  id: string,
+): { steps: ExecutionStepRecord[]; workspace: ExecutionWorkspace | null; workflowId: string; input: Record<string, unknown> } | null {
+  const chain: ExecutionRecord[] = [];
+  let cursor: string | null = id;
+  const seen = new Set<string>();
+  while (cursor) {
+    if (seen.has(cursor)) break; // a cycle would only ever come from a corrupted row
+    seen.add(cursor);
+    const execution = getExecution(cursor);
+    if (!execution) return null;
+    chain.push(execution);
+    cursor = execution.resumedFrom;
+  }
+  if (!chain.length) return null;
+  chain.reverse(); // oldest ancestor first
+
+  const steps = chain.flatMap((e) => getExecutionSteps(e.id));
+  const root = chain[0];
+  // The nearest ancestor's workspace record is freshest — same root/branch,
+  // but its changedFiles/commit reflect the most recent work in it.
+  const nearestWorkspace = [...chain].reverse().find((e) => e.workspace)?.workspace ?? null;
+  return { steps, workspace: nearestWorkspace, workflowId: root.workflowId, input: root.input };
 }
 
 interface StepRow {

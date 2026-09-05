@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { deleteExecution, getExecution, getExecutionSteps } from "@/executions/store";
+import { deleteExecution, getExecution, getExecutionSteps, getResumedAs } from "@/executions/store";
 import { getWorkflow } from "@/workflows/registry";
 
 export const runtime = "nodejs";
@@ -18,7 +18,7 @@ export async function GET(_req: Request, { params }: Params) {
   } catch {
     // The definition may have been edited or removed since the run; steps stand alone.
   }
-  return NextResponse.json({ execution, steps: getExecutionSteps(id), workflow });
+  return NextResponse.json({ execution, steps: getExecutionSteps(id), workflow, resumedAs: getResumedAs(id) });
 }
 
 export async function DELETE(_req: Request, { params }: Params) {

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, GitBranch, Gauge, Radio, Square, Wrench } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, GitBranch, Gauge, Play, Radio, RotateCcw, Square, Wrench } from "lucide-react";
 
 import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } from "@/components/workflow-graph";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ interface Detail {
   execution: ExecutionRecord;
   steps: ExecutionStepRecord[];
   workflow: { id: string; name: string; entry: string; nodes: ApiWorkflowNode[] } | null;
+  resumedAs: string[];
 }
 
 const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | "destructive"> = {
@@ -40,7 +41,10 @@ function preview(value: unknown): string {
 
 export default function ExecutionDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [starting, setStarting] = useState<"restart" | "continue" | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
   const [live, setLive] = useState<Record<string, NodeStatus>>({});
   const [liveEdges, setLiveEdges] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
@@ -60,6 +64,40 @@ export default function ExecutionDetailPage() {
   }, [load]);
 
   const running = detail?.execution.status === "running";
+
+  // Restart begins the same workflow fresh (a new worktree from HEAD); Continue
+  // reuses this run's worktree and picks up at the node it stopped on. Both
+  // just ask the server which node id to go look at next.
+  async function restart() {
+    if (!detail?.execution) return;
+    setStarting("restart");
+    setStartError(null);
+    const r = await fetch("/api/executions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workflowId: detail.execution.workflowId, input: detail.execution.input }),
+    });
+    const data = await r.json();
+    setStarting(null);
+    if (!r.ok) {
+      setStartError(data.error ?? "could not restart");
+      return;
+    }
+    router.push(`/executions/${data.executionId}`);
+  }
+
+  async function continueRun() {
+    setStarting("continue");
+    setStartError(null);
+    const r = await fetch(`/api/executions/${id}/resume`, { method: "POST" });
+    const data = await r.json();
+    setStarting(null);
+    if (!r.ok) {
+      setStartError(data.error ?? "could not continue");
+      return;
+    }
+    router.push(`/executions/${data.executionId}`);
+  }
 
   // Asking is all this does: the engine stops at its next check and settles the
   // run itself, so the page keeps streaming until the status actually changes.
@@ -163,6 +201,27 @@ export default function ExecutionDetailPage() {
               )}
             </h1>
             <p className="font-mono text-xs text-muted-foreground">{id}</p>
+            {ex?.resumedFrom && (
+              <p className="text-[11px] text-muted-foreground">
+                resumed from{" "}
+                <Link href={`/executions/${ex.resumedFrom}`} className="font-mono underline-offset-4 hover:underline">
+                  {ex.resumedFrom.slice(0, 8)}
+                </Link>
+              </p>
+            )}
+            {detail && detail.resumedAs.length > 0 && (
+              <p className="text-[11px] text-muted-foreground">
+                continued as{" "}
+                {detail.resumedAs.map((childId, i) => (
+                  <span key={childId}>
+                    {i > 0 && ", "}
+                    <Link href={`/executions/${childId}`} className="font-mono underline-offset-4 hover:underline">
+                      {childId.slice(0, 8)}
+                    </Link>
+                  </span>
+                ))}
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -177,6 +236,22 @@ export default function ExecutionDetailPage() {
               <Square /> {stopping ? "Stopping…" : "Stop"}
             </Button>
           )}
+          {ex && !running && (
+            <>
+              <Button variant="outline" size="sm" onClick={restart} disabled={starting !== null}>
+                <RotateCcw /> {starting === "restart" ? "Starting…" : "Restart"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={continueRun}
+                disabled={starting !== null}
+                title="Continues in the same worktree, at the node this run stopped on"
+              >
+                <Play /> {starting === "continue" ? "Starting…" : "Continue"}
+              </Button>
+            </>
+          )}
           {ex && (
             <Badge variant={STATUS_VARIANT[ex.status]} className="text-[10px]">
               {ex.status}
@@ -184,6 +259,8 @@ export default function ExecutionDetailPage() {
           )}
         </div>
       </header>
+
+      {startError && <p className="text-sm text-destructive">{startError}</p>}
 
       {ex?.error && <WhyItStopped error={ex.error} steps={steps} />}
 

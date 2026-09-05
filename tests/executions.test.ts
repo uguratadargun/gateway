@@ -6,11 +6,14 @@ import {
   deleteExecution,
   finishExecution,
   getExecution,
+  getExecutionLineage,
   getExecutionSteps,
   getLayout,
+  getResumedAs,
   listExecutions,
   recordStep,
   saveLayout,
+  setExecutionWorkspace,
 } from "@/executions/store";
 import { createState } from "@/runtime/state";
 
@@ -47,6 +50,92 @@ describe("execution store", () => {
     expect(listExecutions({ workflowId: "dev" }).map((e) => e.id)).toContain("exec-store-1");
     expect(deleteExecution("exec-store-1")).toBe(true);
     expect(getExecutionSteps("exec-store-1")).toHaveLength(0);
+  });
+
+  it("walks a chain of resumes into one ordered lineage", () => {
+    // Root run: two steps, then stopped.
+    createExecution("lineage-root", "dev", { task: "x" }, 1000);
+    setExecutionWorkspace("lineage-root", {
+      root: "/tmp/w",
+      repo: "/tmp/repo",
+      branch: "gate/run-a",
+      baseRef: "HEAD",
+      commit: "aaa",
+      changedFiles: ["a.ts"],
+    });
+    recordStep("lineage-root", {
+      nodeId: "planner",
+      stepIndex: 0,
+      visit: 1,
+      startedAt: 1000,
+      finishedAt: 1100,
+      status: "completed",
+      input: null,
+      output: { plan: "p" },
+    });
+    recordStep("lineage-root", {
+      nodeId: "implementation",
+      stepIndex: 1,
+      visit: 1,
+      startedAt: 1100,
+      finishedAt: 1200,
+      status: "failed",
+      input: null,
+      output: null,
+      error: { code: "RUN_CANCELLED", message: "run cancelled" },
+    });
+
+    // First resume: one more step, then stopped again.
+    createExecution("lineage-mid", "dev", { task: "x" }, 1300, "lineage-root");
+    setExecutionWorkspace("lineage-mid", {
+      root: "/tmp/w",
+      repo: "/tmp/repo",
+      branch: "gate/run-a",
+      baseRef: "HEAD",
+      commit: "bbb",
+      changedFiles: ["a.ts", "b.ts"],
+    });
+    recordStep("lineage-mid", {
+      nodeId: "implementation",
+      stepIndex: 2, // continues the cumulative count seeded from the root
+      visit: 2,
+      startedAt: 1300,
+      finishedAt: 1400,
+      status: "completed",
+      input: null,
+      output: { diff: "d" },
+    });
+
+    // Second resume, still in progress.
+    createExecution("lineage-tip", "dev", { task: "x" }, 1500, "lineage-mid");
+
+    const lineage = getExecutionLineage("lineage-tip")!;
+    expect(lineage.workflowId).toBe("dev");
+    expect(lineage.input).toEqual({ task: "x" });
+    // Oldest step first, across both ancestors, nothing from "lineage-tip" yet.
+    expect(lineage.steps.map((s) => `${s.nodeId}:${s.status}`)).toEqual([
+      "planner:completed",
+      "implementation:failed",
+      "implementation:completed",
+    ]);
+    // The nearest ancestor's workspace record wins — same worktree, fresher commit.
+    expect(lineage.workspace?.commit).toBe("bbb");
+    expect(lineage.workspace?.changedFiles).toEqual(["a.ts", "b.ts"]);
+
+    expect(getResumedAs("lineage-root")).toEqual(["lineage-mid"]);
+    expect(getResumedAs("lineage-mid")).toEqual(["lineage-tip"]);
+    expect(getExecution("lineage-tip")!.resumedFrom).toBe("lineage-mid");
+    expect(getExecution("lineage-root")!.resumedFrom).toBeNull();
+
+    for (const id of ["lineage-root", "lineage-mid", "lineage-tip"]) deleteExecution(id);
+  });
+
+  it("has nothing to walk for an execution that started fresh", () => {
+    createExecution("lineage-solo", "dev", {}, 1000);
+    const lineage = getExecutionLineage("lineage-solo")!;
+    expect(lineage.steps).toHaveLength(0);
+    expect(lineage.workspace).toBeNull();
+    deleteExecution("lineage-solo");
   });
 
   it("stores node layout separately from the workflow definition", () => {
