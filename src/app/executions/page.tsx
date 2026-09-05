@@ -7,7 +7,7 @@ import { RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { SelectBox, SelectionBar, deleteMany, useSelection } from "@/components/bulk-select";
+import { SelectHandle, SelectionBar, deleteMany, rowClass, useSelection } from "@/components/bulk-select";
 import type { ExecutionRecord } from "@/executions/types";
 
 const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | "destructive"> = {
@@ -80,17 +80,11 @@ export default function ExecutionsPage() {
         <p className="text-sm text-muted-foreground">No runs yet — start one from a workflow.</p>
       ) : (
         <div className="space-y-2">
-          <SelectionBar
-            selection={selection}
-            total={executions.length}
-            noun="runs"
-            onDelete={removeSelected}
-            busy={busy}
-          />
           {executions.map((e) => (
-            <Card key={e.id} className="flex items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-muted/40">
-              <SelectBox
+            <Card key={e.id} className={rowClass(selection.selected.has(e.id))}>
+              <SelectHandle
                 checked={selection.selected.has(e.id)}
+                active={selection.active}
                 onChange={() => selection.toggle(e.id)}
                 label={`Select run ${e.id.slice(0, 8)}`}
               />
@@ -115,6 +109,7 @@ export default function ExecutionsPage() {
               </Link>
             </Card>
           ))}
+          <SelectionBar selection={selection} total={executions.length} noun="runs" onDelete={removeSelected} busy={busy} />
         </div>
       )}
     </main>

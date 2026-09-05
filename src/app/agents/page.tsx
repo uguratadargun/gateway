@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { SelectBox, SelectionBar, deleteMany, useSelection } from "@/components/bulk-select";
+import { SelectHandle, SelectionBar, deleteMany, rowClass, useSelection } from "@/components/bulk-select";
 
 import { newAgentTemplate } from "@/agents/new-agent-template";
 import { agentUsage } from "@/workflows/usage";
@@ -131,13 +131,13 @@ export default function AgentsPage() {
         <p className="text-sm text-muted-foreground">No agents yet.</p>
       ) : (
         <div className="space-y-2">
-          <SelectionBar selection={selection} total={agents.length} noun="agents" onDelete={removeSelected} busy={busy} />
           {agents.map((a) => {
             const users = usage.get(a.id) ?? [];
             return (
-              <Card key={a.id} className="flex items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-muted/40">
-                <SelectBox
+              <Card key={a.id} className={rowClass(selection.selected.has(a.id))}>
+                <SelectHandle
                   checked={selection.selected.has(a.id)}
+                  active={selection.active}
                   onChange={() => selection.toggle(a.id)}
                   label={`Select ${a.id}`}
                 />
@@ -173,6 +173,7 @@ export default function AgentsPage() {
               </Card>
             );
           })}
+          <SelectionBar selection={selection} total={agents.length} noun="agents" onDelete={removeSelected} busy={busy} />
         </div>
       )}
     </main>

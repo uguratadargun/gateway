@@ -339,8 +339,10 @@ canvas never touches the workflow file.
 
 ### Clearing things out
 
-`/agents`, `/workflows` and `/executions` select: tick rows, or the box in the
-bar to take the page, and delete them together. Deleting stayed one-at-a-time on
+`/agents`, `/workflows` and `/executions` select. A row shows its checkbox on
+hover; once anything is ticked, a small bar floats over the list with `Select
+all`, `Cancel` and `Delete`, and disappears again when the selection is empty —
+a list you are only reading looks like a list. Deleting stayed one-at-a-time on
 the detail pages for a long time, which made a clear-out a tour of every item.
 
 Two things are said out loud rather than discovered afterwards. An agent row

@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { SelectBox, SelectionBar, deleteMany, useSelection } from "@/components/bulk-select";
+import { SelectHandle, SelectionBar, deleteMany, rowClass, useSelection } from "@/components/bulk-select";
 
 interface WorkflowSummary {
   id: string;
@@ -137,17 +137,11 @@ export default function WorkflowsPage() {
         <p className="text-sm text-muted-foreground">No workflows yet.</p>
       ) : (
         <div className="space-y-2">
-          <SelectionBar
-            selection={selection}
-            total={workflows.length}
-            noun="workflows"
-            onDelete={removeSelected}
-            busy={busy}
-          />
           {workflows.map((w) => (
-            <Card key={w.id} className="flex items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-muted/40">
-              <SelectBox
+            <Card key={w.id} className={rowClass(selection.selected.has(w.id))}>
+              <SelectHandle
                 checked={selection.selected.has(w.id)}
+                active={selection.active}
                 onChange={() => selection.toggle(w.id)}
                 label={`Select ${w.id}`}
               />
@@ -167,6 +161,13 @@ export default function WorkflowsPage() {
               </Link>
             </Card>
           ))}
+          <SelectionBar
+            selection={selection}
+            total={workflows.length}
+            noun="workflows"
+            onDelete={removeSelected}
+            busy={busy}
+          />
         </div>
       )}
     </main>
