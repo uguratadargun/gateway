@@ -202,6 +202,36 @@ async function cmdSave(kind, argv) {
   return 0;
 }
 
+/**
+ * Removes a definition. An agent a workflow still names is refused: deleting it
+ * would not fail, it would simply stop that workflow from parsing the next time
+ * it is loaded, which is a surprise worth one flag.
+ */
+async function cmdDelete(kind, argv) {
+  const rest = [];
+  let force = false;
+  for (const arg of argv) {
+    if (arg === "--force") force = true;
+    else rest.push(arg);
+  }
+  const id = rest[0];
+  if (!id) die(`usage: gate-workflow delete-${kind} <id>${kind === "agent" ? " [--force]" : ""}`);
+
+  if (kind === "agent" && !force) {
+    const { workflows = [] } = await api("/api/workflows");
+    const used = workflows.filter((wf) => (wf.nodes ?? []).some((n) => n.type === "agent" && n.agent === id));
+    if (used.length) {
+      die(`agent "${id}" is used by ${used.map((wf) => wf.id).join(", ")} — those stop loading; pass --force`);
+    }
+  }
+
+  const collection = kind === "agent" ? "agents" : "workflows";
+  const result = await api(`/api/${collection}/${id}`, { method: "DELETE" });
+  if (result?.deleted === false) die(`no ${kind} "${id}"`);
+  console.log(`deleted ${kind} ${id}`);
+  return 0;
+}
+
 async function cmdRun(argv) {
   const input = {};
   const rest = [];
@@ -348,6 +378,8 @@ function usage() {
   watch <execution-id>                    follow a run to the end
   save-agent <id> <file> [--replace]      create or replace an agent (the server validates it)
   save-workflow <id> <file> [--replace]   create or replace a workflow (the server validates it)
+  delete-agent <id> [--force]             remove an agent (refused while a workflow names it)
+  delete-workflow <id>                    remove a workflow (its recorded runs are kept)
   login                                   let an installed plugin log in: stores the secret in ~/.gate
   install                                 write /gate-run as a user command (not needed with the plugin)
 
@@ -361,6 +393,8 @@ const run =
   : command === "agents" ? cmdAgents(argv)
   : command === "save-agent" ? cmdSave("agent", argv)
   : command === "save-workflow" ? cmdSave("workflow", argv)
+  : command === "delete-agent" ? cmdDelete("agent", argv)
+  : command === "delete-workflow" ? cmdDelete("workflow", argv)
   : command === "run" ? cmdRun(argv)
   : command === "watch" ? cmdWatch(argv)
   : command === "login" ? cmdLogin()

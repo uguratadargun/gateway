@@ -337,6 +337,21 @@ still there for hand-editing, and it refuses to open over unsaved graph edits.
 Node positions are stored separately from the definition, so arranging the
 canvas never touches the workflow file.
 
+### Clearing things out
+
+`/agents`, `/workflows` and `/executions` select: tick rows, or the box in the
+bar to take the page, and delete them together. Deleting stayed one-at-a-time on
+the detail pages for a long time, which made a clear-out a tour of every item.
+
+Two things are said out loud rather than discovered afterwards. An agent row
+shows how many workflows name it, and deleting one that is in use names them and
+warns that they stop loading until they are edited — nothing refuses the
+deletion, it is your file. And deleting runs removes history only: the worktrees
+those runs produced are the deliverable, so they stay on disk, and the dialog
+says so rather than leaving you to assume branches were cleaned up. The CLI
+takes the same line: `delete-agent` refuses an agent a workflow still names
+unless `--force`.
+
 ### Seeing the routing
 
 Nothing about where a run goes next is hidden in a model: the engine takes the
@@ -408,6 +423,8 @@ plugins/gate/scripts/gate-workflow.mjs run repo-dev-team --watch "…" # start o
 plugins/gate/scripts/gate-workflow.mjs watch <execution-id>          # follow one already going
 plugins/gate/scripts/gate-workflow.mjs save-agent <id> <file.md>     # create or replace an agent
 plugins/gate/scripts/gate-workflow.mjs save-workflow <id> <file.yaml> # create or replace a workflow
+plugins/gate/scripts/gate-workflow.mjs delete-agent <id>             # refused while a workflow names it
+plugins/gate/scripts/gate-workflow.mjs delete-workflow <id>          # recorded runs are kept
 plugins/gate/scripts/gate-workflow.mjs login                         # store the secret for an installed plugin
 plugins/gate/scripts/gate-workflow.mjs install                       # /gate-run without the plugin
 ```

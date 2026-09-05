@@ -7,6 +7,7 @@ import { RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { SelectBox, SelectionBar, deleteMany, useSelection } from "@/components/bulk-select";
 import type { ExecutionRecord } from "@/executions/types";
 
 const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | "destructive"> = {
@@ -23,6 +24,9 @@ function duration(e: { startedAt: number; finishedAt: number | null }): string {
 
 export default function ExecutionsPage() {
   const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const selection = useSelection(executions.map((e) => e.id));
 
   async function load() {
     const r = await fetch("/api/executions");
@@ -31,6 +35,31 @@ export default function ExecutionsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  async function removeSelected() {
+    const ids = [...selection.selected];
+    if (!ids.length) return;
+    // The worktrees are the deliverable, so they outlive the record on purpose:
+    // deleting history here must not be read as cleaning up branches.
+    const withTree = executions.filter((e) => ids.includes(e.id) && e.workspace).length;
+    const many = ids.length > 1;
+    if (
+      !confirm(
+        `Delete ${ids.length} run${many ? "s" : ""} from the history?` +
+          (withTree > 0
+            ? `\n\n${withTree} of them produced a git worktree. Those are left on disk — remove them with \`git worktree remove\`.`
+            : ""),
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    const failed = await deleteMany((id) => `/api/executions/${id}`, ids);
+    setBusy(false);
+    setError(failed.length ? `could not delete ${failed.length} of them` : null);
+    selection.clear();
+    await load();
+  }
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-6 py-8">
@@ -45,14 +74,27 @@ export default function ExecutionsPage() {
           <RefreshCw />
         </Button>
       </header>
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       {executions.length === 0 ? (
         <p className="text-sm text-muted-foreground">No runs yet — start one from a workflow.</p>
       ) : (
         <div className="space-y-2">
+          <SelectionBar
+            selection={selection}
+            total={executions.length}
+            noun="runs"
+            onDelete={removeSelected}
+            busy={busy}
+          />
           {executions.map((e) => (
-            <Link key={e.id} href={`/executions/${e.id}`}>
-              <Card className="flex items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-muted/40">
+            <Card key={e.id} className="flex items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-muted/40">
+              <SelectBox
+                checked={selection.selected.has(e.id)}
+                onChange={() => selection.toggle(e.id)}
+                label={`Select run ${e.id.slice(0, 8)}`}
+              />
+              <Link href={`/executions/${e.id}`} className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{e.workflowId}</div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -70,8 +112,8 @@ export default function ExecutionsPage() {
                     {e.status}
                   </Badge>
                 </div>
-              </Card>
-            </Link>
+              </Link>
+            </Card>
           ))}
         </div>
       )}

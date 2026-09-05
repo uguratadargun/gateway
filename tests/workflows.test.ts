@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { agentsDir } from "@/agents/registry";
 import { requiredRunInputs } from "@/workflows/inputs";
+import { agentUsage } from "@/workflows/usage";
 import { parseWorkflow } from "@/workflows/loader";
 import { deleteWorkflow, getWorkflow, listWorkflows, saveWorkflow, workflowsDir } from "@/workflows/registry";
 
@@ -326,5 +327,49 @@ nodes:
 
   it("does not ask when the workflow has no workspace", () => {
     expect(requiredRunInputs(workflow(""), noAgents)).toEqual([]);
+  });
+});
+
+describe("agent usage", () => {
+  const meta = { sourcePath: "/tmp/x.yaml", updatedAt: 0 };
+  const wf = (id: string, body: string) =>
+    parseWorkflow(id, `name: ${id}\nentry: first\nnodes:\n${body}`, meta);
+
+  it("maps an agent to every workflow that names it, and only agent nodes", () => {
+    const one = wf(
+      "one",
+      `  - id: first
+    type: agent
+    agent: planner
+    next: again
+  - id: again
+    type: agent
+    agent: planner
+    next: build
+  - id: build
+    type: command
+    command: ["true"]
+    next: done
+  - id: done
+    type: terminal
+    status: completed
+`,
+    );
+    const two = wf(
+      "two",
+      `  - id: first
+    type: agent
+    agent: planner
+    next: done
+  - id: done
+    type: terminal
+    status: completed
+`,
+    );
+
+    const usage = agentUsage([one, two]);
+    // Named twice in "one", but a workflow is listed once.
+    expect(usage.get("planner")).toEqual(["one", "two"]);
+    expect(usage.has("build")).toBe(false);
   });
 });
