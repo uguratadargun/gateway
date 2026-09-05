@@ -4,7 +4,8 @@ import { createKey, deleteKey, hasActiveKeys, listKeys, revokeKey, verifyKey } f
 import { cacheClear, cacheGet, cacheKey, cacheSet, cacheStats } from "@/lib/cache";
 import { costFor, savingsVsOpus, tierOf } from "@/lib/pricing";
 import { readRateLimit, recordRateLimit } from "@/lib/ratelimit";
-import { clearCredentials, loadCredentials, saveCredentials } from "@/lib/store";
+import type { ClaudeAccount } from "@/lib/claude/oauth";
+import { clearCredentials, loadCredentials, saveCredentials, type StoredCredentials } from "@/lib/store";
 import { saveSettings } from "@/lib/settings";
 import { clearTraffic, readTraffic, recordTraffic } from "@/lib/traffic";
 import { getSpend, readUsage, recordUsage } from "@/lib/usage";
@@ -102,11 +103,14 @@ describe("rate-limit state across accounts", () => {
       "anthropic-ratelimit-unified-status": "allowed_warning",
     });
 
-  const creds = (uuid: string) => ({
+  const creds = (uuid: string): StoredCredentials => ({
     accessToken: "a",
     refreshToken: "r",
     expiresAt: Date.now() + 3_600_000,
-    account: { account_uuid: uuid } as never,
+    account: { account_uuid: uuid } as ClaudeAccount,
+    cliUserID: "0".repeat(64),
+    connectedAt: 0,
+    updatedAt: 0,
   });
 
   it("keeps what it knows when the same account refreshes its token", () => {
