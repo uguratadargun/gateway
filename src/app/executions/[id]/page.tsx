@@ -39,6 +39,13 @@ function preview(value: unknown): string {
   return s.length > 4000 ? `${s.slice(0, 4000)}…` : s;
 }
 
+/** What this run was actually asked to do — "task" is what every hand-written pipeline uses. */
+function describeInput(input: Record<string, unknown>): string | null {
+  if (typeof input.task === "string" && input.task.trim()) return input.task.trim();
+  const rest = Object.fromEntries(Object.entries(input).filter(([k]) => k !== "repo"));
+  return Object.keys(rest).length ? JSON.stringify(rest) : null;
+}
+
 export default function ExecutionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -201,6 +208,9 @@ export default function ExecutionDetailPage() {
               )}
             </h1>
             <p className="font-mono text-xs text-muted-foreground">{id}</p>
+            {ex && describeInput(ex.input) && (
+              <p className="mt-1 max-w-2xl whitespace-pre-wrap text-xs text-foreground/80">{describeInput(ex.input)}</p>
+            )}
             {ex?.resumedFrom && (
               <p className="text-[11px] text-muted-foreground">
                 resumed from{" "}

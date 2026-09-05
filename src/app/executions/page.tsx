@@ -22,6 +22,21 @@ function duration(e: { startedAt: number; finishedAt: number | null }): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
+/**
+ * What this particular run was asked to do — the same workflow run a dozen
+ * times looks identical otherwise, distinguishable only by timestamp or id.
+ * "task" is the input every hand-written pipeline actually uses; anything
+ * else at least shows something rather than nothing.
+ */
+function inputPreview(input: Record<string, unknown>): string | null {
+  if (typeof input.task === "string" && input.task.trim()) return input.task.trim();
+  if (typeof input.repo === "string" && input.repo.trim()) return input.repo.trim();
+  const keys = Object.keys(input);
+  if (!keys.length) return null;
+  const s = JSON.stringify(input);
+  return s.length > 160 ? `${s.slice(0, 160)}…` : s;
+}
+
 export default function ExecutionsPage() {
   const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +106,9 @@ export default function ExecutionsPage() {
               <Link href={`/executions/${e.id}`} className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{e.workflowId}</div>
+                  {inputPreview(e.input) && (
+                    <div className="truncate text-xs text-muted-foreground">{inputPreview(e.input)}</div>
+                  )}
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span>{new Date(e.startedAt).toLocaleString()}</span>
                     <span>·</span>
