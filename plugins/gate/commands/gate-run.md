@@ -20,8 +20,8 @@ Decide what to do with that:
   form (id, what it does, what it needs) and ask which one to run. Do not guess, and do not
   invent a workflow id that is not in the list.
 - **The list came back as an error** — say what it said instead of guessing. `cannot reach gate`
-  means the server is not running; a missing admin secret means `GATE_ADMIN_SECRET` is not set for
-  this shell and the gate checkout was not found next to the plugin.
+  means the server is not running; a missing admin secret means the plugin has never been given
+  one — `plugins/gate/scripts/gate-workflow.mjs login`, run once from the gate checkout, fixes it.
 
 A run works in its own git worktree on its own branch, so it never touches the checkout you are
 in — starting one is safe even mid-task. A workflow whose input list includes `repo` works on the

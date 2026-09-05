@@ -9,6 +9,7 @@
  * The secret comes from GATE_ADMIN_SECRET, or from the .env of this checkout.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +41,11 @@ function envFiles() {
   return files;
 }
 
+/** Where `login` keeps the secret, for a plugin copy with no .env near it. */
+function secretFile() {
+  return join(process.env.GATE_HOME || join(homedir(), ".gate"), "cli-secret");
+}
+
 function adminSecret() {
   if (process.env.GATE_ADMIN_SECRET) return process.env.GATE_ADMIN_SECRET;
   for (const file of envFiles()) {
@@ -55,6 +61,12 @@ function adminSecret() {
       if (value) return value;
     }
   }
+  try {
+    const stored = readFileSync(secretFile(), "utf8").trim();
+    if (stored) return stored;
+  } catch {
+    // Nothing stored; `login` is how it gets there.
+  }
   return null;
 }
 
@@ -62,7 +74,7 @@ let cookie = null;
 
 async function login() {
   const secret = adminSecret();
-  if (!secret) die("no admin secret: export GATE_ADMIN_SECRET, or point GATE_DIR at your gate checkout");
+  if (!secret) die("no admin secret: run `gate-workflow.mjs login` once from your gate checkout, or export GATE_ADMIN_SECRET");
   let res;
   try {
     res = await fetch(`${BASE}/api/admin/login`, {
@@ -233,6 +245,22 @@ function printOutcome(execution) {
 }
 
 /**
+ * Copies the admin secret this checkout can already see into ~/.gate, so a
+ * plugin installed elsewhere — a cache copy with no .env beside it — can log in
+ * without the secret having to live in your shell profile. Same plaintext the
+ * .env holds, kept 0600.
+ */
+function cmdLogin() {
+  const secret = adminSecret();
+  if (!secret) die("no admin secret to store: run this from a gate checkout, or set GATE_ADMIN_SECRET first");
+  const file = secretFile();
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, `${secret}\n`, { mode: 0o600 });
+  console.log(`stored the admin secret in ${file}\n/gate-run now works from any project`);
+  return 0;
+}
+
+/**
  * Writes /gate-run as a plain user command for anyone not installing the
  * plugin: the same command file, with the plugin path resolved rather than
  * left to Claude Code to expand.
@@ -256,6 +284,7 @@ function usage() {
   list                                    what is defined, and what input each needs
   run <id> [task] [--input k=v] [--watch] start a run
   watch <execution-id>                    follow a run to the end
+  login                                   let an installed plugin log in: stores the secret in ~/.gate
   install                                 write /gate-run as a user command (not needed with the plugin)
 
 Environment: GATE_URL (default http://127.0.0.1:4141), GATE_ADMIN_SECRET, GATE_DIR (a gate checkout to read .env from)`);
@@ -267,6 +296,7 @@ const run =
   command === "list" ? cmdList(argv)
   : command === "run" ? cmdRun(argv)
   : command === "watch" ? cmdWatch(argv)
+  : command === "login" ? cmdLogin()
   : command === "install" ? cmdInstall()
   : usage();
 process.exit(await run);

@@ -390,6 +390,13 @@ result. This repository is a Claude Code **marketplace** carrying one plugin,
 /plugin install gate@gateway
 ```
 
+Then, once, from the gate checkout — the plugin is installed as a copy with no
+`.env` beside it, and this is how it is given a way in:
+
+```bash
+plugins/gate/scripts/gate-workflow.mjs login    # stores the admin secret in ~/.gate/cli-secret (0600)
+```
+
 Nothing else is downloaded and nothing is added to `PATH`: the plugin is a
 command file and a dependency-free Node script, and it finds its own files
 through `${CLAUDE_PLUGIN_ROOT}`. The script can also be used on its own:
@@ -398,14 +405,15 @@ through `${CLAUDE_PLUGIN_ROOT}`. The script can also be used on its own:
 plugins/gate/scripts/gate-workflow.mjs list                          # what exists, and what each needs
 plugins/gate/scripts/gate-workflow.mjs run repo-dev-team --watch "…" # start one and follow it
 plugins/gate/scripts/gate-workflow.mjs watch <execution-id>          # follow one already going
+plugins/gate/scripts/gate-workflow.mjs login                         # store the secret for an installed plugin
 plugins/gate/scripts/gate-workflow.mjs install                       # /gate-run without the plugin
 ```
 
-It talks to `GATE_URL` (default `http://127.0.0.1:4141`) and logs in with
-`GATE_ADMIN_SECRET`. An installed plugin is a copy of this repository with no
-`.env` beside it, so there the secret comes from the environment — export it, or
-set `GATE_DIR` to a gate checkout to read its `.env`. Run from the repository
-itself, it finds that `.env` by walking up, and neither is needed.
+It talks to `GATE_URL` (default `http://127.0.0.1:4141`) and logs in with the
+admin secret, taken from the first of: `GATE_ADMIN_SECRET`, the `.env` of a
+checkout named by `GATE_DIR`, a `.env` above the script itself (which is what
+makes it work straight out of the repository), and finally `~/.gate/cli-secret`
+as written by `login`.
 
 The command lists the workflows you actually have every time it is invoked, so
 `/gate-run` needs no ids memorised — `/gate-run` alone offers the list, and
