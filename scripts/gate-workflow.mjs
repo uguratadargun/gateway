@@ -93,7 +93,11 @@ async function cmdList() {
   }
   for (const wf of workflows) {
     const inputs = wf.inputs?.length ? wf.inputs.join(", ") : "none";
-    const where = wf.workspace?.repo ? `git worktree of ${wf.workspace.repo}` : "no workspace (agents cannot touch files)";
+    const where = !wf.workspace
+      ? "no workspace (agents cannot touch files)"
+      : wf.workspace.repo
+        ? `git worktree of ${wf.workspace.repo}`
+        : "git worktree of the repo you run it in";
     console.log(`${wf.id}`);
     console.log(`  ${wf.name}${wf.description ? ` — ${wf.description}` : ""}`);
     console.log(`  input: ${inputs} · ${wf.nodes?.length ?? 0} nodes · ${where}`);
@@ -126,11 +130,16 @@ async function cmdRun(argv) {
   const wf = workflows.find((w) => w.id === id);
   if (!wf) die(`no workflow "${id}"; defined: ${workflows.map((w) => w.id).join(", ") || "(none)"}`);
 
+  // A workflow that takes its repository per run defaults to where the caller
+  // is: that is the whole point of not pinning one — the same pipeline works on
+  // whatever project you happen to be in.
+  const required = wf.inputs ?? [];
+  if (required.includes("repo") && input.repo === undefined) input.repo = process.cwd();
+
   // Free text is only placed automatically when there is exactly one empty slot
   // to put it in; anything else has to be named, so a run is never started with
   // the task in the wrong field.
   const free = rest.join(" ").trim();
-  const required = wf.inputs ?? [];
   let missing = required.filter((k) => input[k] === undefined);
   if (free) {
     if (missing.length === 1) input[missing[0]] = free;
@@ -146,6 +155,7 @@ async function cmdRun(argv) {
     body: JSON.stringify({ workflowId: id, input }),
   });
   console.log(`started ${id} · ${executionId}`);
+  if (input.repo) console.log(`  worktree of ${input.repo}`);
   console.log(`  ${BASE}/executions/${executionId}`);
   return watch ? await follow(executionId, timeout) : 0;
 }

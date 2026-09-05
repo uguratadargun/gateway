@@ -121,7 +121,6 @@ describe("workflow serialization", () => {
         name: "Tiny",
         description: "",
         entry: "start",
-        workspace: { repo: "" },
         nodes: [
           { id: "start", type: "command", command: ["true"], cwd: "", label: "", next: "done" },
           { id: "done", type: "terminal", status: "completed" },
@@ -132,6 +131,24 @@ describe("workflow serialization", () => {
     expect(yaml).not.toContain("label:");
     expect(yaml).not.toContain("workspace:");
     expect(yaml).not.toContain("description:");
+  });
+
+  // Clearing the repository field means "ask the run which repository", not
+  // "take the agents' tools away", so the declaration has to survive the trip.
+  it("keeps a workspace that pins no repository", () => {
+    const doc = workflowGraphDocSchema.parse({
+      name: "Tiny",
+      entry: "start",
+      workspace: { repo: "" },
+      nodes: [
+        { id: "start", type: "command", command: ["true"], next: "done" },
+        { id: "done", type: "terminal", status: "completed" },
+      ],
+    });
+    const yaml = toWorkflowYaml(doc);
+    expect(yaml).toContain("workspace: {}");
+    const parsed = parseWorkflow("tiny", yaml, meta);
+    expect(parsed.workspace).toEqual({});
   });
 
   it("still fails validation for a half-built graph", () => {

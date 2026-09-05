@@ -16,6 +16,9 @@ import type { WorkspaceSpec } from "@/workflows/types";
  * agents do. The worktree is left behind on purpose — it is the deliverable.
  */
 
+/** A workspace spec with its repository settled — pinned, or given per run. */
+export type ResolvedWorkspaceSpec = Omit<WorkspaceSpec, "repo"> & { repo: string };
+
 export interface RunWorkspace {
   /** Absolute path the tools are confined to. */
   root: string;
@@ -46,7 +49,7 @@ function git(cwd: string, args: string[]): string {
 }
 
 /** Creates the run's worktree. Throws before any node runs if it cannot. */
-export function createRunWorkspace(spec: WorkspaceSpec, executionId: string): RunWorkspace {
+export function createRunWorkspace(spec: ResolvedWorkspaceSpec, executionId: string): RunWorkspace {
   const repo = resolve(spec.repo.replace(/^~(?=\/|$)/, homedir()));
   if (!existsSync(repo)) {
     throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" does not exist`);

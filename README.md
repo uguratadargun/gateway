@@ -254,11 +254,24 @@ anything. A workflow that declares a **workspace** gives its agents real tools:
 ```yaml
 name: Repo dev team
 entry: planner
+workspace: {}                       # which repository comes from the run
+```
+
+`repo` is deliberately not part of the pipeline: a workflow describes *how* work
+is done, and the project it is done in is a property of the run. Leave the
+workspace empty and `repo` becomes a required run input — the run box pre-fills
+it, and `scripts/gate-workflow.mjs` / `/gate-run` default it to the directory
+you are working in, so the same pipeline serves every project. Pin one when a
+pipeline only ever makes sense for a single repository:
+
+```yaml
 workspace:
-  repo: /Users/you/Projects/thing   # your repository
+  repo: /Users/you/Projects/thing   # optional: pins this pipeline to one repo
   baseRef: main                     # what the run branches from (default HEAD)
   branchPrefix: gate/run            # branch name prefix (default gate/run)
 ```
+
+An explicit `repo` run input still wins over a pin.
 
 Every run gets **its own `git worktree` on its own branch** under
 `~/.gate/workspaces/<executionId>`. Agents write there, commands run there, and
@@ -296,7 +309,8 @@ The same agent files still work in a workflow **without** a workspace: with no
 worktree there are no tools, and the agents fall back to reasoning over what the
 workflow hands them. That is the difference between the two seeded workflows —
 `sample-dev-pipeline` (prose) and `repo-dev-team` (tools, `npm test` as a real
-command node). Point the latter's `workspace.repo` at your project to use it.
+command node). The latter takes the repository it works in from the run, so it
+is ready to use from wherever you start it.
 
 ### Editing the graph
 
@@ -384,9 +398,11 @@ checkout's `.env`) and talks to `GATE_URL`, default `http://127.0.0.1:4141`.
 command lists the workflows you actually have every time it is invoked, so
 `/gate-run` needs no ids memorised — `/gate-run` alone offers the list, and
 `/gate-run repo-dev-team fix the flaky test` starts that one and follows it.
-Because a run works in its own worktree on its own branch, starting one from a
-Claude Code session never disturbs the checkout that session is editing; when it
-ends, the branch and its `git diff` are what you review.
+A workflow that takes a `repo` input runs against the directory you are in
+(`--input repo=…` to aim it elsewhere). Because that run works in its own
+worktree on its own branch, starting one from a Claude Code session never
+disturbs the checkout that session is editing; when it ends, the branch and its
+`git diff` are what you review.
 
 ## Files
 

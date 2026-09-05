@@ -79,16 +79,18 @@ nodes:
 /**
  * The tool-using team: agents work in a per-run git worktree of a real
  * repository, the test suite is a deterministic command node, and any failure
- * or rejection routes back to the implementer. Edit `workspace.repo` to point
- * at your project before running it.
+ * or rejection routes back to the implementer. The repository comes from the
+ * run, so the same pipeline serves every project.
  */
 const REPO_DEV_TEAM = `name: Repo dev team
 description: Plan, implement and test a change inside a per-run git worktree, then review and security-review it in parallel.
 entry: planner
-workspace:
-  repo: /path/to/your/repo
-  # baseRef: main          # what the run branches from (default HEAD)
-  # branchPrefix: gate/run
+# Agents work in a git worktree of a real repository, never in the repository
+# itself. Which one is a run input ("repo") — the shell client and /gate-run
+# default it to the directory you are in. Pin this pipeline to one project by
+# adding "repo: /path/to/it" here; add "baseRef:" to branch from something
+# other than HEAD, "branchPrefix:" to name the branch differently.
+workspace: {}
 maxWorkflowSteps: 60
 maxVisits: 5
 nodes:

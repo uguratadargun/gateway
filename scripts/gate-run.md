@@ -21,7 +21,8 @@ Decide what to do with that:
   invent a workflow id that is not in the list.
 
 A run works in its own git worktree on its own branch, so it never touches the checkout you are
-in — starting one is safe even mid-task. When it finishes, report how it ended, the branch it
+in — starting one is safe even mid-task. A workflow whose input list includes `repo` works on the
+directory the command is run from unless you pass `--input repo=/some/other/project`. When it finishes, report how it ended, the branch it
 produced and the `git diff` command for it, then offer to review that diff.
 
 If the run is still going when the watch stops, say so and give the execution URL rather than

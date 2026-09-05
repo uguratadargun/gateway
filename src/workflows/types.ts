@@ -76,7 +76,8 @@ export const workflowNodeSchema = z.discriminatedUnion("type", [
  */
 const workspaceSchema = z
   .object({
-    repo: z.string().min(1).max(500),
+    /** Pins the pipeline to one repository; omitted, it is a per-run input. */
+    repo: z.string().min(1).max(500).optional(),
     /** What the run branches from (default HEAD). */
     baseRef: z.string().min(1).max(200).optional(),
     branchPrefix: z

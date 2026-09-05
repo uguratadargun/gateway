@@ -42,7 +42,7 @@ export const workflowGraphDocSchema = z.object({
   description: z.string().max(500).optional(),
   entry: z.string().min(1),
   workspace: z
-    .object({ repo: z.string(), baseRef: z.string().optional(), branchPrefix: z.string().optional() })
+    .object({ repo: z.string().optional(), baseRef: z.string().optional(), branchPrefix: z.string().optional() })
     .optional(),
   maxWorkflowSteps: z.number().optional(),
   maxVisits: z.number().optional(),
@@ -120,8 +120,11 @@ export function toWorkflowYaml(doc: WorkflowGraphDoc): string {
   root.name = doc.name.trim();
   put(root, "description", doc.description?.trim());
   root.entry = doc.entry.trim();
-  if (doc.workspace?.repo?.trim()) {
-    const ws: Record<string, unknown> = { repo: doc.workspace.repo.trim() };
+  // Kept even when empty: `workspace: {}` is what says "this pipeline works in
+  // a repository", with the repository itself coming from the run.
+  if (doc.workspace) {
+    const ws: Record<string, unknown> = {};
+    put(ws, "repo", doc.workspace.repo?.trim());
     put(ws, "baseRef", doc.workspace.baseRef?.trim());
     put(ws, "branchPrefix", doc.workspace.branchPrefix?.trim());
     root.workspace = ws;

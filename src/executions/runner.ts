@@ -6,9 +6,10 @@ import { GateModelProvider } from "@/providers/gate-provider";
 import { runWorkflow } from "@/runtime/engine";
 import { WorkflowError } from "@/runtime/errors";
 import type { WorkflowState } from "@/runtime/state";
-import { createRunWorkspace, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
+import { createRunWorkspace, summarizeWorkspace, type ResolvedWorkspaceSpec, type RunWorkspace } from "@/runtime/workspace";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { getWorkflow } from "@/workflows/registry";
+import type { WorkspaceSpec } from "@/workflows/types";
 
 import { createExecution, finishExecution, recordStep, setExecutionWorkspace } from "./store";
 import type { ExecutionWorkspace } from "./types";
@@ -25,6 +26,20 @@ export interface StartExecutionResult {
   executionId: string;
   /** Resolves when the run finishes; the HTTP layer need not await it. */
   done: Promise<WorkflowState>;
+}
+
+/**
+ * Which repository a run works in. The workflow may pin one; otherwise it is
+ * the `repo` run input, so a single pipeline serves whatever project it is
+ * pointed at. An explicit input wins over the pin.
+ */
+function resolveWorkspace(spec: WorkspaceSpec, input: Record<string, unknown>): ResolvedWorkspaceSpec {
+  const given = typeof input.repo === "string" ? input.repo.trim() : "";
+  const repo = given || spec.repo?.trim() || "";
+  if (!repo) {
+    throw new WorkflowError("WORKSPACE_ERROR", 'this workflow works in a repository; start it with a "repo" run input');
+  }
+  return { ...spec, repo };
 }
 
 export function startExecution(workflowId: string, input: Record<string, unknown> = {}): StartExecutionResult {
@@ -46,7 +61,7 @@ export function startExecution(workflowId: string, input: Record<string, unknown
   let workspace: RunWorkspace | null = null;
   if (workflow.workspace) {
     try {
-      workspace = createRunWorkspace(workflow.workspace, executionId);
+      workspace = createRunWorkspace(resolveWorkspace(workflow.workspace, input), executionId);
       setExecutionWorkspace(executionId, { ...workspace, commit: null, changedFiles: [] });
     } catch (e) {
       const message = (e as Error).message;

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { agentsDir } from "@/agents/registry";
+import { requiredRunInputs } from "@/workflows/inputs";
 import { parseWorkflow } from "@/workflows/loader";
 import { deleteWorkflow, getWorkflow, listWorkflows, saveWorkflow, workflowsDir } from "@/workflows/registry";
 
@@ -289,5 +290,41 @@ nodes:
     type: terminal
 `;
     expect(() => parseWorkflow("p", raw, meta)).toThrow(/both contain node "shared"/);
+  });
+});
+
+describe("run inputs", () => {
+  const meta = { sourcePath: "/tmp/x.yaml", updatedAt: 0 };
+  const noAgents = () => {
+    throw new Error("no agents here");
+  };
+  const workflow = (workspace: string) =>
+    parseWorkflow(
+      "w",
+      `name: W
+entry: start
+${workspace}
+nodes:
+  - id: start
+    type: command
+    command: ["true"]
+    next: done
+  - id: done
+    type: terminal
+    status: completed
+`,
+      meta,
+    );
+
+  it("asks the run for a repository when the workspace pins none", () => {
+    expect(requiredRunInputs(workflow("workspace: {}"), noAgents)).toEqual(["repo"]);
+  });
+
+  it("does not ask when the workflow pins one", () => {
+    expect(requiredRunInputs(workflow("workspace:\n  repo: /tmp/repo"), noAgents)).toEqual([]);
+  });
+
+  it("does not ask when the workflow has no workspace", () => {
+    expect(requiredRunInputs(workflow(""), noAgents)).toEqual([]);
   });
 });

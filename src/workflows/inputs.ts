@@ -31,6 +31,9 @@ export function requiredRunInputs(wf: WorkflowDefinition, loadAgent: (id: string
     for (const path of templatePaths(agent.prompt)) add(path);
     for (const declared of node.inputs ?? agent.inputs) add(declared.replace(/\?$/, ""));
   }
+  // A workspace without a pinned repository takes it per run, so the same
+  // pipeline can be pointed at whatever project the caller is working in.
+  if (wf.workspace && !wf.workspace.repo) keys.add("repo");
   return [...keys].sort();
 }
 
