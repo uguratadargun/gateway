@@ -363,6 +363,31 @@ curl -s -b /tmp/gate.jar -H 'content-type: application/json' \
   http://127.0.0.1:4141/api/executions
 ```
 
+### From Claude Code
+
+Workflows do not run inside Claude Code — the engine calls the model through
+gate's own proxy pipeline, so routing, caching and budget apply exactly as they
+do for any client. What Claude Code needs is a way to start a run and read the
+result, and `scripts/gate-workflow.mjs` is that:
+
+```bash
+scripts/gate-workflow.mjs list                              # what exists, and what each needs
+scripts/gate-workflow.mjs run repo-dev-team --watch "…"     # start one and follow it
+scripts/gate-workflow.mjs watch <execution-id>              # follow one already going
+scripts/gate-workflow.mjs install                           # write the /gate-run slash command
+```
+
+It logs in with `GATE_ADMIN_SECRET` (from the environment, or from this
+checkout's `.env`) and talks to `GATE_URL`, default `http://127.0.0.1:4141`.
+
+`install` writes `~/.claude/commands/gate-run.md`, pointed at this checkout. The
+command lists the workflows you actually have every time it is invoked, so
+`/gate-run` needs no ids memorised — `/gate-run` alone offers the list, and
+`/gate-run repo-dev-team fix the flaky test` starts that one and follows it.
+Because a run works in its own worktree on its own branch, starting one from a
+Claude Code session never disturbs the checkout that session is editing; when it
+ends, the branch and its `git diff` are what you review.
+
 ## Files
 
 - `src/lib/claude/` — OAuth config, PKCE, token flow, Claude Code identity headers
@@ -373,3 +398,4 @@ curl -s -b /tmp/gate.jar -H 'content-type: application/json' \
 - `src/agents/` — agent file format: parse, validate, render · `src/workflows/` — workflow YAML + condition language
 - `src/runtime/` — the deterministic engine, node executors, agent tools (`tools/`) and per-run worktrees (`workspace.ts`) · `src/providers/` — the `ModelProvider` seam onto the gateway
 - `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
+- `scripts/gate-workflow.mjs` — shell client for workflow runs, and the `/gate-run` slash command it installs
