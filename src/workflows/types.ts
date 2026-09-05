@@ -44,7 +44,7 @@ export const workflowNodeSchema = z.discriminatedUnion("type", [
       /** argv, never a shell string: the runtime spawns it without a shell. */
       command: z.array(z.string().min(1)).min(1).max(50),
       cwd: z.string().max(500).optional(),
-      timeoutMs: z.number().int().min(1000).max(600_000).optional(),
+      timeoutMs: z.number().int().min(1000).optional(),
     })
     .strict(),
   z.object({ ...baseNode, type: z.literal("condition") }).strict(),

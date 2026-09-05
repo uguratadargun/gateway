@@ -124,6 +124,35 @@ describe("agent tool loop", () => {
     expect(step.usage).toMatchObject({ inputTokens: 40, outputTokens: 20 });
   });
 
+  it("lets an agent's own maxToolIterations override the run's default", async () => {
+    const capped = `---
+name: Builder
+model: sonnet
+tools: [read_file, write_file, run_command]
+maxToolIterations: 2
+output:
+  type: json
+  schema:
+    summary: string
+---
+Do the work.
+`;
+    const provider = new FakeModelProvider(() => ({
+      toolUses: [toolUse("read_file", { path: "out.txt" })],
+      usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0 },
+    }));
+    // No maxToolIterations passed to the run at all — a long task's agent
+    // needing more rounds than the default (or fewer, as here) sets it on
+    // itself rather than the workflow having to raise it for every node.
+    const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), {
+      provider,
+      loadAgent: (id) => parseAgent(id, capped, meta),
+      workspace,
+    });
+    expect(state.error?.code).toBe("TOOL_LIMIT_EXCEEDED");
+    expect(state.history.at(-1)!.toolCalls).toHaveLength(2);
+  });
+
   it("offers no tools when the workflow has no workspace", async () => {
     const provider = new FakeModelProvider(() => JSON.stringify({ summary: "prose only" }));
     const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent });

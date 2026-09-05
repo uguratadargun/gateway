@@ -20,6 +20,7 @@ interface AgentDetail {
   output: { type: string; schema?: Record<string, string> };
   tools: string[];
   timeoutMs?: number;
+  maxToolIterations?: number;
   prompt: string;
   sourcePath: string;
   updatedAt: number;
@@ -141,6 +142,7 @@ export default function AgentDetailPage() {
                 )}
               </Field>
               {agent.timeoutMs && <Field label="timeout">{agent.timeoutMs} ms</Field>}
+              {agent.maxToolIterations && <Field label="tool rounds">{agent.maxToolIterations} max</Field>}
             </Card>
 
             <Card className="space-y-3 p-4 text-sm">

@@ -18,7 +18,9 @@ export interface CommandNodeResult {
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
-const MAX_OUTPUT_BYTES = 1_000_000;
+// A verbose test suite in a large repo can print for hours; 1MB truncated it
+// mid-run with no way to raise it per node. 20MB comfortably outlives that.
+const MAX_OUTPUT_BYTES = 20_000_000;
 
 export interface CommandRunOptions {
   /** The run's workspace, when the workflow has one: commands run there. */

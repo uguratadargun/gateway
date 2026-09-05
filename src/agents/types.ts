@@ -39,14 +39,21 @@ export const agentFrontmatterSchema = z
     output: agentOutputSpecSchema.default({ type: "text" }),
     /** Tool names this agent may invoke. Declared now, unused until tools ship. */
     tools: z.array(z.string().min(1).max(64)).max(50).default([]),
-    /** Hard cap on a single agent call, enforced by the runtime. */
-    timeoutMs: z.number().int().min(1000).max(600_000).optional(),
+    /** Hard cap on a single agent call, enforced by the runtime. No ceiling: some agents legitimately run long. */
+    timeoutMs: z.number().int().min(1000).optional(),
     /**
      * Output ceiling per model call. Thinking counts against it, so an agent
      * that must return something long (a full diff) needs a bigger one than
      * the 8192 default.
      */
     maxTokens: z.number().int().min(1024).max(200_000).optional(),
+    /**
+     * Tool-call rounds a single node may make before the runtime gives up on
+     * it (default 40). A long task that reads and edits its way through a
+     * large repo for hours legitimately needs more than a quick one; no
+     * ceiling here, since the timeout above is the real backstop.
+     */
+    maxToolIterations: z.number().int().min(1).optional(),
   })
   .strict();
 

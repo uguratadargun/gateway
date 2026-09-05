@@ -66,7 +66,7 @@ export async function executeAgentNode(
   const toolCalls: ToolCallRecord[] = [];
   const usage: NodeUsageRecord = { model: agent.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
   const deadline = agent.timeoutMs ? Date.now() + agent.timeoutMs : null;
-  const maxIterations = deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
+  const maxIterations = agent.maxToolIterations ?? deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
 
   try {
     for (let iteration = 0; ; iteration++) {
