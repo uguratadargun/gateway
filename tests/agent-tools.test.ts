@@ -98,8 +98,11 @@ describe("agent tool loop", () => {
     expect(results[0].content).toMatch(/outside the workspace/);
   });
 
-  it("stops an agent that never stops calling tools", async () => {
-    const provider = new FakeModelProvider(() => ({ toolUses: [toolUse("read_file", { path: "out.txt" })] }));
+  it("stops an agent that never stops calling tools, keeping what it spent", async () => {
+    const provider = new FakeModelProvider(() => ({
+      toolUses: [toolUse("read_file", { path: "out.txt" })],
+      usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0 },
+    }));
     const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), {
       provider,
       loadAgent,
@@ -108,6 +111,17 @@ describe("agent tool loop", () => {
     });
     expect(state.status).toBe("failed");
     expect(state.error?.code).toBe("TOOL_LIMIT_EXCEEDED");
+
+    // The step failed with nothing to show for it before this: every tool
+    // round it actually made, and every token it actually spent, used to be
+    // thrown away along with the error that reported them.
+    const step = state.history.at(-1)!;
+    expect(step.status).toBe("failed");
+    expect(step.toolCalls).toHaveLength(3);
+    expect(step.toolCalls?.every((c) => c.tool === "read_file")).toBe(true);
+    // 4 model calls happen before the 4th trips the limit (iterations 0-3);
+    // only the first 3 got as far as making a tool call.
+    expect(step.usage).toMatchObject({ inputTokens: 40, outputTokens: 20 });
   });
 
   it("offers no tools when the workflow has no workspace", async () => {

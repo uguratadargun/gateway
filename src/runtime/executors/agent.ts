@@ -68,57 +68,65 @@ export async function executeAgentNode(
   const deadline = agent.timeoutMs ? Date.now() + agent.timeoutMs : null;
   const maxIterations = deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
 
-  for (let iteration = 0; ; iteration++) {
-    if (deps.signal?.aborted) {
-      throw new WorkflowError("RUN_CANCELLED", `node "${node.id}" was cancelled`, { nodeId: node.id });
-    }
-    const call = deps.provider.execute({
-      model: agent.model,
-      system: systemPrompt(agent, tools.length > 0),
-      messages,
-      effort: agent.effort,
-      maxTokens: agent.maxTokens,
-      tools: toolDefs.length ? toolDefs : undefined,
-      context: { executionId: state.executionId, workflowId: state.workflowId, nodeId: node.id },
-      signal: deps.signal,
-    });
+  try {
+    for (let iteration = 0; ; iteration++) {
+      if (deps.signal?.aborted) {
+        throw new WorkflowError("RUN_CANCELLED", `node "${node.id}" was cancelled`, { nodeId: node.id });
+      }
+      const call = deps.provider.execute({
+        model: agent.model,
+        system: systemPrompt(agent, tools.length > 0),
+        messages,
+        effort: agent.effort,
+        maxTokens: agent.maxTokens,
+        tools: toolDefs.length ? toolDefs : undefined,
+        context: { executionId: state.executionId, workflowId: state.workflowId, nodeId: node.id },
+        signal: deps.signal,
+      });
 
-    const result = await withDeadline(call, deadline, node.id);
-    usage.model = result.model;
-    usage.inputTokens += result.usage.inputTokens;
-    usage.outputTokens += result.usage.outputTokens;
-    usage.cacheReadTokens += result.usage.cacheReadTokens;
+      const result = await withDeadline(call, deadline, node.id);
+      usage.model = result.model;
+      usage.inputTokens += result.usage.inputTokens;
+      usage.outputTokens += result.usage.outputTokens;
+      usage.cacheReadTokens += result.usage.cacheReadTokens;
 
-    // A truncated answer is never valid JSON; say why instead of blaming the
-    // model's formatting and sending the workflow round the retry loop.
-    if (result.stopReason === "max_tokens") {
-      throw new WorkflowError(
-        "AGENT_OUTPUT_TRUNCATED",
-        `node "${node.id}": agent "${agent.id}" hit its output limit (${agent.maxTokens ?? 8192} max tokens); raise maxTokens in the agent file`,
-        { nodeId: node.id, agentId: agent.id },
-      );
-    }
+      // A truncated answer is never valid JSON; say why instead of blaming the
+      // model's formatting and sending the workflow round the retry loop.
+      if (result.stopReason === "max_tokens") {
+        throw new WorkflowError(
+          "AGENT_OUTPUT_TRUNCATED",
+          `node "${node.id}": agent "${agent.id}" hit its output limit (${agent.maxTokens ?? 8192} max tokens); raise maxTokens in the agent file`,
+          { nodeId: node.id, agentId: agent.id },
+        );
+      }
 
-    if (!result.toolUses.length) {
-      return { input: inputs, output: parseOutput(agent, result.text, node.id), usage, toolCalls };
-    }
-    if (iteration >= maxIterations) {
-      throw new WorkflowError(
-        "TOOL_LIMIT_EXCEEDED",
-        `node "${node.id}": agent "${agent.id}" made ${maxIterations} tool rounds without answering`,
-        { nodeId: node.id, agentId: agent.id },
-      );
-    }
+      if (!result.toolUses.length) {
+        return { input: inputs, output: parseOutput(agent, result.text, node.id), usage, toolCalls };
+      }
+      if (iteration >= maxIterations) {
+        throw new WorkflowError(
+          "TOOL_LIMIT_EXCEEDED",
+          `node "${node.id}": agent "${agent.id}" made ${maxIterations} tool rounds without answering`,
+          { nodeId: node.id, agentId: agent.id },
+        );
+      }
 
-    messages.push({ role: "assistant", content: result.content });
-    const results: ToolResultBlock[] = [];
-    for (const use of result.toolUses) {
-      const record = await runTool(use, toolCtx, agent);
-      toolCalls.push(record);
-      deps.onToolCall?.(record);
-      results.push({ type: "tool_result", toolUseId: use.id, content: record.result, isError: !record.ok });
+      messages.push({ role: "assistant", content: result.content });
+      const results: ToolResultBlock[] = [];
+      for (const use of result.toolUses) {
+        const record = await runTool(use, toolCtx, agent);
+        toolCalls.push(record);
+        deps.onToolCall?.(record);
+        results.push({ type: "tool_result", toolUseId: use.id, content: record.result, isError: !record.ok });
+      }
+      messages.push({ role: "user", content: results });
     }
-    messages.push({ role: "user", content: results });
+  } catch (e) {
+    // A node that fails partway through has still made real tool calls and
+    // spent real tokens; both are attached here, so a failure keeps the
+    // evidence instead of the engine recording it as if nothing happened.
+    if (e instanceof WorkflowError) throw new WorkflowError(e.code, e.message, { ...e.detail, toolCalls, usage });
+    throw e;
   }
 }
 

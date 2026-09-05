@@ -176,6 +176,11 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
         const code = e instanceof WorkflowError ? e.code : "MODEL_EXECUTION_ERROR";
         const message = (e as Error).message;
         const finishedAt = now();
+        // An agent node that fails partway through has already made real tool
+        // calls and spent real tokens; the executor attaches both to the
+        // error it throws, so a failure is recorded with the evidence instead
+        // of looking like nothing happened.
+        const progress = e instanceof WorkflowError ? e.detail : undefined;
         const step: StepRecord = {
           nodeId: node.id,
           stepIndex,
@@ -186,7 +191,8 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
           input,
           output: null,
           error: { code, message },
-          toolCalls,
+          toolCalls: (progress?.toolCalls as ToolCallRecord[] | undefined) ?? toolCalls,
+          usage: progress?.usage as NodeUsageRecord | undefined,
         };
         state.history.push(step);
         opts.onStep?.(step);
