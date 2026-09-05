@@ -3,6 +3,8 @@ import type { StepRecord, WorkflowState } from "@/runtime/state";
 
 import type { ToolCallRecord } from "@/runtime/state";
 
+import type { ExecutionQuota } from "./quota";
+import { summarizeExecutionQuota } from "./quota-summary";
 import type { ExecutionRecord, ExecutionStepRecord, ExecutionWorkspace, WorkflowLayout } from "./types";
 
 /**
@@ -28,7 +30,34 @@ function parse<T>(v: unknown, fallback: T): T {
   }
 }
 
+/**
+ * Settles runs left behind by a process that is gone, once per process.
+ *
+ * It runs here, on first use, rather than from the startup hook: importing this
+ * module from instrumentation drags SQLite into bundles that cannot have it.
+ * The flag hangs off globalThis because route handlers do not share a module
+ * registry in dev.
+ *
+ * Only runs older than this process are swept. Without that cutoff the first
+ * read after a run starts would settle the run that had just started — the
+ * sweep cannot tell "abandoned" from "mine" by status alone.
+ */
+const g = globalThis as unknown as { __gateExecutionsReconciled?: boolean; __gateProcessStart?: number };
+g.__gateProcessStart ??= Date.now();
+
+function reconcileOnce(): void {
+  if (g.__gateExecutionsReconciled) return;
+  g.__gateExecutionsReconciled = true;
+  try {
+    failInterruptedExecutions(g.__gateProcessStart!);
+  } catch {
+    // A locked or missing database surfaces on the query that follows.
+  }
+}
+
 export function createExecution(id: string, workflowId: string, input: Record<string, unknown>, startedAt = Date.now()): void {
+  // Sweep before this row exists, so it can never be swept.
+  reconcileOnce();
   getDb()
     .prepare("INSERT INTO workflow_executions (id, workflow_id, status, started_at, input_json) VALUES (?,?,?,?,?)")
     .run(id, workflowId, "running", startedAt, json(input));
@@ -64,11 +93,15 @@ export function recordStep(executionId: string, step: StepRecord): void {
 }
 
 export function finishExecution(state: WorkflowState, workspace: ExecutionWorkspace | null = null, finishedAt = Date.now()): void {
+  // Every step is already recorded, and the run's own last call left the
+  // windows where they are, so this is the moment both halves are true.
+  const quota = summarizeExecutionQuota(state.executionId, finishedAt);
+
   getDb()
     .prepare(
       `UPDATE workflow_executions
           SET status = ?, finished_at = ?, error_code = ?, error_message = ?, step_count = ?,
-              workspace_json = COALESCE(?, workspace_json)
+              workspace_json = COALESCE(?, workspace_json), quota_json = ?
         WHERE id = ?`,
     )
     .run(
@@ -78,6 +111,7 @@ export function finishExecution(state: WorkflowState, workspace: ExecutionWorksp
       state.error?.message ?? null,
       state.stepCount,
       workspace ? json(workspace) : null,
+      json(quota),
       state.executionId,
     );
 }
@@ -98,6 +132,7 @@ interface ExecutionRow {
   error_message: string | null;
   step_count: number;
   workspace_json: string | null;
+  quota_json: string | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -111,10 +146,12 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
     error: r.error_code ? { code: r.error_code, message: r.error_message ?? "" } : null,
     stepCount: r.step_count,
     workspace: parse<ExecutionWorkspace | null>(r.workspace_json, null),
+    quota: parse<ExecutionQuota | null>(r.quota_json, null),
   };
 }
 
 export function listExecutions(opts: { workflowId?: string; limit?: number } = {}): ExecutionRecord[] {
+  reconcileOnce();
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
   const rows = opts.workflowId
     ? getDb()
@@ -125,6 +162,7 @@ export function listExecutions(opts: { workflowId?: string; limit?: number } = {
 }
 
 export function getExecution(id: string): ExecutionRecord | null {
+  reconcileOnce();
   const row = getDb().prepare("SELECT * FROM workflow_executions WHERE id = ?").get(id);
   return row ? toExecution(row as unknown as ExecutionRow) : null;
 }
@@ -183,15 +221,15 @@ export function getExecutionSteps(executionId: string): ExecutionStepRecord[] {
  * "running" would otherwise sit there for ever, streaming nothing and claiming
  * to be alive, so they are settled at boot for what they are: interrupted.
  */
-export function failInterruptedExecutions(at = Date.now()): number {
+export function failInterruptedExecutions(startedBefore: number, at = Date.now()): number {
   const res = getDb()
     .prepare(
       `UPDATE workflow_executions
           SET status = 'failed', finished_at = ?, error_code = 'RUN_INTERRUPTED',
               error_message = 'the server stopped while this run was going'
-        WHERE status = 'running'`,
+        WHERE status = 'running' AND started_at < ?`,
     )
-    .run(at);
+    .run(at, startedBefore);
   return Number(res.changes ?? 0);
 }
 

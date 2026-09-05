@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, GitBranch, Radio, Square, Wrench } from "lucide-react";
+import { ArrowLeft, GitBranch, Gauge, Radio, Square, Wrench } from "lucide-react";
 
 import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } from "@/components/workflow-graph";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { takenLinks, type RoutingLink } from "@/workflows/routing";
 import type { WorkflowEvent } from "@/events/types";
+import { formatPoints, quotaShare } from "@/executions/quota";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 
 interface Detail {
@@ -25,9 +26,14 @@ const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | 
   failed: "destructive",
 };
 
+// Test runners colour their output; the escape codes make a failing suite
+// unreadable here, and reading it is the whole point of opening the step.
+// eslint-disable-next-line no-control-regex
+const ANSI = /\u001b\[[0-9;]*m/g;
+
 function preview(value: unknown): string {
   if (value == null) return "—";
-  const s = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  const s = (typeof value === "string" ? value : JSON.stringify(value, null, 2)).replace(ANSI, "");
   return s.length > 4000 ? `${s.slice(0, 4000)}…` : s;
 }
 
@@ -206,6 +212,8 @@ export default function ExecutionDetailPage() {
         </Card>
       )}
 
+      {ex?.quota && <QuotaCard quota={ex.quota} />}
+
       {running && liveTools.length > 0 && (
         <Card className="space-y-0.5 p-3 text-[11px]">
           <div className="pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tool activity</div>
@@ -340,6 +348,63 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <pre className="mt-0.5 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 font-mono">
         {children}
       </pre>
+    </div>
+  );
+}
+
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+/**
+ * What this run alone consumed. The token and cost figures are its own steps
+ * summed; the window shares are attributed by cost, which is an estimate and
+ * says so — the API never reports what a single run moved a window by.
+ */
+function QuotaCard({ quota }: { quota: NonNullable<ExecutionRecord["quota"]> }) {
+  const share = quotaShare(quota);
+  const { input, output, cacheRead } = quota.tokens;
+  const total = input + output + cacheRead;
+  if (total === 0) return null;
+
+  return (
+    <Card className="space-y-2 p-3 text-xs">
+      <div className="flex items-center gap-2">
+        <Gauge className="size-3.5 text-muted-foreground" />
+        <span className="font-medium">This run used</span>
+        <span className="font-mono">{fmtTokens(total)} tokens</span>
+        <span className="text-muted-foreground">
+          {fmtTokens(input)} in · {fmtTokens(output)} out
+          {cacheRead > 0 && ` · ${fmtTokens(cacheRead)} cached`}
+        </span>
+        <span className="ml-auto font-mono">${quota.costUsd.toFixed(3)}</span>
+      </div>
+
+      {share && (share.fiveHour != null || share.weekly != null) && (
+        <div className="space-y-0.5 border-t pt-2">
+          {share.fiveHour != null && (
+            <WindowLine label="5-hour window" points={share.fiveHour} atPct={share.at5hPct} />
+          )}
+          {share.weekly != null && <WindowLine label="Weekly window" points={share.weekly} atPct={share.at7dPct} />}
+          <p className="pt-1 text-[10px] text-muted-foreground">
+            Estimated: the API reports where a window stands, never what one run moved it by, so this run&apos;s slice
+            is its share of the cost of everything the gateway sent inside that window.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function WindowLine({ label, points, atPct }: { label: string; points: number; atPct: number | null }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-28 text-muted-foreground">{label}</span>
+      <span className="font-mono">≈ {formatPoints(points)}</span>
+      {atPct != null && <span className="text-muted-foreground">· window now at {atPct.toFixed(1)}%</span>}
     </div>
   );
 }

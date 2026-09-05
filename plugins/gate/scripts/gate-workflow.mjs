@@ -338,9 +338,28 @@ function printStep(step, n) {
   if (step.error) console.log(`     ${step.error.code}: ${step.error.message}`);
 }
 
+function quotaLine(quota) {
+  if (!quota) return null;
+  const { input = 0, output = 0, cacheRead = 0 } = quota.tokens ?? {};
+  const total = input + output + cacheRead;
+  if (!total) return null;
+  const c = quota.calibration;
+  const slice = (util, windowCost) =>
+    util == null || !windowCost || !quota.costUsd ? null : util * 100 * Math.min(quota.costUsd / windowCost, 1);
+  const five = c ? slice(c.util5h, c.cost5hUsd) : null;
+  const week = c ? slice(c.util7d, c.cost7dUsd) : null;
+  const windows = [
+    five == null ? null : `≈${five < 1 ? five.toFixed(2) : five.toFixed(1)} pts of 5h`,
+    week == null ? null : `≈${week < 1 ? week.toFixed(2) : week.toFixed(1)} pts of weekly`,
+  ].filter(Boolean);
+  return `  used ${total.toLocaleString()} tokens · $${quota.costUsd.toFixed(3)}${windows.length ? ` · ${windows.join(" · ")} (est.)` : ""}`;
+}
+
 function printOutcome(execution) {
   const took = duration((execution.finishedAt ?? Date.now()) - execution.startedAt);
   console.log(`${execution.status} in ${took} · ${execution.stepCount} steps`);
+  const quota = quotaLine(execution.quota);
+  if (quota) console.log(quota);
   if (execution.error) console.log(`  ${execution.error.code}: ${execution.error.message}`);
   const ws = execution.workspace;
   if (ws) {

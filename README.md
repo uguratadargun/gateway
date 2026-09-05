@@ -394,6 +394,21 @@ a running command node's child process is killed rather than abandoned. The run
 settles as `failed` with `RUN_CANCELLED`, and its worktree is kept — half-done
 work is still work, and `git diff` will show it.
 
+### What a run cost
+
+An execution shows what it used: its own tokens and API-equivalent cost, summed
+from its steps, so concurrent runs and ordinary Claude Code traffic are never in
+that number. It also estimates its share of the 5-hour and weekly rate-limit
+windows — the API reports where a window stands, never what one run moved it by,
+so the run's slice is attributed by its share of the cost of everything the
+gateway sent inside that window, and is labelled as an estimate.
+
+When a run stops at the loop ceiling, the error names what kept sending it back
+(`node "implementation" ran 6 times (max 5); last sent back by "tests" (exit 1)`)
+— a gate that was already red before the run started looks exactly like this, and
+that is worth being able to see. Step output is stripped of terminal colour codes,
+because a failing suite is what you open the step to read.
+
 Nothing survives a restart, so any run left at `running` by a stopped server is
 settled at boot as `RUN_INTERRUPTED` instead of sitting there claiming to be
 alive. Deleting a run from the history is not a way to stop it: that removes the

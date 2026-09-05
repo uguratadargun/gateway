@@ -1,6 +1,8 @@
 /** What a run did in its git worktree, recorded when it finishes. */
 import type { ToolCallRecord } from "@/runtime/state";
 
+import type { ExecutionQuota } from "./quota";
+
 export interface ExecutionWorkspace {
   root: string;
   repo: string;
@@ -20,6 +22,8 @@ export interface ExecutionRecord {
   error: { code: string; message: string } | null;
   stepCount: number;
   workspace: ExecutionWorkspace | null;
+  /** Where the account's rate-limit windows stood before and after the run. */
+  quota: ExecutionQuota | null;
 }
 
 export interface ExecutionStepRecord {

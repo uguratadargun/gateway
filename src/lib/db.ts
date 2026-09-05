@@ -148,6 +148,7 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["sessions", "effort", "effort TEXT"],
   ["workflow_executions", "workspace_json", "workspace_json TEXT"],
   ["workflow_execution_steps", "tool_calls_json", "tool_calls_json TEXT"],
+  ["workflow_executions", "quota_json", "quota_json TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

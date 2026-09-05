@@ -101,6 +101,11 @@ export default function ExecutionsPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  {e.quota && e.quota.costUsd > 0 && (
+                    <span className="font-mono text-[10px] text-muted-foreground tabular-nums">
+                      ${e.quota.costUsd.toFixed(3)}
+                    </span>
+                  )}
                   <span className="font-mono text-[10px] text-muted-foreground">{e.id.slice(0, 8)}</span>
                   <Badge variant={STATUS_VARIANT[e.status]} className="text-[10px]">
                     {e.status}

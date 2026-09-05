@@ -48,6 +48,28 @@ export interface RunWorkflowOptions {
   now?: () => number;
 }
 
+/**
+ * What kept sending a node round again.
+ *
+ * A loop limit on its own says a node repeated, not why — and "why" is almost
+ * always the same gate refusing it. The last step before this one is the one
+ * that routed here, so naming it, and the signal it refused on, turns "ran 6
+ * times" into something you can act on without reading the whole history.
+ */
+function sentBack(state: WorkflowState, nodeId: string): string {
+  const previous = [...state.history].reverse().find((h) => h.nodeId !== nodeId);
+  if (!previous) return "";
+  const output = previous.output;
+  let signal = "";
+  if (output && typeof output === "object") {
+    const o = output as Record<string, unknown>;
+    if (o.ok === false) signal = typeof o.exitCode === "number" ? ` (exit ${o.exitCode})` : " (failed)";
+    else if (typeof o.verdict === "string" && o.verdict !== "approved") signal = ` (${o.verdict})`;
+    else if (o.passed === false) signal = " (tests failed)";
+  }
+  return `; last sent back by "${previous.nodeId}"${signal}`;
+}
+
 export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflowOptions): Promise<WorkflowState> {
   const now = opts.now ?? Date.now;
   const emit = (e: WorkflowEvent) => opts.emit?.(e);
@@ -92,7 +114,11 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
       const visit = (state.visitCounts[node.id] = (state.visitCounts[node.id] ?? 0) + 1);
       state.stepCount += 1;
       if (visit > maxVisits) {
-        return halt("LOOP_LIMIT_EXCEEDED", `node "${node.id}" ran ${visit} times (max ${maxVisits})`, node.id);
+        return halt(
+          "LOOP_LIMIT_EXCEEDED",
+          `node "${node.id}" ran ${visit} times (max ${maxVisits})${sentBack(state, node.id)}`,
+          node.id,
+        );
       }
       if (state.stepCount > maxSteps) {
         return halt("LOOP_LIMIT_EXCEEDED", `workflow exceeded ${maxSteps} steps`, node.id);

@@ -166,6 +166,9 @@ describe("runWorkflow", () => {
     expect(state.error?.code).toBe("LOOP_LIMIT_EXCEEDED");
     expect(state.visitCounts.implementation).toBe(4); // maxVisits 3 + the attempt that trips it
     expect(events.at(-1)).toMatchObject({ type: "workflow.failed", code: "LOOP_LIMIT_EXCEEDED" });
+    // "ran 4 times" alone does not say why; the gate that kept refusing does.
+    expect(state.error?.message).toContain('last sent back by "tester"');
+    expect(state.error?.message).toContain("tests failed");
   });
 
   it("fails the run when an agent's output does not match its declared schema", async () => {
