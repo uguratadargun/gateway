@@ -9,6 +9,7 @@ import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } fr
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { takenLinks, type RoutingLink } from "@/workflows/routing";
 import type { WorkflowEvent } from "@/events/types";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 
@@ -96,20 +97,34 @@ export default function ExecutionDetailPage() {
     return out;
   }, [shown, live, replay]);
 
+  /**
+   * What the engine chose after each step. Derived from the definition and the
+   * order the nodes ran in, so a replay shows the same path the run took —
+   * including the fan-out of a parallel node, whose branches interleave.
+   */
+  const routes: RoutingLink[][] = useMemo(() => {
+    if (!detail?.workflow) return [];
+    const run = detail.execution;
+    // Only a run that ended at a terminal can name its last decision; one that
+    // died on an engine error never got to make it.
+    const endedWith = replay === null && !run.error && run.status !== "running" ? run.status : undefined;
+    return takenLinks(
+      detail.workflow.nodes,
+      shown.map((s) => s.nodeId),
+      endedWith,
+    );
+  }, [detail, shown, replay]);
+
   const activeEdges = useMemo(() => {
-    if (replay !== null) {
-      const set = new Set<string>();
-      for (let i = 0; i + 1 < shown.length; i++) set.add(`${shown[i].nodeId}->${shown[i + 1].nodeId}`);
-      return set;
-    }
+    if (replay !== null) return new Set(routes.flat().map((l) => `${l.from}->${l.to}`));
     return new Set(liveEdges);
-  }, [shown, liveEdges, replay]);
+  }, [routes, liveEdges, replay]);
 
   const graphNodes = useMemo(() => (detail?.workflow ? toGraphNodes(detail.workflow.nodes) : []), [detail]);
   const ex = detail?.execution;
 
   return (
-    <main className="mx-auto max-w-6xl space-y-4 px-6 py-8">
+    <main className="mx-auto max-w-[1500px] space-y-4 px-6 py-8">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link href="/executions">
@@ -193,7 +208,7 @@ export default function ExecutionDetailPage() {
         </Card>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[1.7fr_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2.3fr)_minmax(320px,1fr)]">
         <div className="space-y-2">
           {detail?.workflow && (
             <WorkflowGraph nodes={graphNodes} entry={detail.workflow.entry} statuses={statuses} activeEdges={activeEdges} />
@@ -221,7 +236,7 @@ export default function ExecutionDetailPage() {
           )}
         </div>
 
-        <Card className="max-h-[600px] space-y-1 overflow-y-auto p-3">
+        <Card className="max-h-[min(72vh,720px)] space-y-1 overflow-y-auto p-3">
           <div className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Steps ({steps.length})
           </div>
@@ -240,6 +255,21 @@ export default function ExecutionDetailPage() {
                 </span>
                 <span className={s.status === "failed" ? "text-destructive" : "text-emerald-500"}>●</span>
               </button>
+              {routes[s.stepIndex]?.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-1.5 border-t px-2 py-1 text-[10px] text-muted-foreground">
+                  <span>→</span>
+                  {routes[s.stepIndex].map((l, i) => (
+                    <span key={i} className="flex items-center gap-1">
+                      <span className="font-mono text-foreground/80">{l.to}</span>
+                      {l.kind === "branch" && <span>in parallel</span>}
+                      {l.kind === "join" && <span>after the branches</span>}
+                      {l.label && <span>· {l.label}</span>}
+                      {!l.label && l.when && <span className="font-mono">· {l.when}</span>}
+                      {i < routes[s.stepIndex].length - 1 && <span>,</span>}
+                    </span>
+                  ))}
+                </div>
+              )}
               {openStep === s.stepIndex && (
                 <div className="space-y-2 border-t bg-muted/20 p-2 text-[11px]">
                   {s.usage && (

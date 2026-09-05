@@ -298,6 +298,52 @@ workflow hands them. That is the difference between the two seeded workflows —
 `sample-dev-pipeline` (prose) and `repo-dev-team` (tools, `npm test` as a real
 command node). Point the latter's `workspace.repo` at your project to use it.
 
+### Editing the graph
+
+`/workflows/<id>` is an editor, not just a picture. The canvas is trackpad-first
+— two fingers pan in both directions, pinch zooms, and the wheel no longer
+zooms — and the toolbar adds nodes of any type. Drag from a node's right handle
+onto another node to connect them (on a `parallel` node that adds a branch);
+click an edge and press Delete to remove it. The inspector on the right edits
+the selected node: its id (every reference follows the rename), label, agent,
+argv, terminal status, branches and join, and its edges with their `when`
+conditions.
+
+The canvas fills most of the page and has a full-screen mode (Escape leaves it,
+and leaves the selection after that); a minimap sits in the corner for graphs
+that outgrow the viewport, cards snap to the same 16px grid the background
+draws, and **Tidy up** lays everything out left-to-right again.
+
+Nothing is written until **Save graph**, which posts the graph, serializes it to
+YAML server-side and runs it through the same validation a hand-edited file
+gets — an unreachable node or an unknown agent comes back as the same error
+message, and the file on disk is untouched. Because saving from the canvas
+rewrites the file, comments in the YAML do not survive it; the **YAML** tab is
+still there for hand-editing, and it refuses to open over unsaved graph edits.
+Node positions are stored separately from the definition, so arranging the
+canvas never touches the workflow file.
+
+### Seeing the routing
+
+Nothing about where a run goes next is hidden in a model: the engine takes the
+first edge whose condition holds, and the last edge without a condition is the
+fallback. The UI shows that in three places. On the canvas, edges that hand
+control back into a node the run is still inside — `tests failed →
+implementation`, `changes requested → implementation` — leave from a handle of their own under the card
+and travel back on a dashed amber return lane, one lane per loop, so they never
+double back through the forward flow. The **Routing** card beside it lists every point where the engine
+chooses, in words. The inspector's *arrives from* section answers the same
+question from the other end: what leads into this node, and under what
+condition.
+
+On `/executions/<id>` each step carries the decision that followed it, so a
+finished run reads as the path it actually took (`tester → checks · tests
+pass`, `verdict → implementation · changes requested`). Parallel branches
+interleave in the step list, so the link out of a step is matched against the
+definition rather than against its neighbour, and the last decision — into a
+terminal node, which never runs as a step — is recovered from how the run
+ended.
+
 ### Running
 
 `/workflows/<id>` draws the graph and takes a JSON run input (both seeded
