@@ -96,6 +96,47 @@ CREATE TABLE IF NOT EXISTS ratelimit_history (
   reset_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS rl_ts ON ratelimit_history(ts);
+
+CREATE TABLE IF NOT EXISTS workflow_executions (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  input_json TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  step_count INTEGER NOT NULL DEFAULT 0,
+  workspace_json TEXT
+);
+CREATE INDEX IF NOT EXISTS wf_exec_started ON workflow_executions(started_at);
+CREATE INDEX IF NOT EXISTS wf_exec_workflow ON workflow_executions(workflow_id);
+
+CREATE TABLE IF NOT EXISTS workflow_execution_steps (
+  execution_id TEXT NOT NULL,
+  step_index INTEGER NOT NULL,
+  node_id TEXT NOT NULL,
+  visit INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL,
+  input_json TEXT,
+  output_json TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  model TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  tool_calls_json TEXT,
+  PRIMARY KEY (execution_id, step_index)
+);
+
+CREATE TABLE IF NOT EXISTS workflow_layouts (
+  workflow_id TEXT PRIMARY KEY,
+  layout_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 /** Columns added after the first schema; applied idempotently on open. */
@@ -105,6 +146,8 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["usage", "session_id", "session_id TEXT"],
   ["sessions", "base_tier", "base_tier TEXT"],
   ["sessions", "effort", "effort TEXT"],
+  ["workflow_executions", "workspace_json", "workspace_json TEXT"],
+  ["workflow_execution_steps", "tool_calls_json", "tool_calls_json TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

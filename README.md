@@ -108,8 +108,214 @@ OpenAI SDK clients work too — point them at the same base URL and call
 - **Sessions** — `/sessions`, requests grouped by conversation with cost per session.
 - **Analytics** — `/analytics`, tokens/cost/requests over time by tier, per-model breakdown, table view.
 - **Live tail + export** — SSE activity feed on `/traffic`; usage/traffic export as CSV/JSON.
+- **Agent workflows** — `/workflows`, a graph orchestrator that runs Markdown-defined agents through the gateway: conditional loops, parallel branches, file/command tools in a per-run git worktree, and a live node view.
 
 Everything is configurable from the dashboard (persisted to `~/.gate/settings.json`).
+
+## Agent workflows
+
+`/workflows` runs multi-agent pipelines — plan → implement → test → review →
+security review, looping back on a failure — on top of the gateway. Every model
+call goes through `executeMessages` in-process, so routing, effort, prompt
+caching, budget, throttling and traffic logging apply exactly as they do for any
+other client.
+
+**The engine is deterministic.** A model produces *output*; the workflow file
+decides where the run goes next. Edge conditions are parsed into a small AST and
+interpreted (`src/workflows/condition.ts`) — there is no `eval`/`new Function`
+anywhere in that path, and a `command` node is spawned from an argv array in the
+YAML, never a shell string built from model output.
+
+### Agents — `~/.gate/agents/<id>.md`
+
+Markdown: YAML frontmatter says how the agent runs, the body is the prompt.
+
+```markdown
+---
+name: Tester
+model: sonnet          # tier alias or a concrete claude-* id; routed as usual
+effort: medium         # optional: low | medium | high | xhigh | max
+maxTokens: 32000       # optional output ceiling; thinking counts against it
+inputs: [implementation.diff, reviewer.feedback?]
+output:
+  type: json           # or: text
+  schema:
+    passed: boolean
+    failures: "string[]"
+    notes: "string?"
+---
+
+Test this change:
+
+{{inputs.implementation.diff}}
+```
+
+- `inputs` are dotted paths into upstream **node** outputs (`<nodeId>.<field>`),
+  or `input.*` for the run input. A node only ever sees what it declares — the
+  full state is never dumped into a prompt — and a prompt that reads an
+  undeclared input fails at save time, not mid-run.
+- A trailing `?` marks an input optional: it renders empty until the node that
+  produces it has run. That is what makes feedback loops work — the
+  implementation agent can read the tester's failures on its second pass
+  without failing on its first.
+- `output.type: json` is validated against the declared shape (extra keys are
+  kept); an invalid answer fails the node rather than propagating silently. An
+  answer cut off by the output ceiling is reported as `AGENT_OUTPUT_TRUNCATED`,
+  not as bad formatting — raise `maxTokens` for agents that return long output.
+- A workflow's run input is checked before anything starts: `/workflows/<id>`
+  pre-fills the box with the `input.*` keys its agents read, and a run missing
+  one is refused with `RUN_INPUT_MISSING` instead of failing at the first node.
+
+### Workflows — `~/.gate/workflows/<id>.yaml`
+
+```yaml
+name: Sample dev pipeline
+entry: planner
+maxWorkflowSteps: 40     # hard stop for the run
+maxVisits: 4             # hard stop per node — loop protection
+nodes:
+  - id: planner
+    type: agent
+    agent: planner
+    next: implementation
+
+  - id: tester
+    type: agent
+    agent: tester
+    edges:
+      - when: outputs.tester.passed == true
+        to: reviewer
+        label: tests pass
+      - to: implementation        # no `when` → the fallback edge
+        label: tests failed
+
+  - id: done
+    type: terminal
+```
+
+Node types: `agent`, `command` (argv, no shell — it runs in the run's worktree
+when the workflow has one), `condition` (routing only, no output), `parallel`
+(below) and `terminal`. Conditions read `outputs.*` and
+`input.*` with `== != > >= < <= && || !` over literals. Unknown agents, unreachable nodes,
+dangling edges and malformed conditions are all rejected when the file is
+saved — a broken workflow never reaches the engine.
+
+### Running branches in parallel
+
+Nodes that only depend on the same upstream output can run at the same time.
+A `parallel` node starts every branch together and continues at its `join`
+node once they have all finished:
+
+```yaml
+  - id: checks
+    type: parallel
+    branches: [reviewer, security]   # started together
+    join: verdict                    # both must arrive here
+
+  - id: reviewer
+    type: agent
+    agent: reviewer
+    next: verdict
+
+  - id: security
+    type: agent
+    agent: security-reviewer
+    next: verdict
+
+  - id: verdict            # a normal condition node: both verdicts are readable
+    type: condition
+    edges:
+      - when: outputs.reviewer.verdict == "approved" && outputs.security.verdict == "approved"
+        to: done
+      - to: implementation
+```
+
+Each branch is checked at save time to be a self-contained region: branches may
+not overlap, may not be entered from anywhere but the fan-out node, may not end
+the workflow, and must reach the join. That is what makes concurrency safe —
+two branches can never write the same node output or race for the same edge.
+The shipped sample pipeline uses this for review + security review, which both
+read only `implementation.diff`.
+
+If one branch fails, the run fails: the other branches are allowed to finish
+unwinding first (their in-flight model call is not cancelled) so the execution
+history stays complete. Real upstream concurrency is still bounded by gate's
+concurrency limiter.
+
+Both directories are seeded with five agents and this sample pipeline the first
+time you open `/agents` or `/workflows`; after that they are yours to edit (from
+the dashboard or in `$EDITOR`), and deletions stick.
+
+### Working on a repository: tools and per-run worktrees
+
+An agent that only writes prose can plan and review, but it cannot change
+anything. A workflow that declares a **workspace** gives its agents real tools:
+
+```yaml
+name: Repo dev team
+entry: planner
+workspace:
+  repo: /Users/you/Projects/thing   # your repository
+  baseRef: main                     # what the run branches from (default HEAD)
+  branchPrefix: gate/run            # branch name prefix (default gate/run)
+```
+
+Every run gets **its own `git worktree` on its own branch** under
+`~/.gate/workspaces/<executionId>`. Agents write there, commands run there, and
+your checkout and current branch are never touched — whatever the agents do,
+the worst case is a branch you delete. The worktree is deliberately left behind
+when the run ends: it *is* the deliverable. Review it with
+`git -C <worktree> diff`, merge the branch, or throw it away with
+`git worktree remove <worktree> && git branch -D <branch>`.
+
+The tools an agent may use are declared per agent, so roles stay honest — the
+implementer writes, the reviewers only read:
+
+| tool | what it does |
+| --- | --- |
+| `read_file` | read a file (line-numbered, optional offset/limit) |
+| `list_files` | list the tree, skipping `.git`, `node_modules`, build output |
+| `search_files` | regex search across files |
+| `write_file` | create or replace a file |
+| `edit_file` | exact-string replace, refusing an ambiguous match |
+| `run_command` | run argv in the worktree (no shell string) |
+
+Every path an agent passes is resolved against the worktree and refused if it
+escapes it — `../../.ssh/id_rsa`, an absolute path, or a symlink pointing out of
+the workspace all fail. `run_command` takes an argv array, so nothing the model
+writes is ever handed to a shell for interpretation; it can still run any
+program, which is what makes `npm test` (and everything else) work — the isolation
+that makes that acceptable is the worktree, not a command filter.
+
+A tool that fails hands its error back to the model as a tool result, so an
+agent can correct itself; an agent that keeps calling tools without answering
+fails its node after 40 rounds. Tool calls are recorded on the step and streamed
+live, so `/executions/<id>` shows exactly what each agent read, wrote and ran.
+
+The same agent files still work in a workflow **without** a workspace: with no
+worktree there are no tools, and the agents fall back to reasoning over what the
+workflow hands them. That is the difference between the two seeded workflows —
+`sample-dev-pipeline` (prose) and `repo-dev-team` (tools, `npm test` as a real
+command node). Point the latter's `workspace.repo` at your project to use it.
+
+### Running
+
+`/workflows/<id>` draws the graph and takes a JSON run input (both seeded
+pipelines expect `{"task": "…"}`). During a run the page follows
+`/api/executions/<id>/stream` (SSE) and highlights nodes and edges as they fire,
+with a live tool-activity feed. `/executions` keeps the history — every step's
+input, output, tool calls, model, tokens and duration — and `/executions/<id>`
+replays the exact path a run took and links the branch it produced.
+
+Runs can also be started over HTTP (the management API uses the admin cookie):
+
+```bash
+curl -s -c /tmp/gate.jar -H 'content-type: application/json' \
+  -d "{\"secret\":\"$GATE_ADMIN_SECRET\"}" http://127.0.0.1:4141/api/admin/login
+curl -s -b /tmp/gate.jar -H 'content-type: application/json' \
+  -d '{"workflowId":"repo-dev-team","input":{"task":"…"}}' \
+  http://127.0.0.1:4141/api/executions
+```
 
 ## Files
 
@@ -118,3 +324,6 @@ Everything is configurable from the dashboard (persisted to `~/.gate/settings.js
 - `src/lib/store.ts` / `token-manager.ts` — encrypted token store + refresh
 - `src/app/api/gateway/v1/messages/` — the proxy endpoint
 - `src/app/api/auth/` — login flow · `src/app/api/routing/` · `src/app/api/usage/`
+- `src/agents/` — agent file format: parse, validate, render · `src/workflows/` — workflow YAML + condition language
+- `src/runtime/` — the deterministic engine, node executors, agent tools (`tools/`) and per-run worktrees (`workspace.ts`) · `src/providers/` — the `ModelProvider` seam onto the gateway
+- `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
