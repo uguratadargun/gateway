@@ -141,6 +141,67 @@ async function cmdList() {
   return 0;
 }
 
+async function cmdAgents() {
+  const { agents = [], errors = [] } = await api("/api/agents");
+  if (!agents.length && !errors.length) {
+    console.log("no agents defined (~/.gate/agents is empty)");
+    return 0;
+  }
+  for (const agent of agents) {
+    const fields = Object.keys(agent.output?.schema ?? {});
+    const output = agent.output?.type === "json" ? `json {${fields.join(", ")}}` : "text";
+    console.log(`${agent.id}`);
+    console.log(`  ${agent.name}${agent.description ? ` — ${agent.description}` : ""}`);
+    console.log(
+      `  ${agent.model}${agent.effort ? `/${agent.effort}` : ""} · output ${output}` +
+        `${agent.inputs?.length ? ` · reads ${agent.inputs.join(", ")}` : ""}` +
+        `${agent.tools?.length ? ` · tools ${agent.tools.join(", ")}` : ""}`,
+    );
+  }
+  for (const e of errors) console.log(`${e.id}\n  BROKEN — ${e.message}`);
+  return 0;
+}
+
+/**
+ * Writes a definition through the server, which parses and validates it before
+ * anything reaches disk — a rejected save means the definition is wrong, and
+ * says how. An id that already exists is protected: replacing an agent someone
+ * tuned should be a decision, not a side effect of a generated name colliding.
+ */
+async function cmdSave(kind, argv) {
+  const rest = [];
+  let replace = false;
+  for (const arg of argv) {
+    if (arg === "--replace") replace = true;
+    else rest.push(arg);
+  }
+  const [id, file] = rest;
+  if (!id || !file) die(`usage: gate-workflow save-${kind} <id> <file> [--replace]`);
+
+  let source;
+  try {
+    source = readFileSync(file, "utf8");
+  } catch {
+    die(`cannot read ${file}`);
+  }
+
+  const collection = kind === "agent" ? "agents" : "workflows";
+  const listing = await api(`/api/${collection}`);
+  const known = new Set([
+    ...(listing[collection] ?? []).map((d) => d.id),
+    ...(listing.errors ?? []).map((e) => e.id),
+  ]);
+  if (known.has(id) && !replace) die(`${kind} "${id}" already exists — pass --replace to overwrite it`);
+
+  await api(`/api/${collection}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, source }),
+  });
+  console.log(`saved ${kind} ${id}`);
+  return 0;
+}
+
 async function cmdRun(argv) {
   const input = {};
   const rest = [];
@@ -281,9 +342,12 @@ function cmdInstall() {
 function usage() {
   console.log(`gate-workflow — run gate agent workflows from a shell
 
-  list                                    what is defined, and what input each needs
+  list                                    what workflows are defined, and what input each needs
+  agents                                  what agents are defined, and what each reads and returns
   run <id> [task] [--input k=v] [--watch] start a run
   watch <execution-id>                    follow a run to the end
+  save-agent <id> <file> [--replace]      create or replace an agent (the server validates it)
+  save-workflow <id> <file> [--replace]   create or replace a workflow (the server validates it)
   login                                   let an installed plugin log in: stores the secret in ~/.gate
   install                                 write /gate-run as a user command (not needed with the plugin)
 
@@ -294,6 +358,9 @@ Environment: GATE_URL (default http://127.0.0.1:4141), GATE_ADMIN_SECRET, GATE_D
 const [command, ...argv] = process.argv.slice(2);
 const run =
   command === "list" ? cmdList(argv)
+  : command === "agents" ? cmdAgents(argv)
+  : command === "save-agent" ? cmdSave("agent", argv)
+  : command === "save-workflow" ? cmdSave("workflow", argv)
   : command === "run" ? cmdRun(argv)
   : command === "watch" ? cmdWatch(argv)
   : command === "login" ? cmdLogin()

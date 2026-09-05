@@ -403,8 +403,11 @@ through `${CLAUDE_PLUGIN_ROOT}`. The script can also be used on its own:
 
 ```bash
 plugins/gate/scripts/gate-workflow.mjs list                          # what exists, and what each needs
+plugins/gate/scripts/gate-workflow.mjs agents                        # what agents exist, and what each reads
 plugins/gate/scripts/gate-workflow.mjs run repo-dev-team --watch "…" # start one and follow it
 plugins/gate/scripts/gate-workflow.mjs watch <execution-id>          # follow one already going
+plugins/gate/scripts/gate-workflow.mjs save-agent <id> <file.md>     # create or replace an agent
+plugins/gate/scripts/gate-workflow.mjs save-workflow <id> <file.yaml> # create or replace a workflow
 plugins/gate/scripts/gate-workflow.mjs login                         # store the secret for an installed plugin
 plugins/gate/scripts/gate-workflow.mjs install                       # /gate-run without the plugin
 ```
@@ -424,6 +427,23 @@ worktree on its own branch, starting one from a Claude Code session never
 disturbs the checkout that session is editing; when it ends, the branch and its
 `git diff` are what you review.
 
+### Designing a pipeline for a repository
+
+`/gate-design <what it should do>` is the other half: Claude Code reads the
+repository it is in — package manager, real test and lint commands, layout,
+conventions — proposes a set of agents and a workflow shaped around what it
+found, and, once you agree, writes them through the same validating API. It is
+given the authoring reference (`plugins/gate/reference/authoring.md`) rather
+than left to guess the file formats, and it is told to reuse the agents you
+already have instead of producing near-duplicates.
+
+Saving is where the safety is: the server parses and validates every agent and
+workflow before it reaches disk, so a wrong definition comes back as
+`prompt references undeclared input: nobody.field` or `node "check" references
+unknown agent "does-not-exist"` and gets fixed, rather than failing mid-run. An
+id that already exists is refused unless `--replace` is passed, so a generated
+name cannot quietly overwrite an agent you tuned.
+
 ## Files
 
 - `src/lib/claude/` — OAuth config, PKCE, token flow, Claude Code identity headers
@@ -434,4 +454,4 @@ disturbs the checkout that session is editing; when it ends, the branch and its
 - `src/agents/` — agent file format: parse, validate, render · `src/workflows/` — workflow YAML + condition language
 - `src/runtime/` — the deterministic engine, node executors, agent tools (`tools/`) and per-run worktrees (`workspace.ts`) · `src/providers/` — the `ModelProvider` seam onto the gateway
 - `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
-- `plugins/gate/` — the Claude Code plugin: the `/gate-run` command and the shell client behind it · `.claude-plugin/marketplace.json` — this repo as a marketplace
+- `plugins/gate/` — the Claude Code plugin: `/gate-run`, `/gate-design`, the authoring reference and the shell client behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
