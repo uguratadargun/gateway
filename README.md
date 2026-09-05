@@ -308,8 +308,10 @@ live, so `/executions/<id>` shows exactly what each agent read, wrote and ran.
 The same agent files still work in a workflow **without** a workspace: with no
 worktree there are no tools, and the agents fall back to reasoning over what the
 workflow hands them. That is the difference between the two seeded workflows —
-`sample-dev-pipeline` (prose) and `repo-dev-team` (tools, `npm test` as a real
-command node). The latter takes the repository it works in from the run, so it
+`sample-dev-pipeline` (prose) and `repo-dev-team` (tools, `npm ci` and `npm test`
+as real command nodes — a worktree is a clean checkout, so dependencies are
+installed once before the loop, and an install that fails ends the run instead
+of sending the implementer after an error it cannot fix). The latter takes the repository it works in from the run, so it
 is ready to use from wherever you start it.
 
 ### Editing the graph

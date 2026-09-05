@@ -98,7 +98,22 @@ nodes:
     type: agent
     agent: planner
     label: Plan
-    next: implementation
+    next: install
+
+  # Dependencies once, before the loop: a worktree is a clean checkout, so
+  # node_modules is not in it. A failed install is an environment problem, not
+  # something the implementer can fix, so it ends the run instead of looping.
+  - id: install
+    type: command
+    label: npm ci
+    command: [npm, ci]
+    timeoutMs: 600000
+    edges:
+      - when: outputs.install.ok == true
+        to: implementation
+        label: installed
+      - to: install-failed
+        label: install failed
 
   - id: implementation
     type: agent
@@ -151,6 +166,11 @@ nodes:
     type: terminal
     label: Done
     status: completed
+
+  - id: install-failed
+    type: terminal
+    label: Install failed
+    status: failed
 `;
 
 export const DEFAULT_WORKFLOWS: Record<string, string> = {
