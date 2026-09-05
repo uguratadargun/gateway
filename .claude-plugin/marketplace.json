@@ -1,0 +1,19 @@
+{
+  "name": "gateway",
+  "description": "gate — a personal Claude gateway, and its agent workflow orchestrator",
+  "owner": {
+    "name": "Ugur Ata Dargun",
+    "url": "https://github.com/uguratadargun/gateway"
+  },
+  "plugins": [
+    {
+      "name": "gate",
+      "source": "./plugins/gate",
+      "description": "Run gate agent workflows from Claude Code: /gate-run lists the workflows you have defined, starts one against the repository you are in, and follows it to the end.",
+      "version": "0.1.0",
+      "category": "development",
+      "tags": ["agents", "workflows", "orchestration"],
+      "homepage": "https://github.com/uguratadargun/gateway"
+    }
+  ]
+}

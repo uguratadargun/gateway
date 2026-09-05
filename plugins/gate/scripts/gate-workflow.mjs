@@ -13,7 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(HERE, "..");
+const PLUGIN_ROOT = resolve(HERE, "..");
 const BASE = (process.env.GATE_URL || "http://127.0.0.1:4141").replace(/\/+$/, "");
 
 function die(message) {
@@ -21,16 +21,39 @@ function die(message) {
   process.exit(1);
 }
 
+/**
+ * Where a .env might be, nearest first: an explicitly named checkout, then
+ * every directory above this file. Walking up is what lets the same script work
+ * when it is run straight out of the repository; an installed plugin is a copy
+ * with no .env beside it, so there the environment is the way in.
+ */
+function envFiles() {
+  const files = [];
+  if (process.env.GATE_DIR) files.push(join(process.env.GATE_DIR, ".env"));
+  let dir = HERE;
+  for (let i = 0; i < 5; i++) {
+    files.push(join(dir, ".env"));
+    const up = dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return files;
+}
+
 function adminSecret() {
   if (process.env.GATE_ADMIN_SECRET) return process.env.GATE_ADMIN_SECRET;
-  try {
-    for (const line of readFileSync(join(ROOT, ".env"), "utf8").split("\n")) {
+  for (const file of envFiles()) {
+    let contents;
+    try {
+      contents = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of contents.split("\n")) {
       if (!line.startsWith("GATE_ADMIN_SECRET=")) continue;
       const value = line.slice("GATE_ADMIN_SECRET=".length).trim().replace(/^["']|["']$/g, "");
       if (value) return value;
     }
-  } catch {
-    // No .env here; the environment variable is the other way in.
   }
   return null;
 }
@@ -39,7 +62,7 @@ let cookie = null;
 
 async function login() {
   const secret = adminSecret();
-  if (!secret) die(`no admin secret: set GATE_ADMIN_SECRET, or keep it in ${join(ROOT, ".env")}`);
+  if (!secret) die("no admin secret: export GATE_ADMIN_SECRET, or point GATE_DIR at your gate checkout");
   let res;
   try {
     res = await fetch(`${BASE}/api/admin/login`, {
@@ -48,7 +71,7 @@ async function login() {
       body: JSON.stringify({ secret }),
     });
   } catch {
-    die(`cannot reach gate at ${BASE} — start it with \`npm run dev\` in ${ROOT}`);
+    die(`cannot reach gate at ${BASE} — start the server with \`npm run dev\` in your gate checkout`);
   }
   if (!res.ok) die(`admin login failed (${res.status}); check GATE_ADMIN_SECRET`);
   cookie = (res.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).join("; ");
@@ -209,17 +232,21 @@ function printOutcome(execution) {
   return execution.status === "completed" ? 0 : 1;
 }
 
-/** Writes the /gate-run slash command, pointed at this checkout. */
+/**
+ * Writes /gate-run as a plain user command for anyone not installing the
+ * plugin: the same command file, with the plugin path resolved rather than
+ * left to Claude Code to expand.
+ */
 function cmdInstall() {
   const home = process.env.HOME;
   if (!home) die("HOME is not set");
   const dir = join(home, ".claude", "commands");
   mkdirSync(dir, { recursive: true });
-  const self = join(HERE, "gate-workflow.mjs");
-  const template = readFileSync(join(HERE, "gate-run.md"), "utf8").replaceAll("__GATE_CLI__", self);
+  const source = join(PLUGIN_ROOT, "commands", "gate-run.md");
+  const body = readFileSync(source, "utf8").split("${CLAUDE_PLUGIN_ROOT}").join(PLUGIN_ROOT);
   const target = join(dir, "gate-run.md");
-  writeFileSync(target, template);
-  console.log(`installed ${target}\n  → ${self}\nUse it from any project: /gate-run`);
+  writeFileSync(target, body);
+  console.log(`installed ${target}\n  → ${PLUGIN_ROOT}\nUse it from any project: /gate-run`);
   return 0;
 }
 
@@ -229,9 +256,9 @@ function usage() {
   list                                    what is defined, and what input each needs
   run <id> [task] [--input k=v] [--watch] start a run
   watch <execution-id>                    follow a run to the end
-  install                                 write the /gate-run slash command for Claude Code
+  install                                 write /gate-run as a user command (not needed with the plugin)
 
-Environment: GATE_URL (default http://127.0.0.1:4141), GATE_ADMIN_SECRET (default: this checkout's .env)`);
+Environment: GATE_URL (default http://127.0.0.1:4141), GATE_ADMIN_SECRET, GATE_DIR (a gate checkout to read .env from)`);
   return 0;
 }
 

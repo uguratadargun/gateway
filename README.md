@@ -260,7 +260,7 @@ workspace: {}                       # which repository comes from the run
 `repo` is deliberately not part of the pipeline: a workflow describes *how* work
 is done, and the project it is done in is a property of the run. Leave the
 workspace empty and `repo` becomes a required run input — the run box pre-fills
-it, and `scripts/gate-workflow.mjs` / `/gate-run` default it to the directory
+it, and the `gate` plugin's `/gate-run` defaults it to the directory
 you are working in, so the same pipeline serves every project. Pin one when a
 pipeline only ever makes sense for a single repository:
 
@@ -382,20 +382,32 @@ curl -s -b /tmp/gate.jar -H 'content-type: application/json' \
 Workflows do not run inside Claude Code — the engine calls the model through
 gate's own proxy pipeline, so routing, caching and budget apply exactly as they
 do for any client. What Claude Code needs is a way to start a run and read the
-result, and `scripts/gate-workflow.mjs` is that:
+result. This repository is a Claude Code **marketplace** carrying one plugin,
+`gate`, which is exactly that:
 
-```bash
-scripts/gate-workflow.mjs list                              # what exists, and what each needs
-scripts/gate-workflow.mjs run repo-dev-team --watch "…"     # start one and follow it
-scripts/gate-workflow.mjs watch <execution-id>              # follow one already going
-scripts/gate-workflow.mjs install                           # write the /gate-run slash command
+```
+/plugin marketplace add uguratadargun/gateway
+/plugin install gate@gateway
 ```
 
-It logs in with `GATE_ADMIN_SECRET` (from the environment, or from this
-checkout's `.env`) and talks to `GATE_URL`, default `http://127.0.0.1:4141`.
+Nothing else is downloaded and nothing is added to `PATH`: the plugin is a
+command file and a dependency-free Node script, and it finds its own files
+through `${CLAUDE_PLUGIN_ROOT}`. The script can also be used on its own:
 
-`install` writes `~/.claude/commands/gate-run.md`, pointed at this checkout. The
-command lists the workflows you actually have every time it is invoked, so
+```bash
+plugins/gate/scripts/gate-workflow.mjs list                          # what exists, and what each needs
+plugins/gate/scripts/gate-workflow.mjs run repo-dev-team --watch "…" # start one and follow it
+plugins/gate/scripts/gate-workflow.mjs watch <execution-id>          # follow one already going
+plugins/gate/scripts/gate-workflow.mjs install                       # /gate-run without the plugin
+```
+
+It talks to `GATE_URL` (default `http://127.0.0.1:4141`) and logs in with
+`GATE_ADMIN_SECRET`. An installed plugin is a copy of this repository with no
+`.env` beside it, so there the secret comes from the environment — export it, or
+set `GATE_DIR` to a gate checkout to read its `.env`. Run from the repository
+itself, it finds that `.env` by walking up, and neither is needed.
+
+The command lists the workflows you actually have every time it is invoked, so
 `/gate-run` needs no ids memorised — `/gate-run` alone offers the list, and
 `/gate-run repo-dev-team fix the flaky test` starts that one and follows it.
 A workflow that takes a `repo` input runs against the directory you are in
@@ -414,4 +426,4 @@ disturbs the checkout that session is editing; when it ends, the branch and its
 - `src/agents/` — agent file format: parse, validate, render · `src/workflows/` — workflow YAML + condition language
 - `src/runtime/` — the deterministic engine, node executors, agent tools (`tools/`) and per-run worktrees (`workspace.ts`) · `src/providers/` — the `ModelProvider` seam onto the gateway
 - `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
-- `scripts/gate-workflow.mjs` — shell client for workflow runs, and the `/gate-run` slash command it installs
+- `plugins/gate/` — the Claude Code plugin: the `/gate-run` command and the shell client behind it · `.claude-plugin/marketplace.json` — this repo as a marketplace
