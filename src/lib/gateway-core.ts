@@ -394,9 +394,13 @@ export async function dispatch(
       publishActivity({ ts: Date.now(), kind: "throttle", note: `blocked at ${Math.round(util * 100)}% of 5h window` });
       return {
         ok: false,
-        response: jsonError(429, `Rate-limit window ${Math.round(util * 100)}% used; refusing until reset`, {
-          "Retry-After": String(retryAfter),
-        }),
+        response: jsonError(
+          429,
+          `gate is refusing this request: its rate-limit throttle sees the 5h window ${Math.round(util * 100)}% used ` +
+            `(setting: block at ${Math.round(settings.throttle.blockAt * 100)}%). This is gate, not Anthropic. ` +
+            `Turn the throttle off in Settings if the account changed.`,
+          { "Retry-After": String(retryAfter) },
+        ),
       };
     }
     if (util >= settings.throttle.downgradeAt) {

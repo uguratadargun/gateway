@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ClaudeAccount } from "./claude/oauth";
+import { resetRateLimit } from "./ratelimit";
 
 /**
  * Encrypted on-disk credential store for a single Claude account. Tokens are
@@ -74,10 +75,18 @@ export function loadCredentials(): StoredCredentials | null {
 }
 
 export function saveCredentials(creds: StoredCredentials): void {
+  // A refresh rewrites the same account's tokens many times a day; only a
+  // different account invalidates what is known about the quota.
+  const previous = loadCredentials();
+  const changed = previous?.account?.account_uuid !== creds.account?.account_uuid;
+
   if (!existsSync(GATE_DIR)) mkdirSync(GATE_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(CRED_FILE, seal(JSON.stringify(creds)), { mode: 0o600 });
+
+  if (changed) resetRateLimit();
 }
 
 export function clearCredentials(): void {
   if (existsSync(CRED_FILE)) writeFileSync(CRED_FILE, "");
+  resetRateLimit();
 }

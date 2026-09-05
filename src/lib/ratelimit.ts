@@ -86,6 +86,23 @@ export function recordRateLimit(headers: Headers): void {
   }
 }
 
+/**
+ * Forgets the windows.
+ *
+ * Rate-limit state belongs to an account, not to gate: kept across a change of
+ * account it describes someone else's quota, and the throttle would refuse a
+ * fresh account's requests on the strength of an exhausted one. The history
+ * goes too — a forecast built from the old account's slope is no better.
+ */
+export function resetRateLimit(): void {
+  try {
+    kvSet(KEY, "");
+    getDb().prepare("DELETE FROM ratelimit_history").run();
+  } catch {
+    // best-effort: a stale snapshot expires on its own at the window reset
+  }
+}
+
 export function readRateLimit(): RateLimitSnapshot | null {
   try {
     const raw = kvGet(KEY);

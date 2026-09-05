@@ -4,6 +4,7 @@ import { createKey, deleteKey, hasActiveKeys, listKeys, revokeKey, verifyKey } f
 import { cacheClear, cacheGet, cacheKey, cacheSet, cacheStats } from "@/lib/cache";
 import { costFor, savingsVsOpus, tierOf } from "@/lib/pricing";
 import { readRateLimit, recordRateLimit } from "@/lib/ratelimit";
+import { clearCredentials, loadCredentials, saveCredentials } from "@/lib/store";
 import { saveSettings } from "@/lib/settings";
 import { clearTraffic, readTraffic, recordTraffic } from "@/lib/traffic";
 import { getSpend, readUsage, recordUsage } from "@/lib/usage";
@@ -91,5 +92,48 @@ describe("traffic + ratelimit (sqlite)", () => {
     const rl = readRateLimit();
     expect(rl?.unifiedStatus).toBe("allowed");
     expect(rl?.raw["anthropic-ratelimit-tokens-remaining"]).toBe("1234");
+  });
+});
+
+describe("rate-limit state across accounts", () => {
+  const headers = () =>
+    new Headers({
+      "anthropic-ratelimit-unified-5h-utilization": "0.97",
+      "anthropic-ratelimit-unified-status": "allowed_warning",
+    });
+
+  const creds = (uuid: string) => ({
+    accessToken: "a",
+    refreshToken: "r",
+    expiresAt: Date.now() + 3_600_000,
+    account: { account_uuid: uuid } as never,
+  });
+
+  it("keeps what it knows when the same account refreshes its token", () => {
+    saveCredentials(creds("account-1"));
+    recordRateLimit(headers());
+    expect(readRateLimit()?.utilization5h).toBe(0.97);
+
+    // A refresh rewrites the same account's tokens many times a day.
+    saveCredentials({ ...creds("account-1"), accessToken: "a2" });
+    expect(readRateLimit()?.utilization5h).toBe(0.97);
+  });
+
+  it("forgets it when a different account signs in", () => {
+    saveCredentials(creds("account-1"));
+    recordRateLimit(headers());
+    expect(readRateLimit()?.utilization5h).toBe(0.97);
+
+    // Otherwise the throttle refuses a fresh account on the old one's quota.
+    saveCredentials(creds("account-2"));
+    expect(readRateLimit()).toBeNull();
+    expect(loadCredentials()?.account?.account_uuid).toBe("account-2");
+  });
+
+  it("forgets it on logout", () => {
+    saveCredentials(creds("account-3"));
+    recordRateLimit(headers());
+    clearCredentials();
+    expect(readRateLimit()).toBeNull();
   });
 });

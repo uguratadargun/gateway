@@ -58,6 +58,12 @@ login**, approve, and paste the code Anthropic shows you.
   to loopback by default.
 - Management write endpoints validate bodies with zod (`src/lib/schemas.ts`).
 
+Rate-limit state belongs to the account, not to gate: connecting a different
+account (or logging out) forgets the windows and their history. Kept, they would
+describe someone else's quota — and the throttle would refuse a fresh account's
+requests on the strength of an exhausted one. When the throttle does refuse, it
+says so in the response: that 429 is gate's, not Anthropic's.
+
 ## Storage
 
 Usage, traffic, cache, API keys, and the rate-limit snapshot live in SQLite
