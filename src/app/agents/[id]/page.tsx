@@ -120,14 +120,14 @@ export default function AgentDetailPage() {
           spellCheck={false}
           className="h-[70vh] resize-none font-mono text-xs leading-relaxed"
         />
-        <Card className="space-y-3 p-4 text-sm">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Last validated definition
-          </div>
-          {!agent ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : (
-            <>
+        {!agent ? (
+          <Card className="p-4 text-sm text-muted-foreground">Loading…</Card>
+        ) : (
+          // Two cards, because the rail answers two questions: what this agent
+          // is, and what it exchanges with the rest of a workflow.
+          <div className="space-y-4">
+            <Card className="space-y-3 p-4 text-sm">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Definition</div>
               <Field label="name">{agent.name}</Field>
               {agent.description && <Field label="description">{agent.description}</Field>}
               <Field label="model">
@@ -140,6 +140,11 @@ export default function AgentDetailPage() {
                   </Badge>
                 )}
               </Field>
+              {agent.timeoutMs && <Field label="timeout">{agent.timeoutMs} ms</Field>}
+            </Card>
+
+            <Card className="space-y-3 p-4 text-sm">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Interface</div>
               <Field label="inputs">
                 {agent.inputs.length === 0 ? (
                   <span className="text-muted-foreground">none</span>
@@ -163,13 +168,24 @@ export default function AgentDetailPage() {
                   </ul>
                 )}
               </Field>
-              {agent.timeoutMs && <Field label="timeout">{agent.timeoutMs} ms</Field>}
-              <p className="pt-2 text-[11px] text-muted-foreground">
-                Invalid definitions are rejected on save and never written to disk. ⌘S saves.
+              <Field label="tools">
+                {agent.tools.length === 0 ? (
+                  <span className="text-muted-foreground">none (reasons over what it is handed)</span>
+                ) : (
+                  agent.tools.map((t) => (
+                    <Badge key={t} variant="outline" className="mr-1 font-mono text-[10px]">
+                      {t}
+                    </Badge>
+                  ))
+                )}
+              </Field>
+              <p className="pt-1 text-[11px] text-muted-foreground">
+                Tools only exist when the workflow declares a workspace. Invalid definitions are rejected on save and
+                never written to disk. ⌘S saves.
               </p>
-            </>
-          )}
-        </Card>
+            </Card>
+          </div>
+        )}
       </div>
     </main>
   );

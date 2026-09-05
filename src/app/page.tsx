@@ -25,14 +25,12 @@ export default function Home() {
           <GatewayInfo />
           <ClientsPanel />
         </div>
+        <RoutingRulesPanel />
         <div className="grid gap-6 md:grid-cols-2">
-          <RoutingRulesPanel />
           <RoutingSimulator />
-        </div>
-        <div className="grid gap-6 md:grid-cols-2">
-          <SettingsPanel />
           <KeysPanel />
         </div>
+        <SettingsPanel />
         <UsagePanel />
       </div>
     </main>

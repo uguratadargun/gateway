@@ -107,14 +107,28 @@ export function RoutingRulesPanel() {
   if (!cfg) return null;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Route className="size-4" /> Model routing rules
-        </CardTitle>
-        <CardDescription>Which model — and how much effort — for each difficulty.</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5">
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Route className="size-4" /> Model routing
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Which model, and how much effort, for each difficulty.
+          </p>
+        </div>
+        <Button onClick={save} size="sm">
+          <Save /> {saved ? "Saved" : "Save routing"}
+        </Button>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+      <Card className="md:col-span-2">
+        <CardHeader>
+          <CardTitle className="text-base">Difficulty to model</CardTitle>
+          <CardDescription>A preset sets all six at once; each row can then be changed on its own.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
         <div>
           <Label className="text-xs text-muted-foreground">Cost / quality preset</Label>
           <div className="mt-2 flex gap-1 rounded-lg border bg-muted/40 p-1 text-sm">
@@ -173,7 +187,15 @@ export function RoutingRulesPanel() {
             </div>
           ))}
         </div>
+        </CardContent>
+      </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">How difficulty is decided</CardTitle>
+          <CardDescription>What grades an ungraded request, and where the size thresholds sit.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
         <div className="space-y-2 rounded-md border p-2.5">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -191,9 +213,31 @@ export function RoutingRulesPanel() {
           </div>
         </div>
 
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <Label className="text-xs text-muted-foreground">Large-context (tokens)</Label>
+            <Input type="number" className="mt-1 h-8" value={cfg.thresholds.largeContext} onChange={(e) => setCfg({ ...cfg, thresholds: { ...cfg.thresholds, largeContext: Number(e.target.value) } })} />
+          </div>
+          <div>
+            <Label className="text-xs text-muted-foreground">Trivial (tokens)</Label>
+            <Input type="number" className="mt-1 h-8" value={cfg.thresholds.trivial} onChange={(e) => setCfg({ ...cfg, thresholds: { ...cfg.thresholds, trivial: Number(e.target.value) } })} />
+          </div>
+          <div>
+            <Label className="text-xs text-muted-foreground">Haiku max (tokens)</Label>
+            <Input type="number" className="mt-1 h-8" value={cfg.thresholds.haikuContextMax} onChange={(e) => setCfg({ ...cfg, thresholds: { ...cfg.thresholds, haikuContextMax: Number(e.target.value) } })} />
+          </div>
+        </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Model version per tier</CardTitle>
+          <CardDescription>Which concrete model each tier resolves to.</CardDescription>
+        </CardHeader>
+        <CardContent>
         <div>
-          <div className="flex items-center justify-between">
-            <Label className="text-xs text-muted-foreground">Model version per tier</Label>
+          <div className="flex items-center justify-end">
             {modelsSource && (
               <span className="text-[11px] text-muted-foreground">{modelsSource === "live" ? "from your account" : "known list"}</span>
             )}
@@ -222,25 +266,9 @@ export function RoutingRulesPanel() {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <Label className="text-xs text-muted-foreground">Large-context (tokens)</Label>
-            <Input type="number" className="mt-1 h-8" value={cfg.thresholds.largeContext} onChange={(e) => setCfg({ ...cfg, thresholds: { ...cfg.thresholds, largeContext: Number(e.target.value) } })} />
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Trivial (tokens)</Label>
-            <Input type="number" className="mt-1 h-8" value={cfg.thresholds.trivial} onChange={(e) => setCfg({ ...cfg, thresholds: { ...cfg.thresholds, trivial: Number(e.target.value) } })} />
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Haiku max (tokens)</Label>
-            <Input type="number" className="mt-1 h-8" value={cfg.thresholds.haikuContextMax} onChange={(e) => setCfg({ ...cfg, thresholds: { ...cfg.thresholds, haikuContextMax: Number(e.target.value) } })} />
-          </div>
-        </div>
-
-        <Button onClick={save} size="sm">
-          <Save /> {saved ? "Saved" : "Save routing"}
-        </Button>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+      </div>
+    </section>
   );
 }
