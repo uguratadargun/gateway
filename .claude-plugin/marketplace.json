@@ -10,7 +10,7 @@
       "name": "gate",
       "source": "./plugins/gate",
       "description": "Run gate agent workflows from Claude Code: /gate-run starts one against the repository you are in, /gate-design analyses that repository and builds the agents and workflow for it.",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "category": "development",
       "tags": [
         "agents",

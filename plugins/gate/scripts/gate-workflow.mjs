@@ -330,12 +330,57 @@ async function follow(executionId, timeoutSeconds) {
   }
 }
 
+/**
+ * The few lines that say why a gate refused, so a watched run explains itself
+ * without anyone opening the page. Mirrors src/executions/failure.ts; the
+ * script stays dependency-free and cannot import it.
+ */
+function refusalLines(output, limit = 3) {
+  if (!output || typeof output !== "object") return [];
+  const ansi = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+  const signals = [
+    /\b(?:AssertionError|TypeError|ReferenceError|SyntaxError)\b/,
+    /\berror TS\d+\b/,
+    /^\s*(?:FAIL|✕|×|✗)\s/u,
+    /\b(?:Unable to find|Cannot find|Module not found)\b/,
+    /^\s*(?:Error|error):/,
+  ];
+  const noise = [/^\s*[┌│└─╭╰]/u, /npm (?:warn|notice)/i, /Update available/i, /^\s*at\s+\S+\s*\(/];
+  const clean = (t) =>
+    typeof t !== "string"
+      ? []
+      : t
+          .replace(ansi, "")
+          .split("\n")
+          .map((l) => l.trimEnd())
+          .filter((l) => l.trim() && !noise.some((n) => n.test(l)));
+
+  if (output.ok === false) {
+    const lines = [...clean(output.stderr), ...clean(output.stdout)];
+    const out = [];
+    for (const signal of signals) {
+      for (const line of lines) {
+        const key = line.trim().slice(0, 160);
+        if (signal.test(line) && !out.includes(key)) out.push(key);
+        if (out.length >= limit) return out;
+      }
+    }
+    return out.length ? out : lines.slice(-limit).map((l) => l.trim().slice(0, 160));
+  }
+  if (typeof output.verdict === "string" && output.verdict !== "approved") {
+    const detail = [output.feedback, output.findings].flat().filter((v) => typeof v === "string" && v.trim());
+    return [`verdict: ${output.verdict}`, ...detail.slice(0, limit - 1).map((l) => l.trim().slice(0, 160))];
+  }
+  return [];
+}
+
 function printStep(step, n) {
   const usage = step.usage ? ` · ${step.usage.model} ${step.usage.inputTokens}→${step.usage.outputTokens} tok` : "";
   const tools = step.toolCalls?.length ? ` · ${step.toolCalls.length} tool calls` : "";
   const visit = step.visit > 1 ? ` (visit ${step.visit})` : "";
   console.log(`  ${String(n).padStart(2)} ${step.nodeId}${visit} — ${step.status} ${duration(step.finishedAt - step.startedAt)}${usage}${tools}`);
   if (step.error) console.log(`     ${step.error.code}: ${step.error.message}`);
+  for (const line of refusalLines(step.output)) console.log(`     ${line}`);
 }
 
 function quotaLine(quota) {

@@ -403,6 +403,15 @@ windows — the API reports where a window stands, never what one run moved it b
 so the run's slice is attributed by its share of the cost of everything the
 gateway sent inside that window, and is labelled as an estimate.
 
+A step that refuses says so where it happened: the failing lines are lifted out
+of its output and shown under it in the step list, and again at the top of a
+failed run as what ended it — which node refused, with what, and how many of its
+attempts it refused. A gate that refused every attempt is called out as having
+been red before the run started. The extraction drops terminal colour codes,
+update banners and stack frames, and keeps assertions, type errors and FAIL
+lines; the same summary is printed by `--watch`, so a run explains itself in the
+terminal too.
+
 When a run stops at the loop ceiling, the error names what kept sending it back
 (`node "implementation" ran 6 times (max 5); last sent back by "tests" (exit 1)`)
 — a gate that was already red before the run started looks exactly like this, and

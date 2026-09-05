@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { takenLinks, type RoutingLink } from "@/workflows/routing";
 import type { WorkflowEvent } from "@/events/types";
+import { stepFailure } from "@/executions/failure";
 import { formatPoints, quotaShare } from "@/executions/quota";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 
@@ -184,11 +185,7 @@ export default function ExecutionDetailPage() {
         </div>
       </header>
 
-      {ex?.error && (
-        <Card className="border-destructive/50 p-3 text-sm text-destructive">
-          <span className="font-mono text-xs">{ex.error.code}</span> — {ex.error.message}
-        </Card>
-      )}
+      {ex?.error && <WhyItStopped error={ex.error} steps={steps} />}
 
       {ex?.workspace && (
         <Card className="space-y-1 p-3 text-xs">
@@ -296,6 +293,20 @@ export default function ExecutionDetailPage() {
                   ))}
                 </div>
               )}
+              {(() => {
+                const failure = stepFailure(s.output);
+                if (!failure) return null;
+                return (
+                  <div className="border-t bg-destructive/5 px-2 py-1">
+                    <div className="text-[10px] uppercase tracking-wide text-destructive">{failure.headline}</div>
+                    {failure.lines.map((l, i) => (
+                      <div key={i} className="truncate font-mono text-[10px] text-muted-foreground" title={l}>
+                        {l}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               {openStep === s.stepIndex && (
                 <div className="space-y-2 border-t bg-muted/20 p-2 text-[11px]">
                   {s.usage && (
@@ -406,5 +417,65 @@ function WindowLine({ label, points, atPct }: { label: string; points: number; a
       <span className="font-mono">≈ {formatPoints(points)}</span>
       {atPct != null && <span className="text-muted-foreground">· window now at {atPct.toFixed(1)}%</span>}
     </div>
+  );
+}
+
+
+/**
+ * The end of the run, said in one place.
+ *
+ * A halt code on its own ("ran 6 times") tells you a node repeated, not what
+ * refused it. The step that did the refusing is in the history, so its reason
+ * is lifted up here — a gate that was already red before the run started reads
+ * as exactly that, instead of looking like the agent's fault.
+ */
+function WhyItStopped({
+  error,
+  steps,
+}: {
+  error: NonNullable<ExecutionRecord["error"]>;
+  steps: ExecutionStepRecord[];
+}) {
+  // The last step that refused is the one that ended the run.
+  let culprit: { step: ExecutionStepRecord; failure: NonNullable<ReturnType<typeof stepFailure>> } | null = null;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const failure = stepFailure(steps[i].output, 6);
+    if (failure) {
+      culprit = { step: steps[i], failure };
+      break;
+    }
+  }
+  const sameNode = culprit ? steps.filter((s) => s.nodeId === culprit!.step.nodeId) : [];
+  const attempts = sameNode.length;
+  const refusals = sameNode.filter((s) => stepFailure(s.output)).length;
+
+  return (
+    <Card className="space-y-2 border-destructive/50 p-3 text-sm">
+      <div className="text-destructive">
+        <span className="font-mono text-xs">{error.code}</span> — {error.message}
+      </div>
+      {culprit && (
+        <div className="space-y-1 border-t pt-2">
+          <div className="text-xs text-muted-foreground">
+            <span className="font-mono text-foreground">{culprit.step.nodeId}</span> refused with{" "}
+            <span className="font-mono">{culprit.failure.headline}</span>
+            {attempts > 1 && (
+              <>
+                {" "}
+                · refused {refusals} of {attempts} attempts
+              </>
+            )}
+          </div>
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 font-mono text-[11px]">
+            {culprit.failure.lines.join("\n") || "the output said nothing more"}
+          </pre>
+          {attempts > 1 && refusals === attempts && (
+            <p className="text-[11px] text-muted-foreground">
+              It refused every attempt, so it was already failing before this run touched anything.
+            </p>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
