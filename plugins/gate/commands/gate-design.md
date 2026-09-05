@@ -18,6 +18,12 @@ How the two file formats work, and what a save will reject:
 
 The user wants a pipeline for: $ARGUMENTS
 
+If that is empty there is no brief, which is fine: design the pipeline this
+repository obviously wants — plan, implement, run its own test command, review —
+and say that is what you are proposing and why it fits what you found. Do not
+stop to ask what they want first; read the repository, then put a concrete
+proposal in front of them.
+
 Build it for **this repository**, in three passes.
 
 ## 1. Read the repository first
