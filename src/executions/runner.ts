@@ -22,6 +22,33 @@ import type { ExecutionWorkspace } from "./types";
 
 const provider = new GateModelProvider();
 
+/**
+ * Runs in flight, so they can be stopped.
+ *
+ * A run lives in this process, not in the database, so cancellation has to
+ * reach the same process that started it. The entry is removed when the run
+ * settles, which also means "is this id cancellable" and "is it still going"
+ * are the same question.
+ *
+ * It hangs off globalThis because route handlers do not share a module
+ * registry in dev: the start and the cancel arrive through different routes,
+ * and a per-module Map would leave the cancel looking at an empty one.
+ */
+const g = globalThis as unknown as { __gateRunsInFlight?: Map<string, AbortController> };
+const inFlight = (g.__gateRunsInFlight ??= new Map<string, AbortController>());
+
+/** Stops a running execution. False when there is nothing here to stop. */
+export function cancelExecution(executionId: string): boolean {
+  const controller = inFlight.get(executionId);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
+
+export function isRunning(executionId: string): boolean {
+  return inFlight.has(executionId);
+}
+
 export interface StartExecutionResult {
   executionId: string;
   /** Resolves when the run finishes; the HTTP layer need not await it. */
@@ -55,6 +82,8 @@ export function startExecution(workflowId: string, input: Record<string, unknown
 
   const executionId = randomUUID();
   createExecution(executionId, workflow.id, input);
+  const controller = new AbortController();
+  inFlight.set(executionId, controller);
 
   // The worktree is created before the first node runs: a workflow that cannot
   // get its workspace fails immediately rather than half-way through a plan.
@@ -67,6 +96,7 @@ export function startExecution(workflowId: string, input: Record<string, unknown
       const message = (e as Error).message;
       const code = e instanceof WorkflowError ? e.code : "WORKSPACE_ERROR";
       const state = failedState(executionId, workflow.id, input, code, message);
+      inFlight.delete(executionId);
       finishExecution(state);
       publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: state.error!.code as never, message });
       return { executionId, done: Promise.resolve(state) };
@@ -80,14 +110,17 @@ export function startExecution(workflowId: string, input: Record<string, unknown
     workspace,
     emit: publishWorkflowEvent,
     onStep: (step) => recordStep(executionId, step),
+    signal: controller.signal,
   })
     .then((state) => {
+      inFlight.delete(executionId);
       finishExecution(state, workspaceSummary(workspace));
       return state;
     })
     .catch((e: unknown) => {
       // The engine records its own failures; this only covers a crash in the
       // engine itself, which must still close out the execution row.
+      inFlight.delete(executionId);
       const message = (e as Error).message;
       const state = failedState(executionId, workflow.id, input, "WORKFLOW_ROUTING_ERROR", message);
       finishExecution(state, workspaceSummary(workspace));

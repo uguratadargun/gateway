@@ -42,6 +42,9 @@ export interface RunWorkflowOptions {
   maxToolIterations?: number;
   /** Called as each step lands in history, so a run can be persisted live. */
   onStep?: (step: StepRecord) => void;
+  /** Cancels the run. Checked before every node and inside an agent's tool
+   *  loop, so a stop takes effect without waiting out the current step. */
+  signal?: AbortSignal;
   now?: () => number;
 }
 
@@ -72,6 +75,9 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
     for (;;) {
       // A terminal node or a failing sibling branch ends every walk in flight.
       if (state.status !== "running") return;
+      // A cancelled run stops here rather than at the next node boundary it
+      // happens to reach; branches in flight see the halt and unwind too.
+      if (opts.signal?.aborted) return halt("RUN_CANCELLED", "run cancelled", currentId);
       if (currentId === stopAt) return;
 
       const node = findNode(workflow, currentId);
@@ -107,6 +113,7 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
             loadAgent,
             workspace: opts.workspace ?? null,
             maxToolIterations: opts.maxToolIterations,
+            signal: opts.signal,
             onToolCall: (call) =>
               emit({
                 type: "tool.called",
@@ -126,7 +133,7 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
           toolCalls = res.toolCalls.length ? res.toolCalls : undefined;
         } else if (node.type === "command") {
           input = node.command;
-          output = await execCommand(node, { defaultCwd: opts.workspace?.root });
+          output = await execCommand(node, { defaultCwd: opts.workspace?.root, signal: opts.signal });
         } else if (node.type === "parallel") {
           input = { branches: node.branches, join: node.join };
           for (const branch of node.branches) {

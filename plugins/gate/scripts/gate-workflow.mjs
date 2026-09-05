@@ -286,6 +286,23 @@ async function cmdRun(argv) {
   return watch ? await follow(executionId, timeout) : 0;
 }
 
+/**
+ * Asks a run to stop. The engine settles it; this only sends the request, so
+ * the status is read back rather than assumed.
+ */
+async function cmdCancel(argv) {
+  const id = argv[0];
+  if (!id) die("usage: gate-workflow cancel <execution-id>");
+  const result = await api(`/api/executions/${id}/cancel`, { method: "POST" });
+  if (!result?.cancelled) die(result?.reason ? `not cancelled: ${result.reason}` : "not cancelled");
+  console.log(`cancelling ${id}`);
+  const { execution } = await api(`/api/executions/${id}`);
+  // A cancelled run settles as failed; that is the outcome asked for, so the
+  // command itself succeeded.
+  if (execution.status !== "running") printOutcome(execution);
+  return 0;
+}
+
 async function cmdWatch(argv) {
   const rest = [];
   let timeout = 1800;
@@ -376,6 +393,7 @@ function usage() {
   agents                                  what agents are defined, and what each reads and returns
   run <id> [task] [--input k=v] [--watch] start a run
   watch <execution-id>                    follow a run to the end
+  cancel <execution-id>                   stop a run (the worktree it made is kept)
   save-agent <id> <file> [--replace]      create or replace an agent (the server validates it)
   save-workflow <id> <file> [--replace]   create or replace a workflow (the server validates it)
   delete-agent <id> [--force]             remove an agent (refused while a workflow names it)
@@ -397,6 +415,7 @@ const run =
   : command === "delete-workflow" ? cmdDelete("workflow", argv)
   : command === "run" ? cmdRun(argv)
   : command === "watch" ? cmdWatch(argv)
+  : command === "cancel" ? cmdCancel(argv)
   : command === "login" ? cmdLogin()
   : command === "install" ? cmdInstall()
   : usage();

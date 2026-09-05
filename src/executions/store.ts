@@ -176,6 +176,25 @@ export function getExecutionSteps(executionId: string): ExecutionStepRecord[] {
   }));
 }
 
+/**
+ * Closes out runs left behind by a process that is gone.
+ *
+ * A run lives in the server process; nothing survives a restart. Rows left at
+ * "running" would otherwise sit there for ever, streaming nothing and claiming
+ * to be alive, so they are settled at boot for what they are: interrupted.
+ */
+export function failInterruptedExecutions(at = Date.now()): number {
+  const res = getDb()
+    .prepare(
+      `UPDATE workflow_executions
+          SET status = 'failed', finished_at = ?, error_code = 'RUN_INTERRUPTED',
+              error_message = 'the server stopped while this run was going'
+        WHERE status = 'running'`,
+    )
+    .run(at);
+  return Number(res.changes ?? 0);
+}
+
 export function deleteExecution(id: string): boolean {
   const db = getDb();
   db.prepare("DELETE FROM workflow_execution_steps WHERE execution_id = ?").run(id);

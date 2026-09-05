@@ -25,6 +25,9 @@ export interface AgentExecutorDeps {
   workspace?: RunWorkspace | null;
   onToolCall?: (call: ToolCallRecord) => void;
   maxToolIterations?: number;
+  /** Cancels the run. Checked every tool round, not only between nodes: an
+   *  agent working through a dozen tool calls must stop when asked. */
+  signal?: AbortSignal;
 }
 
 export interface AgentNodeResult {
@@ -66,6 +69,9 @@ export async function executeAgentNode(
   const maxIterations = deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
 
   for (let iteration = 0; ; iteration++) {
+    if (deps.signal?.aborted) {
+      throw new WorkflowError("RUN_CANCELLED", `node "${node.id}" was cancelled`, { nodeId: node.id });
+    }
     const call = deps.provider.execute({
       model: agent.model,
       system: systemPrompt(agent, tools.length > 0),
@@ -74,6 +80,7 @@ export async function executeAgentNode(
       maxTokens: agent.maxTokens,
       tools: toolDefs.length ? toolDefs : undefined,
       context: { executionId: state.executionId, workflowId: state.workflowId, nodeId: node.id },
+      signal: deps.signal,
     });
 
     const result = await withDeadline(call, deadline, node.id);

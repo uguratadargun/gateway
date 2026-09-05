@@ -29,6 +29,8 @@ export class GateModelProvider implements ModelProvider {
       body.tools = req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
     }
 
+    if (req.signal?.aborted) throw new WorkflowError("RUN_CANCELLED", "run cancelled");
+
     const executionId = req.context?.executionId ?? null;
     const res = await executeMessages(body, {
       stream: false,
@@ -42,6 +44,12 @@ export class GateModelProvider implements ModelProvider {
         stickyKey: executionId && req.context?.nodeId ? `workflow:${executionId}:${req.context.nodeId}` : null,
       },
       requestPreview: JSON.stringify(body),
+      signal: req.signal,
+    }).catch((e) => {
+      // The abort surfaces here as a fetch rejection; name it for what it is,
+      // so a cancelled node is not reported as a model failure.
+      if (req.signal?.aborted) throw new WorkflowError("RUN_CANCELLED", "run cancelled");
+      throw e;
     });
 
     const raw = await res.text();

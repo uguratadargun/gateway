@@ -134,8 +134,10 @@ export async function sendWithFallback(opts: {
   creds: StoredCredentials;
   clientBeta?: string | null;
   extraBeta?: string[];
+  /** Abort the upstream call. A cancelled workflow uses this. */
+  signal?: AbortSignal;
 }): Promise<{ upstream: Response; usedModel: string; usedTier: Tier; attempts: number }> {
-  const { body, route, clientBeta, extraBeta = [] } = opts;
+  const { body, route, clientBeta, extraBeta = [], signal } = opts;
   let creds = opts.creds;
   const settings = loadSettings();
 
@@ -168,7 +170,7 @@ export async function sendWithFallback(opts: {
       for (const f of clientBeta?.split(",").map((s) => s.trim()).filter(Boolean) ?? []) set.add(f);
       for (const f of extraBeta) set.add(f);
       headers["anthropic-beta"] = [...set].join(",");
-      return fetch(ANTHROPIC_MESSAGES_URL, { method: "POST", headers, body: JSON.stringify(wire) });
+      return fetch(ANTHROPIC_MESSAGES_URL, { method: "POST", headers, body: JSON.stringify(wire), signal });
     };
 
     let cls: ErrorClass = "network";
@@ -189,7 +191,10 @@ export async function sendWithFallback(opts: {
         }
         recordRateLimit(upstream.headers);
         cls = classifyStatus(upstream.status);
-      } catch {
+      } catch (e) {
+        // An abort is a decision, not a transient failure: retrying it would
+        // send the request the caller just cancelled.
+        if (signal?.aborted) throw e;
         upstream = null;
         cls = "network";
       }
@@ -289,6 +294,8 @@ export interface DispatchOptions {
   session: SessionInfo;
   /** Original client request, for the traffic log. */
   requestPreview: string;
+  /** Abort the upstream call; propagated to fetch. */
+  signal?: AbortSignal;
 }
 
 export interface DispatchHooks {
@@ -435,7 +442,7 @@ export async function dispatch(
 
   let sent: Awaited<ReturnType<typeof sendWithFallback>>;
   try {
-    sent = await sendWithFallback({ body, route, creds, clientBeta: opts.clientBeta, extraBeta });
+    sent = await sendWithFallback({ body, route, creds, clientBeta: opts.clientBeta, extraBeta, signal: opts.signal });
   } catch (err) {
     release();
     return { ok: false, response: jsonError(502, err instanceof Error ? err.message : "Upstream failure") };

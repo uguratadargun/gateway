@@ -4,6 +4,7 @@ import { parseAgent } from "@/agents/loader";
 import type { AgentDefinition } from "@/agents/types";
 import type { WorkflowEvent } from "@/events/types";
 import { runWorkflow } from "@/runtime/engine";
+import { runCommand } from "@/runtime/executors/command";
 import { parseWorkflow } from "@/workflows/loader";
 
 import { FakeModelProvider } from "./fakes/fake-model-provider";
@@ -327,5 +328,77 @@ describe("parallel nodes", () => {
     expect(state.history.find((s) => s.nodeId === "security")?.status).toBe("failed");
     // The join is never reached, so the workflow does not continue past it.
     expect(state.history.some((s) => s.nodeId === "verdict")).toBe(false);
+  });
+});
+
+describe("cancellation", () => {
+  const workflow = () => parseWorkflow("pipeline", PIPELINE, meta);
+
+  it("does not start a run whose signal is already aborted", async () => {
+    const provider = new FakeModelProvider(() => '{"plan":"x"}');
+    const state = await runWorkflow(workflow(), {
+      provider,
+      loadAgent,
+      signal: AbortSignal.abort(),
+    });
+
+    expect(state.status).toBe("failed");
+    expect(state.error?.code).toBe("RUN_CANCELLED");
+    // Nothing was asked of the model: the check happens before the first node.
+    expect(provider.calls).toHaveLength(0);
+    expect(state.history).toHaveLength(0);
+  });
+
+  it("stops at the next node once cancelled, keeping what already finished", async () => {
+    const controller = new AbortController();
+    // Cancel while the first node is being answered.
+    const provider = new FakeModelProvider((_req, i) => {
+      if (i === 0) {
+        controller.abort();
+        return '{"plan":"x"}';
+      }
+      return '{"diff":"y"}';
+    });
+
+    const state = await runWorkflow(workflow(), {
+      provider,
+      loadAgent,
+      signal: controller.signal,
+    });
+
+    expect(state.status).toBe("failed");
+    expect(state.error?.code).toBe("RUN_CANCELLED");
+    // The planner finished and is kept; the implementation never ran.
+    expect(state.history.map((h) => h.nodeId)).toEqual(["planner"]);
+    expect(state.outputs.planner).toEqual({ plan: "x" });
+    expect(provider.calls).toHaveLength(1);
+  });
+
+  it("reports the cancellation as a workflow failure event", async () => {
+    const events: WorkflowEvent[] = [];
+    const state = await runWorkflow(workflow(), {
+      provider: new FakeModelProvider(() => '{"plan":"x"}'),
+      loadAgent,
+      signal: AbortSignal.abort(),
+      emit: (e) => events.push(e),
+    });
+
+    expect(state.status).toBe("failed");
+    const failed = events.find((e) => e.type === "workflow.failed");
+    expect(failed).toMatchObject({ code: "RUN_CANCELLED" });
+  });
+});
+
+
+describe("cancelling a command node", () => {
+  it("kills the child process rather than leaving it running", async () => {
+    const node = { id: "wait", type: "command", command: ["sleep", "5"], edges: [] } as Parameters<typeof runCommand>[0];
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+
+    const started = Date.now();
+    await expect(runCommand(node, { signal: controller.signal })).rejects.toMatchObject({ code: "RUN_CANCELLED" });
+    // It came back on the abort, not after the command's own five seconds.
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 });

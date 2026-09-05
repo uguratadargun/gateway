@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, GitBranch, Radio, Wrench } from "lucide-react";
+import { ArrowLeft, GitBranch, Radio, Square, Wrench } from "lucide-react";
 
 import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } from "@/components/workflow-graph";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +37,7 @@ export default function ExecutionDetailPage() {
   const [live, setLive] = useState<Record<string, NodeStatus>>({});
   const [liveEdges, setLiveEdges] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [liveTools, setLiveTools] = useState<Array<{ nodeId: string; tool: string; ok: boolean; summary: string }>>([]);
   const [openStep, setOpenStep] = useState<number | null>(null);
   /** Replay position for a finished run; null = show the whole run. */
@@ -52,6 +53,18 @@ export default function ExecutionDetailPage() {
   }, [load]);
 
   const running = detail?.execution.status === "running";
+
+  // Asking is all this does: the engine stops at its next check and settles the
+  // run itself, so the page keeps streaming until the status actually changes.
+  async function stop() {
+    setStopping(true);
+    try {
+      await fetch(`/api/executions/${id}/cancel`, { method: "POST" });
+    } finally {
+      setStopping(false);
+    }
+    await load();
+  }
 
   useEffect(() => {
     if (!running) return;
@@ -151,6 +164,11 @@ export default function ExecutionDetailPage() {
               <Radio className={connected ? "size-3.5 text-emerald-500" : "size-3.5"} />
               {connected ? "streaming" : "connecting…"}
             </span>
+          )}
+          {running && (
+            <Button variant="outline" size="sm" onClick={stop} disabled={stopping}>
+              <Square /> {stopping ? "Stopping…" : "Stop"}
+            </Button>
           )}
           {ex && (
             <Badge variant={STATUS_VARIANT[ex.status]} className="text-[10px]">

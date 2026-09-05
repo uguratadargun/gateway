@@ -53,6 +53,9 @@ export interface ModelProviderRequest {
   tools?: ToolDefinition[];
   /** Attribution for cost/traffic reporting; ignored by providers that lack it. */
   context?: { executionId?: string; nodeId?: string; workflowId?: string };
+  /** Cancels the call. Aborting really drops the upstream request, so a
+   *  cancelled run stops paying for the answer it will never read. */
+  signal?: AbortSignal;
 }
 
 export interface ModelProviderResult {

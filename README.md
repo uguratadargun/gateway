@@ -386,6 +386,19 @@ with a live tool-activity feed. `/executions` keeps the history — every step's
 input, output, tool calls, model, tokens and duration — and `/executions/<id>`
 replays the exact path a run took and links the branch it produced.
 
+A run can be stopped: **Stop** on the execution page, or
+`gate-workflow.mjs cancel <execution-id>`. The engine checks for it before every
+node *and* inside an agent's tool loop, so a stop does not wait out a step that
+is making a dozen tool calls; the upstream model request is really aborted, and
+a running command node's child process is killed rather than abandoned. The run
+settles as `failed` with `RUN_CANCELLED`, and its worktree is kept — half-done
+work is still work, and `git diff` will show it.
+
+Nothing survives a restart, so any run left at `running` by a stopped server is
+settled at boot as `RUN_INTERRUPTED` instead of sitting there claiming to be
+alive. Deleting a run from the history is not a way to stop it: that removes the
+record, not the work.
+
 Runs can also be started over HTTP (the management API uses the admin cookie):
 
 ```bash
@@ -425,6 +438,7 @@ plugins/gate/scripts/gate-workflow.mjs list                          # what exis
 plugins/gate/scripts/gate-workflow.mjs agents                        # what agents exist, and what each reads
 plugins/gate/scripts/gate-workflow.mjs run repo-dev-team --watch "…" # start one and follow it
 plugins/gate/scripts/gate-workflow.mjs watch <execution-id>          # follow one already going
+plugins/gate/scripts/gate-workflow.mjs cancel <execution-id>         # stop one (its worktree is kept)
 plugins/gate/scripts/gate-workflow.mjs save-agent <id> <file.md>     # create or replace an agent
 plugins/gate/scripts/gate-workflow.mjs save-workflow <id> <file.yaml> # create or replace a workflow
 plugins/gate/scripts/gate-workflow.mjs delete-agent <id>             # refused while a workflow names it

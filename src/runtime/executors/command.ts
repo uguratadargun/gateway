@@ -23,6 +23,8 @@ const MAX_OUTPUT_BYTES = 1_000_000;
 export interface CommandRunOptions {
   /** The run's workspace, when the workflow has one: commands run there. */
   defaultCwd?: string;
+  /** Cancels the run: the child process is killed, not merely abandoned. */
+  signal?: AbortSignal;
 }
 
 export type CommandRunner = (
@@ -43,9 +45,21 @@ export const runCommand: CommandRunner = (node, options) =>
     execFile(
       file,
       args,
-      { cwd: cwdFor(node, options), timeout: node.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxBuffer: MAX_OUTPUT_BYTES, shell: false },
+      {
+        cwd: cwdFor(node, options),
+        timeout: node.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        maxBuffer: MAX_OUTPUT_BYTES,
+        shell: false,
+        signal: options?.signal,
+      },
       (error, stdout, stderr) => {
         const err = error as (Error & { code?: number | string; killed?: boolean }) | null;
+        // A kill from the abort signal looks the same as a timeout kill; the
+        // signal is what tells them apart.
+        if (options?.signal?.aborted) {
+          reject(new WorkflowError("RUN_CANCELLED", `node "${node.id}" was cancelled`, { nodeId: node.id }));
+          return;
+        }
         if (err?.killed) {
           reject(new WorkflowError("NODE_TIMEOUT", `node "${node.id}" command timed out`, { nodeId: node.id }));
           return;
