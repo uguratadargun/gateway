@@ -50,6 +50,13 @@ will reuse, which new agents you will add and why, and the real commands the
 of it; add a new one when this repository genuinely needs different knowledge in
 the prompt. Wait for confirmation.
 
+Start from the canonical shape in the reference — plan → implement → stage →
+diff → test → parallel review → verdict — and change it only where this
+repository gives you a reason. It is not a suggestion to improve on: the diff
+node, the empty-diff edge and the rejection-to-planner route are each there
+because the obvious alternative fails in a way that is invisible until a run
+has already spent its budget.
+
 ## 3. Write it
 
 Agents first — a workflow that names an agent that does not exist yet will be
@@ -68,6 +75,17 @@ another id instead.
 The server validates every save. If it refuses, the definition is wrong: read
 the message, fix that, save again. Do not route around it, and do not write into
 `~/.gate` by hand.
+
+## 4. Check it before you save, then again after
+
+The server validates shape, not sense: it will happily accept a pipeline whose
+reviewers cannot see the diff, whose implementer has no timeout, or whose plan
+can never be revised. Go through **"Before you save — check every one of these"**
+in the reference above, item by item, against the files you just wrote. State
+the result — not "checked", but which items you verified and on which files.
+
+Anything you had to deviate from, say so and say why. A deviation you can defend
+is fine; a silent one is how a pipeline reaches the user needing hand-editing.
 
 When it is saved, tell the user the workflow id, that `/gate-run <id>` starts it,
 and what run input it takes. Do not start a run yourself unless they ask.

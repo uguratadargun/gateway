@@ -146,7 +146,17 @@ input.mode == "strict"
 ### Command node output
 
 A `command` node's output is `{ ok, exitCode, stdout, stderr }` — route on
-`outputs.<id>.ok`, and feed `outputs.<id>.stdout` to the agent that must fix it.
+`outputs.<id>.ok`, and feed **both** `outputs.<id>.stdout` and
+`outputs.<id>.stderr` to the agent that must fix it. Test runners split their
+output across the two and which half carries the failure is not yours to guess;
+an implementer handed only `stdout` can be told a run failed with nothing that
+says why.
+
+A command node's `command` is an argv array run with no shell, which means no
+pipes, no `&&`, no globbing and no `$VAR`. It also means the interpreter is
+found on `PATH`: write `[node, ...]`, `[python3, ...]`, `[npm, test]` — never an
+absolute path into a version manager like `~/.nvm/versions/node/v22.21.1/bin/node`,
+which pins the pipeline to one installed version and breaks on the next upgrade.
 
 ## Tools
 
@@ -166,11 +176,104 @@ Give writing tools only to the agent that implements. A reviewer gets
 `read_file`, `list_files`, `search_files` and nothing more — a reviewer that can
 edit is not a reviewer.
 
+That is also why a reviewer is **handed** the diff rather than left to find it:
+without `run_command` it cannot run `git diff`, and with only a list of changed
+paths it reads each file's current state with no way to tell which lines are
+new. See the diff node in the shape below — it is not optional.
+
 ## Shape that works
 
-Plan → implement → run the project's real test command → review (in parallel
-with a security review) → a condition that either finishes or routes back to
-implementation. Failure and rejection both go back to the implementer. That
-loop is uncapped unless you set `maxVisits`: leave it uncapped for a long task
-whose review cycles you cannot count in advance, and watch the run instead —
-the Stop button ends one that is going nowhere.
+```
+setup ─▶ planner ─▶ implementer ─▶ stage ─▶ diff ─▶ tests ─┬─ pass ─▶ reviews ─┬─ reviewer ─┐
+           ▲                                     ▲         │                   └─ security ─┴─▶ verdict
+           │                                     └── fail ──┘                                     │
+           └──────────────── changes requested ───────────────────────────────────────────────────┘
+```
+
+Plan → implement → take the diff → run the project's real test command → review
+in parallel → a condition that either finishes or sends the work back.
+
+Three things in that picture are easy to get wrong, and each one is a rule.
+
+### The diff comes from git, never from the implementer
+
+Do not give the implementer an output field like `diff: string`. Making a model
+retype a diff it has already written to disk burns its whole output budget, can
+truncate, and can drift from what is actually in the worktree — the reviewers
+then review a description of the change instead of the change.
+
+Two command nodes between the implementer and the tests, because `command` is
+argv with no shell:
+
+```yaml
+  - id: stage
+    type: command
+    label: Stage new files            # `add -N` so new files appear in the diff
+    command: [git, add, -N, .]
+    next: diff
+
+  - id: diff
+    type: command
+    label: git diff
+    command: [git, diff]
+    edges:
+      - when: outputs.diff.stdout != ""
+        to: tests
+        label: has changes
+      - to: nothing-changed           # a terminal with status: failed
+        label: worktree unchanged
+```
+
+Every reviewer then declares `inputs: [diff.stdout, …]` and reads
+`{{inputs.diff.stdout}}`. The empty-diff edge matters too: an implementer that
+wrote nothing must fail the run, not hand the reviewers a blank page to approve.
+
+### Rejection goes back to the planner, not the implementer
+
+A failing test goes back to the **implementer** — the plan was fine, the code
+was not. A rejected review goes back to the **planner**, and the planner then
+hands a revised plan down.
+
+The reason is that a review rejection is very often "this was cut at the wrong
+seam", and the implementer cannot act on that: it is holding a plan that says
+to do exactly what was just rejected, so it produces the same shape again and
+the loop spins until the budget stops it. Give the planner the optional inputs
+that let it revise:
+
+```yaml
+inputs: [reviewer.findings?, security.findings?, implementer.summary?]
+```
+
+They are empty on the first pass, which is how one planner file serves both.
+
+### Every output a node declares must be read by something
+
+An agent that returns `risks` nobody consumes is paying for tokens that go
+nowhere. Before saving, trace each field of each agent's `output.schema` to the
+`inputs:` list that reads it, and delete the ones with no reader.
+
+## Before you save — check every one of these
+
+A definition that fails any of these is wrong even though the server will
+accept it. The server validates shape, not sense.
+
+- [ ] **Every agent carries `timeoutMs: 3600000`** — explicitly, all of them, the
+      implementer included. Not `0`, which means no timeout at all and lets a
+      wedged node hang the run until someone notices it. Raise it for an agent
+      you expect to run longer; never lower it below the hour without a reason.
+- [ ] **`maxCostUsd` is set** to something the user would actually pay for one
+      run. It is the only ceiling that bounds an uncapped pipeline.
+- [ ] **`maxWorkflowSteps: 0` and `maxVisits: 0`** unless the user asked for a
+      cap. Rounds and revisits cannot be counted in advance; spend can.
+- [ ] **A `stage` + `diff` node pair exists**, and every reviewer takes
+      `diff.stdout` — not `changed_files`, not a `diff` field from the model.
+- [ ] **The empty-diff edge exists** and lands on a `status: failed` terminal.
+- [ ] **Review rejection routes to the planner**, test failure to the implementer.
+- [ ] **The planner declares the optional review inputs** so a second pass can
+      revise the plan.
+- [ ] **Command nodes that can fail feed both `stdout` and `stderr`** to whoever
+      must fix them.
+- [ ] **No absolute interpreter paths** in any `command` — `PATH` resolves them.
+- [ ] **No orphan output fields** — every one is read somewhere.
+- [ ] **Every command you wrote is a command this repository really has**, taken
+      from `package.json` / `Makefile` / CI, not invented.
