@@ -44,12 +44,17 @@ export function parseAgent(
   if (!prompt) throw new AgentDefinitionError("prompt body is empty", id);
 
   const def: AgentDefinition = { ...parsed.data, id, prompt, sourcePath: meta.sourcePath, updatedAt: meta.updatedAt };
-  const unknownTools = def.tools.filter((t) => !isKnownTool(t));
-  if (unknownTools.length) {
-    throw new AgentDefinitionError(
-      `unknown tool${unknownTools.length > 1 ? "s" : ""}: ${unknownTools.join(", ")} (available: ${knownToolNames().join(", ")})`,
-      id,
-    );
+  // Only gate's own loop serves gate's own tools. A claude-code agent names
+  // Claude Code's (`Read`, `Grep`, `Bash`, …), which this registry has never
+  // heard of and has no business vetoing — the CLI rejects an unknown one.
+  if (def.executor === "gate") {
+    const unknownTools = def.tools.filter((t) => !isKnownTool(t));
+    if (unknownTools.length) {
+      throw new AgentDefinitionError(
+        `unknown tool${unknownTools.length > 1 ? "s" : ""}: ${unknownTools.join(", ")} (available: ${knownToolNames().join(", ")})`,
+        id,
+      );
+    }
   }
   assertTemplateInputsDeclared(def);
   return def;

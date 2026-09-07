@@ -8,6 +8,8 @@ import { ToolError, type ToolContext } from "@/runtime/tools/types";
 import type { RunWorkspace } from "@/runtime/workspace";
 import type { WorkflowNode } from "@/workflows/types";
 
+import { runClaudeCodeNode } from "./claude-code";
+
 /**
  * Runs one agent node: resolve declared inputs → prompt → model call. An agent
  * that declares tools keeps the turn going — model asks for a tool, the tool
@@ -95,6 +97,17 @@ export async function executeAgentNode(
   }
 
   const workspace = deps.workspace ?? null;
+  // `?? default` and not `|| default`: an explicit 0 means no deadline at all.
+  const nodeTimeoutMs = agent.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
+  const nodeDeadline = nodeTimeoutMs > 0 ? Date.now() + nodeTimeoutMs : null;
+
+  // The other loop. Same inputs, same prompt, same output contract — only who
+  // holds the conversation and serves the tools changes.
+  if (agent.executor === "claude-code") {
+    const res = await runClaudeCodeNode(agent, prompt, node.id, { workspace, onToolCall: deps.onToolCall, signal: deps.signal }, nodeDeadline);
+    return { input: inputs, output: res.output, usage: res.usage, toolCalls: res.toolCalls };
+  }
+
   const tools = toolsFor(agent.tools, Boolean(workspace));
   const canWrite = tools.some((t) => WRITE_TOOLS.has(t.name));
   const toolDefs = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
@@ -106,9 +119,7 @@ export async function executeAgentNode(
   const toolCalls: ToolCallRecord[] = [];
   let writes = 0;
   const usage: NodeUsageRecord = { model: agent.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
-  // `?? default` and not `|| default`: an explicit 0 means no deadline at all.
-  const timeoutMs = agent.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
-  const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : null;
+  const deadline = nodeDeadline;
   const maxIterations = agent.maxToolIterations ?? deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
 
   try {
@@ -207,7 +218,7 @@ function reconNudge(rounds: number, toolCallCount: number): string | null {
   );
 }
 
-function systemPrompt(agent: AgentDefinition, hasTools: boolean, canWrite: boolean): string {
+export function systemPrompt(agent: AgentDefinition, hasTools: boolean, canWrite: boolean): string {
   const parts = [`You are the "${agent.name}" agent in an automated workflow.`];
   if (agent.description) parts.push(agent.description);
   if (hasTools) {
@@ -242,7 +253,7 @@ function extractJson(text: string): string {
   return start >= 0 && end > start ? body.slice(start, end + 1) : body;
 }
 
-function parseOutput(agent: { id: string; output: AgentOutputSpec }, text: string, nodeId: string): unknown {
+export function parseOutput(agent: { id: string; output: AgentOutputSpec }, text: string, nodeId: string): unknown {
   if (agent.output.type === "text") return text.trim();
   let parsed: unknown;
   try {
@@ -266,7 +277,7 @@ function parseOutput(agent: { id: string; output: AgentOutputSpec }, text: strin
 }
 
 /** The agent's timeout covers the whole tool loop, not one model call. */
-function withDeadline<T>(p: Promise<T>, deadline: number | null, nodeId: string): Promise<T> {
+export function withDeadline<T>(p: Promise<T>, deadline: number | null, nodeId: string): Promise<T> {
   if (!deadline) return p;
   const remaining = deadline - Date.now();
   if (remaining <= 0) return Promise.reject(new WorkflowError("NODE_TIMEOUT", `node "${nodeId}" ran out of time`, { nodeId }));

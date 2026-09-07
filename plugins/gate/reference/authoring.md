@@ -27,6 +27,7 @@ timeoutMs: 3600000                  # DEFAULT when omitted, and what a new agent
                                     # works a large repo; 0 = no timeout at all.
 maxTokens: 32000                    # optional; thinking counts against it (default 8192)
 maxToolIterations: 0                # optional; 0 (the default) = as many tool rounds as it needs
+executor: gate                      # or: claude-code — see Executors below
 ---
 
 Prompt text. Two placeholder forms, and nothing else — no expressions, no code:
@@ -180,6 +181,36 @@ That is also why a reviewer is **handed** the diff rather than left to find it:
 without `run_command` it cannot run `git diff`, and with only a list of changed
 paths it reads each file's current state with no way to tell which lines are
 new. See the diff node in the shape below — it is not optional.
+
+## Executors — who runs the loop inside a node
+
+`executor: gate` (the default) means gate holds the conversation and serves the
+six tools above. `executor: claude-code` hands the node to a headless Claude
+Code running in the worktree instead.
+
+|  | `gate` | `claude-code` |
+| --- | --- | --- |
+| tools | the six above, with hard caps: 200KB reads, search stops at 100 matches, 30KB of command output | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`, `TodoWrite`… — real ripgrep, ranged reads, uniqueness-checked edits |
+| context | every tool result appended, never trimmed | compacted by the harness |
+| `tools:` names | `read_file`, `edit_file`, … | `Read`, `Edit`, `Grep`, … |
+
+The context row is the one that decides it. A node that reads its way through a
+large repository on the gate loop ends up re-sending a six-figure context every
+round: a planner measured here spent $7 and 9M tokens without answering, most of
+it re-reading itself. No round cap fixes that — a cap kills the node; compaction
+lets it finish. Reach for `claude-code` on any node that explores or edits a real
+repository, and leave short deterministic nodes on `gate`, which starts instantly
+where the harness pays about 50-70K tokens of system prompt to start at all.
+
+Routing, metering and `maxCostUsd` are unaffected: the child is pointed at this
+gate's own gateway, so every call it makes is routed and counted exactly like one
+gate made itself. It needs a `workspace` — the worktree is what it runs in — and it runs
+unattended with `--permission-mode bypassPermissions`, the
+`--dangerously-skip-permissions` setting: an implementer that must run the
+project's own toolchain cannot have its commands enumerated in advance, and a
+denied call in an unattended run surfaces as a mysterious failure an hour later.
+Know what that buys and costs — the worktree is a throwaway branch, but Bash is
+not confined to it, so a node is bounded by the machine gate runs on.
 
 ## Shape that works
 

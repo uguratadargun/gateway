@@ -37,7 +37,22 @@ export const agentFrontmatterSchema = z
     /** Upstream node outputs this agent is allowed to read, e.g. "planner.plan". */
     inputs: z.array(z.string().min(1).max(200)).max(50).default([]),
     output: agentOutputSpecSchema.default({ type: "text" }),
-    /** Tool names this agent may invoke. Declared now, unused until tools ship. */
+    /**
+     * Which loop runs this agent's node.
+     *
+     * `gate` is the built-in one: gate holds the conversation and serves its own
+     * six tools. `claude-code` hands the node to a headless Claude Code in the
+     * worktree instead — better tools, and a harness that compacts its context
+     * rather than appending every tool result until the node re-reads 100K a
+     * round. Routing, metering and the run budget are unaffected either way:
+     * the child is pointed at this gate's own gateway.
+     */
+    executor: z.enum(["gate", "claude-code"]).default("gate"),
+    /**
+     * Tool names this agent may invoke. Which names are valid depends on the
+     * executor: gate's own (`read_file`, `edit_file`, …) or Claude Code's
+     * (`Read`, `Edit`, `Grep`, `Bash`, …).
+     */
     tools: z.array(z.string().min(1).max(64)).max(50).default([]),
     /**
      * Wall-clock cap on one visit to this agent's node — every tool round it
