@@ -151,6 +151,47 @@ export async function runRepoSetup(id: string): Promise<RepoRecord | null> {
 }
 
 /**
+ * Fetch and fast-forward a connected repository.
+ *
+ * Fast-forward only, deliberately: this checkout is shared by every run and is
+ * not a place to resolve a merge. If it will not fast-forward, that is a person's
+ * decision and the log says so rather than leaving a half-merged tree behind.
+ *
+ * The setup commands run again afterwards, because a pull that moved the
+ * lockfile and did not reinstall is how a worktree ends up borrowing
+ * dependencies that no longer match the code.
+ */
+export async function pullRepo(id: string): Promise<RepoRecord | null> {
+  const repo = getRepo(id);
+  if (!repo) return null;
+
+  setRepoStatus(id, "installing");
+  const parts: string[] = [];
+  for (const argv of [
+    ["git", "fetch", "--prune", "--quiet"],
+    ["git", "pull", "--ff-only"],
+  ]) {
+    const { ok, log } = await runOne(argv, repo.root);
+    parts.push(log);
+    if (!ok) {
+      setRepoStatus(id, "failed", parts.join("\n\n").slice(-MAX_LOG_BYTES));
+      return getRepo(id);
+    }
+  }
+
+  for (const argv of repo.setup) {
+    const { ok, log } = await runOne(argv, repo.root);
+    parts.push(log);
+    if (!ok) {
+      setRepoStatus(id, "failed", parts.join("\n\n").slice(-MAX_LOG_BYTES));
+      return getRepo(id);
+    }
+  }
+  setRepoStatus(id, "ready", parts.join("\n\n").slice(-MAX_LOG_BYTES));
+  return getRepo(id);
+}
+
+/**
  * Get a fresh worktree ready: borrow the checkout's installed dependencies,
  * then run whatever the repo said each worktree needs.
  *

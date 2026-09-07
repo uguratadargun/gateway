@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FolderGit2, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { DownloadCloud, FolderGit2, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -116,6 +116,12 @@ export default function ReposPage() {
     load();
   }
 
+  async function pull(id: string) {
+    setRepos((p) => p.map((r) => (r.id === id ? { ...r, status: "installing" } : r)));
+    await fetch(`/api/repos/${id}/pull`, { method: "POST" });
+    load();
+  }
+
   async function reinstall(id: string) {
     setRepos((p) => p.map((r) => (r.id === id ? { ...r, status: "installing" } : r)));
     await fetch(`/api/repos/${id}/setup`, { method: "POST" });
@@ -214,6 +220,10 @@ export default function ReposPage() {
                 </Badge>
               )}
               <span className="ml-auto flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={() => pull(repo.id)} disabled={repo.status === "installing"}>
+                  <DownloadCloud className={cn(repo.status === "installing" && "animate-pulse")} />
+                  Pull
+                </Button>
                 <Button variant="ghost" size="sm" onClick={() => reinstall(repo.id)} disabled={repo.status === "installing"}>
                   <RefreshCw className={cn(repo.status === "installing" && "animate-spin")} />
                   Re-run setup
