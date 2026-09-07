@@ -9,6 +9,7 @@ import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } fr
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { formatDuration } from "@/lib/duration";
 import { takenLinks, type RoutingLink } from "@/workflows/routing";
 import type { WorkflowEvent } from "@/events/types";
 import { stepFailure } from "@/executions/failure";
@@ -361,7 +362,7 @@ export default function ExecutionDetailPage() {
                 <span className="min-w-0 flex-1 truncate font-mono">{s.nodeId}</span>
                 {s.visit > 1 && <span className="shrink-0 text-[10px] text-muted-foreground">×{s.visit}</span>}
                 <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
-                  {s.finishedAt - s.startedAt} ms
+                  {formatDuration(s.finishedAt - s.startedAt)}
                 </span>
                 <span className={s.status === "failed" ? "text-destructive" : "text-emerald-500"}>●</span>
               </button>
@@ -419,7 +420,7 @@ export default function ExecutionDetailPage() {
                               <span className={c.ok ? "text-emerald-500" : "text-destructive"}>●</span>
                               <span>{c.tool}</span>
                               <span className="truncate text-muted-foreground">{preview(c.input).slice(0, 120)}</span>
-                              <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">{c.durationMs} ms</span>
+                              <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">{formatDuration(c.durationMs)}</span>
                             </div>
                             <div className="truncate pl-4 text-muted-foreground">{c.result.split("\n")[0].slice(0, 160)}</div>
                           </div>

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SelectHandle, SelectionBar, deleteMany, rowClass, useSelection } from "@/components/bulk-select";
+import { formatDuration } from "@/lib/duration";
 import type { ExecutionRecord } from "@/executions/types";
 
 const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | "destructive"> = {
@@ -18,8 +19,7 @@ const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | 
 
 function duration(e: { startedAt: number; finishedAt: number | null }): string {
   if (!e.finishedAt) return "running";
-  const ms = e.finishedAt - e.startedAt;
-  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+  return formatDuration(e.finishedAt - e.startedAt);
 }
 
 /**
