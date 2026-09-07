@@ -8,6 +8,8 @@ import { runWorkflow, type RunWorkflowOptions } from "@/runtime/engine";
 import { WorkflowError } from "@/runtime/errors";
 import type { WorkflowState } from "@/runtime/state";
 import { createRunWorkspace, summarizeWorkspace, type ResolvedWorkspaceSpec, type RunWorkspace } from "@/runtime/workspace";
+import { getRepo, type RepoRecord } from "@/repos/store";
+import { isPathLike, prepareWorktree } from "@/repos/setup";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { getWorkflow } from "@/workflows/registry";
 import type { WorkflowDefinition, WorkspaceSpec } from "@/workflows/types";
@@ -61,14 +63,41 @@ export interface StartExecutionResult {
  * Which repository a run works in. The workflow may pin one; otherwise it is
  * the `repo` run input, so a single pipeline serves whatever project it is
  * pointed at. An explicit input wins over the pin.
+ *
+ * The value may be a path, as it always could, or the id of a connected repo —
+ * which is the same answer with the checkout, the base ref and the per-worktree
+ * preparation already attached to it. A path is anything that looks like one;
+ * everything else is looked up, and an id that is not registered says so rather
+ * than being handed to git as a directory name.
  */
-function resolveWorkspace(spec: WorkspaceSpec, input: Record<string, unknown>): ResolvedWorkspaceSpec {
+function resolveWorkspace(
+  spec: WorkspaceSpec,
+  input: Record<string, unknown>,
+): { spec: ResolvedWorkspaceSpec; repo: RepoRecord | null } {
   const given = typeof input.repo === "string" ? input.repo.trim() : "";
-  const repo = given || spec.repo?.trim() || "";
-  if (!repo) {
+  const value = given || spec.repo?.trim() || "";
+  if (!value) {
     throw new WorkflowError("WORKSPACE_ERROR", 'this workflow works in a repository; start it with a "repo" run input');
   }
-  return { ...spec, repo };
+  if (isPathLike(value)) return { spec: { ...spec, repo: value }, repo: null };
+
+  const connected = getRepo(value);
+  if (!connected) {
+    throw new WorkflowError(
+      "WORKSPACE_ERROR",
+      `no connected repository "${value}" — connect it first, or give an absolute path`,
+    );
+  }
+  if (connected.status !== "ready") {
+    throw new WorkflowError(
+      "WORKSPACE_ERROR",
+      `repository "${value}" has not finished its setup (${connected.status}); run it from the Repos page first`,
+    );
+  }
+  return {
+    spec: { ...spec, repo: connected.root, baseRef: spec.baseRef ?? connected.baseRef ?? undefined },
+    repo: connected,
+  };
 }
 
 export function startExecution(workflowId: string, input: Record<string, unknown> = {}): StartExecutionResult {
@@ -88,9 +117,12 @@ export function startExecution(workflowId: string, input: Record<string, unknown
   // The worktree is created before the first node runs: a workflow that cannot
   // get its workspace fails immediately rather than half-way through a plan.
   let workspace: RunWorkspace | null = null;
+  let connected: RepoRecord | null = null;
   if (workflow.workspace) {
     try {
-      workspace = createRunWorkspace(resolveWorkspace(workflow.workspace, input), executionId);
+      const resolved = resolveWorkspace(workflow.workspace, input);
+      connected = resolved.repo;
+      workspace = createRunWorkspace(resolved.spec, executionId);
       setExecutionWorkspace(executionId, { ...workspace, commit: null, changedFiles: [] });
     } catch (e) {
       const message = (e as Error).message;
@@ -102,7 +134,7 @@ export function startExecution(workflowId: string, input: Record<string, unknown
     }
   }
 
-  return { executionId, done: launch(workflow, input, executionId, workspace) };
+  return { executionId, done: launch(workflow, input, executionId, workspace, undefined, connected) };
 }
 
 /**
@@ -156,41 +188,50 @@ function reuseWorkspace(workspace: ExecutionWorkspace | null): RunWorkspace | nu
 }
 
 /** Runs the engine, tracks it as cancellable, and settles the execution either way. */
-function launch(
+async function launch(
   workflow: WorkflowDefinition,
   input: Record<string, unknown>,
   executionId: string,
   workspace: RunWorkspace | null,
   resume?: RunWorkflowOptions["resume"],
+  /** Connected repo, when the run named one: its worktree preparation runs first. */
+  connected?: RepoRecord | null,
 ): Promise<WorkflowState> {
   const controller = new AbortController();
   inFlight.set(executionId, controller);
 
-  return runWorkflow(workflow, {
-    provider,
-    input,
-    executionId,
-    workspace,
-    emit: publishWorkflowEvent,
-    onStep: (step) => recordStep(executionId, step),
-    signal: controller.signal,
-    resume,
-  })
-    .then((state) => {
-      inFlight.delete(executionId);
-      finishExecution(state, workspaceSummary(workspace));
-      return state;
-    })
-    .catch((e: unknown) => {
-      // The engine records its own failures; this only covers a crash in the
-      // engine itself, which must still close out the execution row.
-      inFlight.delete(executionId);
-      const message = (e as Error).message;
-      const state = failedState(executionId, workflow.id, input, "WORKFLOW_ROUTING_ERROR", message);
-      finishExecution(state, workspaceSummary(workspace));
-      publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: "WORKFLOW_ROUTING_ERROR", message });
-      return state;
+  try {
+    // Linking dependencies and generating build output happen before the first
+    // node, not as nodes: a worktree carries only what git tracks, and every
+    // pipeline pointed at the same repo was otherwise repeating the same three
+    // command nodes — one of which, got wrong, cost a whole run.
+    if (connected && workspace) await prepareWorktree(connected, workspace.root);
+
+    const state = await runWorkflow(workflow, {
+      provider,
+      input,
+      executionId,
+      workspace,
+      emit: publishWorkflowEvent,
+      onStep: (step) => recordStep(executionId, step),
+      signal: controller.signal,
+      resume,
     });
+    inFlight.delete(executionId);
+    finishExecution(state, workspaceSummary(workspace));
+    return state;
+  } catch (e) {
+    // The engine records its own node failures; this covers preparing the
+    // worktree and a crash in the engine itself, both of which must still
+    // close out the execution row.
+    inFlight.delete(executionId);
+    const message = (e as Error).message;
+    const code = e instanceof WorkflowError ? e.code : "WORKFLOW_ROUTING_ERROR";
+    const state = failedState(executionId, workflow.id, input, code, message);
+    finishExecution(state, workspaceSummary(workspace));
+    publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: code as never, message });
+    return state;
+  }
 }
 
 function workspaceSummary(workspace: RunWorkspace | null): ExecutionWorkspace | null {

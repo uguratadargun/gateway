@@ -132,6 +132,25 @@ CREATE TABLE IF NOT EXISTS workflow_execution_steps (
   PRIMARY KEY (execution_id, step_index)
 );
 
+CREATE TABLE IF NOT EXISTS repos (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  -- What the user typed: a path, or a git URL gate cloned from.
+  source TEXT NOT NULL,
+  -- Where it is on disk, which is what a run's worktree branches from.
+  root TEXT NOT NULL,
+  -- 1 when gate created the checkout, and so may remove it again.
+  cloned INTEGER NOT NULL DEFAULT 0,
+  base_ref TEXT,
+  -- argv arrays: setup runs once in the repo, prepare in every worktree.
+  setup_json TEXT NOT NULL DEFAULT '[]',
+  prepare_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'new',
+  last_setup_at INTEGER,
+  last_setup_log TEXT,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS workflow_layouts (
   workflow_id TEXT PRIMARY KEY,
   layout_json TEXT NOT NULL,

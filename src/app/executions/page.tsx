@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { RefreshCw } from "lucide-react";
+import { Play, RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SelectHandle, SelectionBar, deleteMany, rowClass, useSelection } from "@/components/bulk-select";
-import { formatDuration } from "@/lib/duration";
+import { formatDuration, formatElapsed } from "@/lib/duration";
 import type { ExecutionRecord } from "@/executions/types";
 
 const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | "destructive"> = {
@@ -17,9 +17,13 @@ const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | 
   failed: "destructive",
 };
 
-function duration(e: { startedAt: number; finishedAt: number | null }): string {
-  if (!e.finishedAt) return "running";
-  return formatDuration(e.finishedAt - e.startedAt);
+/**
+ * How long a run took — and, while it is still going, how long it has taken so
+ * far. The word "running" said nothing the status badge beside it did not
+ * already say, and hid the one number that tells you whether to go and look.
+ */
+function duration(e: { startedAt: number; finishedAt: number | null }, now: number): string {
+  return e.finishedAt ? formatDuration(e.finishedAt - e.startedAt) : formatElapsed(now - e.startedAt);
 }
 
 /**
@@ -42,6 +46,8 @@ export default function ExecutionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const selection = useSelection(executions.map((e) => e.id));
+  /** Ticks so a running row's elapsed time moves without a page refresh. */
+  const [now, setNow] = useState(() => Date.now());
 
   async function load() {
     const r = await fetch("/api/executions");
@@ -50,6 +56,13 @@ export default function ExecutionsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  const anyRunning = executions.some((e) => !e.finishedAt);
+  useEffect(() => {
+    if (!anyRunning) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [anyRunning]);
 
   async function removeSelected() {
     const ids = [...selection.selected];
@@ -85,9 +98,16 @@ export default function ExecutionsPage() {
             Every workflow run, with the exact path it took. {executions.length} runs.
           </p>
         </div>
-        <Button variant="ghost" size="icon" onClick={load} aria-label="Refresh">
-          <RefreshCw />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Link href="/executions/new">
+            <Button size="sm">
+              <Play /> New run
+            </Button>
+          </Link>
+          <Button variant="ghost" size="icon" onClick={load} aria-label="Refresh">
+            <RefreshCw />
+          </Button>
+        </div>
       </header>
       {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -114,7 +134,7 @@ export default function ExecutionsPage() {
                     <span>·</span>
                     <span>{e.stepCount} steps</span>
                     <span>·</span>
-                    <span>{duration(e)}</span>
+                    <span className="tabular-nums">{duration(e, now)}</span>
                     {e.error && <span className="text-destructive">{e.error.code}</span>}
                   </div>
                 </div>

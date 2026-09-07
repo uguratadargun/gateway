@@ -4,11 +4,12 @@ import { useState } from "react";
 import { Check, Copy, Wrench } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { DiffView } from "@/components/diff-view";
 import { Dialog } from "@/components/ui/dialog";
 import { stepFailure } from "@/executions/failure";
 import type { ExecutionStepRecord } from "@/executions/types";
 import { formatDuration } from "@/lib/duration";
-import { stripAnsi } from "@/lib/utils";
+import { cn, stripAnsi } from "@/lib/utils";
 
 /**
  * One step, in full.
@@ -62,6 +63,123 @@ function Block({ title, text, tone }: { title: string; text: string; tone?: "bad
       <pre className="mt-1 max-h-[45vh] overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/30 p-2 font-mono text-[11px] leading-relaxed">
         {text}
       </pre>
+    </section>
+  );
+}
+
+/**
+ * An agent's input and output, read as data rather than dumped as JSON.
+ *
+ * A reviewer returns `{verdict, findings: [{file, what, fix}, …]}` and takes a
+ * whole `git diff` as input. Rendered as one pretty-printed blob that is a wall
+ * of quotes and \n — the findings are unreadable and the diff is worse. Each
+ * field gets the shape it actually is instead: a diff renders as a diff, a list
+ * of findings as cards, prose as prose.
+ */
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/** One finding, or any small object: its fields as labelled rows. */
+function ObjectCard({ value }: { value: Record<string, unknown> }) {
+  return (
+    <div className="rounded border bg-background p-2">
+      {Object.entries(value).map(([k, v]) => {
+        if (v == null || v === "") return null;
+        return (
+          <div key={k} className="flex gap-2 py-0.5 text-[11px]">
+            <span className="w-14 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">{k}</span>
+            <span className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", k === "file" && "font-mono")}>
+              {typeof v === "string" ? stripAnsi(v) : JSON.stringify(v)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ValueBlock({ label, value }: { label: string; value: unknown }) {
+  if (value == null || value === "") return null;
+
+  // A diff is the one input worth rendering as what it is.
+  if (typeof value === "string" && value.startsWith("diff --git ")) {
+    return (
+      <section>
+        <h3 className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">{label}</h3>
+        <DiffView diff={value} />
+      </section>
+    );
+  }
+  if (typeof value === "string") return <Block title={label} text={stripAnsi(value)} />;
+
+  if (Array.isArray(value)) {
+    if (!value.length) return null;
+    return (
+      <section>
+        <div className="flex items-center gap-2">
+          <h3 className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</h3>
+          <span className="text-[10px] text-muted-foreground/60 tabular-nums">{value.length}</span>
+          <CopyButton text={JSON.stringify(value, null, 2)} />
+        </div>
+        <ol className="mt-1 space-y-1">
+          {value.map((v, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="pt-2 text-[10px] tabular-nums text-muted-foreground">{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                {isPlainObject(v) ? (
+                  <ObjectCard value={v} />
+                ) : (
+                  <div className="rounded border bg-background p-2 text-[11px] whitespace-pre-wrap break-words">
+                    {typeof v === "string" ? stripAnsi(v) : JSON.stringify(v)}
+                  </div>
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+    );
+  }
+
+  // One level down is where an agent's declared inputs live: planner.plan,
+  // diff.stdout, implementer.summary.
+  if (isPlainObject(value)) {
+    return (
+      <>
+        {Object.entries(value).map(([k, v]) => (
+          <ValueBlock key={k} label={`${label}.${k}`} value={v} />
+        ))}
+      </>
+    );
+  }
+  return <Block title={label} text={String(value)} />;
+}
+
+/** The whole of a step's input or output, field by field. */
+function Structured({ label, value }: { label: string; value: unknown }) {
+  if (!isPlainObject(value)) return <Block title={label} text={asText(value)} />;
+  const { verdict, ...rest } = value;
+  return (
+    <section className="space-y-3">
+      {typeof verdict === "string" && (
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">verdict</span>
+          <Badge variant={verdict === "approved" ? "success" : "destructive"} className="text-[10px]">
+            {verdict}
+          </Badge>
+        </div>
+      )}
+      {Object.entries(rest).map(([k, v]) => (
+        <ValueBlock key={k} label={k} value={v} />
+      ))}
+      <details className="text-[10px] text-muted-foreground">
+        <summary className="cursor-pointer">raw {label}</summary>
+        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/30 p-2 font-mono">
+          {asText(value)}
+        </pre>
+      </details>
     </section>
   );
 }
@@ -164,17 +282,19 @@ export function StepDetailDialog({ step, onClose }: { step: ExecutionStepRecord 
             </section>
           )}
 
-          {/* A command's two streams are the point; anything else reads as one output. */}
+          {/* A command's two streams are the point; an agent's output is data. */}
           {command ? (
             <>
               <Block title="stderr" text={command.stderr} tone="bad" />
               <Block title="stdout" text={command.stdout} />
+              <Block title="input" text={asText(step.input)} />
             </>
           ) : (
-            <Block title="output" text={asText(step.output)} />
+            <>
+              <Structured label="output" value={step.output} />
+              <Structured label="input" value={step.input} />
+            </>
           )}
-
-          <Block title="input" text={asText(step.input)} />
         </div>
       )}
     </Dialog>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, GitBranch, Gauge, Maximize2, Play, Radio, RotateCcw, RefreshCw, Square, Wrench } from "lucide-react";
+import { ArrowLeft, Clock, GitBranch, Gauge, Maximize2, Play, Radio, RotateCcw, RefreshCw, Square, Wrench } from "lucide-react";
 
 import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } from "@/components/workflow-graph";
 import { Badge } from "@/components/ui/badge";
@@ -203,10 +203,15 @@ export default function ExecutionDetailPage() {
   }, [running, steps, liveSteps]);
 
   useEffect(() => {
-    if (activeSteps.length === 0) return;
+    if (!running && activeSteps.length === 0) return;
+    setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [activeSteps.length]);
+  }, [running, activeSteps.length]);
+
+  /** How long this run has taken: still counting while it goes, fixed once it ends. */
+  const run = detail?.execution;
+  const elapsed = run ? (run.finishedAt ?? now) - run.startedAt : null;
 
   const statuses = useMemo(() => {
     const out: Record<string, NodeStatus> = {};
@@ -315,6 +320,15 @@ export default function ExecutionDetailPage() {
               </Button>
             </>
           )}
+          {elapsed !== null && (
+            <span
+              className="flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums"
+              title={`started ${new Date(run!.startedAt).toLocaleString()}`}
+            >
+              <Clock className="size-3.5" />
+              {formatElapsed(elapsed)}
+            </span>
+          )}
           {ex && (
             <Badge variant={STATUS_VARIANT[ex.status]} className="text-[10px]">
               {ex.status}
@@ -398,6 +412,29 @@ export default function ExecutionDetailPage() {
           <div className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Steps ({steps.length + activeSteps.length})
           </div>
+
+          {/* Pinned, because the chronological entry for a running step is at
+              the bottom of a list that scrolls — by the third pass there were
+              28 of them, so the one thing you actually want to watch was the
+              one you had to go looking for. */}
+          {activeSteps.length > 0 && (
+            <div className="sticky top-0 z-10 -mx-1 mb-1 space-y-1 border-b bg-background/95 px-1 pb-1.5 backdrop-blur">
+              <div className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-500">
+                running now
+              </div>
+              {activeSteps.map((s) => (
+                <div key={`pin-${s.stepIndex}`} className="flex items-center gap-2 text-xs">
+                  <span className="w-5 shrink-0 text-muted-foreground tabular-nums">{s.stepIndex + 1}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono">{s.nodeId}</span>
+                  {s.visit > 1 && <span className="shrink-0 text-[10px] text-muted-foreground">×{s.visit}</span>}
+                  <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+                    {formatElapsed(now - s.startedAt)}
+                  </span>
+                  <span className="animate-pulse text-amber-500">●</span>
+                </div>
+              ))}
+            </div>
+          )}
           {steps.length + activeSteps.length === 0 && (
             <p className="px-1 text-xs text-muted-foreground">Waiting for the first step…</p>
           )}

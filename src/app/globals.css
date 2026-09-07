@@ -54,3 +54,79 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
+
+@layer base {
+  /**
+   * Scrollbars, in the palette the rest of the page uses.
+   *
+   * The platform default is a wide opaque bar that reads as chrome bolted onto
+   * a panel rather than part of it — loudest exactly where this app scrolls
+   * most, inside small cards: the step list, a diff, a step's output. These
+   * borrow the same tokens everything else does, so they follow the theme
+   * instead of fighting it.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  /* Transparent, not a colour: a track painted over a card's own background
+     draws a channel down its edge. */
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 9999px;
+    /* Padding drawn as a border against the track keeps the thumb clear of the
+       content it sits beside, without narrowing the area you can grab. */
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.55);
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background-color: hsl(var(--muted-foreground) / 0.75);
+  }
+}
+
+/**
+ * React Flow's zoom controls, in this app's palette.
+ *
+ * They ship with their own light theme baked in — a white button with a
+ * near-black icon — which the rest of the canvas already overrode for the
+ * minimap and every Panel, but not here: on a dark background the control sat
+ * there as a white block with nothing readable in it.
+ *
+ * Two things this had to get right, both learned the hard way:
+ *
+ * Outside `@layer base`, because Tailwind tree-shakes class selectors inside a
+ * layer against the content it scans — and `.react-flow` never appears in any
+ * source file here, since the library adds it at runtime. Put in the layer,
+ * these rules were dropped and only this comment survived into the build.
+ *
+ * And set through the library's own custom properties rather than by
+ * out-specifying its selectors, which is the seam it supports and the one that
+ * survives an upgrade.
+ */
+.react-flow {
+  --xy-controls-box-shadow: none;
+  --xy-controls-button-background-color: hsl(var(--background) / 0.85);
+  --xy-controls-button-background-color-hover: hsl(var(--muted));
+  --xy-controls-button-color: hsl(var(--muted-foreground));
+  --xy-controls-button-color-hover: hsl(var(--foreground));
+  --xy-controls-button-border-color: hsl(var(--border));
+}
+
+.react-flow__controls {
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) - 2px);
+  overflow: hidden;
+  backdrop-filter: blur(4px);
+}
