@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2, Minimize2 } from "lucide-react";
+import { Maximize2, Minimize2, X } from "lucide-react";
 import {
   Background,
   Controls,
@@ -12,8 +12,13 @@ import {
   Position,
   ReactFlow,
   applyNodeChanges,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath,
+  getSmoothStepPath,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeChange,
   type NodeProps,
@@ -163,6 +168,84 @@ export interface WorkflowGraphProps {
   className?: string;
 }
 
+/**
+ * An edge that can be removed by clicking the edge itself.
+ *
+ * Clicking one used to select its *source node*, which opened the inspector on
+ * a node with every one of its outgoing edges listed — so picking one arrow
+ * showed two, and you had to work out which of them you had actually pointed
+ * at. The arrow now carries its own delete control, so the thing you click is
+ * the thing that goes.
+ */
+interface EdgeData extends Record<string, unknown> {
+  from: string;
+  index: number;
+  loop: boolean;
+  offset: number;
+  onDelete?: (ref: { from: string; index: number }) => void;
+}
+
+function DeletableEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  label,
+  markerEnd,
+  style,
+  selected,
+  data,
+}: EdgeProps) {
+  const d = data as EdgeData | undefined;
+  const geometry = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
+  const [path, labelX, labelY] = d?.loop
+    ? getSmoothStepPath({ ...geometry, borderRadius: 10, offset: d.offset })
+    : getBezierPath(geometry);
+
+  return (
+    <>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
+      {/* A 1px line is nearly impossible to hit; this invisible one is not. */}
+      <path d={path} fill="none" strokeWidth={16} stroke="transparent" className="react-flow__edge-interaction" />
+      <EdgeLabelRenderer>
+        <div
+          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+          className="pointer-events-auto absolute flex items-center gap-1 nodrag nopan"
+        >
+          {label && (
+            <span className="rounded bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground">{label}</span>
+          )}
+          {d?.onDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                d.onDelete?.({ from: d.from, index: d.index });
+              }}
+              aria-label="Delete this edge"
+              title="Delete this edge"
+              className={cn(
+                "grid size-4 place-items-center rounded-full border bg-background text-muted-foreground",
+                "transition-opacity hover:border-destructive hover:bg-destructive hover:text-destructive-foreground",
+                // Faint until wanted, but never hidden: a control you have to
+                // discover by hovering the right pixel is one nobody finds.
+                selected ? "opacity-100" : "opacity-40 hover:opacity-100 focus:opacity-100",
+              )}
+            >
+              <X className="size-2.5" />
+            </button>
+          )}
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
+const edgeTypes = { workflow: DeletableEdge };
+
 export function WorkflowGraph({
   nodes,
   entry,
@@ -255,6 +338,11 @@ export function WorkflowGraph({
     knownLayout.current = layout ?? {};
   }, [nodes, layout, fallback, cardData]);
 
+  const deleteOneEdge = useCallback(
+    (ref: { from: string; index: number }) => onDeleteEdges?.([ref]),
+    [onDeleteEdges],
+  );
+
   const rfEdges: Edge[] = useMemo(
     () =>
       nodes.flatMap((n) =>
@@ -267,15 +355,20 @@ export function WorkflowGraph({
             id: `${n.id}-${e.to}-${i}`,
             source: n.id,
             target: e.to,
-            type: loop ? "smoothstep" : "default",
+            type: "workflow",
             sourceHandle: loop ? "loop-out" : "out",
             targetHandle: loop ? "loop-in" : "in",
-            pathOptions: loop ? { borderRadius: 10, offset: 26 + 20 * (loopLane.get(key) ?? 0) } : undefined,
             label: e.label ?? e.when,
             animated: active,
             // The index is the edge's identity in the workflow file: two edges
             // can share a source and a target and still differ by condition.
-            data: { from: n.id, index: i },
+            data: {
+              from: n.id,
+              index: i,
+              loop,
+              offset: 26 + 20 * (loopLane.get(key) ?? 0),
+              onDelete: editable ? deleteOneEdge : undefined,
+            },
             deletable: editable,
             markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color },
             style: {
@@ -283,15 +376,10 @@ export function WorkflowGraph({
               strokeWidth: active ? 2 : loop ? 1.5 : 1,
               ...(loop ? { strokeDasharray: "6 4" } : {}),
             },
-            labelShowBg: true,
-            labelBgStyle: { fill: "hsl(var(--background))", fillOpacity: 0.9 },
-            labelBgPadding: [4, 2] as [number, number],
-            labelBgBorderRadius: 4,
-            labelStyle: { fontSize: 10, fill: loop ? LOOP_COLOR : "hsl(var(--muted-foreground))" },
           };
         }),
       ),
-    [nodes, activeEdges, editable, loops, loopLane],
+    [nodes, activeEdges, editable, loops, loopLane, deleteOneEdge],
   );
 
   // Positions are persisted when a drag ends, not on every frame; the counter
@@ -377,9 +465,9 @@ export function WorkflowGraph({
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onNodeClick={(_, n) => onSelect?.(n.id)}
-        onEdgeClick={(_, e) => onSelect?.(e.source)}
         onPaneClick={() => onSelect?.(null)}
         onConnect={handleConnect}
         onEdgesDelete={handleEdgesDelete}

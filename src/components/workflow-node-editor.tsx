@@ -33,6 +33,52 @@ const fieldClass = "h-8 text-xs";
 const selectClass =
   "flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
+/**
+ * The argv editor.
+ *
+ * Held as text rather than derived from the array on every render: trimming
+ * each line as it was typed meant a controlled textarea swallowed the space
+ * the moment you pressed it, so "npm test" could never be typed at all — the
+ * caret snapped back after "npm". The array is still what leaves here; only
+ * the trimming waits until the line is whole.
+ */
+function CommandLines({
+  nodeId,
+  value,
+  onChange,
+}: {
+  nodeId: string;
+  value: string[];
+  onChange: (command: string[]) => void;
+}) {
+  const [text, setText] = useState(() => value.join("\n"));
+
+  // Re-seed when the inspector moves to another node, but never while typing
+  // in this one — that is the snap-back all over again.
+  useEffect(() => {
+    setText(value.join("\n"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeId]);
+
+  return (
+    <Textarea
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(
+          e.target.value
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean),
+        );
+      }}
+      spellCheck={false}
+      placeholder={"npm\ntest"}
+      className="h-20 resize-none font-mono text-xs"
+    />
+  );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
@@ -158,13 +204,13 @@ export function WorkflowNodeEditor({
 
       {node.type === "command" && (
         <>
-          <Field label="command (one argument per line)">
-            <Textarea
-              value={(node.command ?? []).join("\n")}
-              onChange={(e) => onChange({ command: e.target.value.split("\n").map((l) => l.trim()).filter(Boolean) })}
-              spellCheck={false}
-              className="h-20 resize-none font-mono text-xs"
-            />
+          <Field label="command — one argument per line">
+            <CommandLines nodeId={node.id} value={node.command ?? []} onChange={(command) => onChange({ command })} />
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              Run without a shell, so no pipes, <code>&amp;&amp;</code> or globbing — and{" "}
+              <code className="text-foreground/80">npm test</code> is two lines, not one. An argument may itself contain
+              spaces: put the whole <code className="text-foreground/80">--exclude &#123;a,b&#125;</code> value on its own line.
+            </p>
           </Field>
           <Field label="cwd (optional, inside the workspace)">
             <Input
