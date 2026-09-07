@@ -155,14 +155,18 @@ export async function runClaudeCodeNode(
       agent.model,
       "--add-dir",
       workspace.root,
-      // A run is unattended: a prompt nobody can answer is a hang, not a question.
+      // A run is unattended, so nothing may wait for an answer.
       //
-      // This is the `--dangerously-skip-permissions` setting. `--allowed-tools`
-      // is not a capability filter — it gates permission prompts, and under this
-      // mode there are none — so a node here has the whole toolset either way,
-      // which is what a node working a real repository is meant to have.
+      // Not `bypassPermissions`: Claude Code refuses that outright when the
+      // process is root, which is how gate runs as a service — and it refuses
+      // for a good reason, because that mode as root is unrestricted execution
+      // on the host. `auto` decides without asking, and `--permission-prompts
+      // none` denies whatever would still have prompted rather than hanging on
+      // a question nobody is there to answer.
       "--permission-mode",
-      "bypassPermissions",
+      "auto",
+      "--permission-prompts",
+      "none",
     ];
     if (agent.effort) args.push("--effort", agent.effort);
     if (resume) args.push("--resume", resume);
@@ -328,7 +332,12 @@ export async function runClaudeCodeNode(
     if (parsed.is_error || typeof parsed.result !== "string") {
       throw new WorkflowError(
         "MODEL_EXECUTION_ERROR",
-        `node "${nodeId}": claude-code did not finish (${parsed.subtype ?? "unknown"})`,
+        `node "${nodeId}": claude-code did not finish (${parsed.subtype ?? "unknown"})` +
+          // Denials are silent otherwise, and a node that lost the tool it
+          // needed reads exactly like one that simply answered badly.
+          (parsed.permission_denials?.length
+            ? `; ${parsed.permission_denials.length} tool call(s) denied by the permission mode`
+            : ""),
         // The tool calls it did make and the tokens it did spend are attached, so
         // a failure is recorded with its evidence instead of looking like nothing.
         { nodeId, agentId: agent.id, usage, toolCalls },

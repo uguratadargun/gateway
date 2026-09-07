@@ -101,9 +101,12 @@ describe("claude-code executor", () => {
     expect(args[args.indexOf("--output-format") + 1]).toBe("stream-json");
     expect(args).toContain("--verbose");
     // Unattended: a permission prompt nobody can answer is a hang, not a question.
-    expect(args[args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
-    // Full toolset on purpose — --allowed-tools gates prompts, not capability,
-    // and under bypassPermissions it would be theatre either way.
+    // Unattended, and running as root as a service — where Claude Code refuses
+    // bypassPermissions outright. `auto` decides without asking; the prompt
+    // target denies whatever is left rather than waiting for nobody.
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("auto");
+    expect(args[args.indexOf("--permission-prompts") + 1]).toBe("none");
+    // Full toolset on purpose — --allowed-tools gates prompts, not capability.
     expect(args).not.toContain("--allowed-tools");
     expect(args).not.toContain("--disallowed-tools");
   });
