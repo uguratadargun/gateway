@@ -47,8 +47,28 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/**
+ * Machine output or prose?
+ *
+ * A `git diff`, a test runner's stdout and a JSON blob all need a monospace
+ * column: the alignment carries meaning and a wrapped line is a wrong line. A
+ * plan, a summary, a reviewer's reasoning need the opposite — 11px monospace
+ * turns three paragraphs of argument into something you skim instead of read,
+ * which is exactly the part of a run worth reading.
+ */
+function looksMechanical(title: string, text: string): boolean {
+  if (/^(stdout|stderr|diff|result|input|output)$/i.test(title) || title.endsWith(".stdout") || title.endsWith(".stderr")) {
+    return true;
+  }
+  const head = text.trimStart();
+  if (head.startsWith("{") || head.startsWith("[") || head.startsWith("diff --git ")) return true;
+  // Wide or tab-indented lines are laid out, not written.
+  return text.includes("\t") || text.split("\n").some((l) => l.length > 200);
+}
+
 function Block({ title, text, tone }: { title: string; text: string; tone?: "bad" }) {
   if (!text.trim()) return null;
+  const mechanical = looksMechanical(title, text);
   return (
     <section>
       <div className="flex items-center gap-2">
@@ -60,9 +80,17 @@ function Block({ title, text, tone }: { title: string; text: string; tone?: "bad
         <span className="text-[10px] text-muted-foreground/60 tabular-nums">{text.length.toLocaleString()} chars</span>
         <CopyButton text={text} />
       </div>
-      <pre className="mt-1 max-h-[45vh] overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/30 p-2 font-mono text-[11px] leading-relaxed">
+      <div
+        className={cn(
+          "mt-1 max-h-[45vh] overflow-auto whitespace-pre-wrap break-words rounded border bg-muted/30 p-2",
+          mechanical
+            ? "font-mono text-[11px] leading-relaxed"
+            : // Prose: bigger, proportional, and given room between lines.
+              "text-[13px] leading-6",
+        )}
+      >
         {text}
-      </pre>
+      </div>
     </section>
   );
 }
@@ -90,7 +118,12 @@ function ObjectCard({ value }: { value: Record<string, unknown> }) {
         return (
           <div key={k} className="flex gap-2 py-0.5 text-[11px]">
             <span className="w-14 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">{k}</span>
-            <span className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", k === "file" && "font-mono")}>
+            <span
+              className={cn(
+                "min-w-0 flex-1 whitespace-pre-wrap break-words",
+                k === "file" || k === "symbol" ? "font-mono" : "text-[12px] leading-5",
+              )}
+            >
               {typeof v === "string" ? stripAnsi(v) : JSON.stringify(v)}
             </span>
           </div>
@@ -131,7 +164,12 @@ function ValueBlock({ label, value }: { label: string; value: unknown }) {
                 {isPlainObject(v) ? (
                   <ObjectCard value={v} />
                 ) : (
-                  <div className="rounded border bg-background p-2 text-[11px] whitespace-pre-wrap break-words">
+                  <div
+                    className={cn(
+                      "whitespace-pre-wrap break-words rounded border bg-background p-2",
+                      typeof v === "string" && /^[\w./-]+$/.test(v) ? "font-mono text-[11px]" : "text-[12px] leading-5",
+                    )}
+                  >
                     {typeof v === "string" ? stripAnsi(v) : JSON.stringify(v)}
                   </div>
                 )}
