@@ -83,6 +83,14 @@ export default function ReposPage() {
     const data = await r.json();
     setBusy(null);
     if (!r.ok) return setError(data.error ?? "could not read that repository");
+    if (data.needsClone) {
+      // A URL cannot be read without fetching it, and a look should not cost a
+      // clone. Connect does that, and comes back with what it found.
+      setSetup("");
+      setPrepare("");
+      setDetected(data.note);
+      return;
+    }
     setSetup(toText(data.detected.setup));
     setPrepare(toText(data.detected.prepare));
     setDetected(`${data.root} · detected from ${data.detected.reason}`);
@@ -102,7 +110,9 @@ export default function ReposPage() {
     setSource("");
     setSetup("");
     setPrepare("");
-    setDetected(null);
+    // Connecting a URL is the first time anything is known about it, so say
+    // what the clone turned up rather than clearing the line to nothing.
+    setDetected(data.detected?.reason ? `connected · detected from ${data.detected.reason}` : null);
     load();
   }
 

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { detectRepoCommands } from "@/repos/detect";
-import { connectRepo, runRepoSetup, slugFor } from "@/repos/setup";
+import { connectRepo, isPathLike, runRepoSetup, slugFor } from "@/repos/setup";
 import { createRepo, getRepo, listRepos } from "@/repos/store";
 import { WorkflowError } from "@/runtime/errors";
 
@@ -68,11 +68,26 @@ export async function POST(req: Request) {
   }
 }
 
-/** What gate would propose for a path, before anything is stored. */
+/**
+ * What gate would propose, before anything is stored.
+ *
+ * Local paths only, and deliberately: this is reached by a button labelled
+ * "Inspect", and reading a repository that is already on disk is free. A URL
+ * cannot be inspected without fetching it, and routing that through here once
+ * cloned 239MB as the side effect of a look — with nothing recorded, so the
+ * checkout was orphaned the moment it landed. Connecting does the clone, where
+ * the cost is what the button says it is, and answers with the same detection.
+ */
 export async function PUT(req: Request) {
   const body = await req.json().catch(() => null);
-  const source = typeof body?.source === "string" ? body.source : "";
+  const source = typeof body?.source === "string" ? body.source.trim() : "";
   if (!source) return NextResponse.json({ error: "give a path" }, { status: 400 });
+  if (!isPathLike(source)) {
+    return NextResponse.json(
+      { needsClone: true, note: "Connect will clone it first, then say what it found." },
+      { status: 200 },
+    );
+  }
   try {
     const { root, cloned } = connectRepo(source, slugFor(source));
     return NextResponse.json({ root, cloned, detected: detectRepoCommands(root) });

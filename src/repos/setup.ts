@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -83,21 +83,43 @@ export function connectRepo(source: string, id: string): ConnectResult {
   return { root, cloned: false, commands: detectRepoCommands(root) };
 }
 
+/**
+ * Run one command, keeping the tail of what it said.
+ *
+ * `spawn` and a rolling buffer, not `execFile` with a `maxBuffer`: that option
+ * does not truncate, it **kills the child** once the limit is passed. A
+ * `pnpm install` prints megabytes of progress, so the install died of the log
+ * rather than of anything wrong with it — and the log then held only progress
+ * noise, saying nothing about why. Output can no longer end a command; only
+ * the command's own exit code and the timeout can.
+ */
 function runOne(argv: string[], cwd: string): Promise<{ ok: boolean; log: string }> {
   return new Promise((resolvePromise) => {
     const [file, ...args] = argv;
-    execFile(
-      file,
-      args,
-      { cwd, timeout: COMMAND_TIMEOUT_MS, maxBuffer: MAX_LOG_BYTES, shell: false },
-      (error, stdout, stderr) => {
-        const body = [String(stdout ?? ""), String(stderr ?? "")].filter(Boolean).join("\n").trim();
-        resolvePromise({
-          ok: !error,
-          log: `$ ${argv.join(" ")}\n${body}${error ? `\n-> ${(error as Error).message}` : ""}`,
-        });
-      },
-    );
+    const child = spawn(file, args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+
+    let tail = "";
+    const keep = (chunk: Buffer) => {
+      tail += chunk.toString();
+      if (tail.length > MAX_LOG_BYTES) tail = tail.slice(-MAX_LOG_BYTES);
+    };
+    child.stdout?.on("data", keep);
+    child.stderr?.on("data", keep);
+
+    let done = false;
+    const finish = (ok: boolean, note?: string) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolvePromise({ ok, log: `$ ${argv.join(" ")}\n${tail.trim()}${note ? `\n-> ${note}` : ""}` });
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(false, `timed out after ${Math.round(COMMAND_TIMEOUT_MS / 60_000)} minutes`);
+    }, COMMAND_TIMEOUT_MS);
+
+    child.on("error", (e) => finish(false, e.message));
+    child.on("close", (code) => finish(code === 0, code === 0 ? undefined : `exited ${code ?? "on a signal"}`));
   });
 }
 
