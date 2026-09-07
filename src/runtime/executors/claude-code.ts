@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 import type { AgentDefinition } from "@/agents/types";
 import { WorkflowError } from "@/runtime/errors";
@@ -117,6 +118,13 @@ export async function runClaudeCodeNode(
   }
   // Captured once: the narrowing above does not survive into the closure below.
   const workspace = deps.workspace;
+  if (!existsSync(workspace.root)) {
+    throw new WorkflowError(
+      "WORKSPACE_ERROR",
+      `node "${nodeId}": this run's worktree is gone (${workspace.root}); it was removed while the run was going`,
+      { nodeId, agentId: agent.id },
+    );
+  }
 
   const toolCalls: ToolCallRecord[] = [];
   const usage: NodeUsageRecord = {

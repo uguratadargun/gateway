@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 
 import { getAgent } from "@/agents/registry";
 import type { AgentDefinition } from "@/agents/types";
@@ -164,6 +165,18 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
       const stepIndex = state.stepCount - 1;
       const startedAt = now();
       emit({ type: "node.started", executionId, at: startedAt, nodeId: node.id, stepIndex, visit });
+
+      // The worktree can go away under a run — removed by hand, or by a
+      // cleanup that did not check for live runs. Without this the run carries
+      // on until some child process happens to need the directory, and then
+      // dies saying only that it produced no output.
+      if (opts.workspace && !existsSync(opts.workspace.root)) {
+        return halt(
+          "WORKSPACE_ERROR",
+          `this run's worktree is gone (${opts.workspace.root}); it was removed while the run was going`,
+          node.id,
+        );
+      }
 
       let input: unknown = null;
       let output: unknown = null;

@@ -660,7 +660,19 @@ function WhyItStopped({
   error: NonNullable<ExecutionRecord["error"]>;
   steps: ExecutionStepRecord[];
 }) {
-  // The last step that refused is the one that ended the run.
+  /**
+   * Whether a refusing gate is what ended this run.
+   *
+   * A loop limit and a spend ceiling are both reached *because* something kept
+   * saying no, so naming that gate explains the stop. Everything else — a
+   * vanished worktree, a timeout, a cancelled run — has its own cause, and the
+   * last reviewer that asked for changes is then ordinary pipeline behaviour
+   * rather than the reason. Presenting it as the reason sent a real
+   * investigation at the wrong thing.
+   */
+  const refusalExplainsIt = error.code === "LOOP_LIMIT_EXCEEDED" || error.code === "BUDGET_EXCEEDED";
+
+  // The last step that refused: the cause when a gate ended the run, context otherwise.
   let culprit: { step: ExecutionStepRecord; failure: NonNullable<ReturnType<typeof stepFailure>> } | null = null;
   for (let i = steps.length - 1; i >= 0; i--) {
     const failure = stepFailure(steps[i].output, 6);
@@ -680,6 +692,11 @@ function WhyItStopped({
       </div>
       {culprit && (
         <div className="space-y-1 border-t pt-2">
+          {!refusalExplainsIt && (
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              the last gate that refused — context, not the cause above
+            </div>
+          )}
           <div className="text-xs text-muted-foreground">
             <span className="font-mono text-foreground">{culprit.step.nodeId}</span> refused with{" "}
             <span className="font-mono">{culprit.failure.headline}</span>
@@ -693,7 +710,7 @@ function WhyItStopped({
           <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 font-mono text-[11px]">
             {culprit.failure.lines.join("\n") || "the output said nothing more"}
           </pre>
-          {attempts > 1 && refusals === attempts && (
+          {refusalExplainsIt && attempts > 1 && refusals === attempts && (
             <p className="text-[11px] text-muted-foreground">
               It refused every attempt, so it was already failing before this run touched anything.
             </p>

@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
@@ -7,7 +10,10 @@ import { parseAgent } from "@/agents/loader";
 import { runClaudeCodeNode } from "@/runtime/executors/claude-code";
 
 const meta = { sourcePath: "/tmp/x", updatedAt: 0 };
-const workspace = { root: "/tmp/ws", repo: "/tmp/ws", branch: "b", baseRef: "HEAD" };
+// A real directory: the executor refuses to spawn into a worktree that is not
+// there, which is the point of one of the tests below.
+const root = mkdtempSync(join(tmpdir(), "gate-cc-"));
+const workspace = { root, repo: root, branch: "b", baseRef: "HEAD" };
 
 const AGENT = `---
 name: Builder
@@ -187,6 +193,22 @@ describe("claude-code executor", () => {
       code: "AGENT_OUTPUT_VALIDATION_ERROR",
     });
     expect(spawns).toHaveLength(3); // the first turn plus two corrections
+  });
+
+  it("names the missing worktree instead of spawning into nothing", async () => {
+    const agent = parseAgent("builder", AGENT, meta);
+    const gone = { root: "/tmp/gate-worktree-that-is-not-there", repo: "x", branch: "b", baseRef: "HEAD" };
+    let spawned = false;
+    const cli = (() => {
+      spawned = true;
+      throw new Error("should not reach the CLI");
+    }) as never;
+
+    await expect(runClaudeCodeNode(agent, "go", "build", { workspace: gone, spawnCli: cli }, null)).rejects.toMatchObject({
+      code: "WORKSPACE_ERROR",
+      message: expect.stringContaining(gone.root),
+    });
+    expect(spawned).toBe(false);
   });
 
   it("refuses the executor when the workflow declares no workspace", async () => {

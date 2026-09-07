@@ -1,3 +1,6 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { parseAgent } from "@/agents/loader";
@@ -419,6 +422,28 @@ describe("uncapped by request", () => {
 
     expect(state.status).toBe("completed");
     expect(state.visitCounts.implementation).toBe(60);
+  });
+});
+
+describe("a worktree that disappears", () => {
+  it("stops with the directory named, rather than with a child that produced no output", async () => {
+    // Removed by hand, or by a cleanup that did not check for live runs. Before
+    // this the run carried on until some child happened to need the directory,
+    // and then died saying only "exited without a code — no output", which sent
+    // a real investigation at the wrong thing entirely.
+    const gone = join(tmpdir(), `gate-gone-${Date.now()}`);
+    const provider = new FakeModelProvider(() => '{"plan": "p"}');
+    const state = await runWorkflow(workflow, {
+      provider,
+      loadAgent,
+      workspace: { root: gone, repo: gone, branch: "gate/run-x", baseRef: "HEAD" },
+    });
+
+    expect(state.status).toBe("failed");
+    expect(state.error?.code).toBe("WORKSPACE_ERROR");
+    expect(state.error?.message).toContain(gone);
+    // It refuses before spending anything on the node.
+    expect(provider.calls).toHaveLength(0);
   });
 });
 
