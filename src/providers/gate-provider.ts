@@ -54,6 +54,11 @@ export class GateModelProvider implements ModelProvider {
 
     const raw = await res.text();
     if (!res.ok) {
+      // Stopping a run aborts the upstream fetch, and the pipeline turns that
+      // into a 502 response rather than a rejection — so the abort arrives
+      // here, not in the catch above. Without this check a run the user
+      // stopped is recorded as a model failure.
+      if (req.signal?.aborted) throw new WorkflowError("RUN_CANCELLED", "run cancelled");
       throw new WorkflowError("MODEL_EXECUTION_ERROR", `model call failed (${res.status}): ${truncate(raw)}`, {
         status: res.status,
         model: req.model,
