@@ -21,8 +21,12 @@ output:
     verdict: string                 # string, number, boolean, string[], number[], object, any
     findings: "string[]"            #   a trailing "?" makes the field optional
     notes: "string?"
-timeoutMs: 120000                   # optional, 1s–10min
+timeoutMs: 3600000                  # DEFAULT when omitted, and what a new agent should
+                                    # carry. Covers the whole node — every tool round,
+                                    # not one model call. Raise it for an agent that
+                                    # works a large repo; 0 = no timeout at all.
 maxTokens: 32000                    # optional; thinking counts against it (default 8192)
+maxToolIterations: 0                # optional; 0 (the default) = as many tool rounds as it needs
 ---
 
 Prompt text. Two placeholder forms, and nothing else — no expressions, no code:
@@ -54,8 +58,13 @@ workspace: {}                   # this pipeline works in a git worktree of the
                                 # add `repo: /path` to pin one project instead.
                                 # omit `workspace` entirely for a prose-only
                                 # pipeline — then agents get NO tools.
-maxWorkflowSteps: 60            # ceiling on total steps
-maxVisits: 5                    # ceiling per node; a loop that exceeds it fails
+                                # No ceilings unless you ask for them:
+maxWorkflowSteps: 0             # 0 = uncapped; a number stops the whole run there
+maxVisits: 0                    # 0 = uncapped; a number fails a node that revisits past it
+maxCostUsd: 0                   # 0 = uncapped. THIS is the ceiling worth setting: how
+                                # many rounds a task needs cannot be known up front,
+                                # what you will pay for it can. Checked between nodes,
+                                # cumulative across a Continue.
 nodes:
   - id: planner
     type: agent
@@ -68,7 +77,9 @@ nodes:
     label: npm test
     command: [npm, test]        # argv array, no shell
     cwd: packages/core          # optional, relative to the worktree
-    timeoutMs: 600000           # optional
+    timeoutMs: 3600000          # DEFAULT when omitted — same hour an agent gets.
+                                # A test suite that runs longer needs a bigger
+                                # number here, or 0 for no timeout at all.
     edges:
       - when: outputs.tests.ok == true
         to: checks
@@ -159,5 +170,7 @@ edit is not a reviewer.
 
 Plan → implement → run the project's real test command → review (in parallel
 with a security review) → a condition that either finishes or routes back to
-implementation. Failure and rejection both go back to the implementer, and
-`maxVisits` stops it looping forever.
+implementation. Failure and rejection both go back to the implementer. That
+loop is uncapped unless you set `maxVisits`: leave it uncapped for a long task
+whose review cycles you cannot count in advance, and watch the run instead —
+the Stop button ends one that is going nowhere.

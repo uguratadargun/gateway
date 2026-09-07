@@ -18,6 +18,7 @@ interface WorkflowSummary {
   entry: string;
   maxWorkflowSteps: number;
   maxVisits: number;
+  maxCostUsd: number;
   nodes: Array<{ id: string; type: string }>;
   updatedAt: number;
 }
@@ -25,8 +26,8 @@ interface WorkflowSummary {
 const TEMPLATE = (id: string) => `name: ${id}
 description: What this pipeline does.
 entry: start
-maxWorkflowSteps: 50
-maxVisits: 5
+# Uncapped by default. Add "maxWorkflowSteps:" / "maxVisits:" to stop a loop
+# that would otherwise only end when you stop it from this dashboard.
 nodes:
   - id: start
     type: command

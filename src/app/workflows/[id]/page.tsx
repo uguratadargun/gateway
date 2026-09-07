@@ -27,6 +27,7 @@ interface ApiWorkflow {
   workspace?: { repo: string; baseRef?: string; branchPrefix?: string };
   maxWorkflowSteps: number;
   maxVisits: number;
+  maxCostUsd: number;
   nodes: ApiWorkflowNode[];
   sourcePath: string;
 }
@@ -42,6 +43,7 @@ interface Draft {
   workspace?: { repo: string; baseRef?: string; branchPrefix?: string };
   maxWorkflowSteps: number;
   maxVisits: number;
+  maxCostUsd: number;
   nodes: ApiWorkflowNode[];
 }
 
@@ -56,11 +58,24 @@ function toDraft(wf: ApiWorkflow): Draft {
     workspace: wf.workspace,
     maxWorkflowSteps: wf.maxWorkflowSteps,
     maxVisits: wf.maxVisits,
+    maxCostUsd: wf.maxCostUsd,
     nodes: wf.nodes.map((n) => ({
       ...n,
       edges: (n.edges ?? []).map((e) => ({ to: e.to, when: e.when, label: e.label })),
     })),
   };
+}
+
+/**
+ * Caps are opt-in, and 0 means there is none — which "max 0 steps" reads as the
+ * exact opposite of. Say what is actually true instead.
+ */
+function describeCaps(wf: ApiWorkflow): string {
+  const caps: string[] = [];
+  if (wf.maxWorkflowSteps > 0) caps.push(`${wf.maxWorkflowSteps} steps`);
+  if (wf.maxVisits > 0) caps.push(`${wf.maxVisits} visits`);
+  if (wf.maxCostUsd > 0) caps.push(`$${wf.maxCostUsd} spend`);
+  return caps.length ? `max ${caps.join(" / ")}` : "uncapped — steps, visits and spend";
 }
 
 function freshId(kind: NodeKind, taken: Set<string>): string {
@@ -406,7 +421,7 @@ export default function WorkflowDetailPage() {
             <h1 className="text-lg font-semibold">{wf?.name ?? id}</h1>
             <p className="text-xs text-muted-foreground">
               {wf
-                ? `${draft?.nodes.length ?? wf.nodes.length} nodes · entry ${draft?.entry ?? wf.entry} · max ${wf.maxWorkflowSteps} steps / ${wf.maxVisits} visits`
+                ? `${draft?.nodes.length ?? wf.nodes.length} nodes · entry ${draft?.entry ?? wf.entry} · ${describeCaps(wf)}`
                 : "…"}
             </p>
             {wf?.workspace && (

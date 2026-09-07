@@ -9,7 +9,7 @@ import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } fr
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { formatDuration } from "@/lib/duration";
+import { formatDuration, formatElapsed } from "@/lib/duration";
 import { takenLinks, type RoutingLink } from "@/workflows/routing";
 import type { WorkflowEvent } from "@/events/types";
 import { stepFailure } from "@/executions/failure";
@@ -58,6 +58,10 @@ export default function ExecutionDetailPage() {
   const [connected, setConnected] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [liveTools, setLiveTools] = useState<Array<{ nodeId: string; tool: string; ok: boolean; summary: string }>>([]);
+  /** Steps the engine has announced but not yet recorded, so the list shows a step while it runs. */
+  const [liveSteps, setLiveSteps] = useState<Record<number, { nodeId: string; visit: number; startedAt: number }>>({});
+  /** Ticks once a second so the running steps' stopwatches move. */
+  const [now, setNow] = useState(() => Date.now());
   const [openStep, setOpenStep] = useState<number | null>(null);
   /** Replay position for a finished run; null = show the whole run. */
   const [replay, setReplay] = useState<number | null>(null);
@@ -131,7 +135,13 @@ export default function ExecutionDetailPage() {
       } catch {
         return;
       }
-      if (e.type === "node.started") setLive((p) => ({ ...p, [e.nodeId]: "running" }));
+      if (e.type === "node.started") {
+        setLive((p) => ({ ...p, [e.nodeId]: "running" }));
+        // `at` is the engine's clock, which is what makes a step that began
+        // before this page opened show its true age when the bus replays it.
+        setLiveSteps((p) => ({ ...p, [e.stepIndex]: { nodeId: e.nodeId, visit: e.visit, startedAt: e.at } }));
+        setNow(Date.now());
+      }
       if (e.type === "node.completed") {
         setLive((p) => ({ ...p, [e.nodeId]: "completed" }));
         load();
@@ -147,6 +157,8 @@ export default function ExecutionDetailPage() {
       if (e.type === "workflow.completed" || e.type === "workflow.failed") {
         es.close();
         setConnected(false);
+        // Nothing is running any more, so no announced step is still owed a record.
+        setLiveSteps({});
         load();
       }
     };
@@ -155,6 +167,27 @@ export default function ExecutionDetailPage() {
 
   const steps = detail?.steps ?? [];
   const shown = replay === null ? steps : steps.slice(0, replay + 1);
+
+  /**
+   * A step is recorded only once it finishes, so until then the list would have
+   * nothing to show for the node the run is actually on. These are the started
+   * ones still missing a record — several at a time, when a parallel node has
+   * fanned out. They drop out on their own as the record lands.
+   */
+  const activeSteps = useMemo(() => {
+    if (!running) return [];
+    const recorded = new Set(steps.map((s) => s.stepIndex));
+    return Object.entries(liveSteps)
+      .map(([stepIndex, s]) => ({ ...s, stepIndex: Number(stepIndex) }))
+      .filter((s) => !recorded.has(s.stepIndex))
+      .sort((a, b) => a.stepIndex - b.stepIndex);
+  }, [running, steps, liveSteps]);
+
+  useEffect(() => {
+    if (activeSteps.length === 0) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [activeSteps.length]);
 
   const statuses = useMemo(() => {
     const out: Record<string, NodeStatus> = {};
@@ -349,9 +382,11 @@ export default function ExecutionDetailPage() {
 
         <Card className="max-h-[min(72vh,720px)] space-y-1 overflow-y-auto p-3">
           <div className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Steps ({steps.length})
+            Steps ({steps.length + activeSteps.length})
           </div>
-          {steps.length === 0 && <p className="px-1 text-xs text-muted-foreground">Waiting for the first step…</p>}
+          {steps.length + activeSteps.length === 0 && (
+            <p className="px-1 text-xs text-muted-foreground">Waiting for the first step…</p>
+          )}
           {steps.map((s) => (
             <div key={s.stepIndex} className="rounded-md border">
               <button
@@ -432,6 +467,19 @@ export default function ExecutionDetailPage() {
                   <Section title="output">{preview(s.output)}</Section>
                 </div>
               )}
+            </div>
+          ))}
+          {activeSteps.map((s) => (
+            <div key={`live-${s.stepIndex}`} className="rounded-md border border-dashed">
+              <div className="flex w-full items-center gap-2 px-2 py-1.5 text-xs">
+                <span className="w-5 shrink-0 text-muted-foreground tabular-nums">{s.stepIndex + 1}</span>
+                <span className="min-w-0 flex-1 truncate font-mono">{s.nodeId}</span>
+                {s.visit > 1 && <span className="shrink-0 text-[10px] text-muted-foreground">×{s.visit}</span>}
+                <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+                  {formatElapsed(now - s.startedAt)}
+                </span>
+                <span className="animate-pulse text-sky-400">●</span>
+              </div>
             </div>
           ))}
         </Card>

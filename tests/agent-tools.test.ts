@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parseAgent, AgentDefinitionError } from "@/agents/loader";
 import type { AgentDefinition } from "@/agents/types";
@@ -124,6 +124,22 @@ describe("agent tool loop", () => {
     expect(step.usage).toMatchObject({ inputTokens: 40, outputTokens: 20 });
   });
 
+  it("lets an agent call tools past the old 40-round cap when nothing sets one", async () => {
+    // The cap used to be a hardcoded 40, which killed hour-long runs that had
+    // already been paid for. With neither the run nor the agent naming one,
+    // the loop only ends when the agent answers.
+    let rounds = 0;
+    const provider = new FakeModelProvider(() => {
+      rounds++;
+      if (rounds <= 50) return { toolUses: [toolUse("read_file", { path: "out.txt" })] };
+      return JSON.stringify({ summary: "done" });
+    });
+    const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent, workspace });
+
+    expect(state.status).toBe("completed");
+    expect(state.history.at(-1)!.toolCalls).toHaveLength(50);
+  });
+
   it("lets an agent's own maxToolIterations override the run's default", async () => {
     const capped = `---
 name: Builder
@@ -151,6 +167,32 @@ Do the work.
     });
     expect(state.error?.code).toBe("TOOL_LIMIT_EXCEEDED");
     expect(state.history.at(-1)!.toolCalls).toHaveLength(2);
+  });
+
+  it("gives an agent that names no timeout an hour — not none, and not two minutes", async () => {
+    // Both failure modes matter. A node that legitimately runs half an hour must
+    // not meet its own default (the old command-node default was two minutes);
+    // an agent wedged on a provider that never answers must not hang the run
+    // forever. The deadline covers the whole node, tool rounds included.
+    expect(parseAgent("builder", BUILDER, meta).timeoutMs).toBeUndefined();
+
+    vi.useFakeTimers();
+    try {
+      const provider = new FakeModelProvider(() => new Promise<never>(() => {}));
+      const run = runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent, workspace });
+
+      await vi.advanceTimersByTimeAsync(59 * 60_000);
+      let settled = false;
+      void run.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      const state = await run;
+      expect(state.error?.code).toBe("NODE_TIMEOUT");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("offers no tools when the workflow has no workspace", async () => {

@@ -393,6 +393,103 @@ describe("cancellation", () => {
 });
 
 
+describe("uncapped by request", () => {
+  it("lets a command node declare timeoutMs: 0 and run untimed", async () => {
+    // Omitting the field gets the one-hour default, not "no timeout"; 0 is how
+    // you say "as long as it takes", and execFile reads it as none.
+    const node = { id: "wait", type: "command", command: ["sleep", "0.3"], timeoutMs: 0, edges: [] } as Parameters<
+      typeof runCommand
+    >[0];
+    await expect(runCommand(node)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("runs a node more times than the old maxVisits ceiling when nothing caps it", async () => {
+    // maxVisits used to default to 5 and could never be raised past 50; a
+    // review loop on a long task legitimately goes round more often than that.
+    let attempts = 0;
+    const provider = new FakeModelProvider((req) => {
+      const nodeId = req.context?.nodeId;
+      if (nodeId === "planner") return '{"plan": "p"}';
+      if (nodeId === "implementation") return '{"diff": "d"}';
+      attempts++;
+      return attempts < 60 ? '{"passed": false, "failures": 1}' : '{"passed": true, "failures": 0}';
+    });
+    const uncapped = parseWorkflow("dev", PIPELINE.replace("maxVisits: 3\n", ""), meta);
+    const state = await runWorkflow(uncapped, { provider, loadAgent });
+
+    expect(state.status).toBe("completed");
+    expect(state.visitCounts.implementation).toBe(60);
+  });
+});
+
+describe("spend budget", () => {
+  it("halts a run that goes over maxCostUsd, and says what it spent", async () => {
+    // The ceiling worth having: how many rounds a task needs is unknowable up
+    // front, what you will pay for it is not. Sonnet output bills $10/Mtok, so
+    // 300k output tokens a step is $3 — the second step crosses a $5 budget.
+    const provider = new FakeModelProvider((req) => {
+      const nodeId = req.context?.nodeId;
+      const text =
+        nodeId === "planner" ? '{"plan": "p"}' : nodeId === "implementation" ? '{"diff": "d"}' : '{"passed": true, "failures": 0}';
+      return { text, usage: { inputTokens: 0, outputTokens: 300_000, cacheReadTokens: 0 } };
+    });
+    const capped = parseWorkflow("dev", `maxCostUsd: 5\n${PIPELINE}`, meta);
+    const state = await runWorkflow(capped, { provider, loadAgent });
+
+    expect(state.status).toBe("failed");
+    expect(state.error?.code).toBe("BUDGET_EXCEEDED");
+    expect(state.error?.message).toMatch(/\$6\.00.*\$5\.00/);
+    // Stopped between nodes, not part-way through one: both steps it paid for
+    // are in the history, and "tester" was never started.
+    expect(state.history).toHaveLength(2);
+    expect(provider.callsFor("tester")).toHaveLength(0);
+  });
+
+  it("does not refill the budget when a run is continued", async () => {
+    const provider = new FakeModelProvider(() => '{"diff":"y"}');
+    const capped = parseWorkflow("dev", `maxCostUsd: 5\n${PIPELINE}`, meta);
+    const state = await runWorkflow(capped, {
+      provider,
+      loadAgent,
+      resume: {
+        outputs: { planner: { plan: "p" } },
+        visitCounts: {},
+        stepCount: 1,
+        // The lineage already spent $6 of a $5 budget.
+        history: [
+          {
+            nodeId: "planner",
+            stepIndex: 0,
+            visit: 1,
+            startedAt: 0,
+            finishedAt: 1,
+            status: "completed",
+            input: null,
+            output: { plan: "p" },
+            usage: { model: "sonnet", inputTokens: 0, outputTokens: 600_000, cacheReadTokens: 0 },
+          },
+        ],
+        startNodeId: "implementation",
+      },
+    });
+
+    expect(state.error?.code).toBe("BUDGET_EXCEEDED");
+    // One node ran — continuing is allowed to make progress, then stops.
+    expect(provider.calls).toHaveLength(1);
+  });
+
+  it("leaves a run alone when no budget is declared", async () => {
+    const provider = new FakeModelProvider((req) => {
+      const nodeId = req.context?.nodeId;
+      if (nodeId === "planner") return { text: '{"plan": "p"}', usage: { inputTokens: 0, outputTokens: 900_000, cacheReadTokens: 0 } };
+      if (nodeId === "implementation") return '{"diff": "d"}';
+      return '{"passed": true, "failures": 0}';
+    });
+    const state = await runWorkflow(workflow, { provider, loadAgent });
+    expect(state.status).toBe("completed");
+  });
+});
+
 describe("cancelling a command node", () => {
   it("kills the child process rather than leaving it running", async () => {
     const node = { id: "wait", type: "command", command: ["sleep", "5"], edges: [] } as Parameters<typeof runCommand>[0];
@@ -461,14 +558,16 @@ describe("resuming", () => {
 
   it("keeps maxWorkflowSteps a real ceiling across a resume", async () => {
     const provider = new FakeModelProvider(() => '{"diff":"y"}');
-    const state = await runWorkflow(workflow, {
+    // A cap only exists when the workflow asks for one, so this fixture asks.
+    const capped = parseWorkflow("dev", `maxWorkflowSteps: 20\n${PIPELINE}`, meta);
+    const state = await runWorkflow(capped, {
       provider,
       loadAgent,
       executionId: "exec-resume-3",
       resume: {
         outputs: {},
         visitCounts: {},
-        stepCount: 10_000, // already over any workflow's maxWorkflowSteps
+        stepCount: 10_000, // already well over the 20 above
         history: [],
         startNodeId: "implementation",
       },

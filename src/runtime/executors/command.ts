@@ -17,7 +17,11 @@ export interface CommandNodeResult {
   stderr: string;
 }
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+// What a command node gets when it names no timeout of its own. Two minutes
+// used to be it, which killed any real test suite; a command node's whole job
+// is often to run one, so it gets the same generous hour an agent node gets.
+// `timeoutMs: 0` is "as long as it takes" — execFile reads 0 as no timeout.
+const DEFAULT_TIMEOUT_MS = 60 * 60_000;
 // A verbose test suite in a large repo can print for hours; 1MB truncated it
 // mid-run with no way to raise it per node. 20MB comfortably outlives that.
 const MAX_OUTPUT_BYTES = 20_000_000;

@@ -8,6 +8,21 @@ efficiently. Dashboard built with Next.js + shadcn/ui.
 > **Scope:** built for using **your own** Claude account through your own tools.
 > It does not do multi-account rotation or account sharing.
 
+## Where to get it
+
+```bash
+git clone https://github.com/uguratadargun/gateway.git
+```
+
+The repository is also a Claude Code **marketplace** carrying one plugin, `gate`
+— `/gate-run` starts an agent workflow against the repository you are in,
+`/gate-design` builds one for it ([details](#from-claude-code)):
+
+```
+/plugin marketplace add uguratadargun/gateway
+/plugin install gate@gateway
+```
+
 ## How it works
 
 1. **Login** — the same Authorization-Code-with-PKCE flow Claude Code uses

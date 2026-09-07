@@ -39,8 +39,9 @@ describe("parseWorkflow", () => {
   it("parses nodes, edges and defaults", () => {
     const wf = parseWorkflow("dev", PIPELINE, meta);
     expect(wf.name).toBe("Dev pipeline");
-    expect(wf.maxWorkflowSteps).toBe(50);
-    expect(wf.maxVisits).toBe(5);
+    // A workflow that names no ceiling gets none: 0 is "uncapped", not "50".
+    expect(wf.maxWorkflowSteps).toBe(0);
+    expect(wf.maxVisits).toBe(0);
     expect(wf.nodes).toHaveLength(4);
     const planner = wf.nodes.find((n) => n.id === "planner")!;
     expect(planner.edges).toEqual([{ to: "implementation", condition: null }]);

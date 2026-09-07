@@ -44,7 +44,8 @@ export const workflowNodeSchema = z.discriminatedUnion("type", [
       /** argv, never a shell string: the runtime spawns it without a shell. */
       command: z.array(z.string().min(1)).min(1).max(50),
       cwd: z.string().max(500).optional(),
-      timeoutMs: z.number().int().min(1000).optional(),
+      /** Unset = one hour, the same default an agent node gets; 0 = no timeout. */
+      timeoutMs: z.number().int().min(0).optional(),
     })
     .strict(),
   z.object({ ...baseNode, type: z.literal("condition") }).strict(),
@@ -98,10 +99,17 @@ export const workflowDefinitionSchema = z
     entry: nodeId,
     /** Declared to give agents file/command tools and to run commands in a worktree. */
     workspace: workspaceSchema.optional(),
-    /** Hard stop for the whole run; the engine caps this regardless. */
-    maxWorkflowSteps: z.number().int().min(1).max(500).default(50),
-    /** Hard stop for revisits of any single node (loop protection). */
-    maxVisits: z.number().int().min(1).max(50).default(5),
+    /** Stop for the whole run. 0 — the default — means the run is not capped. */
+    maxWorkflowSteps: z.number().int().min(0).default(0),
+    /** Stop for revisits of any single node (loop protection). 0 = uncapped. */
+    maxVisits: z.number().int().min(0).default(0),
+    /**
+     * Spend ceiling for the whole run, in USD of API-list-equivalent cost.
+     * 0 — the default — means none. This is the ceiling worth setting: how many
+     * tool rounds or node visits a task needs cannot be known in advance, but
+     * what you are willing to spend on it can.
+     */
+    maxCostUsd: z.number().min(0).default(0),
     nodes: z.array(workflowNodeSchema).min(1).max(100),
   })
   .strict();

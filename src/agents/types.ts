@@ -39,8 +39,13 @@ export const agentFrontmatterSchema = z
     output: agentOutputSpecSchema.default({ type: "text" }),
     /** Tool names this agent may invoke. Declared now, unused until tools ship. */
     tools: z.array(z.string().min(1).max(64)).max(50).default([]),
-    /** Hard cap on a single agent call, enforced by the runtime. No ceiling: some agents legitimately run long. */
-    timeoutMs: z.number().int().min(1000).optional(),
+    /**
+     * Wall-clock cap on one visit to this agent's node — every tool round it
+     * takes counts against it, not each model call separately. Left out, it is
+     * an hour, which is past any healthy node; 0 turns it off entirely for an
+     * agent that genuinely runs longer. There is no upper bound.
+     */
+    timeoutMs: z.number().int().min(0).optional(),
     /**
      * Output ceiling per model call. Thinking counts against it, so an agent
      * that must return something long (a full diff) needs a bigger one than
@@ -49,11 +54,12 @@ export const agentFrontmatterSchema = z
     maxTokens: z.number().int().min(1024).max(200_000).optional(),
     /**
      * Tool-call rounds a single node may make before the runtime gives up on
-     * it (default 40). A long task that reads and edits its way through a
-     * large repo for hours legitimately needs more than a quick one; no
-     * ceiling here, since the timeout above is the real backstop.
+     * it. Unset — or 0 — means no cap, which is the default: a long task that
+     * reads and edits its way through a large repo for hours legitimately
+     * needs more rounds than anyone can name up front, and the timeout above
+     * is the real backstop. Set it only to hold a known-cheap agent short.
      */
-    maxToolIterations: z.number().int().min(1).optional(),
+    maxToolIterations: z.number().int().min(0).optional(),
   })
   .strict();
 

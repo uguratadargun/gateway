@@ -46,6 +46,7 @@ export const workflowGraphDocSchema = z.object({
     .optional(),
   maxWorkflowSteps: z.number().optional(),
   maxVisits: z.number().optional(),
+  maxCostUsd: z.number().optional(),
   nodes: z.array(nodeDoc).min(1),
 });
 
@@ -131,6 +132,7 @@ export function toWorkflowYaml(doc: WorkflowGraphDoc): string {
   }
   put(root, "maxWorkflowSteps", doc.maxWorkflowSteps);
   put(root, "maxVisits", doc.maxVisits);
+  put(root, "maxCostUsd", doc.maxCostUsd);
   root.nodes = doc.nodes.map(serializeNode);
   return dump(root, { lineWidth: 120, noRefs: true });
 }

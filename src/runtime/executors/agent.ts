@@ -15,8 +15,28 @@ import type { WorkflowNode } from "@/workflows/types";
  * prose, which is then validated against the agent's declared output shape.
  */
 
-/** A model cannot keep calling tools forever; a stuck agent fails its node. */
-const MAX_TOOL_ITERATIONS = 40;
+/**
+ * No tool-round ceiling by default.
+ *
+ * A fixed number is always wrong for someone: 40 rounds is generous for a
+ * question and nothing at all for an agent working through a large repository
+ * for hours, and the run it kills has already been paid for. An agent or a run
+ * that wants a cap sets one (0 or unset means none); the node timeout and the
+ * Stop button are the backstops for one that is genuinely stuck.
+ */
+const MAX_TOOL_ITERATIONS = 0;
+
+/**
+ * How long one visit to an agent node may take when the agent names nothing.
+ *
+ * An agent that works through a large repository routinely runs half an hour,
+ * so a default has to be generous enough that a healthy node never meets it —
+ * but a default of "none" is worse than a long one: a node wedged on a
+ * provider that never answers would then hang the run until someone noticed.
+ * An hour is past any real node and short of a lost afternoon. `timeoutMs: 0`
+ * turns it off deliberately.
+ */
+const DEFAULT_AGENT_TIMEOUT_MS = 60 * 60_000;
 
 /** The tools that leave something behind. An agent holding one is here to change code. */
 const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
@@ -42,6 +62,7 @@ export interface AgentExecutorDeps {
   /** Present only when the workflow declares one; without it there are no tools. */
   workspace?: RunWorkspace | null;
   onToolCall?: (call: ToolCallRecord) => void;
+  /** Tool rounds one agent may take before its node fails. 0 or unset = no cap. */
   maxToolIterations?: number;
   /** Cancels the run. Checked every tool round, not only between nodes: an
    *  agent working through a dozen tool calls must stop when asked. */
@@ -85,7 +106,9 @@ export async function executeAgentNode(
   const toolCalls: ToolCallRecord[] = [];
   let writes = 0;
   const usage: NodeUsageRecord = { model: agent.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
-  const deadline = agent.timeoutMs ? Date.now() + agent.timeoutMs : null;
+  // `?? default` and not `|| default`: an explicit 0 means no deadline at all.
+  const timeoutMs = agent.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
+  const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : null;
   const maxIterations = agent.maxToolIterations ?? deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
 
   try {
@@ -123,7 +146,7 @@ export async function executeAgentNode(
       if (!result.toolUses.length) {
         return { input: inputs, output: parseOutput(agent, result.text, node.id), usage, toolCalls };
       }
-      if (iteration >= maxIterations) {
+      if (maxIterations > 0 && iteration >= maxIterations) {
         throw new WorkflowError(
           "TOOL_LIMIT_EXCEEDED",
           `node "${node.id}": agent "${agent.id}" made ${maxIterations} tool rounds without answering`,

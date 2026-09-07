@@ -141,8 +141,9 @@ export default function AgentDetailPage() {
                   </Badge>
                 )}
               </Field>
-              {agent.timeoutMs && <Field label="timeout">{agent.timeoutMs} ms</Field>}
-              {agent.maxToolIterations && <Field label="tool rounds">{agent.maxToolIterations} max</Field>}
+              {/* 0 means "no limit" for both, and `x &&` would render a bare 0 rather than hide the field. */}
+              {!!agent.timeoutMs && <Field label="timeout">{agent.timeoutMs} ms</Field>}
+              {!!agent.maxToolIterations && <Field label="tool rounds">{agent.maxToolIterations} max</Field>}
             </Card>
 
             <Card className="space-y-3 p-4 text-sm">

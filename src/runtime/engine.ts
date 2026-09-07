@@ -4,6 +4,7 @@ import { getAgent } from "@/agents/registry";
 import type { AgentDefinition } from "@/agents/types";
 import type { EventSink, WorkflowEvent } from "@/events/types";
 import type { ModelProvider } from "@/providers/types";
+import { costForUsage, tierOf } from "@/lib/pricing";
 import { findNode, type WorkflowDefinition, type WorkflowNode } from "@/workflows/types";
 
 import { WorkflowError, type WorkflowErrorCode } from "./errors";
@@ -24,9 +25,14 @@ import type { RunWorkspace } from "./workspace";
  * concurrency never means two nodes racing for the same output.
  */
 
-/** Ceilings a workflow file cannot raise, so a bad definition can't hang gate. */
-const HARD_MAX_STEPS = 500;
-const HARD_MAX_VISITS = 50;
+/**
+ * There are no ceilings a workflow file cannot raise. A pipeline that loops a
+ * node until a test suite passes, on a task that takes hours, is a legitimate
+ * run and not a bad definition — and a hard 500/50 cut it off with everything
+ * it had spent already gone. A workflow that wants a cap declares one
+ * (`maxWorkflowSteps` / `maxVisits`, 0 meaning none); a run that turns out to
+ * be looping is stopped from the dashboard, where it can be seen looping.
+ */
 
 export interface RunWorkflowOptions {
   provider: ModelProvider;
@@ -79,6 +85,20 @@ function sentBack(state: WorkflowState, nodeId: string): string {
   return `; last sent back by "${previous.nodeId}"${signal}`;
 }
 
+/**
+ * What one step cost, in API-list-equivalent USD — the same measure the
+ * executions page reports, so a budget is denominated in the number the user
+ * already sees. Command and condition nodes record no usage and cost nothing.
+ */
+function costOfStep(usage: NodeUsageRecord | undefined): number {
+  if (!usage) return 0;
+  return costForUsage(
+    tierOf(usage.model),
+    { input: usage.inputTokens, output: usage.outputTokens, cacheRead: usage.cacheReadTokens },
+    { model: usage.model },
+  );
+}
+
 export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflowOptions): Promise<WorkflowState> {
   const now = opts.now ?? Date.now;
   const emit = (e: WorkflowEvent) => opts.emit?.(e);
@@ -87,8 +107,15 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
   const startNodeId = opts.resume?.startNodeId ?? workflow.entry;
   const loadAgent = opts.loadAgent ?? getAgent;
   const execCommand = opts.runCommand ?? runCommand;
-  const maxSteps = Math.min(workflow.maxWorkflowSteps, HARD_MAX_STEPS);
-  const maxVisits = Math.min(workflow.maxVisits, HARD_MAX_VISITS);
+  const maxSteps = workflow.maxWorkflowSteps;
+  const maxVisits = workflow.maxVisits;
+  const maxCost = workflow.maxCostUsd;
+  /**
+   * What this run has spent, seeded from the history a resume carries so the
+   * budget is cumulative across a lineage rather than refilled by continuing.
+   * Command and condition nodes record no usage and cost nothing.
+   */
+  let spentUsd = state.history.reduce((sum, step) => sum + costOfStep(step.usage), 0);
 
   /** Ends the run. The first failure wins; later branches see it and unwind. */
   function halt(code: WorkflowErrorCode, message: string, nodeId?: string): void {
@@ -123,14 +150,14 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
 
       const visit = (state.visitCounts[node.id] = (state.visitCounts[node.id] ?? 0) + 1);
       state.stepCount += 1;
-      if (visit > maxVisits) {
+      if (maxVisits > 0 && visit > maxVisits) {
         return halt(
           "LOOP_LIMIT_EXCEEDED",
           `node "${node.id}" ran ${visit} times (max ${maxVisits})${sentBack(state, node.id)}`,
           node.id,
         );
       }
-      if (state.stepCount > maxSteps) {
+      if (maxSteps > 0 && state.stepCount > maxSteps) {
         return halt("LOOP_LIMIT_EXCEEDED", `workflow exceeded ${maxSteps} steps`, node.id);
       }
 
@@ -206,6 +233,7 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
         };
         state.history.push(step);
         opts.onStep?.(step);
+        spentUsd += costOfStep(step.usage);
         emit({ type: "node.failed", executionId, at: finishedAt, nodeId: node.id, stepIndex, code, message });
         return halt(code, message, node.id);
       }
@@ -237,6 +265,17 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
         durationMs: finishedAt - startedAt,
         usage,
       });
+
+      // Checked between nodes, never mid-node: a node that is already running
+      // has been paid for, and killing it half-way buys nothing back.
+      spentUsd += costOfStep(usage);
+      if (maxCost > 0 && spentUsd > maxCost) {
+        return halt(
+          "BUDGET_EXCEEDED",
+          `run spent $${spentUsd.toFixed(2)}, over this workflow's $${maxCost.toFixed(2)} budget`,
+          node.id,
+        );
+      }
 
       if (node.type === "parallel") {
         emit({ type: "edge.selected", executionId, at: now(), from: node.id, to: node.join, label: "join" });

@@ -14,8 +14,6 @@ import { workflowsDir } from "./registry";
 const SAMPLE_DEV_PIPELINE = `name: Sample dev pipeline
 description: Plan, implement and test a task, then review and security-review it in parallel, looping back to implementation on any rejection.
 entry: planner
-maxWorkflowSteps: 40
-maxVisits: 4
 nodes:
   - id: planner
     type: agent
@@ -91,8 +89,6 @@ entry: planner
 # adding "repo: /path/to/it" here; add "baseRef:" to branch from something
 # other than HEAD, "branchPrefix:" to name the branch differently.
 workspace: {}
-maxWorkflowSteps: 60
-maxVisits: 5
 nodes:
   - id: planner
     type: agent
@@ -107,7 +103,6 @@ nodes:
     type: command
     label: npm ci
     command: [npm, ci]
-    timeoutMs: 600000
     edges:
       - when: outputs.install.ok == true
         to: implementation
