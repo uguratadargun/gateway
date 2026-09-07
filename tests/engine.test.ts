@@ -425,6 +425,71 @@ describe("uncapped by request", () => {
   });
 });
 
+describe("a command that carries what a node produced", () => {
+  it("fills {{outputs}} and {{input}} into argv, one argument at a time", async () => {
+    // Without this a command node could only be written as a constant, so a
+    // pipeline that needed to commit with the implementer's own summary had to
+    // reach for an agent to run git — a model doing a deterministic job.
+    const wf = parseWorkflow(
+      "w",
+      `name: Ship
+entry: planner
+nodes:
+  - id: planner
+    type: agent
+    agent: planner
+    next: ship
+  - id: ship
+    type: command
+    command: [echo, "{{input.task}}", "plan: {{outputs.planner.plan}}"]
+    next: done
+  - id: done
+    type: terminal
+`,
+      meta,
+    );
+    const seen: string[][] = [];
+    const state = await runWorkflow(wf, {
+      provider: new FakeModelProvider(() => '{"plan": "a plan with spaces"}'),
+      loadAgent,
+      input: { task: "do the thing" },
+      runCommand: async (node) => {
+        seen.push(node.command);
+        return { ok: true, exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(state.status).toBe("completed");
+    // One argument stays one argument however many spaces the value had, so
+    // nothing is ever re-split and no shell quoting is involved.
+    expect(seen[0]).toEqual(["echo", "do the thing", "plan: a plan with spaces"]);
+  });
+
+  it("fails the node when a command references something that was never produced", async () => {
+    const wf = parseWorkflow(
+      "w",
+      `name: Ship
+entry: ship
+nodes:
+  - id: ship
+    type: command
+    command: [echo, "{{outputs.nobody.nothing}}"]
+    next: done
+  - id: done
+    type: terminal
+`,
+      meta,
+    );
+    const state = await runWorkflow(wf, {
+      provider: new FakeModelProvider(() => "{}"),
+      loadAgent,
+      runCommand: async () => ({ ok: true, exitCode: 0, stdout: "", stderr: "" }),
+    });
+    expect(state.status).toBe("failed");
+    expect(state.error?.message).toMatch(/unresolved template/);
+  });
+});
+
 describe("a worktree that disappears", () => {
   it("stops with the directory named, rather than with a child that produced no output", async () => {
     // Removed by hand, or by a cleanup that did not check for live runs. Before

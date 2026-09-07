@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 
 import { getAgent } from "@/agents/registry";
+import { renderTemplate, TemplateError } from "@/agents/template";
 import type { AgentDefinition } from "@/agents/types";
 import type { EventSink, WorkflowEvent } from "@/events/types";
 import type { ModelProvider } from "@/providers/types";
@@ -12,7 +13,7 @@ import { WorkflowError, type WorkflowErrorCode } from "./errors";
 import { executeAgentNode } from "./executors/agent";
 import { runCommand, type CommandRunner } from "./executors/command";
 import { selectEdge } from "./executors/condition";
-import { createState, type NodeUsageRecord, type ResumeSeed, type StepRecord, type ToolCallRecord, type WorkflowState } from "./state";
+import { conditionContext, createState, type NodeUsageRecord, type ResumeSeed, type StepRecord, type ToolCallRecord, type WorkflowState } from "./state";
 import type { RunWorkspace } from "./workspace";
 
 /**
@@ -98,6 +99,28 @@ function costOfStep(usage: NodeUsageRecord | undefined): number {
     { input: usage.inputTokens, output: usage.outputTokens, cacheRead: usage.cacheReadTokens },
     { model: usage.model },
   );
+}
+
+/**
+ * A command node's argv, with `{{outputs.x.y}}` and `{{input.k}}` filled in.
+ *
+ * Rendered per argument, never re-split: an argument is one argument whatever
+ * the value turns out to contain, so a commit message with spaces and newlines
+ * stays a single argv entry and no shell quoting is involved anywhere.
+ */
+function renderCommand(command: string[], ctx: Record<string, unknown>, nodeId: string): string[] {
+  return command.map((arg) => {
+    if (!arg.includes("{{")) return arg;
+    try {
+      return renderTemplate(arg, ctx);
+    } catch (e) {
+      throw new WorkflowError(
+        "WORKFLOW_ROUTING_ERROR",
+        `node "${nodeId}": ${e instanceof TemplateError ? e.message : String(e)}`,
+        { nodeId },
+      );
+    }
+  });
 }
 
 export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflowOptions): Promise<WorkflowState> {
@@ -208,8 +231,14 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
           usage = res.usage;
           toolCalls = res.toolCalls.length ? res.toolCalls : undefined;
         } else if (node.type === "command") {
-          input = node.command;
-          output = await execCommand(node, { defaultCwd: opts.workspace?.root, signal: opts.signal });
+          // Rendered here, where the state is: a command that has to carry what
+          // a node produced — a commit message, a branch, a review verdict —
+          // could otherwise only be written as a constant, which is why every
+          // pipeline that needed one reached for an agent to run `git` instead.
+          // `outputs` and `input` are the same two roots a condition reads.
+          const command = renderCommand(node.command, conditionContext(state), node.id);
+          input = command;
+          output = await execCommand({ ...node, command }, { defaultCwd: opts.workspace?.root, signal: opts.signal });
         } else if (node.type === "parallel") {
           input = { branches: node.branches, join: node.join };
           for (const branch of node.branches) {
