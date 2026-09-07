@@ -8,7 +8,6 @@ import {
   Handle,
   MiniMap,
   MarkerType,
-  PanOnScrollMode,
   Panel,
   Position,
   ReactFlow,
@@ -59,7 +58,7 @@ const KIND_COLOR: Record<NodeKind, string> = {
 
 const STATUS_STYLE: Record<NodeStatus, string> = {
   idle: "",
-  running: "ring-2 ring-sky-400 animate-pulse",
+  running: "ring-2 ring-amber-500 animate-pulse",
   completed: "ring-2 ring-emerald-500",
   failed: "ring-2 ring-destructive",
 };
@@ -391,9 +390,7 @@ export function WorkflowGraph({
         deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
         // Trackpad-first navigation: two fingers pan in both directions, pinch
         // zooms, and the wheel no longer zooms out from under the pointer.
-        panOnScroll
-        panOnScrollMode={PanOnScrollMode.Free}
-        zoomOnScroll={false}
+        zoomOnScroll
         zoomOnPinch
         zoomOnDoubleClick={false}
         minZoom={0.2}

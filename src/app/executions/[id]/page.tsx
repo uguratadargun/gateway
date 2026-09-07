@@ -3,13 +3,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, GitBranch, Gauge, Play, Radio, RotateCcw, Square, Wrench } from "lucide-react";
+import { ArrowLeft, GitBranch, Gauge, Maximize2, Play, Radio, RotateCcw, RefreshCw, Square, Wrench } from "lucide-react";
 
 import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } from "@/components/workflow-graph";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { DiffView } from "@/components/diff-view";
+import { StepDetailDialog } from "@/components/step-detail";
 import { formatDuration, formatElapsed } from "@/lib/duration";
+import { stripAnsi } from "@/lib/utils";
 import { takenLinks, type RoutingLink } from "@/workflows/routing";
 import type { WorkflowEvent } from "@/events/types";
 import { stepFailure } from "@/executions/failure";
@@ -29,14 +32,9 @@ const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | 
   failed: "destructive",
 };
 
-// Test runners colour their output; the escape codes make a failing suite
-// unreadable here, and reading it is the whole point of opening the step.
-// eslint-disable-next-line no-control-regex
-const ANSI = /\u001b\[[0-9;]*m/g;
-
 function preview(value: unknown): string {
   if (value == null) return "—";
-  const s = (typeof value === "string" ? value : JSON.stringify(value, null, 2)).replace(ANSI, "");
+  const s = stripAnsi(typeof value === "string" ? value : JSON.stringify(value, null, 2));
   return s.length > 4000 ? `${s.slice(0, 4000)}…` : s;
 }
 
@@ -63,8 +61,29 @@ export default function ExecutionDetailPage() {
   /** Ticks once a second so the running steps' stopwatches move. */
   const [now, setNow] = useState(() => Date.now());
   const [openStep, setOpenStep] = useState<number | null>(null);
+  /** The step shown in full, in a dialog — the list itself has to stay skimmable. */
+  const [detailStep, setDetailStep] = useState<ExecutionStepRecord | null>(null);
   /** Replay position for a finished run; null = show the whole run. */
   const [replay, setReplay] = useState<number | null>(null);
+  /** The worktree's diff, read on demand — it can be megabytes. */
+  const [diff, setDiff] = useState<{ diff: string; truncated: boolean } | null>(null);
+  const [diffError, setDiffError] = useState<string | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+
+  const loadDiff = useCallback(async () => {
+    setDiffLoading(true);
+    setDiffError(null);
+    try {
+      const r = await fetch(`/api/executions/${id}/diff`);
+      const data = await r.json();
+      if (r.ok) setDiff(data);
+      else setDiffError(data.error ?? "could not read the diff");
+    } catch {
+      setDiffError("could not read the diff");
+    } finally {
+      setDiffLoading(false);
+    }
+  }, [id]);
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/executions/${id}`);
@@ -191,7 +210,7 @@ export default function ExecutionDetailPage() {
 
   const statuses = useMemo(() => {
     const out: Record<string, NodeStatus> = {};
-    for (const s of shown) out[s.nodeId] = s.status === "failed" ? "failed" : "completed";
+    for (const s of shown) out[s.nodeId] = s.status === "failed" || stepFailure(s.output) ? "failed" : "completed";
     if (replay === null) for (const [k, v] of Object.entries(live)) out[k] = v;
     return out;
   }, [shown, live, replay]);
@@ -322,11 +341,6 @@ export default function ExecutionDetailPage() {
             )}
           </div>
           <p className="break-all font-mono text-[11px] text-muted-foreground">{ex.workspace.root}</p>
-          {ex.workspace.changedFiles.length > 0 && (
-            <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 font-mono text-[11px]">
-              {ex.workspace.changedFiles.join("\n")}
-            </pre>
-          )}
         </Card>
       )}
 
@@ -399,7 +413,9 @@ export default function ExecutionDetailPage() {
                 <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
                   {formatDuration(s.finishedAt - s.startedAt)}
                 </span>
-                <span className={s.status === "failed" ? "text-destructive" : "text-emerald-500"}>●</span>
+                <span className={stepFailure(s.output) || s.status === "failed" ? "text-destructive" : "text-emerald-500"}>
+                  ●
+                </span>
               </button>
               {routes[s.stepIndex]?.length > 0 && (
                 <div className="flex flex-wrap items-center gap-x-1.5 border-t px-2 py-1 text-[10px] text-muted-foreground">
@@ -420,14 +436,21 @@ export default function ExecutionDetailPage() {
                 const failure = stepFailure(s.output);
                 if (!failure) return null;
                 return (
-                  <div className="border-t bg-destructive/5 px-2 py-1">
-                    <div className="text-[10px] uppercase tracking-wide text-destructive">{failure.headline}</div>
+                  <button
+                    onClick={() => setDetailStep(s)}
+                    className="block w-full border-t bg-destructive/5 px-2 py-1 text-left hover:bg-destructive/10"
+                    title="Open the full output"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] uppercase tracking-wide text-destructive">{failure.headline}</span>
+                      <Maximize2 className="size-2.5 shrink-0 text-destructive/60" />
+                    </div>
                     {failure.lines.map((l, i) => (
                       <div key={i} className="truncate font-mono text-[10px] text-muted-foreground" title={l}>
                         {l}
                       </div>
                     ))}
-                  </div>
+                  </button>
                 );
               })()}
               {openStep === s.stepIndex && (
@@ -465,6 +488,9 @@ export default function ExecutionDetailPage() {
                   )}
                   <Section title="input">{preview(s.input)}</Section>
                   <Section title="output">{preview(s.output)}</Section>
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => setDetailStep(s)}>
+                    <Maximize2 /> Full detail
+                  </Button>
                 </div>
               )}
             </div>
@@ -478,12 +504,37 @@ export default function ExecutionDetailPage() {
                 <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
                   {formatElapsed(now - s.startedAt)}
                 </span>
-                <span className="animate-pulse text-sky-400">●</span>
+                <span className="animate-pulse text-amber-500">●</span>
               </div>
             </div>
           ))}
         </Card>
       </div>
+
+      {ex?.workspace && (
+        <Card className="space-y-2 p-3">
+          <div className="flex items-center gap-2">
+            <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Changes</span>
+            <span className="font-mono text-[11px] text-muted-foreground">{ex.workspace.branch}</span>
+            <Button variant="ghost" size="sm" className="ml-auto" onClick={loadDiff} disabled={diffLoading}>
+              <RefreshCw className={diffLoading ? "animate-spin" : ""} />
+              {diff ? "Refresh" : diffLoading ? "Reading…" : "Show diff"}
+            </Button>
+          </div>
+
+          {diffError && <p className="px-1 text-xs text-destructive">{diffError}</p>}
+          {diff && <DiffView diff={diff.diff} truncated={diff.truncated} />}
+          {!diff && !diffError && (
+            <p className="px-1 text-xs text-muted-foreground">
+              {ex.workspace.changedFiles.length > 0
+                ? `${ex.workspace.changedFiles.length} file${ex.workspace.changedFiles.length === 1 ? "" : "s"} changed in the worktree.`
+                : "Read straight from the worktree, so it is current even while the run is going."}
+            </p>
+          )}
+        </Card>
+      )}
+      <StepDetailDialog step={detailStep} onClose={() => setDetailStep(null)} />
     </main>
   );
 }

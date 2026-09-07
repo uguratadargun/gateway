@@ -87,6 +87,27 @@ export function summarizeWorkspace(ws: RunWorkspace): WorkspaceSummary {
   return { ...ws, changedFiles, commit };
 }
 
+/** A diff big enough to be a denial of service against the browser is not a diff. */
+const MAX_DIFF_BYTES = 4_000_000;
+
+/**
+ * The unified diff of what a run did in its worktree, for the UI to render.
+ *
+ * `add -N` first, because a run's most interesting output is usually a file
+ * that did not exist before and `git diff` alone cannot see one. It records
+ * intent-to-add only — no content is staged — and it is the same thing the
+ * pipeline's own `stage` node does, so a diff read here matches the diff the
+ * reviewers were given.
+ */
+export function readRunDiff(root: string): { diff: string; truncated: boolean } {
+  if (!existsSync(root)) throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
+  git(root, ["add", "-N", "."]);
+  const diff = git(root, ["diff"]);
+  return diff.length > MAX_DIFF_BYTES
+    ? { diff: diff.slice(0, MAX_DIFF_BYTES), truncated: true }
+    : { diff, truncated: false };
+}
+
 /** Removes a worktree and its branch. Only ever called explicitly. */
 export function removeRunWorkspace(ws: { repo: string; root: string; branch: string }): void {
   try {

@@ -18,7 +18,7 @@ tools: [read_file, list_files]      # see Tools
 output:
   type: json                        # or: type: text
   schema:
-    verdict: string                 # string, number, boolean, string[], number[], object, any
+    verdict: string                 # string, number, boolean, string[], number[], object, object[], any
     findings: "string[]"            #   a trailing "?" makes the field optional
     notes: "string?"
 timeoutMs: 3600000                  # DEFAULT when omitted, and what a new agent should
@@ -190,9 +190,9 @@ Code running in the worktree instead.
 
 |  | `gate` | `claude-code` |
 | --- | --- | --- |
-| tools | the six above, with hard caps: 200KB reads, search stops at 100 matches, 30KB of command output | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`, `TodoWrite`… — real ripgrep, ranged reads, uniqueness-checked edits |
+| tools | the six above, with hard caps: 200KB reads, search stops at 100 matches, 30KB of command output | the whole Claude Code toolset — real ripgrep, ranged reads, uniqueness-checked edits, `Bash`, `TodoWrite` |
 | context | every tool result appended, never trimmed | compacted by the harness |
-| `tools:` names | `read_file`, `edit_file`, … | `Read`, `Edit`, `Grep`, … |
+| `tools:` | the allowlist, and it is enforced | **ignored** — see below |
 
 The context row is the one that decides it. A node that reads its way through a
 large repository on the gate loop ends up re-sending a six-figure context every
@@ -201,6 +201,17 @@ it re-reading itself. No round cap fixes that — a cap kills the node; compacti
 lets it finish. Reach for `claude-code` on any node that explores or edits a real
 repository, and leave short deterministic nodes on `gate`, which starts instantly
 where the harness pays about 50-70K tokens of system prompt to start at all.
+
+`tools:` does nothing for a `claude-code` agent, so leave it out rather than
+writing a list that reads like a restriction and is not one. `--allowed-tools`
+gates permission *prompts*, not capability, and under the permission mode below
+there are no prompts — measured here: a child given `--allowed-tools Read`
+reached for `Bash` on its first move and was not stopped. A node that must work
+a real repository gets the real toolset; that is the trade being made.
+
+Every tool call it makes is streamed back (`--output-format stream-json`) and
+becomes a `tool.called` event, so a claude-code node is watchable on the
+executions page while it runs, not only once it is over.
 
 Routing, metering and `maxCostUsd` are unaffected: the child is pointed at this
 gate's own gateway, so every call it makes is routed and counted exactly like one
@@ -277,6 +288,37 @@ inputs: [reviewer.findings?, security.findings?, implementer.summary?]
 
 They are empty on the first pass, which is how one planner file serves both.
 
+### A worktree does not carry generated files
+
+Each run works in a fresh `git worktree`, so it contains what git tracks and
+nothing else. Build output — a protobuf bundle, transpiled `.js` beside the
+`.ts`, generated clients, compiled assets — is normally gitignored, which means
+it is **not there**, however complete the main checkout looks.
+
+Measured here: a repository whose main checkout had 924 generated `.js` files
+under `ts/` gave a worktree 2 of them. Nineteen test files failed on
+`Cannot find module`, every pass, byte-identical — a failure no implementer can
+fix, because it is not in the code, and the loop ran until the budget stopped it.
+
+So find the generation step and put it between the workspace setup and the
+planner, one `command` node per script (argv has no `&&`):
+
+```yaml
+  - id: protobuf
+    type: command
+    command: [pnpm, build-protobuf]
+    next: transpile
+
+  - id: transpile
+    type: command
+    command: [pnpm, transpileNew]
+    next: planner
+```
+
+**Verify the test command inside a worktree, not in the main checkout.** Running
+it where the artifacts already exist proves nothing about where the node runs —
+that is exactly how this was missed.
+
 ### Every output a node declares must be read by something
 
 An agent that returns `risks` nobody consumes is paying for tokens that go
@@ -306,5 +348,16 @@ accept it. The server validates shape, not sense.
       must fix them.
 - [ ] **No absolute interpreter paths** in any `command` — `PATH` resolves them.
 - [ ] **No orphan output fields** — every one is read somewhere.
+- [ ] **No `tools:` on a `claude-code` agent** — it is ignored, and writing one
+      claims a restriction that does not exist.
 - [ ] **Every command you wrote is a command this repository really has**, taken
       from `package.json` / `Makefile` / CI, not invented.
+- [ ] **The generation step runs before the planner** if anything the tests need
+      is gitignored build output — established by listing the repository's
+      ignored artifacts, not by assuming there are none.
+- [ ] **The test command was verified inside a worktree**, not in the main
+      checkout where the build output already exists.
+- [ ] **A list-of-things output field is `object[]`, not `string[]`**, unless the
+      prompt genuinely wants one line each. A reviewer asked for `findings`
+      returns objects; declaring `string[]` makes every run spend a correction
+      round arguing with it.

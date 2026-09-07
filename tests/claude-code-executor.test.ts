@@ -23,10 +23,10 @@ Do the work.
 `;
 
 /** A stand-in for the CLI: replays one canned stdout, then exits. */
-function fakeCli(stdout: string, code = 0, stderr = "") {
+function fakeCli(stdout: string | string[], code = 0, stderr = "") {
   return ((_cmd: string, args: string[]) => {
     const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
-    child.stdout = Readable.from([stdout]);
+    child.stdout = Readable.from(Array.isArray(stdout) ? stdout : [stdout]);
     child.stderr = Readable.from([stderr]);
     child.kill = () => true;
     (fakeCli as unknown as { lastArgs: string[] }).lastArgs = args;
@@ -35,14 +35,39 @@ function fakeCli(stdout: string, code = 0, stderr = "") {
   }) as never;
 }
 
-const OK = JSON.stringify({
-  type: "result",
-  subtype: "success",
-  is_error: false,
-  result: '{"summary": "did the thing"}',
-  usage: { input_tokens: 6, output_tokens: 408, cache_read_input_tokens: 98115 },
-  modelUsage: { "claude-sonnet-5": {} },
-});
+/** An NDJSON stream shaped like the real `--output-format stream-json`. */
+const STREAM = [
+  { type: "system", subtype: "init" },
+  { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Grep", input: { pattern: "isOnline" } }] } },
+  { type: "user", message: { content: [{ tool_use_id: "t1", type: "tool_result", content: "ts/a.ts:12" }] } },
+  { type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Edit", input: { file_path: "ts/a.ts" } }] } },
+  { type: "user", message: { content: [{ tool_use_id: "t2", type: "tool_result", content: "denied", is_error: true }] } },
+  {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: '{"summary": "did the thing"}',
+    usage: { input_tokens: 6, output_tokens: 408, cache_read_input_tokens: 98115 },
+    modelUsage: { "claude-sonnet-5": {} },
+  },
+]
+  .map((e) => JSON.stringify(e))
+  .join("\n");
+
+const OK = STREAM;
+
+/** A minimal stream whose result line carries `payload` as the agent's answer. */
+function streamOf(payload: unknown, sessionId: string): string {
+  return JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    session_id: sessionId,
+    result: JSON.stringify(payload),
+    usage: { input_tokens: 6, output_tokens: 408, cache_read_input_tokens: 0 },
+    modelUsage: { "claude-sonnet-5": {} },
+  });
+}
 
 describe("claude-code executor", () => {
   it("validates the CLI's final message against the agent's declared output shape", async () => {
@@ -65,12 +90,103 @@ describe("claude-code executor", () => {
     await runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: fakeCli(OK) }, null);
     const args = (fakeCli as unknown as { lastArgs: string[] }).lastArgs;
 
-    expect(args).toContain("--allowed-tools");
-    expect(args).toEqual(expect.arrayContaining(["Read", "Grep", "Edit"]));
+    // Streamed, not one blob at the end: the dashboard has to fill in while the
+    // node runs, not after it.
+    expect(args[args.indexOf("--output-format") + 1]).toBe("stream-json");
+    expect(args).toContain("--verbose");
     // Unattended: a permission prompt nobody can answer is a hang, not a question.
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
-    // A node must not be able to start another run from inside a run.
-    expect(args[args.indexOf("--disallowed-tools") + 1]).toBe("Bash(gate-workflow*)");
+    // Full toolset on purpose — --allowed-tools gates prompts, not capability,
+    // and under bypassPermissions it would be theatre either way.
+    expect(args).not.toContain("--allowed-tools");
+    expect(args).not.toContain("--disallowed-tools");
+  });
+
+  it("reports each tool call as it comes back, so the run is watchable", async () => {
+    const agent = parseAgent("builder", AGENT, meta);
+    const seen: string[] = [];
+    const res = await runClaudeCodeNode(
+      agent,
+      "go",
+      "build",
+      { workspace, spawnCli: fakeCli(STREAM), onToolCall: (c) => seen.push(`${c.tool}:${c.ok}`) },
+      null,
+    );
+
+    // Emitted live during the node, not assembled at the end.
+    expect(seen).toEqual(["Grep:true", "Edit:false"]);
+    // And recorded on the step, so the finished run keeps its evidence.
+    expect(res.toolCalls).toHaveLength(2);
+    expect(res.toolCalls[0]).toMatchObject({ tool: "Grep", input: { pattern: "isOnline" }, ok: true, result: "ts/a.ts:12" });
+    expect(res.toolCalls[1]).toMatchObject({ tool: "Edit", ok: false, result: "denied" });
+  });
+
+  it("survives a stream that arrives split mid-line", async () => {
+    // Chunk boundaries fall wherever the pipe puts them; a half-written JSON
+    // line must not lose the tool call it was carrying.
+    const agent = parseAgent("builder", AGENT, meta);
+    const half = Math.floor(STREAM.length / 2);
+    const res = await runClaudeCodeNode(
+      agent,
+      "go",
+      "build",
+      { workspace, spawnCli: fakeCli([STREAM.slice(0, half), STREAM.slice(half)]) },
+      null,
+    );
+    expect(res.toolCalls).toHaveLength(2);
+    expect(res.output).toEqual({ summary: "did the thing" });
+  });
+
+  it("resumes the session to fix a malformed answer instead of failing the node", async () => {
+    // The expensive half is already done when the packaging is wrong. Killing
+    // the node there throws the work away and, on a parallel branch, takes the
+    // whole run with it — a review that never reaches the verdict is a
+    // rejection that never reaches the planner.
+    const badThenGood = [
+      streamOf({ summary: { text: "an object where a string was declared" } }, "sess-1"),
+      streamOf({ summary: "did the thing" }, "sess-1"),
+    ];
+    const spawns: string[][] = [];
+    const cli = ((_cmd: string, args: string[]) => {
+      spawns.push(args);
+      const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
+      child.stdout = Readable.from([badThenGood[spawns.length - 1] ?? badThenGood[1]]);
+      child.stderr = Readable.from([""]);
+      child.kill = () => true;
+      setTimeout(() => child.emit("close", 0), 0);
+      return child;
+    }) as never;
+
+    const agent = parseAgent("builder", AGENT, meta);
+    const res = await runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: cli }, null);
+
+    expect(res.output).toEqual({ summary: "did the thing" });
+    expect(spawns).toHaveLength(2);
+    // Resumed, not re-run: the second turn continues the same session and is
+    // told what was wrong rather than being handed the whole job again.
+    expect(spawns[1][spawns[1].indexOf("--resume") + 1]).toBe("sess-1");
+    expect(spawns[1][spawns[1].indexOf("-p") + 1]).toMatch(/did not match the output shape/);
+    // Both turns are paid for, so the budget sees the correction.
+    expect(res.usage.outputTokens).toBe(816);
+  });
+
+  it("gives up after the retries rather than looping on a shape it cannot produce", async () => {
+    const agent = parseAgent("builder", AGENT, meta);
+    const spawns: string[][] = [];
+    const cli = ((_cmd: string, args: string[]) => {
+      spawns.push(args);
+      const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
+      child.stdout = Readable.from([streamOf({ summary: { still: "wrong" } }, "sess-1")]);
+      child.stderr = Readable.from([""]);
+      child.kill = () => true;
+      setTimeout(() => child.emit("close", 0), 0);
+      return child;
+    }) as never;
+
+    await expect(runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: cli }, null)).rejects.toMatchObject({
+      code: "AGENT_OUTPUT_VALIDATION_ERROR",
+    });
+    expect(spawns).toHaveLength(3); // the first turn plus two corrections
   });
 
   it("refuses the executor when the workflow declares no workspace", async () => {

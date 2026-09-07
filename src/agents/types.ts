@@ -13,7 +13,7 @@ import { EFFORTS, type Effort } from "@/lib/reasoning";
  * answer, short enough to write by hand. A trailing "?" marks a field
  * optional.
  */
-const FIELD_TYPES = ["string", "number", "boolean", "string[]", "number[]", "object", "any"] as const;
+const FIELD_TYPES = ["string", "number", "boolean", "string[]", "number[]", "object", "object[]", "any"] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
 const fieldSpec = z.string().refine(
@@ -122,6 +122,12 @@ function fieldValidator(t: FieldType): z.ZodTypeAny {
       return z.array(z.string());
     case "number[]":
       return z.array(z.number());
+    // A list of findings is the shape a reviewer reaches for on its own, and
+    // without this the vocabulary could say `object` but not a list of them —
+    // so the model returned objects, the schema demanded strings, and the node
+    // died on the mismatch every single run.
+    case "object[]":
+      return z.array(z.record(z.string(), z.unknown()));
     case "object":
       return z.record(z.string(), z.unknown());
     default:

@@ -195,6 +195,30 @@ Do the work.
     }
   });
 
+  it("shows an agent its own validation error and takes the corrected answer", async () => {
+    // The same recovery on gate's own loop: the model gets told exactly what
+    // failed and answers again, instead of the node dying on the packaging.
+    const provider = new FakeModelProvider((_req, i) =>
+      i === 0 ? JSON.stringify({ summary: { text: "object where a string was declared" } }) : JSON.stringify({ summary: "done" }),
+    );
+    const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent, workspace });
+
+    expect(state.status).toBe("completed");
+    expect(state.outputs.build).toEqual({ summary: "done" });
+    expect(provider.calls).toHaveLength(2);
+    // The second call carries the failure, so the model knows what to change.
+    const correction = provider.calls[1].messages.at(-1)!.content;
+    expect(JSON.stringify(correction)).toMatch(/did not match the output shape/);
+  });
+
+  it("fails the node when the shape is still wrong after the retries", async () => {
+    const provider = new FakeModelProvider(() => JSON.stringify({ summary: { still: "wrong" } }));
+    const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent, workspace });
+
+    expect(state.error?.code).toBe("AGENT_OUTPUT_VALIDATION_ERROR");
+    expect(provider.calls).toHaveLength(3); // the first answer plus two corrections
+  });
+
   it("offers no tools when the workflow has no workspace", async () => {
     const provider = new FakeModelProvider(() => JSON.stringify({ summary: "prose only" }));
     const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent });

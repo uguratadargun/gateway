@@ -58,6 +58,28 @@ const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
 const RECON_ROUNDS_BEFORE_NUDGE = 12;
 const NUDGE_EVERY_ROUNDS = 10;
 
+/**
+ * How many times an agent may be shown its own validation error and asked again.
+ *
+ * A model that returns findings as objects where the schema said strings has
+ * done all the expensive work already — read the repository, formed the answer
+ * — and got the packaging wrong. Killing the node there throws that away and,
+ * on a parallel branch, takes the whole run with it: observed here as a review
+ * that never reached the verdict, so a rejection never made it back to the
+ * planner. Being told exactly what failed is enough to fix it, and costs one
+ * short round instead of a run.
+ */
+const MAX_OUTPUT_RETRIES = 2;
+
+/** What to send back when the answer did not match the declared shape. */
+export function outputCorrection(message: string): string {
+  return (
+    `Your last message did not match the output shape this node declared: ${message}\n\n` +
+    "Send the same answer again, corrected, as a single JSON object and nothing else — no prose, no code fence. " +
+    "Do not redo any work; only the shape of the final message was wrong."
+  );
+}
+
 export interface AgentExecutorDeps {
   provider: ModelProvider;
   loadAgent(id: string): AgentDefinition;
@@ -121,6 +143,7 @@ export async function executeAgentNode(
   const usage: NodeUsageRecord = { model: agent.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
   const deadline = nodeDeadline;
   const maxIterations = agent.maxToolIterations ?? deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
+  let outputRetries = 0;
 
   try {
     for (let iteration = 0; ; iteration++) {
@@ -155,7 +178,16 @@ export async function executeAgentNode(
       }
 
       if (!result.toolUses.length) {
-        return { input: inputs, output: parseOutput(agent, result.text, node.id), usage, toolCalls };
+        try {
+          return { input: inputs, output: parseOutput(agent, result.text, node.id), usage, toolCalls };
+        } catch (e) {
+          const validation = e instanceof WorkflowError && e.code === "AGENT_OUTPUT_VALIDATION_ERROR";
+          if (!validation || outputRetries >= MAX_OUTPUT_RETRIES) throw e;
+          outputRetries++;
+          messages.push({ role: "assistant", content: result.content });
+          messages.push({ role: "user", content: [{ type: "text", text: outputCorrection((e as Error).message) }] });
+          continue;
+        }
       }
       if (maxIterations > 0 && iteration >= maxIterations) {
         throw new WorkflowError(
