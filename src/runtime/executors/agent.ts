@@ -1,6 +1,6 @@
 import { renderTemplate, TemplateError } from "@/agents/template";
 import { buildOutputSchema, type AgentDefinition, type AgentOutputSpec } from "@/agents/types";
-import type { ModelProvider, ModelProviderMessage, ToolResultBlock, ToolUseBlock } from "@/providers/types";
+import type { ModelProvider, ModelProviderMessage, ProviderContentBlock, ToolUseBlock } from "@/providers/types";
 import { WorkflowError } from "@/runtime/errors";
 import { resolveInputs, type NodeUsageRecord, type ToolCallRecord, type WorkflowState } from "@/runtime/state";
 import { getTool, toolsFor } from "@/runtime/tools/registry";
@@ -17,6 +17,24 @@ import type { WorkflowNode } from "@/workflows/types";
 
 /** A model cannot keep calling tools forever; a stuck agent fails its node. */
 const MAX_TOOL_ITERATIONS = 40;
+
+/** The tools that leave something behind. An agent holding one is here to change code. */
+const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
+
+/**
+ * Reconnaissance has no natural end.
+ *
+ * An agent asked to change a large repository will map the whole thing before
+ * touching it, announce that it has enough evidence, and then go on mapping —
+ * observed here as 111 reads and searches in a row without a single write, on
+ * a prompt that said in as many words that the worktree was the deliverable.
+ * Prose in the prompt loses to the pull of the next unread file; what breaks
+ * the pattern is being told, in the loop, that nothing has been written yet.
+ * So a writing agent gets that reminder once it has spent this many rounds
+ * with nothing on disk, and again every so often until it starts.
+ */
+const RECON_ROUNDS_BEFORE_NUDGE = 12;
+const NUDGE_EVERY_ROUNDS = 10;
 
 export interface AgentExecutorDeps {
   provider: ModelProvider;
@@ -57,6 +75,7 @@ export async function executeAgentNode(
 
   const workspace = deps.workspace ?? null;
   const tools = toolsFor(agent.tools, Boolean(workspace));
+  const canWrite = tools.some((t) => WRITE_TOOLS.has(t.name));
   const toolDefs = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
   const toolCtx: ToolContext | null = workspace
     ? { root: workspace.root, nodeId: node.id, executionId: state.executionId }
@@ -64,6 +83,7 @@ export async function executeAgentNode(
 
   const messages: ModelProviderMessage[] = [{ role: "user", content: prompt }];
   const toolCalls: ToolCallRecord[] = [];
+  let writes = 0;
   const usage: NodeUsageRecord = { model: agent.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
   const deadline = agent.timeoutMs ? Date.now() + agent.timeoutMs : null;
   const maxIterations = agent.maxToolIterations ?? deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
@@ -75,7 +95,7 @@ export async function executeAgentNode(
       }
       const call = deps.provider.execute({
         model: agent.model,
-        system: systemPrompt(agent, tools.length > 0),
+        system: systemPrompt(agent, tools.length > 0, canWrite),
         messages,
         effort: agent.effort,
         maxTokens: agent.maxTokens,
@@ -112,13 +132,18 @@ export async function executeAgentNode(
       }
 
       messages.push({ role: "assistant", content: result.content });
-      const results: ToolResultBlock[] = [];
+      const results: ProviderContentBlock[] = [];
       for (const use of result.toolUses) {
         const record = await runTool(use, toolCtx, agent);
         toolCalls.push(record);
         deps.onToolCall?.(record);
+        if (record.ok && WRITE_TOOLS.has(use.name)) writes++;
         results.push({ type: "tool_result", toolUseId: use.id, content: record.result, isError: !record.ok });
       }
+      // Rides along with the tool results rather than as a turn of its own, so
+      // the reminder costs no extra model call.
+      const nudge = canWrite && writes === 0 ? reconNudge(iteration + 1, toolCalls.length) : null;
+      if (nudge) results.push({ type: "text", text: nudge });
       messages.push({ role: "user", content: results });
     }
   } catch (e) {
@@ -147,13 +172,31 @@ async function runTool(use: ToolUseBlock, ctx: ToolContext | null, agent: AgentD
   }
 }
 
-function systemPrompt(agent: AgentDefinition, hasTools: boolean): string {
+/** Null until the agent has surveyed for too long; then the same reminder, periodically. */
+function reconNudge(rounds: number, toolCallCount: number): string | null {
+  if (rounds < RECON_ROUNDS_BEFORE_NUDGE) return null;
+  if ((rounds - RECON_ROUNDS_BEFORE_NUDGE) % NUDGE_EVERY_ROUNDS !== 0) return null;
+  return (
+    `You have made ${toolCallCount} tool calls in this node and have not written anything to the worktree yet. ` +
+    "The worktree is the deliverable: nothing downstream reads this answer for the change itself, and a node that " +
+    "ends with an unchanged worktree fails. Apply the part of the change you already understand, now, with " +
+    "write_file or edit_file — then keep reading between edits instead of before them."
+  );
+}
+
+function systemPrompt(agent: AgentDefinition, hasTools: boolean, canWrite: boolean): string {
   const parts = [`You are the "${agent.name}" agent in an automated workflow.`];
   if (agent.description) parts.push(agent.description);
   if (hasTools) {
     parts.push(
-      "You are working in a git worktree of the target repository. Tool paths are relative to its root. " +
-        "Inspect before you change anything, make the smallest change that does the job, and verify it with the tools you have.",
+      canWrite
+        ? "You are working in a git worktree of the target repository, and that worktree is your output: every " +
+            "change you decide on, you apply there yourself with the write and edit tools. Nothing reads your final " +
+            "answer for the change itself. Work change by change — read what the edit in front of you needs, make it, " +
+            "verify it, move on — rather than surveying the whole repository first and writing at the end. Tool paths " +
+            "are relative to the worktree root."
+        : "You are working in a git worktree of the target repository. Tool paths are relative to its root. Read " +
+            "what you need, and base what you report on what you actually read rather than on what a name suggests.",
     );
   }
   if (agent.output.type === "json") {

@@ -204,3 +204,85 @@ describe("run workspace", () => {
     expect(() => createRunWorkspace({ repo: "/nope/nowhere" }, "exec")).toThrow(/does not exist/);
   });
 });
+
+const READER = `---
+name: Reader
+model: sonnet
+tools: [read_file]
+output:
+  type: json
+  schema:
+    summary: string
+---
+Look at the work.
+`;
+
+/**
+ * An agent that can write but does not is the failure this loop exists to
+ * break: it maps the repository for ever and answers with prose, leaving the
+ * worktree — the actual deliverable — untouched.
+ */
+describe("reconnaissance nudge", () => {
+  /**
+   * Every recorded call shares one message array (the executor appends to it
+   * in place), so the last call carries the whole conversation — which is
+   * exactly what to assert on: how many reminders were sent, and at which
+   * tool call each one landed.
+   */
+  const nudges = (provider: FakeModelProvider): string[] =>
+    provider.calls[provider.calls.length - 1].messages.flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content
+            .filter((b): b is { type: "text"; text: string } => b.type === "text")
+            .map((b) => b.text)
+            .filter((t) => t.includes("have not written anything"))
+        : [],
+    );
+
+  const reads = (until: number) => (_req: unknown, i: number) =>
+    i < until ? { toolUses: [toolUse("read_file", { path: "package.json" })] } : JSON.stringify({ summary: "read a lot" });
+
+  it("tells a writing agent to start once it has only read for too long", async () => {
+    const provider = new FakeModelProvider(reads(15));
+
+    await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent, workspace });
+
+    expect(nudges(provider)).toEqual([expect.stringContaining("You have made 12 tool calls")]);
+  });
+
+  it("says it again while the agent still has not written anything", async () => {
+    const provider = new FakeModelProvider(reads(30));
+
+    await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent, workspace });
+
+    expect(nudges(provider)).toEqual([
+      expect.stringContaining("You have made 12 tool calls"),
+      expect.stringContaining("You have made 22 tool calls"),
+    ]);
+  });
+
+  it("stays quiet once the agent has actually written something", async () => {
+    const provider = new FakeModelProvider((_req, i) => {
+      if (i === 0) return { toolUses: [toolUse("write_file", { path: "out.txt", content: "x" })] };
+      return i < 20 ? { toolUses: [toolUse("read_file", { path: "out.txt" })] } : JSON.stringify({ summary: "done" });
+    });
+
+    await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent, workspace });
+
+    expect(nudges(provider)).toEqual([]);
+  });
+
+  it("leaves a read-only agent alone, and never calls the worktree its output", async () => {
+    const provider = new FakeModelProvider(reads(15));
+
+    await runWorkflow(parseWorkflow("w", WORKFLOW, meta), {
+      provider,
+      loadAgent: (id) => parseAgent(id, READER, meta),
+      workspace,
+    });
+
+    expect(nudges(provider)).toEqual([]);
+    expect(provider.calls[0].system).not.toContain("that worktree is your output");
+    expect(provider.calls[0].system).toContain("what you actually read");
+  });
+});
