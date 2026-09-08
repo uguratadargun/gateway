@@ -1,6 +1,7 @@
 import { resolveKey, type Principal } from "./apikeys";
 import { bearerToken } from "./gate-auth";
 import { teamScope, type DefinitionScope } from "./def-root";
+import { isOlderThan, MIN_CLIENT_VERSION, VERSION_HEADERS } from "./protocol";
 import { DEFAULT_TEAM_ID, ensureDefaultTeam, getTeam } from "./teams";
 
 /**
@@ -35,6 +36,18 @@ export function clientErrorResponse(e: ClientAuthError): Response {
  * so the happy path reads as a plain principal.
  */
 export function requireClient(req: Request): Principal | Response {
+  // Before anything about who: a client too old to be served correctly is
+  // turned away with the command that fixes it, rather than being allowed on
+  // to fail later against a route that has moved under it.
+  const clientVersion = req.headers.get(VERSION_HEADERS.client);
+  if (clientVersion && isOlderThan(clientVersion, MIN_CLIENT_VERSION)) {
+    return clientErrorResponse({
+      status: 426,
+      error: `this gate needs gate ${MIN_CLIENT_VERSION} or newer (you have ${clientVersion}) — run \`/plugin update gate@gateway\` in Claude Code`,
+      code: "CLIENT_TOO_OLD",
+    });
+  }
+
   const token = bearerToken(req);
   if (!token) {
     return clientErrorResponse({
@@ -53,6 +66,10 @@ export function requireClient(req: Request): Principal | Response {
         code: "SCOPE_MISSING",
       });
     }
+    // The default team is created lazily — a gate that has issued keys but
+    // never had anyone open /team has no row for it, and refusing its own
+    // default is not a sentence anyone can act on.
+    if (principal.teamId === DEFAULT_TEAM_ID) ensureDefaultTeam();
     if (!getTeam(principal.teamId)) {
       return clientErrorResponse({
         status: 403,

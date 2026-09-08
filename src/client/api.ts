@@ -1,5 +1,7 @@
 import { hostname } from "node:os";
 
+import { GATE_VERSION, isOlderThan, VERSION_HEADERS } from "@/lib/protocol";
+
 import type { ClientConfig } from "./config";
 
 /**
@@ -13,7 +15,9 @@ import type { ClientConfig } from "./config";
  * them only hides which one happened.
  */
 
-export const CLI_VERSION = "0.13.0";
+/** This build's version. The server's own copy of the same constant is what it
+ *  is compared against — see src/lib/protocol.ts. */
+export const CLI_VERSION = GATE_VERSION;
 
 export class GateApiError extends Error {
   constructor(
@@ -46,6 +50,8 @@ export interface Bundle {
 }
 
 export class GateClient {
+  private warnedAboutVersion = false;
+
   constructor(private readonly config: ClientConfig) {}
 
   get url(): string {
@@ -64,7 +70,7 @@ export class GateClient {
     return {
       authorization: `Bearer ${this.config.key}`,
       "x-gate-host": hostname(),
-      "x-gate-cli": CLI_VERSION,
+      [VERSION_HEADERS.client]: CLI_VERSION,
       ...extra,
     };
   }
@@ -79,6 +85,7 @@ export class GateClient {
     } catch (e) {
       throw new GateApiError(`cannot reach gate at ${this.config.url} (${(e as Error).message})`, 0, "UNREACHABLE");
     }
+    this.noteVersions(res);
     if (res.status === 304) return { status: 304, body: null as T };
     const text = await res.text();
     let json: any = null;
@@ -94,11 +101,29 @@ export class GateClient {
     return { status: res.status, body: json as T };
   }
 
+  /**
+   * Notices, once, that this CLI is behind the gate it is talking to.
+   *
+   * Only a warning: being a version behind is the normal state of a tool
+   * installed on a dozen machines, and refusing on that alone would stop work
+   * for nothing. The server refuses the versions it genuinely cannot serve.
+   */
+  private noteVersions(res: Response): void {
+    if (this.warnedAboutVersion) return;
+    const server = res.headers.get(VERSION_HEADERS.server);
+    if (!server || !isOlderThan(CLI_VERSION, server)) return;
+    this.warnedAboutVersion = true;
+    console.error(
+      `# gate ${CLI_VERSION} here, ${server} on ${this.config.url} — run \`/plugin update gate@gateway\` in Claude Code when convenient`,
+    );
+  }
+
   async me(): Promise<{
     user: { id: string; email: string; name: string | null } | null;
     team: { id: string; name: string };
     scopes: string[];
     gatewayUrl: string;
+    server?: { version: string; minClientVersion: string };
   }> {
     return (await this.request<any>("/api/v1/me")).body;
   }

@@ -188,6 +188,12 @@ async function cmdWhoami(): Promise<number> {
   const me = await client.me();
   console.log(`${me.user?.email ?? "(key with no owner)"} · team ${me.team.name} (${me.team.id}) · ${client.url}`);
   console.log(`scopes: ${me.scopes.join(", ")}`);
+  // Both ends, side by side: the first thing to check when a command starts
+  // failing in a way the message does not explain.
+  console.log(
+    `gate ${CLI_VERSION} here · ${me.server?.version ?? "unknown"} there` +
+      (me.server?.minClientVersion ? ` (needs ${me.server.minClientVersion}+)` : ""),
+  );
   return 0;
 }
 

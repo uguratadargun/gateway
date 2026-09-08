@@ -697,6 +697,27 @@ the like, run in each worktree) are still the server's — a local run does not
 get them yet, so a pipeline that relies on them wants a `command` node of its
 own.
 
+**Keeping up to date.** Three things move at different speeds, and only one of
+them needs anybody to do anything.
+
+- *Definitions* look after themselves: every command re-syncs against the
+  bundle hash first, so a workflow edited in the dashboard is live on every
+  machine at the next `gate list` or `/gate-run`, and a workflow the team
+  deleted is gone from the mirror too.
+- *The server* is your deploy. Schema migrations are idempotent on open, and
+  the one-time move of `~/.gate/agents` under `teams/default/` happens on the
+  first read.
+- *The CLI* is `/plugin update gate@gateway`, per machine — and this is the one
+  that can silently drift, so it does not. Every `/api/v1` response carries the
+  server's version and the oldest client it will serve (`x-gate-server`,
+  `x-gate-min-cli`). A client behind the server says so once and carries on; a
+  client below the minimum is refused with `CLIENT_TOO_OLD` and the command
+  that fixes it, rather than meeting a route that has moved under it and
+  reporting something that reads like a broken workflow. `gate whoami` prints
+  both ends. `MIN_CLIENT_VERSION` in `src/lib/protocol.ts` is raised only by a
+  change that genuinely breaks older clients — it stops them dead, which is
+  the point.
+
 **Stop works in both directions.** The server cannot reach into a process on
 your laptop, so Stop on the execution page records the request and the answer
 rides back on the run's next report — within a few seconds — where it aborts

@@ -7584,7 +7584,32 @@ function readWorkflowSource(id, scope = teamScope()) {
 
 // src/client/api.ts
 import { hostname } from "node:os";
-var CLI_VERSION = "0.13.0";
+
+// src/lib/protocol.ts
+var GATE_VERSION = "0.13.0";
+var VERSION_HEADERS = {
+  /** Client → server: the CLI's own version. */
+  client: "x-gate-cli",
+  /** Server → client: what is running there. */
+  server: "x-gate-server",
+  /** Server → client: the oldest client it will serve. */
+  minClient: "x-gate-min-cli"
+};
+function compareVersions(a, b) {
+  const parts = (v) => v.trim().split(".").map((n) => Number.parseInt(n, 10)).map((n) => Number.isFinite(n) ? n : 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) {
+    const diff = (x[i] ?? 0) - (y[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+function isOlderThan(version, than) {
+  return compareVersions(version, than) < 0;
+}
+
+// src/client/api.ts
+var CLI_VERSION = GATE_VERSION;
 var GateApiError = class extends Error {
   constructor(message, status, code) {
     super(message);
@@ -7600,6 +7625,7 @@ var GateClient = class {
     this.config = config;
   }
   config;
+  warnedAboutVersion = false;
   get url() {
     return this.config.url;
   }
@@ -7613,7 +7639,7 @@ var GateClient = class {
     return {
       authorization: `Bearer ${this.config.key}`,
       "x-gate-host": hostname(),
-      "x-gate-cli": CLI_VERSION,
+      [VERSION_HEADERS.client]: CLI_VERSION,
       ...extra
     };
   }
@@ -7627,6 +7653,7 @@ var GateClient = class {
     } catch (e) {
       throw new GateApiError(`cannot reach gate at ${this.config.url} (${e.message})`, 0, "UNREACHABLE");
     }
+    this.noteVersions(res);
     if (res.status === 304) return { status: 304, body: null };
     const text = await res.text();
     let json = null;
@@ -7639,6 +7666,22 @@ var GateClient = class {
       throw new GateApiError(detail, res.status, json?.code);
     }
     return { status: res.status, body: json };
+  }
+  /**
+   * Notices, once, that this CLI is behind the gate it is talking to.
+   *
+   * Only a warning: being a version behind is the normal state of a tool
+   * installed on a dozen machines, and refusing on that alone would stop work
+   * for nothing. The server refuses the versions it genuinely cannot serve.
+   */
+  noteVersions(res) {
+    if (this.warnedAboutVersion) return;
+    const server = res.headers.get(VERSION_HEADERS.server);
+    if (!server || !isOlderThan(CLI_VERSION, server)) return;
+    this.warnedAboutVersion = true;
+    console.error(
+      `# gate ${CLI_VERSION} here, ${server} on ${this.config.url} \u2014 run \`/plugin update gate@gateway\` in Claude Code when convenient`
+    );
   }
   async me() {
     return (await this.request("/api/v1/me")).body;
@@ -9074,6 +9117,9 @@ async function cmdWhoami() {
   const me = await client.me();
   console.log(`${me.user?.email ?? "(key with no owner)"} \xB7 team ${me.team.name} (${me.team.id}) \xB7 ${client.url}`);
   console.log(`scopes: ${me.scopes.join(", ")}`);
+  console.log(
+    `gate ${CLI_VERSION} here \xB7 ${me.server?.version ?? "unknown"} there` + (me.server?.minClientVersion ? ` (needs ${me.server.minClientVersion}+)` : "")
+  );
   return 0;
 }
 async function cmdList() {

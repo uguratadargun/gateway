@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { GATE_VERSION, MIN_CLIENT_VERSION } from "@/lib/protocol";
 import { requireClient } from "@/lib/tenancy";
 import { getTeam, getUser } from "@/lib/teams";
 
@@ -26,5 +27,6 @@ export async function GET(req: Request) {
     // `localhost` is normalised the way /api/clients does it: it may resolve to
     // ::1 while the server binds 127.0.0.1.
     gatewayUrl: gatewayUrlFor(req),
+    server: { version: GATE_VERSION, minClientVersion: MIN_CLIENT_VERSION },
   });
 }

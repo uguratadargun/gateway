@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { getAgent, listAgents, saveAgent } from "@/agents/registry";
 import { createExecution, getExecution } from "@/executions/store";
-import { createKey, resolveKey, revokeKey } from "@/lib/apikeys";
+import { createKey, resolveKey, revokeKey, type Principal } from "@/lib/apikeys";
+import { getDb } from "@/lib/db";
 import { teamScope } from "@/lib/def-root";
+import { isOlderThan, MIN_CLIENT_VERSION, VERSION_HEADERS } from "@/lib/protocol";
 import { ownsExecution, requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { createTeam, createUser, updateUser } from "@/lib/teams";
 import { listWorkflows, saveWorkflow } from "@/workflows/registry";
@@ -119,11 +121,53 @@ describe("client API auth", () => {
     expect(await (refused as Response).json()).toMatchObject({ code: "SCOPE_MISSING" });
   });
 
+  it("serves a key for the default team even before anyone has opened /team", () => {
+    // The row is created lazily; a gate that issued a key on day one and never
+    // visited the team page must not refuse its own default.
+    getDb().prepare("DELETE FROM teams WHERE id = 'default'").run();
+    const principal = requireClient(request(createKey({ name: "day one" }).plaintext));
+    expect(principal).not.toBeInstanceOf(Response);
+    expect((principal as Principal).teamId).toBe("default");
+  });
+
   it("hands a valid key its own team's scope", () => {
     createTeam("Iota", "iota");
     const principal = requireClient(request(keyFor("iota")));
     expect(principal).not.toBeInstanceOf(Response);
     expect(scopeForPrincipal(principal as never).root).toContain("teams/iota");
+  });
+});
+
+describe("version skew", () => {
+  it("orders versions, including malformed ones, without throwing", () => {
+    expect(isOlderThan("0.13.0", "0.14.0")).toBe(true);
+    expect(isOlderThan("0.13.0", "0.13.0")).toBe(false);
+    expect(isOlderThan("1.0.0", "0.99.99")).toBe(false);
+    expect(isOlderThan("0.9", "0.10.0")).toBe(true);
+    // Unreadable is a reason to warn, never to fail: it sorts as 0.0.0.
+    expect(isOlderThan("nonsense", "0.1.0")).toBe(true);
+  });
+
+  it("turns away a client too old to be served, with the fix", async () => {
+    createTeam("Lambda", "lambda");
+    const key = keyFor("lambda");
+    const req = new Request("http://gate.test/api/v1/me", {
+      headers: { authorization: `Bearer ${key}`, [VERSION_HEADERS.client]: "0.1.0" },
+    });
+    const refused = requireClient(req);
+    expect(refused).toBeInstanceOf(Response);
+    expect((refused as Response).status).toBe(426);
+    const body = await (refused as Response).json();
+    expect(body.code).toBe("CLIENT_TOO_OLD");
+    expect(body.error).toContain("/plugin update");
+  });
+
+  it("serves a client at or above the minimum", () => {
+    createTeam("Mu", "mu");
+    const req = new Request("http://gate.test/api/v1/me", {
+      headers: { authorization: `Bearer ${keyFor("mu")}`, [VERSION_HEADERS.client]: MIN_CLIENT_VERSION },
+    });
+    expect(requireClient(req)).not.toBeInstanceOf(Response);
   });
 });
 
