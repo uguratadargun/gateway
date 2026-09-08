@@ -2,7 +2,7 @@ import { AccountsPanel } from "@/components/accounts-panel";
 import { ClientsPanel } from "@/components/clients-panel";
 import { GatewayInfo } from "@/components/gateway-info";
 import { KeysPanel } from "@/components/keys-panel";
-import { LocalModelsPanel } from "@/components/local-models-panel";
+import { ProvidersPanel } from "@/components/providers-panel";
 import { OverviewPanel } from "@/components/overview-panel";
 import { RoutingRulesPanel } from "@/components/routing-rules-panel";
 import { RoutingSimulator } from "@/components/routing-simulator";
@@ -15,8 +15,8 @@ export default function Home() {
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Pooled Claude logins and your own local models. Context-aware routing across Haiku,
-          Sonnet, Opus, Fable — and anything you host yourself.
+          Pooled Claude logins and whatever else you point it at. Context-aware routing across
+          Haiku, Sonnet, Opus, Fable — and any provider you add, hosted or on your own machine.
         </p>
       </header>
 
@@ -27,7 +27,7 @@ export default function Home() {
           <GatewayInfo />
           <ClientsPanel />
         </div>
-        <LocalModelsPanel />
+        <ProvidersPanel />
         <RoutingRulesPanel />
         <div className="grid gap-6 md:grid-cols-2">
           <RoutingSimulator />

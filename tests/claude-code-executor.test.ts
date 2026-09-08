@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import { parseAgent } from "@/agents/loader";
-import { runClaudeCodeNode } from "@/runtime/executors/claude-code";
+import { providerModelEnv, runClaudeCodeNode } from "@/runtime/executors/claude-code";
 
 const meta = { sourcePath: "/tmp/x", updatedAt: 0 };
 // A real directory: the executor refuses to spawn into a worktree that is not
@@ -231,5 +231,37 @@ describe("claude-code executor", () => {
     await expect(
       runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: fakeCli("", 1, "not logged in") }, null),
     ).rejects.toMatchObject({ code: "MODEL_EXECUTION_ERROR", message: expect.stringContaining("not logged in") });
+  });
+});
+
+describe("a node running on a provider model", () => {
+  it("pins every alias the child could ask for to that same model", () => {
+    const env = providerModelEnv("provider:zai/glm-5.3");
+    // Claude Code asks for `haiku` on its own for background work; unpinned,
+    // gate would resolve that alias onto a Claude tier and the node would
+    // need a connected Claude account it has no reason to need.
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("provider:zai/glm-5.3");
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("provider:zai/glm-5.3");
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("provider:zai/glm-5.3");
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe("1");
+  });
+
+  it("leaves a Claude model to the router's own ladder", () => {
+    expect(providerModelEnv("sonnet")).toEqual({});
+    expect(providerModelEnv("claude-sonnet-5")).toEqual({});
+  });
+
+  it("hands the pins to the spawned child, alongside the gateway it reports to", async () => {
+    let seen: Record<string, string> | undefined;
+    type Spawn = (cmd: string, args: string[], opts: { env: Record<string, string> }) => unknown;
+    const inner = fakeCli(STREAM) as unknown as Spawn;
+    const spawnCli = ((cmd: string, args: string[], opts: { env: Record<string, string> }) => {
+      seen = opts.env;
+      return inner(cmd, args, opts);
+    }) as never;
+    const agent = parseAgent("builder", AGENT.replace("model: sonnet", "model: provider:zai/glm-5.3"), meta);
+    await runClaudeCodeNode(agent, "go", "n1", { workspace, spawnCli, gatewayUrl: "http://gate/api/gateway" }, null);
+    expect(seen!.ANTHROPIC_BASE_URL).toBe("http://gate/api/gateway");
+    expect(seen!.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("provider:zai/glm-5.3");
   });
 });

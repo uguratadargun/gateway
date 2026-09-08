@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { createProvider, listProviders } from "@/lib/local-providers";
+import { createProvider, listProviders } from "@/lib/providers";
 import { createProviderSchema } from "@/lib/schemas";
 
 export const runtime = "nodejs";
 
-/** Configured OpenAI-compatible endpoints (Ollama, vLLM, LM Studio, …). */
+/** Configured model endpoints: Ollama, vLLM, LM Studio, Z.AI, … */
 export async function GET() {
   return NextResponse.json({ providers: listProviders() });
 }

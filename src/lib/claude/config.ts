@@ -25,6 +25,9 @@ export const CLAUDE_OAUTH = {
   codeChallengeMethod: "S256" as const,
 } as const;
 
+/** The Messages API wire version, sent on every Anthropic-dialect request. */
+export const ANTHROPIC_VERSION = "2023-06-01";
+
 export const ANTHROPIC_API_BASE = "https://api.anthropic.com";
 export const ANTHROPIC_MESSAGES_URL = `${ANTHROPIC_API_BASE}/v1/messages`;
 export const ANTHROPIC_BOOTSTRAP_URL = `${ANTHROPIC_API_BASE}/api/claude_cli/bootstrap`;

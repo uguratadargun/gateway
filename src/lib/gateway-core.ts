@@ -29,8 +29,8 @@ import { countTokens } from "./count-tokens";
 import { gradeDifficulty } from "./grader";
 import { coalesce } from "./inflight";
 import { getLimiter } from "./limiter";
-import { sendToLocalProvider } from "./local-exec";
-import { getProviderByName, parseLocalRef, type LocalModelRef } from "./local-providers";
+import { sendToProvider } from "./provider-exec";
+import { getProviderByName, parseProviderRef, type ProviderModelRef } from "./providers";
 import { applyPromptCaching } from "./prompt-cache";
 import { currentUtilization, readRateLimit, recordRateLimit } from "./ratelimit";
 import { applyReasoning, normalizeEffort, sanitizeForModel, type Effort } from "./reasoning";
@@ -148,7 +148,7 @@ export interface SendOutcome {
   attempts: number;
   /** The Claude account that served the final attempt; null for a local route. */
   accountId: string | null;
-  /** The local provider that served it; null when Anthropic did. */
+  /** The provider that served it; null when Anthropic did. */
   providerId: string | null;
 }
 
@@ -317,7 +317,7 @@ async function attemptOnAccount(args: {
 
 /** Send to a configured OpenAI-compatible endpoint, with transient retries. */
 async function attemptOnProvider(args: {
-  ref: LocalModelRef;
+  ref: ProviderModelRef;
   body: Record<string, unknown>;
   stream: boolean;
   signal?: AbortSignal;
@@ -331,10 +331,11 @@ async function attemptOnProvider(args: {
     return {
       upstream: jsonError(
         502,
-        `Local provider "${ref.provider}" is ${provider ? "disabled" : "not configured"}. Add it under Local models, or point this tier at a Claude model.`,
+        `Provider "${ref.provider}" is ${provider ? "disabled" : "not configured"}. Add it under Providers, or point this tier at a Claude model.`,
       ),
       // Treated as a network failure so the tier chain still has somewhere to
-      // go: an unplugged local box should not take the whole request down.
+      // go: an unplugged box, or an unreachable endpoint, should not take the
+      // whole request down.
       cls: "network",
       accountLimited: false,
       windowFallback: false,
@@ -347,9 +348,9 @@ async function attemptOnProvider(args: {
   for (let attempt = 0; ; attempt++) {
     onAttempt();
     try {
-      upstream = await sendToLocalProvider({
+      upstream = await sendToProvider({
         provider,
-        model: ref.model,
+        ref,
         body: structuredClone(body) as Record<string, unknown>,
         stream,
         signal,
@@ -375,7 +376,7 @@ async function attemptOnProvider(args: {
 export async function sendWithFallback(opts: {
   body: Record<string, unknown>;
   route: RouteResult;
-  /** The account picked by dispatch; null when the route starts on a local model. */
+  /** The account picked by dispatch; null when the route starts on a provider model. */
   account: Account | null;
   pool: Account[];
   poolConfig: AccountPoolConfig;
@@ -414,7 +415,7 @@ export async function sendWithFallback(opts: {
     let accountLimited = false;
     let windowFallback = false;
 
-    const local = parseLocalRef(usedModel);
+    const local = parseProviderRef(usedModel);
     if (local) {
       accountId = null;
       const result = await attemptOnProvider({ ref: local, body, stream, signal, onAttempt });
@@ -639,13 +640,13 @@ export async function dispatch(
   applyReasoning(body, opts.effortHeader, categoryEffort, route.model);
 
   // Which login serves this request, and whether its 5h window still has room.
-  // A route that already points at a local model needs no Claude account.
+  // A route that already points at a provider model needs no Claude account.
   const pool = listAccounts();
   const poolConfig = settings.accountPool;
   let account: Account | null = null;
   let throttled = false;
 
-  if (!parseLocalRef(route.model)) {
+  if (!parseProviderRef(route.model)) {
     if (pool.length === 0) {
       return { ok: false, response: jsonError(401, "No Claude account connected. Log in via the dashboard.") };
     }

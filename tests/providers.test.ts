@@ -7,16 +7,23 @@ import {
 } from "@/lib/anthropic-openai";
 import { getDb } from "@/lib/db";
 import {
+  canonicalModelRef,
+  catalogueRequest,
   createProvider,
-  formatLocalRef,
+  formatProviderRef,
   isSelfHostedBaseUrl,
   listProviderModels,
   listProviders,
-  parseLocalRef,
+  parseProviderRef,
   providerApiKey,
   updateProvider,
-} from "@/lib/local-providers";
-import { sendToLocalProvider } from "@/lib/local-exec";
+} from "@/lib/providers";
+import {
+  sanitizeForAnthropicProvider,
+  sendToAnthropicProvider,
+  sendToOpenAIProvider,
+  sendToProvider,
+} from "@/lib/provider-exec";
 import { routeModel } from "@/lib/router";
 
 // ── request translation ─────────────────────────────────────────────────────
@@ -222,7 +229,7 @@ describe("openai → anthropic stream", () => {
 
 // ── provider registry ───────────────────────────────────────────────────────
 
-describe("local provider registry", () => {
+describe("provider registry", () => {
   beforeEach(() => {
     getDb().exec("DELETE FROM providers");
   });
@@ -236,13 +243,23 @@ describe("local provider registry", () => {
     }
   });
 
-  it("parses and formats local model references", () => {
-    expect(parseLocalRef("local:ollama/qwen3")).toEqual({ provider: "ollama", model: "qwen3" });
+  it("parses and formats provider model references", () => {
+    expect(parseProviderRef("provider:ollama/qwen3")).toEqual({ provider: "ollama", model: "qwen3" });
     // The model half may carry slashes and tags of its own.
-    expect(parseLocalRef("local:ollama/library/qwen3:8b")).toEqual({ provider: "ollama", model: "library/qwen3:8b" });
-    expect(parseLocalRef("claude-sonnet-5")).toBeNull();
-    expect(parseLocalRef("local:ollama")).toBeNull();
-    expect(formatLocalRef("ollama", "qwen3")).toBe("local:ollama/qwen3");
+    expect(parseProviderRef("provider:ollama/library/qwen3:8b")).toEqual({ provider: "ollama", model: "library/qwen3:8b" });
+    expect(parseProviderRef("claude-sonnet-5")).toBeNull();
+    expect(parseProviderRef("provider:ollama")).toBeNull();
+    expect(formatProviderRef("ollama", "qwen3")).toBe("provider:ollama/qwen3");
+  });
+
+  it("still reads the `local:` prefix it used to write", () => {
+    // Every routing.json and agent definition written before the rename holds
+    // one of these; they have to keep resolving to the same endpoint.
+    expect(parseProviderRef("local:ollama/qwen3")).toEqual({ provider: "ollama", model: "qwen3" });
+    expect(canonicalModelRef("local:ollama/qwen3")).toBe("provider:ollama/qwen3");
+    expect(canonicalModelRef("provider:zai/glm-4.6")).toBe("provider:zai/glm-4.6");
+    // A Claude id is not a provider ref and is handed back untouched.
+    expect(canonicalModelRef("claude-sonnet-5")).toBe("claude-sonnet-5");
   });
 
   it("slugifies the name, trims the base URL, and seals the key", () => {
@@ -270,16 +287,56 @@ describe("local provider registry", () => {
     vi.unstubAllGlobals();
   });
 
-  it("routes an explicit local reference straight through", () => {
+  it("routes an explicit provider reference straight through", () => {
+    createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1" });
+    const route = routeModel("provider:ollama/qwen3", { messages: [{ role: "user", content: "hi" }] });
+    expect(route.model).toBe("provider:ollama/qwen3");
+    expect(route.reason).toBe("explicit provider model");
+    expect(listProviders().length).toBe(1);
+  });
+
+  it("routes a legacy `local:` reference to the same endpoint, canonicalised", () => {
     createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1" });
     const route = routeModel("local:ollama/qwen3", { messages: [{ role: "user", content: "hi" }] });
-    expect(route.model).toBe("local:ollama/qwen3");
-    expect(route.reason).toBe("explicit local model");
-    expect(listProviders().length).toBe(1);
+    expect(route.model).toBe("provider:ollama/qwen3");
+    expect(route.reason).toBe("explicit provider model");
+  });
+
+  it("declared models are the catalogue, and nothing is probed", async () => {
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const p = createProvider({
+      name: "zai",
+      kind: "anthropic-compat",
+      baseUrl: "https://api.z.ai/api/anthropic",
+      apiKey: "zai-key",
+      models: "glm-4.6, glm-4.5-air",
+    });
+    expect(p.kind).toBe("anthropic-compat");
+    expect(p.selfHosted).toBe(false);
+    expect(await listProviderModels(p, { force: true })).toEqual({
+      models: ["glm-4.6", "glm-4.5-air"],
+      error: null,
+    });
+    // An endpoint that serves no catalogue must not be asked for one.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("asks each dialect for its catalogue at the address that dialect uses", () => {
+    const openai = createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1" });
+    expect(catalogueRequest(openai, "k").url).toBe("http://localhost:11434/v1/models");
+    expect(catalogueRequest(openai, "k").headers.Authorization).toBe("Bearer k");
+
+    const anthropic = createProvider({ name: "zai", kind: "anthropic-compat", baseUrl: "https://api.z.ai/api/anthropic" });
+    const req = catalogueRequest(anthropic, "k");
+    expect(req.url).toBe("https://api.z.ai/api/anthropic/v1/models");
+    expect(req.headers["x-api-key"]).toBe("k");
+    expect(req.headers["anthropic-version"]).toBe("2023-06-01");
   });
 });
 
-describe("sendToLocalProvider", () => {
+describe("sendToOpenAIProvider", () => {
   beforeEach(() => {
     getDb().exec("DELETE FROM providers");
   });
@@ -298,7 +355,7 @@ describe("sendToLocalProvider", () => {
       }),
     );
 
-    const res = await sendToLocalProvider({
+    const res = await sendToOpenAIProvider({
       provider: p,
       model: "qwen3",
       body: { model: "local:ollama/qwen3", system: "be terse", messages: [{ role: "user", content: "hi" }] },
@@ -310,7 +367,7 @@ describe("sendToLocalProvider", () => {
     const json = (await res.json()) as Record<string, any>;
     expect(json.type).toBe("message");
     expect(json.content).toEqual([{ type: "text", text: "hey" }]);
-    expect(json.model).toBe("local:ollama/qwen3");
+    expect(json.model).toBe("provider:ollama/qwen3");
     vi.unstubAllGlobals();
   });
 
@@ -327,7 +384,7 @@ describe("sendToLocalProvider", () => {
         });
       }),
     );
-    const res = await sendToLocalProvider({ provider: p, model: "qwen3", body: { messages: [] }, stream: true });
+    const res = await sendToOpenAIProvider({ provider: p, model: "qwen3", body: { messages: [] }, stream: true });
     expect(body.stream_options).toEqual({ include_usage: true });
     expect(res.headers.get("content-type")).toBe("text/event-stream");
     expect(await new Response(res.body).text()).toContain("event: message_start");
@@ -337,10 +394,137 @@ describe("sendToLocalProvider", () => {
   it("turns an unreachable box into an Anthropic-shaped error", async () => {
     const p = createProvider({ name: "ollama", baseUrl: "http://127.0.0.1:1/v1" });
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connect ECONNREFUSED"); }));
-    const res = await sendToLocalProvider({ provider: p, model: "qwen3", body: { messages: [] }, stream: false });
+    const res = await sendToOpenAIProvider({ provider: p, model: "qwen3", body: { messages: [] }, stream: false });
     expect(res.status).toBe(502);
     const json = (await res.json()) as Record<string, any>;
     expect(json.error.message).toContain("unreachable");
+    vi.unstubAllGlobals();
+  });
+});
+
+// ── anthropic-compat: forwarded, not translated ─────────────────────────────
+
+describe("sendToAnthropicProvider", () => {
+  beforeEach(() => {
+    getDb().exec("DELETE FROM providers");
+  });
+
+  const zai = () =>
+    createProvider({
+      name: "zai",
+      kind: "anthropic-compat",
+      baseUrl: "https://api.z.ai/api/anthropic",
+      apiKey: "zai-key",
+      models: "glm-4.6",
+    });
+
+  it("posts the Messages API verbatim, with the model unprefixed and the key attached", async () => {
+    const p = zai();
+    let seen: { url: string; headers: Record<string, string>; body: any } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        seen = { url, headers: init.headers as Record<string, string>, body: JSON.parse(init.body as string) };
+        return new Response(JSON.stringify({ type: "message", model: "glm-4.6", content: [{ type: "text", text: "hey" }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+
+    const res = await sendToAnthropicProvider({
+      provider: p,
+      model: "glm-4.6",
+      body: {
+        model: "provider:zai/glm-4.6",
+        system: "be terse",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [{ name: "read_file", description: "read", input_schema: { type: "object" } }],
+      },
+      stream: false,
+    });
+
+    expect(seen!.url).toBe("https://api.z.ai/api/anthropic/v1/messages");
+    expect(seen!.headers["x-api-key"]).toBe("zai-key");
+    expect(seen!.headers["anthropic-version"]).toBe("2023-06-01");
+    expect(seen!.body.model).toBe("glm-4.6");
+    expect(seen!.body.stream).toBe(false);
+    // Untranslated is the whole point: the tool block reaches the model in the
+    // shape the client wrote it, not as an OpenAI function.
+    expect(seen!.body.tools).toEqual([{ name: "read_file", description: "read", input_schema: { type: "object" } }]);
+    expect(seen!.body.system).toBe("be terse");
+    const json = (await res.json()) as Record<string, any>;
+    expect(json.content).toEqual([{ type: "text", text: "hey" }]);
+    vi.unstubAllGlobals();
+  });
+
+  it("drops the parameters only Anthropic's own models take", () => {
+    const body = sanitizeForAnthropicProvider({
+      messages: [],
+      output_config: { effort: "high" },
+      thinking: { type: "adaptive" },
+      context_management: { edits: [{ type: "clear_thinking_20250101" }] },
+      tools: [{ name: "Read" }],
+    });
+    expect(body.output_config).toBeUndefined();
+    expect(body.thinking).toBeUndefined();
+    expect(body.context_management).toBeUndefined();
+    // Ordinary Messages API survives untouched.
+    expect(body.tools).toEqual([{ name: "Read" }]);
+  });
+
+  it("keeps a thinking block the Messages API has always had", () => {
+    const body = sanitizeForAnthropicProvider({ thinking: { type: "enabled", budget_tokens: 2048 } });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
+  });
+
+  it("hands a stream back as it came, without rebuilding it", async () => {
+    const p = zai();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("event: message_start\ndata: {}\n\n", {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+      ),
+    );
+    const res = await sendToAnthropicProvider({ provider: p, model: "glm-4.6", body: { messages: [] }, stream: true });
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(await new Response(res.body).text()).toBe("event: message_start\ndata: {}\n\n");
+    vi.unstubAllGlobals();
+  });
+
+  it("turns an unreachable endpoint into an Anthropic-shaped error", async () => {
+    const p = zai();
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connect ECONNREFUSED"); }));
+    const res = await sendToAnthropicProvider({ provider: p, model: "glm-4.6", body: { messages: [] }, stream: false });
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as Record<string, any>).error.message).toContain("unreachable");
+    vi.unstubAllGlobals();
+  });
+
+  it("sendToProvider picks the dialect from the provider, not the caller", async () => {
+    const anthropic = zai();
+    const openai = createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1" });
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        return new Response(JSON.stringify({ type: "message", content: [], choices: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    await sendToProvider({ provider: anthropic, ref: { provider: "zai", model: "glm-4.6" }, body: { messages: [] }, stream: false });
+    await sendToProvider({ provider: openai, ref: { provider: "ollama", model: "qwen3" }, body: { messages: [] }, stream: false });
+    expect(urls).toEqual([
+      "https://api.z.ai/api/anthropic/v1/messages",
+      "http://localhost:11434/v1/chat/completions",
+    ]);
     vi.unstubAllGlobals();
   });
 });

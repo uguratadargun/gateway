@@ -32,7 +32,14 @@ export const agentFrontmatterSchema = z
   .object({
     name: z.string().min(1).max(64),
     description: z.string().max(500).optional(),
-    /** Tier alias ("sonnet"), or a concrete "claude-*" id. Resolved by the existing router. */
+    /**
+     * Which model runs this agent. A tier alias ("sonnet") the router resolves
+     * per run, a concrete "claude-*" id that pins it, or
+     * `provider:<name>/<model>` for one of the configured providers — an
+     * Ollama on this machine, a hosted endpoint like Z.AI. A provider model is
+     * still routed, metered and counted against the run's budget; it just puts
+     * nothing on the Anthropic bill.
+     */
     model: z.string().min(1).max(100).default("sonnet"),
     effort: z.enum(EFFORTS as [Effort, ...Effort[]]).optional(),
     /** Upstream node outputs this agent is allowed to read, e.g. "planner.plan". */
@@ -47,6 +54,12 @@ export const agentFrontmatterSchema = z
      * rather than appending every tool result until the node re-reads 100K a
      * round. Routing, metering and the run budget are unaffected either way:
      * the child is pointed at this gate's own gateway.
+     *
+     * It is a separate axis from `model`, and every combination is valid: the
+     * Claude Code harness driving a GLM on Z.AI is `executor: claude-code` with
+     * `model: provider:zai/glm-4.6`, and gate's own loop on the same model is
+     * the same line with `executor: gate`. The harness names the loop, not the
+     * vendor.
      */
     executor: z.enum(["gate", "claude-code"]).default("gate"),
     /**

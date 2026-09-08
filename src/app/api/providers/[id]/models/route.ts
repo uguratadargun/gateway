@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { formatLocalRef, getProvider, listProviderModels } from "@/lib/local-providers";
+import { formatProviderRef, getProvider, listProviderModels } from "@/lib/providers";
 
 export const runtime = "nodejs";
 
@@ -19,9 +19,11 @@ export async function GET(req: Request, { params }: Params) {
   const { models, error } = await listProviderModels(provider, { force });
   return NextResponse.json({
     models,
-    refs: models.map((m) => formatLocalRef(provider.name, m)),
+    refs: models.map((m) => formatProviderRef(provider.name, m)),
     error,
     baseUrl: provider.baseUrl,
     selfHosted: provider.selfHosted,
+    /** True when this list is the user's own, so nothing was probed. */
+    declared: provider.models.length > 0,
   });
 }

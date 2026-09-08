@@ -1,9 +1,10 @@
 # gate
 
-A personal Claude gateway. Connect one or more Claude Code OAuth logins — and
-your own local models — then point any Anthropic-compatible tool at it and each
-request goes to the right model (Haiku / Sonnet / Opus / Fable, or something you
-host yourself) based on the prompt's context. Dashboard built with Next.js +
+A personal Claude gateway. Connect one or more Claude Code OAuth logins — plus
+any other model endpoint you have, on your machine or hosted — then point any
+Anthropic-compatible tool at it and each request goes to the right model (Haiku
+/ Sonnet / Opus / Fable, a local model, or a GLM on Z.AI) based on the prompt's
+context. Dashboard built with Next.js +
 shadcn/ui.
 
 > **Scope:** built around the Claude accounts *you* connect. It rotates between
@@ -58,9 +59,9 @@ through your gate; `/gate:design` designs one for that repository
 4. **Account pool** — with more than one login connected, a rate-limited account
    is parked until its window resets and the next one takes over *before* any
    tier is downgraded (see [Account pool](#account-pool)).
-5. **Local models** — a tier can point at your own OpenAI-compatible endpoint
-   instead of a Claude model; gate translates the traffic both ways (see
-   [Local models](#local-models)).
+5. **Providers** — a tier or an agent can point at something that is not a
+   Claude account: a model on your own machine, or a hosted endpoint like Z.AI
+   (see [Providers](#providers)).
 
 ## Setup
 
@@ -98,9 +99,9 @@ quota — and the throttle would refuse a fresh account's requests on the streng
 of an exhausted one. When the throttle does refuse, it says so in the response:
 that 429 is gate's, not Anthropic's, and it names how many accounts it tried.
 
-Local providers get the same treatment as accounts: their API keys are sealed
-under `GATE_SECRET` and never returned by the API — the dashboard sees only
-whether a key is set.
+Providers get the same treatment as accounts: their API keys are sealed under
+`GATE_SECRET` and never returned by the API — the dashboard sees only whether a
+key is set.
 
 ## Teams and people
 
@@ -127,7 +128,7 @@ writing them is a decision about that team's pipelines.
 
 ## Storage
 
-Usage, traffic, cache, API keys, connected accounts, local providers, and the
+Usage, traffic, cache, API keys, connected accounts, providers, and the
 rate-limit snapshot live in SQLite (`~/.gate/gate.db`, WAL) via Node's built-in
 `node:sqlite` — no native build. Account tokens and provider API keys are sealed
 blobs in their rows, not plain columns.
@@ -215,15 +216,25 @@ it as little as it can get away with:
 
 `x-gate-account` on the response names the login that served the request.
 
-## Local models
+## Providers
 
-Anything that speaks `POST {baseUrl}/chat/completions` can serve a tier: Ollama,
-vLLM, LM Studio, llama.cpp, or a hosted OpenAI-compatible endpoint. Add it under
-**Local models** on the dashboard (there are one-click presets for the usual
-ports), and its models appear as `local:<name>/<model>` in every model picker.
+A **provider** is any model endpoint that is not one of the connected Claude
+accounts: Ollama, vLLM, LM Studio or llama.cpp on your own machine, and hosted
+ones like Z.AI. Add it under **Providers** on the dashboard (there are one-click
+presets), and its models appear as `provider:<name>/<model>` in every model
+picker — tiers, agents, and a client naming one directly.
+
+gate speaks two dialects, and which one a provider gets is the only real choice
+when adding it:
+
+| | `openai-compat` | `anthropic-compat` |
+| --- | --- | --- |
+| endpoint | `POST {baseUrl}/chat/completions` | `POST {baseUrl}/v1/messages` |
+| who | Ollama, vLLM, LM Studio, llama.cpp, most hosted APIs | Z.AI, and anything else that publishes a Messages API |
+| what gate does | translates the request out and the answer back | forwards it as it stands |
 
 ```
-routing.json → tiers.haiku = "local:ollama/qwen3-coder"
+routing.json → tiers.haiku = "provider:ollama/qwen3-coder"
 
 Claude Code ──▶ /v1/messages (Anthropic)
                    │  anthropicToOpenAIRequest
@@ -234,33 +245,90 @@ Claude Code ──▶ /v1/messages (Anthropic)
 Claude Code ◀── Anthropic SSE
 ```
 
-gate speaks Anthropic end to end, so the translation is a real round trip, not a
-passthrough: system blocks are hoisted into a system message, `tool_use` becomes
-`tool_calls`, `tool_result` becomes the `role: "tool"` messages OpenAI expects
-(ordered so each answers the call before it), images become data URLs, and
-thinking blocks — whose signatures only Anthropic can verify — are dropped. On
-the way back, the OpenAI chunk stream is rebuilt into the full Anthropic event
-sequence, `message_start` through `message_stop`, with tool arguments streamed as
-`input_json_delta`. `stream_options.include_usage` is requested on every stream,
-because without it most OpenAI-compatible servers report no usage at all and the
-request would be accounted as zero tokens.
+gate speaks Anthropic end to end, so the OpenAI translation is a real round
+trip, not a passthrough: system blocks are hoisted into a system message,
+`tool_use` becomes `tool_calls`, `tool_result` becomes the `role: "tool"`
+messages OpenAI expects (ordered so each answers the call before it), images
+become data URLs, and thinking blocks — whose signatures only Anthropic can
+verify — are dropped. On the way back, the OpenAI chunk stream is rebuilt into
+the full Anthropic event sequence, `message_start` through `message_stop`, with
+tool arguments streamed as `input_json_delta`. `stream_options.include_usage` is
+requested on every stream, because without it most OpenAI-compatible servers
+report no usage at all and the request would be accounted as zero tokens.
+
+An `anthropic-compat` provider skips all of that. The body is forwarded with the
+model id swapped and the provider's key attached, and the answer — JSON or SSE —
+is handed back byte for byte. Tool blocks, cache breakpoints and streamed
+thinking reach the model exactly as the client wrote them. Only the parameters
+that are Anthropic's alone are stripped, because a third-party endpoint answers
+400 on them and they arrive constantly: `output_config`, `context_management`,
+and `thinking: adaptive` (Claude Code sends the last two on every request).
+
+### Z.AI (GLM)
+
+Z.AI publishes a Messages API endpoint, which is what makes it worth forwarding
+to untranslated. Add it as:
+
+```
+Name       zai
+Dialect    Anthropic-compatible
+Base URL   https://api.z.ai/api/anthropic
+API key    (from your Z.AI console)
+Models     glm-5.3, glm-5.3-flash
+```
+
+That is the same endpoint Z.AI documents for pointing Claude Code at GLM. The
+only difference is who the client talks to: their setup puts
+`ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` in your shell and the
+traffic leaves your account unmetered, while gate keeps the middle seat — same
+endpoint, same untranslated body, but routed, logged and counted.
+
+The **Models** field matters here: that endpoint serves no catalogue to
+discover, so gate would otherwise have nothing to put in the pickers. Filled in,
+the list you write *is* the catalogue and nothing is probed. Leave it empty for
+anything that answers `/models` on its own — an Ollama, say.
+
+Then point whatever you like at it: a tier in `routing.json`, or an agent —
+
+```yaml
+model: provider:zai/glm-5.3
+executor: claude-code
+```
+
+— which runs that node's loop in a headless Claude Code whose every call still
+goes through gate, and is therefore routed, metered, logged and counted against
+the run's budget the same as a Claude call would be.
+
+A node on a provider model also gets `ANTHROPIC_DEFAULT_SONNET_MODEL` and its
+`HAIKU` / `OPUS` siblings pinned to that same model — the mechanism Z.AI
+documents for the same purpose. Without it the child's own background work asks
+for the `haiku` alias, gate resolves that alias onto a Claude tier, and a node
+you asked to run on GLM would still need a connected Claude account to answer
+traffic you never asked for. Pinned, a gate with no Claude login at all runs
+that node end to end. (The child logs one `unrecognized_model` line for a model
+id it does not know; it sends the request regardless.)
 
 Practical notes:
 
-- A local model **costs nothing on the Anthropic bill**, and usage accounting
-  prices it at zero rather than as the tier it stands in.
+- A provider model **costs nothing on the Anthropic bill** — whatever it may
+  cost on its own — and usage accounting prices it at zero rather than as the
+  tier it stands in.
 - An endpoint on loopback, RFC1918, or a `.local` / `.internal` / `.lan` name is
-  labelled *on your network*; anything routable publicly is labelled *remote*.
-- If the box is down, the tier fallback chain takes over — an unplugged Ollama
-  drops to the next tier rather than failing the request.
+  labelled *on your network*; anything routable publicly, Z.AI included, is
+  labelled *remote*.
+- If the endpoint is down, the tier fallback chain takes over — an unplugged
+  Ollama drops to the next tier rather than failing the request.
 - You can also address one directly, without touching routing:
-  `model: "local:ollama/qwen3-coder"`.
+  `model: "provider:ollama/qwen3-coder"`.
+- The prefix used to be `local:`, which was never true of a hosted endpoint.
+  Both parse, forever: a `routing.json` or an agent written before the rename
+  keeps resolving, and is canonicalised to `provider:` on the way through.
 
 ## Features
 
 - **Model routing** — context-aware Haiku/Sonnet/Opus/Fable selection with aliases.
 - **Account pool** — several Claude logins behind one endpoint, with five rotation strategies and per-account quota.
-- **Local models** — route any tier to Ollama / vLLM / LM Studio / llama.cpp, translated both ways, streaming included.
+- **Providers** — route any tier or agent to Ollama / vLLM / LM Studio / llama.cpp, or to a hosted endpoint like Z.AI, streaming included.
 - **Rate-limit tracking** — reads Anthropic `anthropic-ratelimit-*` headers; shown live on the dashboard.
 - **Tier fallback** — on 429/529, drops to a cheaper tier automatically.
 - **Context compression** — trims oversized & duplicate blocks before sending.
@@ -945,7 +1013,7 @@ has the new pipeline at their next `gate` command.
 - `src/lib/claude/` — OAuth config, PKCE, token flow, Claude Code identity headers
 - `src/lib/router.ts` — context-aware model routing
 - `src/lib/accounts.ts` / `account-pool.ts` / `token-manager.ts` — the account pool: sealed token store, selection strategies, cooldowns, per-account refresh
-- `src/lib/local-providers.ts` / `local-exec.ts` / `anthropic-openai.ts` — local endpoints, and the Anthropic↔OpenAI translation that lets them serve Anthropic traffic
+- `src/lib/providers.ts` / `provider-exec.ts` / `anthropic-openai.ts` — non-Claude endpoints in both dialects: the Anthropic↔OpenAI translation, and the Anthropic-dialect forward
 - `src/lib/seal.ts` / `store.ts` — AES-256-GCM sealing; the credential shape and the pre-pool file reader
 - `src/app/api/gateway/v1/messages/` — the proxy endpoint
 - `src/app/api/auth/` — login flow · `src/app/api/accounts/` · `src/app/api/providers/` · `src/app/api/routing/` · `src/app/api/usage/`

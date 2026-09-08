@@ -63,7 +63,7 @@ const PRESETS: Record<Preset, { categories: Record<string, Tier>; effort: Record
 
 const selectCls = "h-8 rounded-md border border-input bg-transparent px-2 text-sm";
 
-/** One source of models: the connected Claude account, or a local provider. */
+/** One source of models: the connected Claude account, or a provider. */
 interface ModelGroup {
   label: string;
   kind: "anthropic" | "local";

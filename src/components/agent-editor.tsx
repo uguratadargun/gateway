@@ -79,7 +79,7 @@ export function AgentEditor({
           label="model"
           hint={
             options.modelSource === "live"
-              ? "A tier is resolved per run by the router; a concrete id pins it."
+              ? "A tier is resolved per run by the router; a concrete id pins it. A provider model runs the node off Anthropic entirely."
               : "Model list is the built-in fallback — the account could not be queried."
           }
         >
@@ -102,11 +102,25 @@ export function AgentEditor({
                 </option>
               ))}
             </optgroup>
+            {(options.providerGroups ?? []).map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
             {/* A model the account no longer lists must still be selectable, or
                 opening the file would silently rewrite it to something else. */}
-            {form.model && ![...options.modelTiers, ...options.models].includes(form.model) && (
-              <option value={form.model}>{form.model} (not in the current list)</option>
-            )}
+            {form.model &&
+              ![
+                ...options.modelTiers,
+                ...options.models,
+                ...(options.providerGroups ?? []).flatMap((g) => g.models),
+              ].includes(form.model) && (
+                <option value={form.model}>{form.model} (not in the current list)</option>
+              )}
           </select>
         </Field>
 

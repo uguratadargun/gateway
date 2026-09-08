@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { PROVIDER_KINDS } from "./providers";
+
 /** Request-body schemas for the management API. Invalid input → 400. */
 
 const tier = z.enum(["haiku", "sonnet", "opus", "fable"]);
@@ -161,22 +163,32 @@ const baseUrl = z
   .max(400)
   .refine((v) => /^https?:\/\//i.test(v.trim()), "Base URL must start with http:// or https://");
 
+/** Which wire dialect the endpoint speaks; see `lib/providers.ts`. */
+const providerKind = z.enum(PROVIDER_KINDS);
+/** Models named by hand, as a list or as one comma/newline-separated string. */
+const providerModels = z.union([z.array(z.string().max(120)).max(100), z.string().max(4000)]);
+
 export const createProviderSchema = z.object({
   name: z.string().min(1).max(40),
   label: z.string().min(1).max(80).optional(),
+  kind: providerKind.optional(),
   baseUrl,
   apiKey: z.string().max(400).optional(),
   enabled: z.boolean().optional(),
+  models: providerModels.optional(),
 });
 
 export const updateProviderSchema = z
   .object({
     name: z.string().min(1).max(40),
     label: z.string().min(1).max(80),
+    kind: providerKind,
     baseUrl,
     /** An empty string clears the stored key. */
     apiKey: z.string().max(400),
     enabled: z.boolean(),
+    /** An empty list goes back to discovering the catalogue. */
+    models: providerModels,
   })
   .partial()
   .strict();

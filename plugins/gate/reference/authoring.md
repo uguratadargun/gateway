@@ -11,7 +11,8 @@ the error says and save again.
 ---
 name: Planner                       # required, ≤64 chars
 description: One line.              # optional, ≤500
-model: sonnet                       # tier alias (haiku/sonnet/opus) or a claude-* id
+model: sonnet                       # tier alias (haiku/sonnet/opus), a claude-* id, or
+                                    # provider:<name>/<model> — see Models below
 effort: high                        # default | low | medium | high | xhigh | max
 inputs: [planner.plan, tests.stdout?]   # upstream node outputs this agent may read
 tools: [read_file, list_files]      # see Tools
@@ -236,6 +237,35 @@ That is also why a reviewer is **handed** the diff rather than left to find it:
 without `run_command` it cannot run `git diff`, and with only a list of changed
 paths it reads each file's current state with no way to tell which lines are
 new. See the diff node in the shape below — it is not optional.
+
+## Models — who answers
+
+`model:` takes three forms. A tier alias (`sonnet`) is resolved per run by the
+router, which is what you want unless the node has a reason to pin one. A
+concrete `claude-*` id pins it. And `provider:<name>/<model>` sends the node to
+one of the endpoints configured under **Providers** on the dashboard — an
+Ollama or vLLM on the machine, or a hosted one like Z.AI's GLM.
+
+A provider model is not a way out of the system: it is routed, metered, logged
+and counted against the run's budget exactly like a Claude call, because it
+still goes through gate. What changes is the bill — a provider model costs
+nothing on the Anthropic account.
+
+With `executor: claude-code`, the child's model aliases are pinned to that same
+model, so its own background calls do not quietly fall back onto a Claude tier.
+A node on a provider model needs no connected Claude account.
+
+This is a separate axis from the executor below, and every combination works:
+
+```yaml
+model: provider:zai/glm-5.3         # GLM, driven by the Claude Code harness
+executor: claude-code
+```
+
+```yaml
+model: provider:ollama/qwen3-coder  # a local model on gate's own loop
+executor: gate
+```
 
 ## Executors — who runs the loop inside a node
 

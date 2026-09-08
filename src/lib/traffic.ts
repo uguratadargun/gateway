@@ -16,7 +16,7 @@ export interface TrafficEntry {
   fromCache: boolean;
   requestPreview: string;
   responsePreview: string;
-  /** Which connected Claude account served it; null for a local model. */
+  /** Which connected Claude account served it; null for a provider model. */
   accountId?: string | null;
 }
 

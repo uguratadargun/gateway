@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { deleteProvider, forgetProviderModels, getProvider, updateProvider } from "@/lib/local-providers";
+import { deleteProvider, forgetProviderModels, getProvider, updateProvider } from "@/lib/providers";
 import { updateProviderSchema } from "@/lib/schemas";
 
 export const runtime = "nodejs";

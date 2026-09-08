@@ -251,6 +251,9 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["usage", "account_id", "account_id TEXT"],
   ["usage", "provider_id", "provider_id TEXT"],
   ["traffic", "account_id", "account_id TEXT"],
+  // An endpoint that serves no /models list (Z.AI's Anthropic endpoint among
+  // them) names its catalogue here instead of being discovered.
+  ["providers", "models_json", "models_json TEXT"],
   // Multi-user: a key belongs to a person, and a person to a team. Legacy keys
   // carry NULL and are read as the default team's.
   ["apikeys", "user_id", "user_id TEXT"],

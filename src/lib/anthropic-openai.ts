@@ -190,7 +190,7 @@ function parseArguments(raw: unknown): unknown {
   try {
     return JSON.parse(raw);
   } catch {
-    // A local model that emits malformed JSON should surface as a tool call
+    // A model that emits malformed JSON should surface as a tool call
     // with the raw text, not crash the response path.
     return { _raw: raw };
   }

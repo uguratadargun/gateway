@@ -1,6 +1,6 @@
 import { ANTHROPIC_API_BASE } from "./claude/config";
 import { applyClaudeCodeIdentity } from "./claude/identity";
-import { parseLocalRef } from "./local-providers";
+import { parseProviderRef } from "./providers";
 import { getValidCredentials } from "./token-manager";
 
 const COUNT_URL = `${ANTHROPIC_API_BASE}/v1/messages/count_tokens`;
@@ -15,7 +15,7 @@ export async function countTokens(
 ): Promise<number | null> {
   // Anthropic cannot count for a model it does not serve; asking would spend a
   // round trip to earn a 400. The local estimate is the answer here.
-  if (parseLocalRef(model)) return null;
+  if (parseProviderRef(model)) return null;
   const creds = await getValidCredentials();
   if (!creds) return null;
   const payload: Record<string, unknown> = { model };

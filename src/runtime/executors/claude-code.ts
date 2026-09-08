@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 
 import type { AgentDefinition } from "@/agents/types";
+import { parseProviderRef } from "@/lib/providers";
 import { WorkflowError } from "@/runtime/errors";
 import type { NodeUsageRecord, ToolCallRecord } from "@/runtime/state";
 import type { RunWorkspace } from "@/runtime/workspace";
@@ -41,6 +42,42 @@ function gatewayUrl(override?: string): string {
   if (process.env.GATE_SELF_URL)
     return `${process.env.GATE_SELF_URL.replace(/\/$/, "")}/api/gateway`;
   return `http://127.0.0.1:${process.env.PORT ?? 4141}/api/gateway`;
+}
+
+/**
+ * Environment that points the child's *aliases* at the node's own model.
+ *
+ * Claude Code does not send only the model it was given. Its background work —
+ * conversation titles, the small utility calls — asks for the `haiku` alias,
+ * and gate resolves an alias by category, straight back onto a Claude tier.
+ * A node running on a provider model would therefore still need a connected
+ * Claude account to answer traffic the node never asked for, and a gate with
+ * no Claude login at all would fail the node outright on a title.
+ *
+ * Pinning all three families to the node's own model settles it: every request
+ * the child makes, asked for by alias or by id, lands on the model the agent
+ * declared. This is the same mechanism Z.AI documents for pointing Claude Code
+ * at GLM (`ANTHROPIC_DEFAULT_SONNET_MODEL` and friends) — the difference here
+ * is only that the child is pointed at gate rather than at the vendor, so the
+ * calls stay routed, metered and inside the run's budget.
+ *
+ * Returns nothing for a Claude model: the router's own ladder is the right
+ * answer there, and pinning would disable it.
+ */
+export function providerModelEnv(model: string): Record<string, string> {
+  if (!parseProviderRef(model)) return {};
+  return {
+    ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+    // Telemetry and the other non-essential chatter would otherwise be served
+    // by a model somebody is paying per token for, to no one's benefit.
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    // Provider endpoints are routinely slower to first token than Anthropic's,
+    // and the harness's own HTTP timeout is the one thing gate's node timeout
+    // cannot rescue. Z.AI documents this same value for exactly this reason.
+    API_TIMEOUT_MS: "3000000",
+  };
 }
 
 export interface ClaudeCodeDeps {
@@ -237,6 +274,8 @@ export async function runClaudeCodeNode(
         // it), so a node run by the child groups, sticks to its tier and reuses
         // its prompt cache exactly like one gate held itself.
         ...(deps.sessionId ? { ANTHROPIC_CUSTOM_HEADERS: `x-gate-session: ${deps.sessionId}` } : {}),
+        // Empty unless this node runs on a provider model; see above.
+        ...providerModelEnv(agent.model),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

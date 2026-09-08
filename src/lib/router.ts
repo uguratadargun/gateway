@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { parseLocalRef } from "./local-providers";
+import { canonicalModelRef, parseProviderRef } from "./providers";
 import { normalizeEffort, type Effort } from "./reasoning";
 
 /**
@@ -256,7 +256,9 @@ export interface RouteOptions {
 }
 
 function tierToModel(cfg: RoutingConfig, tier: Tier): string {
-  return cfg.tiers[tier];
+  // Canonicalised on the way out, so a routing.json still holding the old
+  // `local:` prefix produces the same model id the pickers now write.
+  return canonicalModelRef(cfg.tiers[tier]);
 }
 
 /**
@@ -276,8 +278,14 @@ export function routeModel(
 
   // 1. An explicit local reference always wins: the caller named a specific
   //    endpoint, and there is no tier ladder to second-guess it with.
-  if (parseLocalRef(req)) {
-    return { model: req, tier: inferTier(cfg, req), reason: "explicit local model", category: null, tokens };
+  if (parseProviderRef(req)) {
+    return {
+      model: canonicalModelRef(req),
+      tier: inferTier(cfg, req),
+      reason: "explicit provider model",
+      category: null,
+      tokens,
+    };
   }
 
   // 2. Explicit concrete Claude model → pass through unless configured otherwise.
@@ -291,8 +299,14 @@ export function routeModel(
     if (alias in cfg.tiers) {
       return { model: tierToModel(cfg, alias as any), tier: alias as any, reason: `alias:${reqLower}`, category: null, tokens };
     }
-    if (alias.toLowerCase().startsWith("claude-") || parseLocalRef(alias)) {
-      return { model: alias, tier: inferTier(cfg, alias), reason: `alias:${reqLower}`, category: null, tokens };
+    if (alias.toLowerCase().startsWith("claude-") || parseProviderRef(alias)) {
+      return {
+        model: canonicalModelRef(alias),
+        tier: inferTier(cfg, alias),
+        reason: `alias:${reqLower}`,
+        category: null,
+        tokens,
+      };
     }
   }
 
@@ -351,11 +365,13 @@ export function cheaperTier(tier: Tier): Tier | null {
 }
 
 function inferTier(cfg: RoutingConfig, model: string): Tier {
-  // A local model carries no Claude family name. Its tier is whichever slot
+  // A provider model carries no Claude family name. Its tier is whichever slot
   // the user configured it into (that is what the fallback chain will use),
-  // and the routing default when it is not in the ladder at all.
-  if (parseLocalRef(model)) {
-    const slot = (Object.keys(cfg.tiers) as Tier[]).find((t) => cfg.tiers[t] === model);
+  // and the routing default when it is not in the ladder at all. Both sides
+  // are canonicalised so a `local:`-era tier still matches a `provider:` ref.
+  if (parseProviderRef(model)) {
+    const ref = canonicalModelRef(model);
+    const slot = (Object.keys(cfg.tiers) as Tier[]).find((t) => canonicalModelRef(cfg.tiers[t]) === ref);
     return slot ?? cfg.default;
   }
   const m = model.toLowerCase();

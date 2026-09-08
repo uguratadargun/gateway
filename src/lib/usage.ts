@@ -1,11 +1,13 @@
 import { getDb } from "./db";
 import { costForUsage, tierOf, type TokenUsage } from "./pricing";
+import { parseProviderRef } from "./providers";
 import { loadSettings } from "./settings";
 
 function costOfModel(model: string, u: TokenUsage): number {
-  // A self-hosted model puts nothing on the Anthropic bill. Pricing it as the
-  // tier it stands in would inflate both spend and the "savings" figure.
-  if (model.toLowerCase().startsWith("local:")) return 0;
+  // A provider model puts nothing on the Anthropic bill — whatever it may cost
+  // on its own. Pricing it as the tier it stands in would inflate both spend
+  // and the "savings" figure.
+  if (parseProviderRef(model)) return 0;
   return costForUsage(tierOf(model), u, { model, cacheTtl: loadSettings().promptCache.ttl });
 }
 
@@ -23,9 +25,9 @@ export interface UsageEvent {
   stream: boolean;
   sessionId?: string | null;
   sessionTitle?: string | null;
-  /** Which connected Claude account served it; null for a local model. */
+  /** Which connected Claude account served it; null for a provider model. */
   accountId?: string | null;
-  /** Which local provider served it; null when Anthropic did. */
+  /** Which provider served it; null when Anthropic did. */
   providerId?: string | null;
 }
 

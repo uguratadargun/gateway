@@ -7,8 +7,8 @@ var __export = (target, all) => {
 
 // src/client/cli.ts
 import { mkdirSync as mkdirSync11, readFileSync as readFileSync9, writeFileSync as writeFileSync9 } from "node:fs";
-import { homedir as homedir6 } from "node:os";
-import { basename as basename2, join as join12, resolve as resolve6 } from "node:path";
+import { homedir as homedir7 } from "node:os";
+import { basename as basename2, join as join13, resolve as resolve6 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
@@ -54,7 +54,7 @@ function migrateLegacyDefinitions() {
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join as join2, relative } from "node:path";
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/js-yaml/dist/js-yaml.mjs
+// node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
 function defineScalarTag(tagName, options) {
   return {
@@ -3150,7 +3150,7 @@ var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/external.js
+// node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -3262,7 +3262,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/util.js
+// node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -3396,7 +3396,7 @@ var getParsedType = (data) => {
   }
 };
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/ZodError.js
+// node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -3514,7 +3514,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/locales/en.js
+// node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -3617,7 +3617,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/errors.js
+// node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -3626,7 +3626,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/parseUtil.js
+// node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -3736,14 +3736,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/errorUtil.js
+// node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/types.js
+// node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -7675,7 +7675,14 @@ var agentOutputSpecSchema = external_exports.union([
 var agentFrontmatterSchema = external_exports.object({
   name: external_exports.string().min(1).max(64),
   description: external_exports.string().max(500).optional(),
-  /** Tier alias ("sonnet"), or a concrete "claude-*" id. Resolved by the existing router. */
+  /**
+   * Which model runs this agent. A tier alias ("sonnet") the router resolves
+   * per run, a concrete "claude-*" id that pins it, or
+   * `provider:<name>/<model>` for one of the configured providers — an
+   * Ollama on this machine, a hosted endpoint like Z.AI. A provider model is
+   * still routed, metered and counted against the run's budget; it just puts
+   * nothing on the Anthropic bill.
+   */
   model: external_exports.string().min(1).max(100).default("sonnet"),
   effort: external_exports.enum(EFFORTS).optional(),
   /** Upstream node outputs this agent is allowed to read, e.g. "planner.plan". */
@@ -7690,6 +7697,12 @@ var agentFrontmatterSchema = external_exports.object({
    * rather than appending every tool result until the node re-reads 100K a
    * round. Routing, metering and the run budget are unaffected either way:
    * the child is pointed at this gate's own gateway.
+   *
+   * It is a separate axis from `model`, and every combination is valid: the
+   * Claude Code harness driving a GLM on Z.AI is `executor: claude-code` with
+   * `model: provider:zai/glm-4.6`, and gate's own loop on the same model is
+   * the same line with `executor: gate`. The harness names the loop, not the
+   * vendor.
    */
   executor: external_exports.enum(["gate", "claude-code"]).default("gate"),
   /**
@@ -8454,7 +8467,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.24.1";
+var GATE_VERSION = "0.24.2";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8767,7 +8780,7 @@ function clearLocalState() {
 
 // src/client/run.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { homedir as homedir5, hostname as hostname2 } from "node:os";
+import { homedir as homedir6, hostname as hostname2 } from "node:os";
 import { resolve as resolve5 } from "node:path";
 
 // src/runtime/engine.ts
@@ -8973,11 +8986,72 @@ function prune2() {
 // src/runtime/executors/claude-code.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync8 } from "node:fs";
+
+// src/lib/db.ts
+import { homedir as homedir4 } from "node:os";
+import { join as join10 } from "node:path";
+var GATE_DIR2 = process.env.GATE_HOME || join10(homedir4(), ".gate");
+
+// src/lib/claude/config.ts
+var CLAUDE_OAUTH = {
+  clientId: process.env.CLAUDE_OAUTH_CLIENT_ID || "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+  authorizeUrl: "https://claude.ai/oauth/authorize",
+  tokenUrl: "https://api.anthropic.com/v1/oauth/token",
+  // Anthropic's hosted callback that displays the code+state for manual paste,
+  // exactly like Claude Code's headless login. No local server required.
+  redirectUri: process.env.CLAUDE_OAUTH_REDIRECT_URI || "https://platform.claude.com/oauth/code/callback",
+  scopes: [
+    "org:create_api_key",
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers"
+  ],
+  codeChallengeMethod: "S256"
+};
+var ANTHROPIC_API_BASE = "https://api.anthropic.com";
+var ANTHROPIC_MESSAGES_URL = `${ANTHROPIC_API_BASE}/v1/messages`;
+var ANTHROPIC_BOOTSTRAP_URL = `${ANTHROPIC_API_BASE}/api/claude_cli/bootstrap`;
+var ANTHROPIC_OAUTH_USAGE_URL = `${ANTHROPIC_API_BASE}/api/oauth/usage`;
+var CLAUDE_CODE_VERSION = process.env.CLAUDE_CODE_VERSION || "2.1.259";
+var CLAUDE_CODE_STAINLESS_VERSION = process.env.CLAUDE_CODE_STAINLESS_VERSION || "0.112.1";
+
+// src/lib/providers.ts
+var REF_PREFIX = "provider:";
+var LEGACY_REF_PREFIX = "local:";
+function parseProviderRef(ref) {
+  if (typeof ref !== "string") return null;
+  const rest = ref.trim();
+  const lower = rest.toLowerCase();
+  const prefix = lower.startsWith(REF_PREFIX) ? REF_PREFIX : lower.startsWith(LEGACY_REF_PREFIX) ? LEGACY_REF_PREFIX : null;
+  if (!prefix) return null;
+  const body = rest.slice(prefix.length);
+  const slash = body.indexOf("/");
+  if (slash <= 0 || slash === body.length - 1) return null;
+  return { provider: body.slice(0, slash), model: body.slice(slash + 1) };
+}
+
+// src/runtime/executors/claude-code.ts
 function gatewayUrl(override) {
   if (override) return `${override.replace(/\/$/, "")}`;
   if (process.env.GATE_SELF_URL)
     return `${process.env.GATE_SELF_URL.replace(/\/$/, "")}/api/gateway`;
   return `http://127.0.0.1:${process.env.PORT ?? 4141}/api/gateway`;
+}
+function providerModelEnv(model) {
+  if (!parseProviderRef(model)) return {};
+  return {
+    ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+    // Telemetry and the other non-essential chatter would otherwise be served
+    // by a model somebody is paying per token for, to no one's benefit.
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    // Provider endpoints are routinely slower to first token than Anthropic's,
+    // and the harness's own HTTP timeout is the one thing gate's node timeout
+    // cannot rescue. Z.AI documents this same value for exactly this reason.
+    API_TIMEOUT_MS: "3000000"
+  };
 }
 function renderResult(content) {
   if (typeof content === "string") return content;
@@ -9072,7 +9146,9 @@ A type ending in "?" is optional.`
         // same header gate's own provider sets (`sessionFromRequest` prefers
         // it), so a node run by the child groups, sticks to its tier and reuses
         // its prompt cache exactly like one gate held itself.
-        ...deps.sessionId ? { ANTHROPIC_CUSTOM_HEADERS: `x-gate-session: ${deps.sessionId}` } : {}
+        ...deps.sessionId ? { ANTHROPIC_CUSTOM_HEADERS: `x-gate-session: ${deps.sessionId}` } : {},
+        // Empty unless this node runs on a provider model; see above.
+        ...providerModelEnv(agent.model)
       },
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -9739,11 +9815,11 @@ async function runWorkflow(workflow, opts) {
 // src/runtime/workspace.ts
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync10, mkdirSync as mkdirSync9, rmSync as rmSync6 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { join as join10, resolve as resolve4 } from "node:path";
+import { homedir as homedir5 } from "node:os";
+import { join as join11, resolve as resolve4 } from "node:path";
 var MAX_LISTED_FILES = 200;
 function workspacesDir() {
-  return join10(process.env.GATE_HOME || join10(homedir4(), ".gate"), "workspaces");
+  return join11(process.env.GATE_HOME || join11(homedir5(), ".gate"), "workspaces");
 }
 function git(cwd, args) {
   try {
@@ -9754,7 +9830,7 @@ function git(cwd, args) {
   }
 }
 function createRunWorkspace(spec, executionId) {
-  const repo = resolve4(spec.repo.replace(/^~(?=\/|$)/, homedir4()));
+  const repo = resolve4(spec.repo.replace(/^~(?=\/|$)/, homedir5()));
   if (!existsSync10(repo)) {
     throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" does not exist`);
   }
@@ -9765,7 +9841,7 @@ function createRunWorkspace(spec, executionId) {
   }
   const baseRef = spec.baseRef ?? "HEAD";
   const branch = `${spec.branchPrefix ?? "gate/run"}-${executionId.slice(0, 8)}`;
-  const root = join10(workspacesDir(), executionId);
+  const root = join11(workspacesDir(), executionId);
   mkdirSync9(workspacesDir(), { recursive: true, mode: 448 });
   if (existsSync10(root)) rmSync6(root, { recursive: true, force: true });
   git(repo, ["worktree", "add", "-b", branch, root, baseRef]);
@@ -9985,13 +10061,13 @@ function resolveRepo(workflow, input, cwd, repos = {}) {
   const named = given || pinned;
   if (named && !isPathLike(named)) {
     const mapped = repos[named];
-    if (mapped) return resolve5(mapped.replace(/^~(?=\/|$)/, homedir5()));
+    if (mapped) return resolve5(mapped.replace(/^~(?=\/|$)/, homedir6()));
     throw new WorkflowError(
       "WORKSPACE_ERROR",
       `this workflow works in the connected repository "${named}", which this machine has no checkout for \u2014 run \`gate repo ${named} /path/to/your/clone\` once, or pass --input repo=/path/to/your/clone`
     );
   }
-  if (named) return resolve5(named.replace(/^~(?=\/|$)/, homedir5()));
+  if (named) return resolve5(named.replace(/^~(?=\/|$)/, homedir6()));
   try {
     return execFileSync2("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
   } catch {
@@ -10083,7 +10159,7 @@ async function runLocal(client, opts) {
 // src/client/step.ts
 import { existsSync as existsSync11, mkdirSync as mkdirSync10, readFileSync as readFileSync8, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
 import { hostname as hostname3 } from "node:os";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // src/client/walk.ts
 function nextInSession(workflow, steps, input) {
@@ -10143,7 +10219,7 @@ function walk2(workflow, steps, input, replay, from, stopAt) {
 
 // src/client/step.ts
 function pendingPath(executionId) {
-  return join11(gateHome2(), "runs", `${executionId}.json`);
+  return join12(gateHome2(), "runs", `${executionId}.json`);
 }
 function readPending(executionId) {
   try {
@@ -10154,7 +10230,7 @@ function readPending(executionId) {
 }
 function writePending(pending) {
   const file = pendingPath(pending.executionId);
-  mkdirSync10(join11(gateHome2(), "runs"), { recursive: true, mode: 448 });
+  mkdirSync10(join12(gateHome2(), "runs"), { recursive: true, mode: 448 });
   writeFileSync8(file, `${JSON.stringify(pending)}
 `, { mode: 384 });
 }
@@ -10552,9 +10628,9 @@ async function cmdLogin(args) {
   return 0;
 }
 function cmdInstall(args) {
-  const target = typeof args.flags.dir === "string" ? args.flags.dir : join12(homedir6(), ".local", "bin");
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join13(homedir7(), ".local", "bin");
   const script = process.argv[1];
-  const shim = join12(target, "gate");
+  const shim = join13(target, "gate");
   try {
     mkdirSync11(target, { recursive: true });
     writeFileSync9(shim, `#!/bin/sh
