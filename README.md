@@ -698,7 +698,7 @@ gate status                     # your team's recent runs, and where each ran
 gate cancel <execution-id>      # ask one to stop, wherever it is running
 gate pull                       # refresh the mirror by hand (every command does it anyway)
 gate push <file…>               # save designed definitions to your team (needs an author key)
-gate reset [--team]             # disconnect this machine (or wipe what the team owns)
+gate reset                      # disconnect this machine and clear what it pulled
 ```
 
 What travels where:

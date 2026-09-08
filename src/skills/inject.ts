@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { gateHome } from "@/lib/def-root";
@@ -132,7 +132,6 @@ export function buildSkillPlugin(skills: SkillDefinition[]): string | null {
   try {
     mkdirSync(bundlesDir(), { recursive: true, mode: 0o700 });
     if (!existsSync(root)) {
-      const { renameSync } = require("node:fs") as typeof import("node:fs");
       renameSync(staging, root);
     } else {
       rmSync(staging, { recursive: true, force: true });

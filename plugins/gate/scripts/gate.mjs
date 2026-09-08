@@ -7788,18 +7788,6 @@ var GateClient = class {
     });
     return res.body;
   }
-  /**
-   * Deletes every definition the caller's team owns. The team's own id is sent
-   * back as the confirmation, so this cannot be reached by a stray request.
-   */
-  async wipeTeamDefinitions() {
-    const me = await this.me();
-    const res = await this.request(
-      `/api/v1/definitions?confirm=${encodeURIComponent(me.team.id)}`,
-      { method: "DELETE" }
-    );
-    return res.body;
-  }
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
@@ -9110,7 +9098,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
   gate repo [<id> <path>]                       point a pinned repository at your clone
-  gate reset [--team]                           disconnect this machine (or wipe the team's definitions)
+  gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
 
@@ -9462,34 +9450,8 @@ function cmdRepo(args) {
   console.log(`${id} \u2192 ${resolve6(path)}`);
   return 0;
 }
-async function cmdReset(args) {
-  const wipeTeam = args.flags.team === true;
-  if (wipeTeam) {
-    const client = connect();
-    if (!process.stdin.isTTY) {
-      die("refusing to delete a team's definitions unattended \u2014 run this in a terminal");
-    }
-    const config = readConfig();
-    const team = await teamOf(client, config);
-    const manifest = readManifest(team);
-    const count = manifest?.workflows.length ?? 0;
-    console.error(
-      `This deletes every agent and workflow team "${team}" owns (${count} workflow(s)), for everyone on it.`
-    );
-    console.error("Runs already recorded, their worktrees and your API keys are not touched.");
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
-    const answer = (await rl.question(`Type the team name to confirm: `)).trim();
-    rl.close();
-    if (answer !== team) {
-      console.log("nothing deleted");
-      return 1;
-    }
-    const removed2 = await client.wipeTeamDefinitions();
-    console.log(`deleted ${removed2.agents} agent(s) and ${removed2.workflows} workflow(s) from team ${team}`);
-    console.log("(anything the default team shares is untouched \u2014 it is not this team's to delete)");
-  }
-  const removed = clearLocalState();
-  for (const line of removed) console.log(line);
+function cmdReset() {
+  for (const line of clearLocalState()) console.log(line);
   console.log("this machine is disconnected \u2014 `/gate:login <token>` connects it again");
   return 0;
 }
@@ -9542,7 +9504,7 @@ async function main(argv) {
       case "repo":
         return cmdRepo(args);
       case "reset":
-        return await cmdReset(args);
+        return cmdReset();
       case "status":
         return await cmdStatus(args);
       case "cancel":

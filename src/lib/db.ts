@@ -151,6 +151,27 @@ CREATE TABLE IF NOT EXISTS repos (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS skill_sources (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  -- The git URL skills are pulled from; the clone below is gate's own.
+  url TEXT NOT NULL,
+  -- Branch or tag to track; NULL follows whatever the remote's default is.
+  ref TEXT,
+  -- Where skill directories live inside that repository.
+  subdir TEXT NOT NULL DEFAULT 'skills',
+  -- Prepended to a skill's id on import, so two libraries can both ship
+  -- "brainstorming" without one silently replacing the other.
+  prefix TEXT NOT NULL DEFAULT '',
+  root TEXT NOT NULL,
+  -- The commit the clone is on, which is what an imported skill is stamped with.
+  head_sha TEXT,
+  status TEXT NOT NULL DEFAULT 'new',
+  last_sync_at INTEGER,
+  last_sync_log TEXT,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,

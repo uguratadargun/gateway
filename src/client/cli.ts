@@ -39,7 +39,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
   gate repo [<id> <path>]                       point a pinned repository at your clone
-  gate reset [--team]                           disconnect this machine (or wipe the team's definitions)
+  gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
 
@@ -518,49 +518,18 @@ function cmdRepo(args: Args): number {
 /**
  * Puts this machine back to how it was before anyone logged in.
  *
- * Local by default, and that is the whole of it: the login, the mirror, and the
- * approvals this person gave for running workflows here. Nothing anyone else
- * can see changes — the definitions are the team's and stay on the server.
+ * That is the whole of it: the login, the mirror of the team's definitions, and
+ * the approvals this person gave for running workflows here. Nothing anyone
+ * else can see changes — the definitions are the team's and live on the server,
+ * and deleting those belongs in the dashboard, where you can see what you are
+ * deleting before you do.
  *
- * `--team` is the other thing people mean by "reset" and is deliberately not
- * the default: it deletes what the team runs, for everyone on it. It asks for
- * the team's name to be typed back, because a list of pipelines is not
- * something to lose to a fast Enter.
+ * Worktrees are kept too. A run's worktree is work it produced, a branch
+ * somebody may still want, and "reset" meaning "delete everything every run
+ * here ever made" is a surprise nobody wants twice.
  */
-async function cmdReset(args: Args): Promise<number> {
-  const wipeTeam = args.flags.team === true;
-
-  if (wipeTeam) {
-    const client = connect();
-    // Before anything is asked of the server: a refusal that depends on a
-    // round trip is a refusal that can arrive after a timeout instead.
-    if (!process.stdin.isTTY) {
-      die("refusing to delete a team's definitions unattended — run this in a terminal");
-    }
-    const config = readConfig()!;
-    const team = await teamOf(client, config);
-    const manifest = readManifest(team);
-    const count = manifest?.workflows.length ?? 0;
-
-    console.error(
-      `This deletes every agent and workflow team "${team}" owns (${count} workflow(s)), for everyone on it.`,
-    );
-    console.error("Runs already recorded, their worktrees and your API keys are not touched.");
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
-    const answer = (await rl.question(`Type the team name to confirm: `)).trim();
-    rl.close();
-    if (answer !== team) {
-      console.log("nothing deleted");
-      return 1;
-    }
-    const removed = await client.wipeTeamDefinitions();
-    console.log(`deleted ${removed.agents} agent(s) and ${removed.workflows} workflow(s) from team ${team}`);
-    console.log("(anything the default team shares is untouched — it is not this team's to delete)");
-  }
-
-  // Local, always: after wiping the team there is nothing left to mirror.
-  const removed = clearLocalState();
-  for (const line of removed) console.log(line);
+function cmdReset(): number {
+  for (const line of clearLocalState()) console.log(line);
   console.log("this machine is disconnected — `/gate:login <token>` connects it again");
   return 0;
 }
@@ -618,7 +587,7 @@ export async function main(argv: string[]): Promise<number> {
       case "repo":
         return cmdRepo(args);
       case "reset":
-        return await cmdReset(args);
+        return cmdReset();
       case "status":
         return await cmdStatus(args);
       case "cancel":
