@@ -359,15 +359,18 @@ with a person in it and a pipeline node often has none. Three things the
 
 ## Shape that works
 
-gate ships this as `dev`, using the team's `planner`, `implementer` and
-`reviewer`:
+gate ships this as `dev`, using the team's `planner`, `implementer`,
+`reviewer` and `acceptance`:
 
 ```
 base ─▶ planner ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
           ▲                     └─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
-          │                                        └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─▶ merge-request ─▶ done
-          │                                                                 ├─ 4th plan rejected ─▶ review-stuck  └─▶ commit ─────▶ merge-request ─▶ done
-          └──────────────────────── changes requested ──────────────────────┘
+          │                                        └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─┐
+          │                                                                 ├─ 4th plan rejected ─▶ review-stuck  └─▶ commit ─────┤
+          │                                                                 └─ changes requested ──▶ planner                     ▼
+          │                                                                                                              acceptance ─▶ decision ─┬─ ship ─▶ merge-request ─▶ done
+          │                                                                                                                                     ├─ hold ─▶ awaiting-approval
+          └───────────────────────────────────── revise: the person asked for changes ──────────────────────────────────────────────────────────┘
 ```
 
 `base` records the commit the run started from, `diff` is the working tree
@@ -375,6 +378,15 @@ against it, and the reviewer is handed both — because the agents' skills
 commit as they go and a diff against the index would be empty. The planner
 writes a plan *file* (`planFile`) and the implementer executes that file: the
 implementer's skills take a plan file, not a list of steps in a prompt.
+
+`acceptance` is the human gate. A reviewer's approval says the change is
+correct; it does not say anyone wants it shipped. So after the commit, and
+before anything leaves the machine, the person who asked for the change is
+told the branch is ready and how to try it (`git merge <branch>` from their
+own checkout), and asked. "Ship" opens the merge request; "revise" carries
+their requests back to the **planner**, as a change of brief, not to the
+implementer; and a run with nobody to ask — the dashboard's — holds, ending
+with the branch committed and unpushed. The node decides nothing itself.
 
 It contains no `npm ci` and no `npm test` on purpose: those are facts about one
 project, and a default that assumes them fails on the first machine it meets.
@@ -650,7 +662,11 @@ accept it. The server validates shape, not sense.
 - [ ] **If the run is meant to deliver, the pipeline ships what it approved** —
       stage, commit with `{{outputs.<implementer>.summary}}` when anything is
       left to commit, push — and a failed push lands on its own `status: failed`
-      terminal. Ending at `done` on
+      terminal.
+- [ ] **A person approves before anything leaves the machine** — the
+      `acceptance` node stands between the commit and the merge request, its
+      "revise" edge goes to the planner, and its "hold" edge ends the run
+      rather than shipping on nobody's say-so. Ending at `done` on
       approval leaves the change in a worktree nobody opens; that is a choice to
       make deliberately, not by omission.
 - [ ] **No absolute interpreter paths** in any `command` — `PATH` resolves them.

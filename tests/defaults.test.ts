@@ -87,10 +87,15 @@ describe("restoring the shipped definitions", () => {
 });
 
 describe("what the shipped agents declare", () => {
-  it("is a planner, an implementer and a reviewer, each following its skills", () => {
+  it("is a planner, an implementer and a reviewer, each following its skills, and an acceptance gate", () => {
     ensureDefaultAgents();
     const byId = new Map(listAgents().agents.map((a) => [a.id, a]));
-    expect([...byId.keys()].sort()).toEqual(["implementer", "planner", "reviewer"]);
+    expect([...byId.keys()].sort()).toEqual(["acceptance", "implementer", "planner", "reviewer"]);
+    // The gate follows no skill and decides nothing; it asks, and reads.
+    expect(byId.get("acceptance")!.skills).toEqual([]);
+    expect(byId.get("acceptance")!.tools).not.toContain("write_file");
+    // The person's requests reach the planner, like a reviewer's feedback.
+    expect(byId.get("planner")!.inputs).toContain("acceptance.requests?");
 
     // The skills are the point of the defaults: without them these are three
     // ordinary prompts, and the processes somebody chose deliberately are gone.
@@ -138,14 +143,14 @@ describe("the shipped pipeline", () => {
   const STANDINS: Record<string, string> = {
     planner: `---
 name: Planner
-inputs: [reviewer.feedback?, implementer.summary?]
+inputs: [reviewer.feedback?, acceptance.requests?, implementer.summary?]
 output:
   type: json
   schema:
     plan: string
     planFile: string
 ---
-Plan {{input.task}} {{inputs.reviewer.feedback}} {{inputs.implementer.summary}}
+Plan {{input.task}} {{inputs.reviewer.feedback}} {{inputs.acceptance.requests}} {{inputs.implementer.summary}}
 `,
     implementer: `---
 name: Implementer
@@ -168,6 +173,17 @@ output:
     feedback: "string?"
 ---
 Review {{inputs.diff.stdout}} from {{inputs.base.stdout}}
+`,
+    acceptance: `---
+name: Acceptance
+inputs: [implementer.summary]
+output:
+  type: json
+  schema:
+    decision: string
+    requests: "string?"
+---
+Try {{inputs.implementer.summary}}
 `,
   };
 
@@ -202,7 +218,9 @@ Review {{inputs.diff.stdout}} from {{inputs.base.stdout}}
     return { ran, runCommand: runCommand as never };
   }
 
-  function fakeTeam(reviews: (visit: number) => string) {
+  const SHIP = () => JSON.stringify({ decision: "ship" });
+
+  function fakeTeam(reviews: (visit: number) => string, accepts: (visit: number) => string = SHIP) {
     const visits: Record<string, number> = {};
     return new FakeModelProvider((req) => {
       const node = req.context?.nodeId ?? "";
@@ -214,6 +232,8 @@ Review {{inputs.diff.stdout}} from {{inputs.base.stdout}}
           return JSON.stringify({ summary: `pass ${visit}`, changed: true });
         case "reviewer":
           return reviews(visit);
+        case "acceptance":
+          return accepts(visit);
         default:
           return "{}";
       }
@@ -271,6 +291,60 @@ Review {{inputs.diff.stdout}} from {{inputs.base.stdout}}
     const commit = ran.find((c) => c[0] === "git" && c[1] === "commit")!;
     expect(commit).toContain("Add a thing");
     expect(commit).toContain("pass 2");
+    // The merge request is opened only after the person said so, and after
+    // the commit: what they try with `git merge` has to be on the branch.
+    expect(state.visitCounts.acceptance).toBe(1);
+    expect(ran.findIndex((c) => c[0] === "git" && c[1] === "commit")).toBeLessThan(ran.findIndex((c) => c[0] === "sh"));
+  });
+
+  it("sends the person's requests back to the planner, and ships once they say so", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const provider = fakeTeam(
+      () => JSON.stringify({ verdict: "approved" }),
+      (visit) =>
+        visit === 1
+          ? JSON.stringify({ decision: "revise", requests: "Make the button blue, not green." })
+          : JSON.stringify({ decision: "ship" }),
+    );
+    const { ran, runCommand } = fakeGit({ staged: true });
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
+
+    expect(state.error).toBeNull();
+    expect(state.status).toBe("completed");
+    // Tried once, sent back once, tried again, shipped — through the planner,
+    // not the implementer: a person's request is a change of brief.
+    expect(state.visitCounts.acceptance).toBe(2);
+    expect(state.visitCounts.planner).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(2);
+    const plans = provider.callsFor("planner").map((c) => c.messages[0].content);
+    expect(plans[0]).not.toContain("blue");
+    expect(plans[1]).toContain("Make the button blue, not green.");
+    // One merge request, at the end.
+    expect(ran.filter((c) => c[0] === "sh")).toHaveLength(1);
+  });
+
+  it("holds when nobody is there to approve, leaving the branch committed and unpushed", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const provider = fakeTeam(
+      () => JSON.stringify({ verdict: "approved" }),
+      () => JSON.stringify({ decision: "hold" }),
+    );
+    const { ran, runCommand } = fakeGit({ staged: true });
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.status).toBe("completed");
+    expect(terminalOf(events)).toBe("awaiting-approval");
+    expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeDefined();
+    expect(ran.find((c) => c[0] === "sh")).toBeUndefined();
   });
 
   it("skips the commit when the implementer's skills already committed everything", async () => {

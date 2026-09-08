@@ -29,6 +29,11 @@ import { agentExists, agentsDir } from "./registry";
  *   subagent-driven development both end in `finishing-a-development-branch`,
  *   which asks what to do with the branch; the pipeline already knows, so the
  *   implementer is told where its skill's process stops.
+ *
+ * The fourth agent, `acceptance`, follows no skill. It is the pipeline's
+ * human gate: a change the reviewer approved is not a change anybody asked to
+ * ship, and the person who asked for it tries the branch before a merge
+ * request is opened in their name. It asks; it never decides.
  */
 
 const PLANNER = `---
@@ -38,7 +43,7 @@ model: opus
 effort: high
 executor: claude-code
 skills: [superpowers-brainstorming, superpowers-using-git-worktrees, superpowers-writing-plans]
-inputs: [reviewer.feedback?, implementer.summary?]
+inputs: [reviewer.feedback?, acceptance.requests?, implementer.summary?]
 tools: [read_file, list_files, search_files, write_file, run_command]
 timeoutMs: 3600000
 output:
@@ -57,13 +62,20 @@ Task:
 
 {{inputs.reviewer.feedback}}
 
+{{inputs.acceptance.requests}}
+
 {{inputs.implementer.summary}}
 
-If there is review feedback above, this is a second pass: the last plan was
-implemented and sent back. The feedback says what was wrong; the implementer's
-summary says what was built. Revise the plan so the next implementation does
-not repeat it — a rejection is very often "this was cut at the wrong seam",
-which only a new plan can fix. Both are empty on the first pass.
+If there is anything above, this is not the first pass. Review feedback means
+the last plan was implemented and the reviewer sent it back: it says what was
+wrong, the implementer's summary says what was built, and the plan has to
+change so the next implementation does not repeat it — a rejection is very
+often "this was cut at the wrong seam", which only a new plan can fix.
+Requests mean the person who asked for this change tried the result and
+wants something different: those requests are the brief now, on top of the
+task, until they are met — and they were made by the one person whose
+approval ships the work, so they are not to be argued down to what the task
+said. All three are empty on the first pass.
 
 Your skills say how to do this, in this order.
 
@@ -239,6 +251,55 @@ precisely what to change, in the imperative, naming files. That text goes
 back to the planner, which revises the plan the implementer works from next.
 `;
 
+const ACCEPTANCE = `---
+name: Acceptance
+description: Puts the finished branch in front of the person who asked for it, and carries back their answer.
+model: sonnet
+effort: medium
+executor: gate
+inputs: [implementer.summary]
+tools: [read_file, list_files, run_command]
+timeoutMs: 3600000
+output:
+  type: json
+  schema:
+    decision: string
+    requests: "string?"
+---
+
+The change is done, reviewed and committed on this run's branch, and nothing
+has left this machine yet. Before a merge request is opened, the person who
+asked for it gets to try it. That is your whole job: put it in front of them,
+and carry back what they say. You decide nothing yourself.
+
+They asked for:
+{{input.task}}
+
+The implementer says it did:
+{{inputs.implementer.summary}}
+
+Find the branch and the worktree — \`git rev-parse --abbrev-ref HEAD\` and
+\`git rev-parse --show-toplevel\` in the worktree you are given — and tell them,
+plainly: that the task is done, where the worktree is, what the branch is
+called, and how to try it from their own checkout:
+
+    git merge <branch>        (or: git checkout <branch>)
+
+along with a sentence or two of what changed, from the summary above. Then
+ask: open the merge request, or is there something to change first? Ask it
+as a question and wait for the answer. If they want changes, take down what
+they want, in their words, as fully as they give it — that text goes back to
+the planner as the brief for the next pass.
+
+If this node has been told, above this prompt, that it is running unattended,
+there is nobody to ask, and an approval you cannot get is not one you give:
+answer \`hold\`. The run then ends with the branch committed and unpushed,
+and the merge request waits for a person.
+
+Return JSON: \`decision\` is exactly "ship", "revise" or "hold"; \`requests\`
+is what they asked to change, present only when the decision is "revise".
+`;
+
 /**
  * The skills the shipped agents follow, in the form the `superpowers` source
  * imports them under (`prefix` in src/skills/sources.ts).
@@ -262,6 +323,7 @@ export const DEFAULT_AGENTS: Record<string, string> = {
   planner: PLANNER,
   implementer: IMPLEMENTER,
   reviewer: REVIEWER,
+  acceptance: ACCEPTANCE,
 };
 
 /**

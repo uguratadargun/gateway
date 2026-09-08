@@ -33,6 +33,12 @@ import { workflowExists, workflowsDir } from "./registry";
  * reviewer is handed both. For the same reason the commit at the end is
  * allowed to find nothing left to commit.
  *
+ * Between the commit and the merge request stands the person: `acceptance`
+ * tells them the branch is ready and how to try it, and only their answer
+ * opens the merge request or sends the work back to the planner with what
+ * they asked for. Unattended, that node cannot ask, so it holds, and the run
+ * ends with the branch committed and unpushed.
+ *
  * Review is one agent node, not a parallel node with one branch: a parallel
  * node means two regions that genuinely run at once, and the loader is right to
  * refuse one branch. Adding a project's own reviewers alongside this one is
@@ -40,7 +46,7 @@ import { workflowExists, workflowsDir } from "./registry";
  * parallel node joining at `verdict`, and widen the verdict's condition.
  */
 const DEV = `name: Dev
-description: Plan a change, carry it out in a worktree, review it, and open a merge request.
+description: Plan a change, carry it out in a worktree, review it, let the person who asked try it, and open a merge request.
 entry: base
 workspace: {}
 # No engine ceilings: rounds and revisits cannot be counted in advance, and
@@ -114,7 +120,10 @@ nodes:
       # Declared after the success edge and before the loop-back: edges are
       # tried in order. Four plans is three rejections; a change that has not
       # converged by then is not going to on the fifth, and the branch is still
-      # there to be looked at.
+      # there to be looked at. (A person's own revisions count as plans too —
+      # the language has no arithmetic to tell them apart — so a run that has
+      # been revised on request and then rejected can end here early; a person
+      # who is there to ask for revisions is there to start it again.)
       - when: visits.planner >= 4
         to: review-stuck
         label: still rejected after 4 plans
@@ -137,7 +146,7 @@ nodes:
     command: [git, diff, --cached, --quiet]
     edges:
       - when: outputs.staged.ok == true
-        to: merge-request
+        to: acceptance
         label: already committed
       - to: commit
         label: has staged changes
@@ -149,10 +158,31 @@ nodes:
     command: [git, commit, -m, "{{input.task}}", -m, "{{outputs.implementer.summary}}"]
     edges:
       - when: outputs.commit.ok == true
-        to: merge-request
+        to: acceptance
         label: committed
       - to: not-shipped
         label: commit failed
+
+  - id: acceptance
+    type: agent
+    agent: acceptance
+    label: Try it
+    next: decision
+
+  - id: decision
+    type: condition
+    label: Open the merge request?
+    edges:
+      - when: outputs.acceptance.decision == "ship"
+        to: merge-request
+        label: approved by the person
+      - when: outputs.acceptance.decision == "revise"
+        to: planner
+        label: changes requested by the person
+      # "hold", and anything else: nobody was there to ask. The branch stays
+      # committed and unpushed, and the merge request waits for a person.
+      - to: awaiting-approval
+        label: nobody to ask
 
   - id: merge-request
     type: command
@@ -192,6 +222,11 @@ nodes:
   - id: done
     type: terminal
     label: Merge request opened
+    status: completed
+
+  - id: awaiting-approval
+    type: terminal
+    label: Committed on the branch, awaiting your approval before a merge request
     status: completed
 
   - id: nothing-changed

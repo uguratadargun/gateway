@@ -24,9 +24,11 @@ own steps. Read the repository, work out what those are, and put a concrete
 proposal in front of them rather than asking what they want first.
 
 Build it for **this repository** — but not from nothing. gate ships a team with
-`planner`, `implementer` and `reviewer`, each following its skills, and a `dev`
-pipeline that plans, implements in a worktree, reviews, commits and opens a
-merge request. **That is the base. You write the ends.**
+`planner`, `implementer` and `reviewer`, each following its skills, plus
+`acceptance`, which puts the finished branch in front of the person before
+anything leaves the machine, and a `dev` pipeline that plans, implements in a
+worktree, reviews, commits, asks, and opens a merge request. **That is the
+base. You write the ends.**
 
 ## 1. Use the default team, do not rewrite it
 
@@ -77,8 +79,10 @@ What you learn becomes `command` nodes, in three places:
   with a labelled edge, and give that loop its own terminal so a test that
   never goes green ends with a reason rather than a ceiling. It goes before
   `stage` and `diff`, so the diff the reviewers see is of a change that passed.
-- **At the end** — the merge request. The shipped node uses `glab` when it is
-  installed and signed in, and GitLab push options otherwise; if this project is on GitHub, make it
+- **At the end, after `acceptance`** — the merge request. The person's
+  approval stays where it is, between the commit and the push: nothing you
+  add goes around it. The shipped node uses `glab` when it is installed and
+  signed in, and GitLab push options otherwise; if this project is on GitHub, make it
   `gh pr create`, and set the target branch to whatever this repository's
   default actually is (`master` and `main` are both common).
 
