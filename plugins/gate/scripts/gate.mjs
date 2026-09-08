@@ -10641,6 +10641,11 @@ function printEvent(event) {
 async function cmdRun(args) {
   const [workflowId, ...trailing] = args.positional;
   if (!workflowId) die("usage: gate run <workflow> [task\u2026]  \xB7  `gate list` shows what you can run");
+  if ((process.env.CLAUDE_CODE_ENTRYPOINT || process.env.CLAUDECODE) && args.flags.quiet !== true) {
+    console.error(
+      "# heads up: this runs headlessly \u2014 you will see the outcome, not the work.\n# In Claude Code, /gate:run drives the same workflow in this session (gate begin/next/step),\n# where you can watch each node and answer it when it asks."
+    );
+  }
   const client = connect();
   const config = readConfig();
   const team = await teamOf(client, config);
