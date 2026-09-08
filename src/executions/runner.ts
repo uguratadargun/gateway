@@ -194,7 +194,7 @@ function reuseWorkspace(workspace: ExecutionWorkspace | null): RunWorkspace | nu
       `the worktree this run used (${workspace.root}) no longer exists on disk; Restart instead`,
     );
   }
-  return { root: workspace.root, repo: workspace.repo, branch: workspace.branch, baseRef: workspace.baseRef };
+  return { root: workspace.root, repo: workspace.repo, branch: workspace.branch, baseRef: workspace.baseRef, baseCommit: workspace.baseCommit };
 }
 
 /** Runs the engine, tracks it as cancellable, and settles the execution either way. */

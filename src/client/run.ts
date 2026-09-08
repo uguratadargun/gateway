@@ -178,7 +178,7 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
   let diff: string | null = null;
   if (workspace) {
     try {
-      diff = readRunDiff(workspace.root).diff;
+      diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
     } catch {
       // A worktree removed mid-run is already the run's own failure; not
       // reporting a diff for it is not a second one.

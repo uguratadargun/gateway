@@ -32,9 +32,13 @@ merge request. **That is the base. You write the ends.**
 
 `planner`, `implementer` and `reviewer` are not starting points to improve on.
 They know nothing about any particular project on purpose — which is what lets
-every pipeline share them — and they carry the skills (brainstorming, writing
-plans, executing plans, test-driven development, requesting code review) that
-make them behave like a team rather than three prompts.
+every pipeline share them — and they carry the skills (brainstorming, using git
+worktrees and writing plans; executing plans, test-driven development and
+subagent-driven development; requesting code review) that make them behave
+like a team rather than three prompts. Their prompts are written against what
+those skills do unattended — where a skill would wait for a person, that it
+commits as it goes, where its process hands off to the pipeline — so a copy
+with a paragraph added is a copy that has to get all of that right again.
 
 So: **name them, never copy them.** Do not write a `my-project-planner` that is
 the shipped planner with a paragraph added; if a project genuinely needs
@@ -58,17 +62,21 @@ Do not design against assumptions. Establish, from the files:
 
 What you learn becomes `command` nodes, in three places:
 
-- **Before the planner** — what a fresh worktree needs before anyone can work
-  in it: dependency install, code generation, linking, a build that other
-  steps assume. (`pnpm install`, `pnpm build-protobuf`, linking `node_modules`
-  — whatever this project really does.) A worktree is a clean checkout: if
-  something is needed and is not tracked by git, it has to be a node.
-- **Between the implementer and the review** — this project's real
-  verification: its test command, its typecheck, its linter. The implementer
-  already tests as it works; this node is the deterministic gate that decides
-  whether the change reaches a reviewer at all. Route a failure back to the
-  implementer with a labelled edge, and give that loop its own terminal so a
-  test that never goes green ends with a reason rather than a ceiling.
+- **Between `base` and the planner** — what a fresh worktree needs before
+  anyone can work in it: dependency install, code generation, linking, a build
+  that other steps assume. (`pnpm install`, `pnpm build-protobuf`, linking
+  `node_modules` — whatever this project really does.) A worktree is a clean
+  checkout: if something is needed and is not tracked by git, it has to be a
+  node. `base` stays the entry: it records the commit the run started from,
+  and everything the run does — the planner's spec included — is diffed
+  against it.
+- **Between the implementer and `stage`** — this project's real verification:
+  its test command, its typecheck, its linter. The implementer already tests
+  as it works; this node is the deterministic gate that decides whether the
+  change reaches a reviewer at all. Route a failure back to the implementer
+  with a labelled edge, and give that loop its own terminal so a test that
+  never goes green ends with a reason rather than a ceiling. It goes before
+  `stage` and `diff`, so the diff the reviewers see is of a change that passed.
 - **At the end** — the merge request. The shipped node prefers `glab` and falls
   back to GitLab push options; if this project is on GitHub, make it
   `gh pr create`, and set the target branch to whatever this repository's
@@ -93,11 +101,27 @@ reviewers, each with its own narrow agent and one job. Then:
   branches are the default `reviewer` **and** yours, joined at `verdict`;
 - give each new reviewer `next: verdict` and the same `verdict` /
   `feedback` output shape as the shipped one;
+- give it the same inputs the shipped reviewer takes — `base.stdout` and
+  `diff.stdout` at least — and only reading tools. The diff is the working
+  tree against the run's base commit, not `base..HEAD`: the implementer may
+  have committed some of its work and left the rest uncommitted, and the
+  prompt has to say so wherever the reviewer is told to look at git itself;
+- `executor: claude-code`, like the shipped one, if it has to read the
+  repository around the diff; `timeoutMs: 3600000` either way;
 - widen the verdict's condition so every reviewer has to approve:
   `outputs.reviewer.verdict == "approved" && outputs.<yours>.verdict == "approved"`.
+  The give-up edge (`visits.planner >= 4`) stays where it is.
 
 The default reviewer stays a branch. It is not replaced, and it is not made
 optional.
+
+Its feedback has to reach the planner, or a rejection from your reviewer sends
+the run back to a planner that cannot see why. A node may narrow an agent's
+inputs, never widen them, so this is the one edit to the shipped `planner` a
+design may propose: add `<yours>.feedback?` to its `inputs:` and
+`{{inputs.<yours>.feedback}}` on the line under the shipped reviewer's, and
+nothing else. Say so in the proposal — saving it needs `--replace` on
+`planner`, which is the user's to agree to.
 
 ## 4. Propose before writing
 

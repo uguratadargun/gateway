@@ -76,6 +76,7 @@ const workspaceSchema = z.object({
   repo: z.string().max(1000),
   branch: z.string().max(200),
   baseRef: z.string().max(200),
+  baseCommit: z.string().max(80).optional(),
 });
 
 export const reportSchema = z
@@ -102,6 +103,7 @@ export const finishRunSchema = z
         repo: z.string().max(1000),
         branch: z.string().max(200),
         baseRef: z.string().max(200),
+        baseCommit: z.string().max(80).optional(),
         commit: z.string().max(80).nullable().default(null),
         changedFiles: z.array(z.string().max(500)).max(200).default([]),
       })

@@ -24,6 +24,15 @@ import { workflowsDir } from "./registry";
  * tests; a deterministic test node is something `/gate:design` adds once it
  * has read the repository and knows the command.
  *
+ * The diff is taken against the commit the run started from, not against the
+ * index. The agents' skills commit as they go — writing plans puts a commit in
+ * every task, subagent-driven development commits after each one — and a
+ * plain `git diff` after that is empty: the run would end at "nothing was
+ * changed" with a branch full of work. `base` records the starting commit
+ * before anything else runs, `diff` compares the working tree to it, and the
+ * reviewer is handed both. For the same reason the commit at the end is
+ * allowed to find nothing left to commit.
+ *
  * Review is one agent node, not a parallel node with one branch: a parallel
  * node means two regions that genuinely run at once, and the loader is right to
  * refuse one branch. Adding a project's own reviewers alongside this one is
@@ -32,16 +41,25 @@ import { workflowsDir } from "./registry";
  */
 const DEV = `name: Dev
 description: Plan a change, carry it out in a worktree, review it, and open a merge request.
-entry: planner
+entry: base
 workspace: {}
-# No ceilings: a change worth making can take a dozen passes, and cutting one
-# off mid-review throws away everything it has already spent. The loops end
-# themselves — the verdict sends work back, and a run that will not converge is
-# stopped from the dashboard, where it can be seen not converging.
+# No engine ceilings: rounds and revisits cannot be counted in advance, and
+# cutting a run off mid-review throws away everything it has already spent.
+# The loops end themselves instead — the verdict sends work back, and the
+# review loop has its own give-up edge below, landing on a terminal that says
+# what is stuck rather than on "node ran N times".
 maxWorkflowSteps: 0
 maxVisits: 0
 maxCostUsd: 0
 nodes:
+  - id: base
+    type: command
+    label: Record the starting commit
+    # format: (not tformat:) prints no trailing newline, so the output is a
+    # bare commit id that can be handed straight to git again.
+    command: [git, log, "-1", --format=format:%H]
+    next: planner
+
   - id: planner
     type: agent
     agent: planner
@@ -52,7 +70,12 @@ nodes:
     type: agent
     agent: implementer
     label: Implement
-    next: stage
+    edges:
+      - when: outputs.implementer.changed == false
+        to: nothing-changed
+        label: deliberately changed nothing
+      - to: stage
+        label: implemented
 
   - id: stage
     type: command
@@ -64,8 +87,10 @@ nodes:
 
   - id: diff
     type: command
-    label: Diff
-    command: [git, diff]
+    label: Diff against the starting commit
+    # The working tree against the base commit: what the implementer committed
+    # and what it left uncommitted, in one diff.
+    command: [git, diff, "{{outputs.base.stdout}}"]
     edges:
       - when: outputs.diff.stdout == ""
         to: nothing-changed
@@ -86,6 +111,13 @@ nodes:
       - when: outputs.reviewer.verdict == "approved"
         to: stage-all
         label: approved
+      # Declared after the success edge and before the loop-back: edges are
+      # tried in order. Four plans is three rejections; a change that has not
+      # converged by then is not going to on the fifth, and the branch is still
+      # there to be looked at.
+      - when: visits.planner >= 4
+        to: review-stuck
+        label: still rejected after 4 plans
       - to: planner
         label: changes requested
 
@@ -95,7 +127,20 @@ nodes:
     # add -A, not add -N: the stage node above recorded intent, and a commit
     # needs the content.
     command: [git, add, -A]
-    next: commit
+    next: staged
+
+  - id: staged
+    type: command
+    label: Anything left to commit?
+    # --quiet exits 0 when the index matches HEAD — the implementer's skills
+    # already committed everything — and 1 when there is something to commit.
+    command: [git, diff, --cached, --quiet]
+    edges:
+      - when: outputs.staged.ok == true
+        to: merge-request
+        label: already committed
+      - to: commit
+        label: has staged changes
 
   - id: commit
     type: command
@@ -124,7 +169,7 @@ nodes:
       - -c
       - >-
         if command -v glab >/dev/null 2>&1; then
-        git push --set-upstream origin HEAD && glab mr create --fill --yes;
+        git push --set-upstream origin HEAD && glab mr create --fill --yes --title "\$1";
         else
         git push -o merge_request.create -o "merge_request.title=\$1" --set-upstream origin HEAD;
         fi
@@ -145,6 +190,11 @@ nodes:
   - id: nothing-changed
     type: terminal
     label: Nothing was changed
+    status: failed
+
+  - id: review-stuck
+    type: terminal
+    label: Review never approved
     status: failed
 
   - id: not-shipped

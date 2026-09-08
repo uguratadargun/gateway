@@ -486,7 +486,7 @@ async function settle(
   if (workspace && existsSync(workspace.root)) {
     summary = summarizeWorkspace(workspace);
     try {
-      diff = readRunDiff(workspace.root).diff;
+      diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
     } catch {
       // A worktree removed mid-run is the run's own failure, not a second one.
     }

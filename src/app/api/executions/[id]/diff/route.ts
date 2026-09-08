@@ -35,7 +35,7 @@ export async function GET(_req: Request, { params }: Params) {
   }
 
   try {
-    return NextResponse.json(readRunDiff(execution.workspace.root));
+    return NextResponse.json(readRunDiff(execution.workspace.root, execution.workspace.baseCommit));
   } catch (e) {
     const message = e instanceof WorkflowError ? e.message : "could not read the worktree";
     return NextResponse.json({ error: message }, { status: 409 });

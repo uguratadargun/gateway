@@ -8454,7 +8454,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.23.0";
+var GATE_VERSION = "0.24.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -9764,7 +9764,8 @@ function createRunWorkspace(spec, executionId) {
   mkdirSync9(workspacesDir(), { recursive: true, mode: 448 });
   if (existsSync10(root)) rmSync6(root, { recursive: true, force: true });
   git(repo, ["worktree", "add", "-b", branch, root, baseRef]);
-  return { root, repo, branch, baseRef };
+  const baseCommit = git(root, ["rev-parse", "HEAD"]);
+  return { root, repo, branch, baseRef, baseCommit };
 }
 function summarizeWorkspace(ws) {
   let changedFiles = [];
@@ -9777,10 +9778,10 @@ function summarizeWorkspace(ws) {
   return { ...ws, changedFiles, commit };
 }
 var MAX_DIFF_BYTES = 4e6;
-function readRunDiff(root) {
+function readRunDiff(root, baseCommit) {
   if (!existsSync10(root)) throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
   git(root, ["add", "-N", "."]);
-  const diff = git(root, ["diff"]);
+  const diff = git(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
   return diff.length > MAX_DIFF_BYTES ? { diff: diff.slice(0, MAX_DIFF_BYTES), truncated: true } : { diff, truncated: false };
 }
 
@@ -10060,7 +10061,7 @@ async function runLocal(client, opts) {
   let diff = null;
   if (workspace) {
     try {
-      diff = readRunDiff(workspace.root).diff;
+      diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
     } catch {
     }
   }
@@ -10414,7 +10415,7 @@ async function settle(ctx, executionId, execution, stepCount, status, error) {
   if (workspace && existsSync11(workspace.root)) {
     summary = summarizeWorkspace(workspace);
     try {
-      diff = readRunDiff(workspace.root).diff;
+      diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
     } catch {
     }
   }

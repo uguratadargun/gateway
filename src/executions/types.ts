@@ -8,6 +8,8 @@ export interface ExecutionWorkspace {
   repo: string;
   branch: string;
   baseRef: string;
+  /** The commit the run branched from; absent on runs recorded before it was kept. */
+  baseCommit?: string;
   commit: string | null;
   changedFiles: string[];
 }

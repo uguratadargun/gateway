@@ -25,6 +25,13 @@ export interface RunWorkspace {
   repo: string;
   branch: string;
   baseRef: string;
+  /**
+   * The commit the branch was cut from — `baseRef` resolved at creation. A
+   * run's agents commit as they go, so "what did the run do" is the working
+   * tree against this, not against the index. Optional only because runs
+   * recorded before it existed have no such field.
+   */
+  baseCommit?: string;
 }
 
 export interface WorkspaceSummary extends RunWorkspace {
@@ -67,7 +74,8 @@ export function createRunWorkspace(spec: ResolvedWorkspaceSpec, executionId: str
   if (existsSync(root)) rmSync(root, { recursive: true, force: true });
 
   git(repo, ["worktree", "add", "-b", branch, root, baseRef]);
-  return { root, repo, branch, baseRef };
+  const baseCommit = git(root, ["rev-parse", "HEAD"]);
+  return { root, repo, branch, baseRef, baseCommit };
 }
 
 /** What the run left behind, recorded on the execution for the UI. */
@@ -96,13 +104,17 @@ const MAX_DIFF_BYTES = 4_000_000;
  * `add -N` first, because a run's most interesting output is usually a file
  * that did not exist before and `git diff` alone cannot see one. It records
  * intent-to-add only — no content is staged — and it is the same thing the
- * pipeline's own `stage` node does, so a diff read here matches the diff the
- * reviewers were given.
+ * pipeline's own `stage` node does.
+ *
+ * Against the base commit when the run recorded one: the shipped agents'
+ * skills commit task by task, and a diff against the index would show a
+ * finished run as empty. That is also what the pipeline's own `diff` node
+ * does, so a diff read here matches the diff the reviewers were given.
  */
-export function readRunDiff(root: string): { diff: string; truncated: boolean } {
+export function readRunDiff(root: string, baseCommit?: string): { diff: string; truncated: boolean } {
   if (!existsSync(root)) throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
   git(root, ["add", "-N", "."]);
-  const diff = git(root, ["diff"]);
+  const diff = git(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
   return diff.length > MAX_DIFF_BYTES
     ? { diff: diff.slice(0, MAX_DIFF_BYTES), truncated: true }
     : { diff, truncated: false };

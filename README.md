@@ -489,9 +489,15 @@ concurrency limiter.
 
 gate ships one team that works in a repository nobody has looked at:
 **planner**, **implementer** and **reviewer**, each following skills from
-`superpowers` (brainstorming and writing plans; executing plans and
-test-driven development; requesting code review), and a `dev` pipeline that
-plans, implements in a worktree, reviews, commits and opens a merge request.
+`superpowers` (brainstorming, using git worktrees and writing plans; executing
+plans, test-driven development and subagent-driven development; requesting
+code review), and a `dev` pipeline that plans, implements in a worktree,
+reviews, commits and opens a merge request. The prompts are written against
+what those skills do without a person in the session — where one would wait
+for approval, the planner rules and records the ruling; because they commit
+task by task, the pipeline diffs against the commit the run started from and
+lets the commit node find nothing left to commit; where one hands off to a
+finishing skill, the implementer stops and the pipeline ships.
 
 It contains no `npm ci` and no `npm test` on purpose — those are facts about
 one project, and a default that assumes them fails on the first machine it

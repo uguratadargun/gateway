@@ -257,12 +257,15 @@ lets it finish. Reach for `claude-code` on any node that explores or edits a rea
 repository, and leave short deterministic nodes on `gate`, which starts instantly
 where the harness pays about 50-70K tokens of system prompt to start at all.
 
-`tools:` does nothing for a `claude-code` agent, so leave it out rather than
-writing a list that reads like a restriction and is not one. `--allowed-tools`
-gates permission *prompts*, not capability, and under the permission mode below
+`tools:` is not enforced for a `claude-code` agent. `--allowed-tools` gates
+permission *prompts*, not capability, and under the permission mode below
 there are no prompts — measured here: a child given `--allowed-tools Read`
 reached for `Bash` on its first move and was not stopped. A node that must work
-a real repository gets the real toolset; that is the trade being made.
+a real repository gets the real toolset; that is the trade being made. The list
+still means something: a run driven from a session (`/gate:run`) reads it as
+the shape of the role and stays inside it, which is why the shipped agents
+carry one. Write it as the shape of the job — reads for a reviewer, writes for
+an implementer — and know that headless it is a description, not a fence.
 
 Every tool call it makes is streamed back (`--output-format stream-json`) and
 becomes a `tool.called` event, so a claude-code node is watchable on the
@@ -303,16 +306,41 @@ that should interrogate the request before designing takes
 `superpowers-test-driven-development`. An agent carrying five skills is an agent
 whose prompt no longer decides anything.
 
+Read the skill before binding it, because a skill was written for a session
+with a person in it and a pipeline node often has none. Three things the
+`superpowers` skills do that a prompt has to answer for:
+
+- **They stop for a human.** Brainstorming will not proceed past its approval
+  gate; executing plans raises concerns "before starting". Headless, nobody
+  answers — the prompt has to say what to do instead (rule, and record the
+  ruling), or the node ends on a question.
+- **They commit as they go.** Writing plans puts a commit step in every task;
+  subagent-driven development commits after each one. A pipeline that then
+  runs a plain `git diff` sees nothing. Diff against the run's base commit
+  (see the shape below), and let the commit node find nothing to commit.
+- **They hand off to skills the team may not hold.** Executing plans and
+  subagent-driven development end in `finishing-a-development-branch`, which
+  asks what to do with the branch. The pipeline already knows; tell the agent
+  where its skill's process stops.
+
 ## Shape that works
 
 gate ships this as `dev`, using the team's `planner`, `implementer` and
 `reviewer`:
 
 ```
-planner ─▶ implementer ─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
-   ▲                                     └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ commit ─▶ merge-request ─▶ done
-   └──────────────── changes requested ──────────────────────────┘
+base ─▶ planner ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
+          ▲                     └─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
+          │                                        └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─▶ merge-request ─▶ done
+          │                                                                 ├─ 4th plan rejected ─▶ review-stuck  └─▶ commit ─────▶ merge-request ─▶ done
+          └──────────────────────── changes requested ──────────────────────┘
 ```
+
+`base` records the commit the run started from, `diff` is the working tree
+against it, and the reviewer is handed both — because the agents' skills
+commit as they go and a diff against the index would be empty. The planner
+writes a plan *file* (`planFile`) and the implementer executes that file: the
+implementer's skills take a plan file, not a list of steps in a prompt.
 
 It contains no `npm ci` and no `npm test` on purpose: those are facts about one
 project, and a default that assumes them fails on the first machine it meets.
@@ -321,11 +349,11 @@ the planner, its real test command between the implementer and the review, and
 a merge-request node that matches its host. `/gate:design` writes those, reading
 them out of the repository rather than guessing.
 
-The shipped agents follow skills (brainstorming and writing plans for the
-planner, executing plans and test-driven development for the implementer,
-requesting code review for the reviewer), which is what makes them a team
-rather than three prompts. Name them; do not copy them into project-specific
-variants.
+The shipped agents follow skills (brainstorming, using git worktrees and
+writing plans for the planner; executing plans, test-driven development and
+subagent-driven development for the implementer; requesting code review for
+the reviewer), which is what makes them a team rather than three prompts. Name
+them; do not copy them into project-specific variants.
 
 Three things in that picture are easy to get wrong, and each one is a rule.
 
@@ -336,10 +364,16 @@ retype a diff it has already written to disk burns its whole output budget, can
 truncate, and can drift from what is actually in the worktree — the reviewers
 then review a description of the change instead of the change.
 
-Two command nodes between the implementer and the tests, because `command` is
-argv with no shell:
+Three command nodes, because `command` is argv with no shell — one at the
+entry, two after the implementer:
 
 ```yaml
+  - id: base                          # the entry: before anything can commit
+    type: command
+    label: Record the starting commit
+    command: [git, log, "-1", --format=format:%H]   # format: prints no newline
+    next: planner
+
   - id: stage
     type: command
     label: Stage new files            # `add -N` so new files appear in the diff
@@ -348,8 +382,8 @@ argv with no shell:
 
   - id: diff
     type: command
-    label: git diff
-    command: [git, diff]
+    label: Diff against the starting commit
+    command: [git, diff, "{{outputs.base.stdout}}"]
     edges:
       - when: outputs.diff.stdout != ""
         to: tests
@@ -358,9 +392,15 @@ argv with no shell:
         label: worktree unchanged
 ```
 
-Every reviewer then declares `inputs: [diff.stdout, …]` and reads
-`{{inputs.diff.stdout}}`. The empty-diff edge matters too: an implementer that
-wrote nothing must fail the run, not hand the reviewers a blank page to approve.
+Against the base commit, not a bare `git diff`: the implementer's skills commit
+task by task, and the working tree against the index is then empty however
+much was built. `git diff <base>` is everything the run did, committed or not.
+
+Every reviewer then declares `inputs: [base.stdout, diff.stdout, …]` and reads
+`{{inputs.diff.stdout}}` — and a reviewer whose skill wants a git range gets
+the base from `{{inputs.base.stdout}}`, with the working tree as its head. The
+empty-diff edge matters too: an implementer that wrote nothing must fail the
+run, not hand the reviewers a blank page to approve.
 
 ### Rejection goes back to the planner, not the implementer
 
@@ -450,7 +490,18 @@ delivery. Finish the graph with real command nodes:
     type: command
     label: Stage everything
     command: [git, add, -A]          # add -N staged intent only; commit needs the content
-    next: commit
+    next: staged
+
+  - id: staged                       # the skills may have committed everything already
+    type: command
+    label: Anything left to commit?
+    command: [git, diff, --cached, --quiet]   # exits 0 when there is nothing
+    edges:
+      - when: outputs.staged.ok == true
+        to: push
+        label: already committed
+      - to: commit
+        label: has staged changes
 
   - id: commit
     type: command
@@ -546,8 +597,11 @@ accept it. The server validates shape, not sense.
       run. It is the only ceiling that bounds an uncapped pipeline.
 - [ ] **`maxWorkflowSteps: 0` and `maxVisits: 0`** unless the user asked for a
       cap. Rounds and revisits cannot be counted in advance; spend can.
-- [ ] **A `stage` + `diff` node pair exists**, and every reviewer takes
-      `diff.stdout` — not `changed_files`, not a `diff` field from the model.
+- [ ] **A `base` node is the entry, and a `stage` + `diff` pair diffs against
+      it** (`git diff {{outputs.base.stdout}}`); every reviewer takes
+      `base.stdout` and `diff.stdout` — not `changed_files`, not a `diff`
+      field from the model, not a bare `git diff` that is empty once the
+      implementer's skills have committed.
 - [ ] **The empty-diff edge exists** and lands on a `status: failed` terminal.
 - [ ] **Review rejection routes to the planner**, test failure to the implementer.
 - [ ] **The planner declares the optional review inputs** so a second pass can
@@ -560,8 +614,9 @@ accept it. The server validates shape, not sense.
       after the success edge and before the fallback, landing on a `status:
       failed` terminal that names what is stuck.
 - [ ] **If the run is meant to deliver, the pipeline ships what it approved** —
-      stage, commit with `{{outputs.<implementer>.summary}}`, push — and a failed
-      push lands on its own `status: failed` terminal. Ending at `done` on
+      stage, commit with `{{outputs.<implementer>.summary}}` when anything is
+      left to commit, push — and a failed push lands on its own `status: failed`
+      terminal. Ending at `done` on
       approval leaves the change in a worktree nobody opens; that is a choice to
       make deliberately, not by omission.
 - [ ] **No absolute interpreter paths** in any `command` — `PATH` resolves them.
@@ -569,8 +624,12 @@ accept it. The server validates shape, not sense.
 - [ ] **Every skill in `skills:` is in the team's library** — a name that does
       not resolve is refused on save, and a skill leaning on its own files
       belongs on a `claude-code` agent, where those files exist.
-- [ ] **No `tools:` on a `claude-code` agent** — it is ignored, and writing one
-      claims a restriction that does not exist.
+- [ ] **Every skill's prompt answers for what the skill does unattended** —
+      where it would wait for a person, where it commits, and which skill it
+      hands off to that the team does not hold. See Skills above.
+- [ ] **`tools:` on a `claude-code` agent is the role's shape, not a fence** —
+      a session-driven run stays inside it, a headless one does not. Reads for
+      a reviewer, writes for an implementer, and nothing that relies on it.
 - [ ] **Every command you wrote is a command this repository really has**, taken
       from `package.json` / `Makefile` / CI, not invented.
 - [ ] **The generation step runs before the planner** if anything the tests need
