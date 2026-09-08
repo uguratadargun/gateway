@@ -415,9 +415,12 @@ unwinding first (their in-flight model call is not cancelled) so the execution
 history stays complete. Real upstream concurrency is still bounded by gate's
 concurrency limiter.
 
-Both directories are seeded with five agents and this sample pipeline the first
-time you open `/agents` or `/workflows`; after that they are yours to edit (from
-the dashboard or in `$EDITOR`), and deletions stick.
+The **default team's** directories are seeded with five agents and this sample
+pipeline the first time you open `/agents` or `/workflows`; after that they are yours to edit (from
+the dashboard or in `$EDITOR`), and deletions stick. A team you create starts
+**empty**: it is a place someone made for their own work, and two pipelines
+nobody wrote — one of which runs `npm ci` on whichever machine picks it up — is
+not a helpful welcome.
 
 ### Working on a repository: tools and per-run worktrees
 

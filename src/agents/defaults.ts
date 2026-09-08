@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { DefinitionScope } from "@/lib/def-root";
+import { DEFAULT_TEAM, type DefinitionScope } from "@/lib/def-root";
 
 import { agentsDir } from "./registry";
 
@@ -203,8 +203,19 @@ export const DEFAULT_AGENTS: Record<string, string> = {
   "security-reviewer": SECURITY_REVIEWER,
 };
 
-/** Write the default agents if this scope's agents directory has never been created. */
+/**
+ * Seeds the shipped examples, once, for the install that has never had any.
+ *
+ * Only the default team. A new team is somebody making a place for their own
+ * work, and filling it with five agents and two pipelines they did not write
+ * is not a helpful welcome — it is a list they have to read before they can
+ * tell which of it is theirs. Worse, one of those samples runs `npm ci` and
+ * `npm test`, and with runs happening on developers' own machines the first
+ * thing a new person would be offered is a workflow that wants to install
+ * dependencies on their laptop.
+ */
 export function ensureDefaultAgents(scope?: DefinitionScope): void {
+  if (scope && scope.teamId !== DEFAULT_TEAM) return;
   const dir = agentsDir(scope);
   if (existsSync(dir)) return;
   mkdirSync(dir, { recursive: true, mode: 0o700 });

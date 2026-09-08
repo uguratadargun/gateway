@@ -122,6 +122,26 @@ export default function TeamPage() {
     await load();
   }
 
+  /**
+   * Moves someone to another team — which moves their keys with them, so the
+   * next command they run pulls that team's definitions. Without this, a person
+   * created in the wrong team could only be fixed by deleting them.
+   */
+  async function moveUser(id: string, nextTeam: string) {
+    setError(null);
+    try {
+      const res = await fetch(`/api/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teamId: nextTeam }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "could not move");
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function removeUser(id: string) {
     await fetch(`/api/users/${id}`, { method: "DELETE" });
     await load();
@@ -201,7 +221,18 @@ export default function TeamPage() {
                 <div className="flex items-center gap-3">
                   <span className="font-medium">{user.name ?? user.email}</span>
                   {user.name && <code className="text-xs text-muted-foreground">{user.email}</code>}
-                  <Badge variant="outline">{teams.find((t) => t.id === user.teamId)?.name ?? user.teamId}</Badge>
+                  <select
+                    className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                    value={user.teamId}
+                    onChange={(e) => moveUser(user.id, e.target.value)}
+                    aria-label={`Team for ${user.email}`}
+                  >
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
                   {user.disabled && <Badge variant="destructive">disabled</Badge>}
                   <div className="ml-auto flex gap-1">
                     <Button variant="outline" size="sm" onClick={() => issueKey(user)}>

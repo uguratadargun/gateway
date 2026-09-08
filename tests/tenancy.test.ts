@@ -9,6 +9,7 @@ import { teamScope } from "@/lib/def-root";
 import { isOlderThan, MIN_CLIENT_VERSION, VERSION_HEADERS } from "@/lib/protocol";
 import { ownsExecution, requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { createTeam, createUser, updateUser } from "@/lib/teams";
+import { ensureDefaultWorkflows } from "@/workflows/defaults";
 import { listWorkflows, saveWorkflow } from "@/workflows/registry";
 
 /**
@@ -207,5 +208,24 @@ describe("connection tokens", () => {
     expect(() => decodeConnectionToken("gate_abc123")).toThrow(/start with gatec_/);
     expect(() => decodeConnectionToken("gatec_not-base64!!")).toThrow(/damaged|missing/);
     expect(() => decodeConnectionToken(encodeConnectionToken({ url: "ftp://x", key: "k" }))).toThrow(/not an http/);
+  });
+});
+
+describe("what a new team starts with", () => {
+  it("is nothing — the shipped samples are only for the default team", () => {
+    createTeam("Nu", "nu");
+    const scope = teamScope("nu");
+    ensureDefaultWorkflows(scope);
+    // A team is a place someone made for their own work. Seeding it would put
+    // two pipelines nobody wrote in front of them — one of which runs `npm ci`
+    // on whichever machine picks it up.
+    expect(listWorkflows(scope).workflows).toHaveLength(0);
+    expect(listAgents(scope).agents).toHaveLength(0);
+  });
+
+  it("still seeds the default team, which is what a single-person install has always been", () => {
+    const scope = teamScope("default");
+    ensureDefaultWorkflows(scope);
+    expect(listWorkflows(scope).workflows.map((w) => w.id)).toContain("repo-dev-team");
   });
 });

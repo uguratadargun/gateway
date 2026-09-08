@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { ensureDefaultAgents } from "@/agents/defaults";
 
-import type { DefinitionScope } from "@/lib/def-root";
+import { DEFAULT_TEAM, type DefinitionScope } from "@/lib/def-root";
 
 import { workflowsDir } from "./registry";
 
@@ -217,6 +217,8 @@ export const DEFAULT_WORKFLOWS: Record<string, string> = {
  */
 export function ensureDefaultWorkflows(scope?: DefinitionScope): void {
   ensureDefaultAgents(scope);
+  // Only the default team is seeded; see ensureDefaultAgents for why.
+  if (scope && scope.teamId !== DEFAULT_TEAM) return;
   const dir = workflowsDir(scope);
   if (existsSync(dir)) return;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
