@@ -263,6 +263,10 @@ Review {{inputs.diff.stdout}} from {{inputs.base.stdout}}
     expect(mr.at(-1)).toBe("Add a thing");
     expect(mr[2]).not.toContain("Add a thing");
     expect(mr[2]).toContain("glab mr create");
+    // glab is used only when it is signed in: a revoked token found after the
+    // push has happened leaves the push-option route nothing to push.
+    expect(mr[2]).toContain("glab auth status");
+    expect(mr[2]).toContain("merge_request.create");
 
     const commit = ran.find((c) => c[0] === "git" && c[1] === "commit")!;
     expect(commit).toContain("Add a thing");

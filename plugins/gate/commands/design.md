@@ -77,8 +77,8 @@ What you learn becomes `command` nodes, in three places:
   with a labelled edge, and give that loop its own terminal so a test that
   never goes green ends with a reason rather than a ceiling. It goes before
   `stage` and `diff`, so the diff the reviewers see is of a change that passed.
-- **At the end** — the merge request. The shipped node prefers `glab` and falls
-  back to GitLab push options; if this project is on GitHub, make it
+- **At the end** — the merge request. The shipped node uses `glab` when it is
+  installed and signed in, and GitLab push options otherwise; if this project is on GitHub, make it
   `gh pr create`, and set the target branch to whatever this repository's
   default actually is (`master` and `main` are both common).
 

@@ -157,9 +157,16 @@ nodes:
   - id: merge-request
     type: command
     label: Push and open the merge request
-    # glab when it is there, and GitLab's push options when it is not: those
-    # need no CLI and no API token, because the SSH key that cloned the
-    # repository is already the whole authentication story.
+    # glab when it is there and signed in, and GitLab's push options when it is
+    # not: those need no CLI and no API token, because the SSH key that cloned
+    # the repository is already the whole authentication story.
+    #
+    # Signed in is checked up front, not discovered. Push options only take
+    # effect on a push that moves the branch, so a glab that fails after the
+    # push has already happened leaves nothing to fall back to — measured
+    # here: a revoked token, a 401 from \`glab mr create\`, and a branch on the
+    # remote with no merge request. \`glab auth status\` fails on a token the
+    # host rejects, which is the case that has to take the other branch.
     #
     # The task rides as \$1 rather than being pasted into the script. Nothing in
     # gate ever builds a shell string out of a run's own values, and a task is
@@ -168,7 +175,7 @@ nodes:
       - sh
       - -c
       - >-
-        if command -v glab >/dev/null 2>&1; then
+        if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
         git push --set-upstream origin HEAD && glab mr create --fill --yes --title "\$1";
         else
         git push -o merge_request.create -o "merge_request.title=\$1" --set-upstream origin HEAD;
