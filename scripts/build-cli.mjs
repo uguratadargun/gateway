@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { build } from "esbuild";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +39,31 @@ if (distinct.length !== 1) {
   process.exit(1);
 }
 console.log(`gate ${distinct[0]}`);
+
+/**
+ * Warns when the plugin has changed since its version last did.
+ *
+ * The check above catches the three numbers disagreeing; it cannot catch all
+ * three being equally stale, which is the failure that actually keeps
+ * happening — a commit ships a new command file or a new bundle under a
+ * version somebody already installed, and their `plugin update` fetches the
+ * number it has and does nothing. Advisory, not fatal: mid-feature the answer
+ * is often "not yet".
+ */
+try {
+  const git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  const lastBump = git(["log", "-1", "--format=%H", "-S", '"version"', "--", "plugins/gate/.claude-plugin/plugin.json"]);
+  if (lastBump) {
+    const since = git(["log", "--oneline", `${lastBump}..HEAD`, "--", "plugins", "src/client"]);
+    if (since) {
+      console.warn(`\n⚠ these commits ship plugin changes at ${distinct[0]}, which may already be installed:`);
+      for (const line of since.split("\n")) console.warn(`   ${line}`);
+      console.warn("  Bump the version, or an update reaches nobody.\n");
+    }
+  }
+} catch {
+  // No git, a shallow clone, or a fresh repo: the check is a courtesy.
+}
 
 await build({
   entryPoints: [resolve(root, "src/client/entry.ts")],
