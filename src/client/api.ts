@@ -102,10 +102,22 @@ export class GateClient {
     } catch {
       // Not JSON — the status and the raw text are what is left to report.
     }
+    // A gate answers in JSON. Anything else — a proxy, a sign-in page, a URL
+    // that was never a gate — is that, and saying so beats both a wall of
+    // markup and the crash that used to follow a 200 with no JSON in it.
+    const notGate = () =>
+      new GateApiError(
+        `${this.config.url} answered with a web page, not gate's API (HTTP ${res.status}) — check the URL in your token`,
+        res.status,
+        "NOT_A_GATE",
+      );
+
     if (!res.ok) {
-      const detail = json?.error ?? text.slice(0, 200) ?? `HTTP ${res.status}`;
-      throw new GateApiError(detail, res.status, json?.code);
+      if (json?.error) throw new GateApiError(json.error, res.status, json.code);
+      if (text.trimStart().startsWith("<")) throw notGate();
+      throw new GateApiError(text.slice(0, 200) || `HTTP ${res.status}`, res.status);
     }
+    if (text && json === null) throw notGate();
     return { status: res.status, body: json as T };
   }
 

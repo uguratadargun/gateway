@@ -532,14 +532,16 @@ async function cmdReset(args: Args): Promise<number> {
 
   if (wipeTeam) {
     const client = connect();
+    // Before anything is asked of the server: a refusal that depends on a
+    // round trip is a refusal that can arrive after a timeout instead.
+    if (!process.stdin.isTTY) {
+      die("refusing to delete a team's definitions unattended — run this in a terminal");
+    }
     const config = readConfig()!;
     const team = await teamOf(client, config);
     const manifest = readManifest(team);
     const count = manifest?.workflows.length ?? 0;
 
-    if (!process.stdin.isTTY) {
-      die("refusing to delete a team's definitions unattended — run this in a terminal");
-    }
     console.error(
       `This deletes every agent and workflow team "${team}" owns (${count} workflow(s)), for everyone on it.`,
     );

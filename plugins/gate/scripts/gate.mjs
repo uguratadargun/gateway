@@ -7712,10 +7712,17 @@ var GateClient = class {
       json = text ? JSON.parse(text) : null;
     } catch {
     }
+    const notGate = () => new GateApiError(
+      `${this.config.url} answered with a web page, not gate's API (HTTP ${res.status}) \u2014 check the URL in your token`,
+      res.status,
+      "NOT_A_GATE"
+    );
     if (!res.ok) {
-      const detail = json?.error ?? text.slice(0, 200) ?? `HTTP ${res.status}`;
-      throw new GateApiError(detail, res.status, json?.code);
+      if (json?.error) throw new GateApiError(json.error, res.status, json.code);
+      if (text.trimStart().startsWith("<")) throw notGate();
+      throw new GateApiError(text.slice(0, 200) || `HTTP ${res.status}`, res.status);
     }
+    if (text && json === null) throw notGate();
     return { status: res.status, body: json };
   }
   /**
@@ -9459,13 +9466,13 @@ async function cmdReset(args) {
   const wipeTeam = args.flags.team === true;
   if (wipeTeam) {
     const client = connect();
+    if (!process.stdin.isTTY) {
+      die("refusing to delete a team's definitions unattended \u2014 run this in a terminal");
+    }
     const config = readConfig();
     const team = await teamOf(client, config);
     const manifest = readManifest(team);
     const count = manifest?.workflows.length ?? 0;
-    if (!process.stdin.isTTY) {
-      die("refusing to delete a team's definitions unattended \u2014 run this in a terminal");
-    }
     console.error(
       `This deletes every agent and workflow team "${team}" owns (${count} workflow(s)), for everyone on it.`
     );
