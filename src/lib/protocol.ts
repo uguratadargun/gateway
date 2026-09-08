@@ -21,7 +21,7 @@
  * bundled into the CLI.
  */
 
-export const GATE_VERSION = "0.20.0";
+export const GATE_VERSION = "0.21.0";
 
 /** The oldest CLI this server will serve. Older ones are refused, with the fix. */
 export const MIN_CLIENT_VERSION = "0.13.0";

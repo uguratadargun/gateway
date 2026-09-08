@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { agentsDir } from "@/agents/registry";
+import type { AgentDefinition } from "@/agents/types";
 import { requiredRunInputs } from "@/workflows/inputs";
 import { agentUsage } from "@/workflows/usage";
 import { parseWorkflow } from "@/workflows/loader";
@@ -433,6 +434,23 @@ nodes:
 
   it("does not ask when the workflow has no workspace", () => {
     expect(requiredRunInputs(workflow(""), noAgents)).toEqual([]);
+  });
+
+  it("does not ask for what only a switched-off step would have read", () => {
+    const src = `name: W
+entry: brief
+nodes:
+  - id: brief
+    type: agent
+    agent: briefer
+    inputs: [input.ticket]
+    disabled: true
+    next: done
+  - id: done
+    type: terminal
+`;
+    const briefer = { id: "briefer", inputs: [], prompt: "Read {{input.ticket}}" } as unknown as AgentDefinition;
+    expect(requiredRunInputs(parseWorkflow("w", src, meta), () => briefer)).toEqual([]);
   });
 });
 

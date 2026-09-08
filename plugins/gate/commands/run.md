@@ -21,6 +21,39 @@ form and ask which one to run. Do not guess, and do not invent an id that is not
 If the list came back as an error, say what it said — `not connected` means this machine has
 never been given a key, and `/gate:login <token>` with a token from the dashboard fixes it.
 
+## Settle the brief before you start it
+
+Treat this like any other request someone makes of you: read it, and if something material is
+unsettled, **ask before starting** rather than after five nodes have run on a guess.
+
+A run is expensive in a way an ordinary answer is not. The task text is copied into every
+agent's prompt, so an ambiguity at the start is an ambiguity the planner, the implementer and
+both reviewers all inherit — and by the time it shows up, there is a branch with the wrong
+thing built on it. Two questions now are cheaper than that, and this is the moment the user is
+still sitting here expecting to talk to you.
+
+Ask when the answer would change what gets built:
+
+- **Scope** — "bump the version" in a repo with three packages: which one, and does anything
+  else move with it?
+- **Behaviour** — what the change should actually do where the brief only says what to touch.
+- **Where** — a workflow pinned to a repository this machine has no clone of, or a task that
+  could mean either of two projects.
+- **Done** — what counts as finished, when the pipeline has a test node and the project's tests
+  do not cover this.
+
+Use AskUserQuestion when the answers are a small set of choices; plain questions otherwise. Ask
+them **together, once** — a run is not an interrogation, and three rounds of one question each
+is worse than starting.
+
+Do not ask when the brief already settles it, when the answer is discoverable by reading the
+repository (read it), or when it is a detail the workflow's own agents decide. A clear
+one-liner deserves a run, not a questionnaire.
+
+Then fold what you learn into the task you pass to `begin` — the run input is what the
+dashboard shows and what every agent reads, so it should say what was actually agreed, not
+what was first typed.
+
 ## How a run works
 
 **You are the one running it.** gate decides *what* runs next and in *what order*; the work
