@@ -170,6 +170,31 @@ export const DEFAULT_AGENTS: Record<string, string> = {
 };
 
 /**
+ * Writes the shipped agents this scope does not have, and says which.
+ *
+ * Directly, the way seeding writes them, rather than through `saveAgent`:
+ * saving refuses an agent naming a skill the team has not imported, and the
+ * shipped agents all name skills. Going through it would make restoring the
+ * defaults impossible until you had imported skills you could not see the need
+ * for — the definitions that name them being the thing you were restoring.
+ *
+ * Nothing is overwritten. A shipped id already here is left as it is, edits
+ * and all.
+ */
+export function writeMissingDefaultAgents(scope?: DefinitionScope): string[] {
+  const dir = agentsDir(scope);
+  const written: string[] = [];
+  for (const [id, source] of Object.entries(DEFAULT_AGENTS)) {
+    const file = join(dir, `${id}.md`);
+    if (existsSync(file)) continue;
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(file, source, { mode: 0o600 });
+    written.push(id);
+  }
+  return written;
+}
+
+/**
  * Seeds the shipped examples, once, for the install that has never had any.
  *
  * Only the default team. A new team is somebody making a place for their own

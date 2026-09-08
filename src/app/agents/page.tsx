@@ -41,6 +41,8 @@ export default function AgentsPage() {
   // Broken files are selectable too: see the workflows list for why.
   const selection = useSelection([...agents.map((a) => a.id), ...errors.map((e) => e.id)]);
   const { team, setTeam, teams, ready } = useTeamScope();
+  /** Shipped definitions this team does not have; see /api/defaults. */
+  const [missingDefaults, setMissingDefaults] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     const r = await fetch(withTeam("/api/agents", team));
@@ -57,6 +59,27 @@ export default function AgentsPage() {
   useEffect(() => {
     if (ready) void load();
   }, [ready, load]);
+
+  useEffect(() => {
+    if (!ready) return;
+    fetch(withTeam("/api/defaults", team))
+      .then((r) => r.json())
+      .then((d) => setMissingDefaults(d.agents ?? []))
+      .catch(() => setMissingDefaults([]));
+  }, [ready, team, agents.length]);
+
+  /** Writes back the shipped definitions this team is missing. */
+  async function restoreDefaults() {
+    setBusy(true);
+    const r = await fetch(withTeam("/api/defaults", team), { method: "POST" });
+    setBusy(false);
+    if (!r.ok) {
+      setError((await r.json()).error ?? "could not restore the defaults");
+      return;
+    }
+    setMissingDefaults([]);
+    await load();
+  }
 
   async function create() {
     const id = newId.trim();
@@ -148,6 +171,18 @@ export default function AgentsPage() {
         </Button>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {missingDefaults.length > 0 && (
+        <Card className="flex flex-wrap items-center gap-3 border-amber-500/40 bg-amber-500/10 p-3 text-xs">
+          <span>
+            This team does not have the shipped agents: <span className="font-mono">{missingDefaults.join(", ")}</span>.
+            Restoring writes only what is missing — anything you have edited stays as it is.
+          </span>
+          <Button size="sm" variant="outline" className="ml-auto" disabled={busy} onClick={restoreDefaults}>
+            Restore
+          </Button>
+        </Card>
+      )}
 
       {errors.length > 0 && (
         <Card className="border-destructive/50 p-4">

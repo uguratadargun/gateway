@@ -157,6 +157,20 @@ export const DEFAULT_WORKFLOWS: Record<string, string> = {
   dev: DEV,
 };
 
+/** The shipped workflows this scope does not have. See `writeMissingDefaultAgents`. */
+export function writeMissingDefaultWorkflows(scope?: DefinitionScope): string[] {
+  const dir = workflowsDir(scope);
+  const written: string[] = [];
+  for (const [id, source] of Object.entries(DEFAULT_WORKFLOWS)) {
+    const file = join(dir, `${id}.yaml`);
+    if (existsSync(file)) continue;
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(file, source, { mode: 0o600 });
+    written.push(id);
+  }
+  return written;
+}
+
 /**
  * Write the default workflows if ~/.gate/workflows has never been created.
  * Agents are seeded first: a workflow that references a missing agent fails
