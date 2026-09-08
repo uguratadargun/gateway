@@ -21,6 +21,9 @@ export function requiredRunInputs(wf: WorkflowDefinition, loadAgent: (id: string
 
   for (const node of wf.nodes) {
     if (node.type !== "agent") continue;
+    // A step that is switched off reads nothing, so it may not be what a run
+    // is refused over: the box would ask for a value nothing will ever use.
+    if (node.disabled) continue;
     let agent: AgentDefinition;
     try {
       agent = loadAgent(node.agent);

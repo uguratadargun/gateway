@@ -6,6 +6,7 @@ import { agentsDir } from "@/agents/registry";
 import { requiredRunInputs } from "@/workflows/inputs";
 import { agentUsage } from "@/workflows/usage";
 import { parseWorkflow } from "@/workflows/loader";
+import { skipTargetOf } from "@/workflows/types";
 import { deleteWorkflow, getWorkflow, listWorkflows, saveWorkflow, workflowsDir } from "@/workflows/registry";
 
 const meta = { sourcePath: "/tmp/x.yaml", updatedAt: 0 };
@@ -34,6 +35,107 @@ nodes:
   - id: done
     type: terminal
 `;
+
+describe("switching a node off", () => {
+  const OFF = (node: string) => `
+name: Dev
+entry: planner
+nodes:
+  - id: planner
+    type: agent
+    agent: planner
+    next: implementation
+${node}
+  - id: done
+    type: terminal
+`;
+
+  it("keeps a node with one edge, and remembers where a run goes past it", () => {
+    const wf = parseWorkflow(
+      "dev",
+      OFF(`  - id: implementation
+    type: agent
+    agent: implementation
+    disabled: true
+    next: done`),
+      meta,
+    );
+    const node = wf.nodes.find((n) => n.id === "implementation")!;
+    expect(skipTargetOf(node)).toBe("done");
+    // Still a node in the graph, so nothing pointing at it is now dangling.
+    expect(wf.nodes).toHaveLength(3);
+  });
+
+  it("makes a node with several edges say which way a run leaves it", () => {
+    const src = OFF(`  - id: implementation
+    type: agent
+    agent: implementation
+    disabled: true
+    edges:
+      - when: outputs.implementation.ok == true
+        to: done
+      - to: planner`);
+    expect(() => parseWorkflow("dev", src, meta)).toThrow(/is off and has 2 edges/);
+  });
+
+  it("takes the edge skipTo names", () => {
+    const wf = parseWorkflow(
+      "dev",
+      OFF(`  - id: implementation
+    type: agent
+    agent: implementation
+    disabled: true
+    skipTo: done
+    edges:
+      - when: outputs.implementation.ok == true
+        to: done
+      - to: planner`),
+      meta,
+    );
+    expect(skipTargetOf(wf.nodes.find((n) => n.id === "implementation")!)).toBe("done");
+  });
+
+  it("refuses a skipTo that is not one of the node's own edges", () => {
+    const src = OFF(`  - id: implementation
+    type: agent
+    agent: implementation
+    disabled: true
+    skipTo: planner
+    next: done`);
+    expect(() => parseWorkflow("dev", src, meta)).toThrow(/not one of its edges/);
+  });
+
+  it("refuses switched-off nodes that skip in a circle", () => {
+    const src = `
+name: Dev
+entry: a
+nodes:
+  - id: a
+    type: agent
+    agent: planner
+    disabled: true
+    next: b
+  - id: b
+    type: command
+    command: ["true"]
+    disabled: true
+    next: a
+  - id: done
+    type: terminal
+`;
+    expect(() => parseWorkflow("dev", src, meta)).toThrow(/skip in a circle/);
+  });
+
+  it("has nothing to say about control nodes: they route, they are not steps", () => {
+    const src = OFF(`  - id: implementation
+    type: condition
+    disabled: true
+    edges:
+      - when: input.go == true
+        to: done`);
+    expect(() => parseWorkflow("dev", src, meta)).toThrow(/disabled/);
+  });
+});
 
 describe("parseWorkflow", () => {
   it("parses nodes, edges and defaults", () => {

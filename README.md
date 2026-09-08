@@ -436,7 +436,11 @@ nodes:
 
 Node types: `agent`, `command` (argv, no shell — it runs in the run's worktree
 when the workflow has one), `condition` (routing only, no output), `parallel`
-(below) and `terminal`. Conditions read `outputs.*` and
+(below) and `terminal`. An `agent` or `command` node can carry `disabled: true`,
+which switches the step off without taking it out of the graph: runs walk
+straight past it — nothing called, nothing spent, no step recorded and no visit
+counted — and continue along one of the node's own edges, named by `skipTo`
+when it has more than one. Conditions read `outputs.*` and
 `input.*` with `== != > >= < <= && || !` over literals. Unknown agents, unreachable nodes,
 dangling edges and malformed conditions are all rejected when the file is
 saved — a broken workflow never reaches the engine.
@@ -567,7 +571,9 @@ onto another node to connect them (on a `parallel` node that adds a branch);
 click an edge and press Delete to remove it. The inspector on the right edits
 the selected node: its id (every reference follows the rename), label, agent,
 argv, terminal status, branches and join, and its edges with their `when`
-conditions.
+conditions. **Turn off** takes a step out of the run without deleting it — the
+card stays on the canvas, dimmed and marked `off`, and runs walk past it along
+the edge the inspector names.
 
 The canvas fills most of the page and has a full-screen mode (Escape leaves it,
 and leaves the selection after that); a minimap sits in the corner for graphs
@@ -813,9 +819,11 @@ them needs anybody to do anything.
   first read.
 - *The CLI* is `/gate:update`, per machine — it refreshes the marketplace and
   re-installs the plugin, then asks for a restart, because an update is fetched
-  at once but loaded at startup. (`/plugin update gate@gateway` is the same
-  thing by hand.) **Anything shipped
-  under `plugins/` or `src/client/` needs a version bump** — installs are cached
+  at once but loaded at startup. (By hand it is two commands, in order:
+  `claude plugin marketplace update gateway`, then `claude plugin update
+  gate@gateway` — the second alone re-installs from a marketplace that has not
+  been refreshed, which is why the version-skew notes name `/gate:update`.)
+  **Anything shipped under `plugins/` or `src/client/` needs a version bump** — installs are cached
   by version (`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>`), so a
   plugin whose contents changed while its number did not is one `plugin update`
   fetches and then ignores, silently. `npm run build:cli` refuses to build when

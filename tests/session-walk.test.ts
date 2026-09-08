@@ -154,6 +154,64 @@ describe("finding the next node from history", () => {
     expect(nextInSession(WORKFLOW, history, {})).toMatchObject({ kind: "done", status: "failed", terminalNodeId: "give-up" });
   });
 
+  it("walks past a node that is switched off", () => {
+    reset();
+    const off = parseWorkflow(
+      "dev",
+      `name: Dev
+entry: setup
+nodes:
+  - id: setup
+    type: command
+    command: ["true"]
+    disabled: true
+    next: planner
+  - id: planner
+    type: agent
+    agent: planner
+    next: done
+  - id: done
+    type: terminal
+`,
+      { sourcePath: "/tmp/dev.yaml", updatedAt: 0, agentExists: (id) => AGENTS.has(id) },
+    );
+    const at = nextInSession(off, [], {});
+    // Not handed to the session, and no step of its own: the first thing the
+    // run is asked to do is the node after it.
+    expect(at.kind === "node" && at.node.id).toBe("planner");
+    expect(at.kind === "node" && at.stepIndex).toBe(0);
+  });
+
+  it("replays a step a node produced before it was switched off", () => {
+    reset();
+    const off = parseWorkflow(
+      "dev",
+      `name: Dev
+entry: setup
+nodes:
+  - id: setup
+    type: command
+    command: ["true"]
+    disabled: true
+    next: planner
+  - id: planner
+    type: agent
+    agent: planner
+    next: done
+  - id: done
+    type: terminal
+`,
+      { sourcePath: "/tmp/dev.yaml", updatedAt: 0, agentExists: (id) => AGENTS.has(id) },
+    );
+    // The run did `setup` and was then edited mid-flight. History is what
+    // happened, so the step is consumed rather than stepped over — otherwise
+    // every later step would line up against the wrong node.
+    const at = nextInSession(off, [step("setup", { ok: true })], {});
+    expect(at.kind === "node" && at.node.id).toBe("planner");
+    expect(at.kind === "node" && at.stepIndex).toBe(1);
+    expect(at.kind === "node" && at.outputs).toEqual({ setup: { ok: true } });
+  });
+
   it("stops at a step that failed rather than walking past it", () => {
     reset();
     const at = nextInSession(WORKFLOW, [step("setup", null, "failed")], {});

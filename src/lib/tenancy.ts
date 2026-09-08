@@ -43,7 +43,7 @@ export function requireClient(req: Request): Principal | Response {
   if (clientVersion && isOlderThan(clientVersion, MIN_CLIENT_VERSION)) {
     return clientErrorResponse({
       status: 426,
-      error: `this gate needs gate ${MIN_CLIENT_VERSION} or newer (you have ${clientVersion}) — run \`/plugin update gate@gateway\` in Claude Code`,
+      error: `this gate needs gate ${MIN_CLIENT_VERSION} or newer (you have ${clientVersion}) — run \`/gate:update\` in Claude Code`,
       code: "CLIENT_TOO_OLD",
     });
   }

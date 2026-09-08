@@ -22,4 +22,4 @@ run; `/gate:run <id> <task>` starts one here, in a worktree of the repository th
 
 If it refuses, report what it said rather than retrying. An invalid or revoked key, a key that
 may not pull workflows, and a token pasted in half each say so in their own words — and a
-`CLIENT_TOO_OLD` means this plugin needs `/plugin update gate@gateway` first.
+`CLIENT_TOO_OLD` means this plugin needs `/gate:update` first.

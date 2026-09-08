@@ -35,7 +35,10 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" begin <workflow-id> "<task text>"
 
 Each call prints one JSON instruction:
 
-- **`{"do": "agent", …}`** — your turn. `prompt` is the whole brief; do that work.
+- **`{"do": "agent", …}`** — your turn. `prompt` is the whole brief; do that work. `remember`
+  restates the rules that matter for this node, including the exact `gate step` line that ends
+  it — read it each time rather than working from memory of this message, which will be a long
+  way back by the fifth node.
   - **Say what you are doing first.** One line before you start — which node, which agent,
     and in a sentence what you are about to do — then keep the user posted as you go. They
     are watching this happen and the workflow's shape is not on their screen; a silent five

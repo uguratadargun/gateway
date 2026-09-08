@@ -161,7 +161,9 @@ describe("version skew", () => {
     expect((refused as Response).status).toBe(426);
     const body = await (refused as Response).json();
     expect(body.code).toBe("CLIENT_TOO_OLD");
-    expect(body.error).toContain("/plugin update");
+    // The command that actually fixes it: /gate:update refreshes the
+    // marketplace before re-installing, which the bare plugin update does not.
+    expect(body.error).toContain("/gate:update");
   });
 
   it("serves a client at or above the minimum", () => {

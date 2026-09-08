@@ -8454,7 +8454,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.19.0";
+var GATE_VERSION = "0.20.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8560,7 +8560,7 @@ var GateClient = class {
     if (!server || !isOlderThan(CLI_VERSION, server)) return;
     this.warnedAboutVersion = true;
     console.error(
-      `# gate ${CLI_VERSION} here, ${server} on ${this.config.url} \u2014 run \`/plugin update gate@gateway\` in Claude Code when convenient`
+      `# gate ${CLI_VERSION} here, ${server} on ${this.config.url} \u2014 run \`/gate:update\` in Claude Code when convenient`
     );
   }
   async me() {
@@ -10240,12 +10240,20 @@ async function next(ctx, executionId) {
         `\u25B8 ${node.id} \xB7 agent ${prepared.agent.id} (${prepared.agent.model}${prepared.agent.effort ? `/${prepared.agent.effort}` : ""})${position.visit > 1 ? ` \xB7 pass ${position.visit}` : ""}`
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
+      const shape = prepared.agent.output.type === "json" ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema).map(([k, t]) => `${k} (${t})`).join(", ")}` : "the answer as plain text";
       return {
         do: "agent",
         executionId,
         nodeId: node.id,
         agent: prepared.agent.id,
         prompt: prepared.prompt,
+        remember: [
+          workspace ? `Work in ${workspace.root} \u2014 the run's worktree, not the user's checkout.` : "This node has no workspace: reason over what the prompt gives you, do not touch files.",
+          "Say what you are doing as you go; the user is watching this happen.",
+          "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
+          `When the work is done, write ${shape} to a file and hand it back:`,
+          `  gate step ${executionId} ${node.id} --output-file <file>`
+        ],
         output: prepared.agent.output.type === "json" ? { type: "json", schema: prepared.agent.output.schema } : { type: "text" },
         workspace: workspace?.root ?? null,
         tools: prepared.agent.tools,

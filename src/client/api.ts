@@ -143,7 +143,7 @@ export class GateClient {
     if (!server || !isOlderThan(CLI_VERSION, server)) return;
     this.warnedAboutVersion = true;
     console.error(
-      `# gate ${CLI_VERSION} here, ${server} on ${this.config.url} — run \`/plugin update gate@gateway\` in Claude Code when convenient`,
+      `# gate ${CLI_VERSION} here, ${server} on ${this.config.url} — run \`/gate:update\` in Claude Code when convenient`,
     );
   }
 

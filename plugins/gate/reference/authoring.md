@@ -135,6 +135,42 @@ Rules that reject a save:
 - Conditions read only `outputs.<nodeId>.<field>`, `input.<key>` and
   `visits.<nodeId>`, and the node id must exist.
 - Node ids and the workflow id are lowercase letters, digits and dashes.
+- A `disabled` node needs a way past it: one edge, or a `skipTo` naming one of
+  its own edges. Switched-off nodes may not skip in a circle.
+
+### Switching a step off
+
+`disabled: true` takes a step out of the run without taking it out of the
+graph. Nothing is called, nothing is spent, no step is recorded and no visit is
+counted — `visits.<id>` counts what ran — and the run carries on along one of
+the node's own edges:
+
+```yaml
+  - id: security
+    type: agent
+    agent: security-reviewer
+    disabled: true              # off: runs walk straight past it
+    skipTo: verdict             # which of its edges they take
+    edges:
+      - when: outputs.security.verdict == "approved"
+        to: verdict
+      - to: implementation
+```
+
+`skipTo` is only needed when the node has more than one edge, and it must name
+one of them: turning a step off changes what a run does, never where its graph
+can go. A node with a single `next:` needs nothing else.
+
+Only `agent` and `command` nodes can be switched off. `condition` and
+`parallel` are routing — a routing node that routes nowhere is a broken graph,
+not a paused one — and `terminal` is the end of the run.
+
+What this does **not** do is fill in for the node. A later node that reads
+`outputs.security.verdict` as a required input fails on it, exactly as it would
+before that node had ever run; make the input optional (`outputs.security.verdict?`)
+if it has to survive the step being off. On the canvas the node stays where it
+is, dimmed and marked `off`, and the inspector's **Turn off** / **Turn on**
+button is what writes these two fields.
 
 ### Condition language
 

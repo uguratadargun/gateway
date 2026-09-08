@@ -128,6 +128,98 @@ function run(provider: FakeModelProvider, events: WorkflowEvent[] = []) {
   return runWorkflow(workflow, { provider, loadAgent, executionId: "exec-1", emit: (e) => events.push(e) });
 }
 
+/**
+ * A step switched off in the file. What the engine must do with it: nothing at
+ * all — no model call, no step, no visit — and carry on along one of the
+ * node's own edges.
+ */
+const WITH_TESTER_OFF = parseWorkflow(
+  "dev",
+  `
+name: Dev pipeline
+entry: planner
+nodes:
+  - id: planner
+    type: agent
+    agent: planner
+    next: implementation
+  - id: implementation
+    type: agent
+    agent: implementation
+    next: tester
+  - id: tester
+    type: agent
+    agent: tester
+    disabled: true
+    skipTo: done
+    edges:
+      - when: outputs.tester.passed == true
+        to: done
+      - to: implementation
+        label: retry
+  - id: done
+    type: terminal
+`,
+  meta,
+);
+
+describe("a node switched off", () => {
+  it("is not run, not recorded, and not counted as a visit", async () => {
+    const provider = new FakeModelProvider((req) =>
+      req.context?.nodeId === "planner" ? '{"plan": "p"}' : '{"diff": "d"}',
+    );
+    const events: WorkflowEvent[] = [];
+    const state = await runWorkflow(WITH_TESTER_OFF, {
+      provider,
+      loadAgent,
+      executionId: "exec-off",
+      emit: (e) => events.push(e),
+    });
+
+    expect(state.status).toBe("completed");
+    expect(provider.callsFor("tester")).toHaveLength(0);
+    expect(state.history.map((h) => h.nodeId)).toEqual(["planner", "implementation"]);
+    // It never ran, so `visits.tester` is 0 — the count is of what happened.
+    expect(state.visitCounts.tester).toBeUndefined();
+    expect(state.outputs.tester).toBeUndefined();
+    // Visible on the canvas as the route it took, rather than as a gap.
+    expect(events).toContainEqual(expect.objectContaining({ type: "edge.selected", from: "tester", to: "done", label: "off" }));
+  });
+
+  it("can be the node a run starts at", async () => {
+    const off = parseWorkflow(
+      "dev",
+      `
+name: Dev pipeline
+entry: setup
+nodes:
+  - id: setup
+    type: command
+    command: ["false"]
+    disabled: true
+    next: planner
+  - id: planner
+    type: agent
+    agent: planner
+    next: done
+  - id: done
+    type: terminal
+`,
+      meta,
+    );
+    const state = await runWorkflow(off, {
+      provider: new FakeModelProvider(() => '{"plan": "p"}'),
+      loadAgent,
+      runCommand: async () => {
+        throw new Error("a switched-off command node must not run");
+      },
+    });
+
+    expect(state.status).toBe("completed");
+    expect(state.history.map((h) => h.nodeId)).toEqual(["planner"]);
+  });
+});
+
 describe("runWorkflow", () => {
   it("walks a linear happy path and records every node output", async () => {
     const provider = new FakeModelProvider((req) => {

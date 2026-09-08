@@ -151,6 +151,51 @@ describe("workflow serialization", () => {
     expect(parsed.workspace).toEqual({});
   });
 
+  it("round-trips a node the editor switched off", () => {
+    const source = `
+name: Tiny
+entry: build
+nodes:
+  - id: build
+    type: command
+    command: [npm, test]
+    disabled: true
+    skipTo: done
+    edges:
+      - when: outputs.build.ok == true
+        to: done
+      - to: retry
+  - id: retry
+    type: agent
+    agent: planner
+    next: done
+  - id: done
+    type: terminal
+    status: completed
+`;
+    const yaml = roundTrip(source);
+    expect(yaml).toContain("disabled: true");
+    expect(yaml).toContain("skipTo: done");
+    expect(shape(yaml)).toEqual(shape(source));
+  });
+
+  // Switching a step back on has to leave nothing behind: a `skipTo` kept on a
+  // live node is a route that goes stale the next time its edges change.
+  it("drops disabled and skipTo when the node is switched back on", () => {
+    const yaml = toWorkflowYaml(
+      workflowGraphDocSchema.parse({
+        name: "Tiny",
+        entry: "build",
+        nodes: [
+          { id: "build", type: "command", command: ["true"], disabled: false, skipTo: "done", next: "done" },
+          { id: "done", type: "terminal", status: "completed" },
+        ],
+      }),
+    );
+    expect(yaml).not.toContain("disabled:");
+    expect(yaml).not.toContain("skipTo:");
+  });
+
   it("still fails validation for a half-built graph", () => {
     const yaml = toWorkflowYaml(
       workflowGraphDocSchema.parse({

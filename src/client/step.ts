@@ -53,6 +53,16 @@ export type Instruction =
       /** What the agent file says it needs; a session has its own tools. */
       tools: string[];
       timeoutMs: number | null;
+      /**
+       * The contract, restated with this node.
+       *
+       * The slash command explains all of this once, at the start. A run is
+       * ten nodes and possibly two hours, by which point that explanation is
+       * far behind and the hand-off is a blob of JSON — so the few rules that
+       * decay worst come back with every node, including the exact command
+       * that ends this one.
+       */
+      remember: string[];
     }
   | { do: "done"; executionId: string; status: "completed" | "failed"; branch: string | null; workspace: string | null }
   | { do: "failed"; executionId: string; nodeId: string; error: { code: string; message: string } };
@@ -213,12 +223,27 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           `${position.visit > 1 ? ` · pass ${position.visit}` : ""}`,
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
+      const shape =
+        prepared.agent.output.type === "json"
+          ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema)
+              .map(([k, t]) => `${k} (${t})`)
+              .join(", ")}`
+          : "the answer as plain text";
       return {
         do: "agent",
         executionId,
         nodeId: node.id,
         agent: prepared.agent.id,
         prompt: prepared.prompt,
+        remember: [
+          workspace
+            ? `Work in ${workspace.root} — the run's worktree, not the user's checkout.`
+            : "This node has no workspace: reason over what the prompt gives you, do not touch files.",
+          "Say what you are doing as you go; the user is watching this happen.",
+          "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
+          `When the work is done, write ${shape} to a file and hand it back:`,
+          `  gate step ${executionId} ${node.id} --output-file <file>`,
+        ],
         output:
           prepared.agent.output.type === "json"
             ? { type: "json", schema: prepared.agent.output.schema }

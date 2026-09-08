@@ -3,7 +3,7 @@
  *
  * They no longer ship together: the server is deployed once and the CLI lives
  * on every developer's machine, updated whenever that person gets round to
- * `/plugin update`. Skew is therefore normal, and the only question is whether
+ * `/gate:update`. Skew is therefore normal, and the only question is whether
  * it is *visible* — an old client meeting a route that did not exist when it
  * was built otherwise gets a 404 and reports something that reads like a bug in
  * the workflow.
@@ -21,7 +21,7 @@
  * bundled into the CLI.
  */
 
-export const GATE_VERSION = "0.19.0";
+export const GATE_VERSION = "0.20.0";
 
 /** The oldest CLI this server will serve. Older ones are refused, with the fix. */
 export const MIN_CLIENT_VERSION = "0.13.0";
