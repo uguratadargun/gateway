@@ -15,6 +15,7 @@ model: sonnet                       # tier alias (haiku/sonnet/opus) or a claude
 effort: high                        # default | low | medium | high | xhigh | max
 inputs: [planner.plan, tests.stdout?]   # upstream node outputs this agent may read
 tools: [read_file, list_files]      # see Tools
+skills: [superpowers-brainstorming] # optional; processes this agent follows — see Skills
 output:
   type: json                        # or: type: text
   schema:
@@ -47,6 +48,9 @@ Rules that reject a save:
 - `inputs:` entries are `<nodeId>.<field>` — the *node* id in the workflow, which
   is not always the agent id.
 - The file name is the agent id: lowercase letters, digits and dashes.
+- Every entry in `skills:` must be a skill the team's library can resolve — its
+  own or one it inherits. A name that does not resolve is refused on save, with
+  the list of the ones that do.
 
 ## Workflow — YAML
 
@@ -237,6 +241,31 @@ project's own toolchain cannot have its commands enumerated in advance, and a
 denied call in an unattended run surfaces as a mysterious failure an hour later.
 Know what that buys and costs — the worktree is a throwaway branch, but Bash is
 not confined to it, so a node is bounded by the machine gate runs on.
+
+## Skills — the process an agent follows
+
+`tools:` says what an agent may touch. `skills:` says how it works: each entry
+names a `SKILL.md` in the team's library, and an agent that declares one is told
+to follow it on every run rather than being left to notice it might apply.
+
+|  | `gate` | `claude-code` |
+| --- | --- | --- |
+| how it arrives | the skill's prose folded into the system prompt | a generated plugin, loaded as `gate-skills:<id>` |
+| the files a skill ships | named, and marked unreadable — gate's tools cannot leave the worktree | there, beside the skill, as written |
+| cost | the whole text, every round | the harness opens it when it is due |
+
+So a skill that is mostly prose works on either executor, and a skill that leans
+on scripts or reference files beside it belongs on a `claude-code` agent.
+
+Import skills on the dashboard's Skills page — `superpowers` ships registered,
+one Sync away, under the `superpowers-` prefix. Assign them in the agent editor,
+or write the `skills:` line by hand.
+
+Use one when the node has a *method* worth naming, not as decoration: a planner
+that should interrogate the request before designing takes
+`superpowers-brainstorming`; an implementer that must write the test first takes
+`superpowers-test-driven-development`. An agent carrying five skills is an agent
+whose prompt no longer decides anything.
 
 ## Shape that works
 
@@ -489,6 +518,9 @@ accept it. The server validates shape, not sense.
       make deliberately, not by omission.
 - [ ] **No absolute interpreter paths** in any `command` — `PATH` resolves them.
 - [ ] **No orphan output fields** — every one is read somewhere.
+- [ ] **Every skill in `skills:` is in the team's library** — a name that does
+      not resolve is refused on save, and a skill leaning on its own files
+      belongs on a `claude-code` agent, where those files exist.
 - [ ] **No `tools:` on a `claude-code` agent** — it is ignored, and writing one
       claims a restriction that does not exist.
 - [ ] **Every command you wrote is a command this repository really has**, taken

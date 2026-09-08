@@ -17,6 +17,8 @@ description: Writes the planned change.
 model: opus
 effort: high
 executor: claude-code
+skills:
+  - superpowers-brainstorming
 inputs:
   - planner.plan
   - tests.ok?
@@ -43,6 +45,9 @@ describe("the agent editor's form", () => {
     expect(after.model).toBe("opus");
     expect(after.effort).toBe("high");
     expect(after.executor).toBe("claude-code");
+    // Kept for either executor: a skill is how the agent works, not what it
+    // may touch, so unlike `tools` it is not dropped when claude-code is on.
+    expect(after.skills).toEqual(["superpowers-brainstorming"]);
     expect(after.inputs).toEqual(before.inputs);
     expect(after.output).toEqual(before.output);
     expect(after.timeoutMs).toBe(3_600_000);
@@ -58,6 +63,7 @@ describe("the agent editor's form", () => {
     expect(front.timeoutMs).toBeUndefined();
     expect(front.maxTokens).toBeUndefined();
     expect(front.maxToolIterations).toBeUndefined();
+    expect(front.skills).toBeUndefined();
     // Written even at its default: it is the field people did not know existed.
     expect(front.executor).toBe("gate");
   });

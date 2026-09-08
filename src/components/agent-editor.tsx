@@ -291,6 +291,52 @@ export function AgentEditor({
         )}
       </Section>
 
+      <Section title="Skills">
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          How this agent works, not what it may touch. A skill it names is one it is told to follow every run —
+          {claudeCode
+            ? " Claude Code loads them as a plugin, with the files each skill ships beside it."
+            : " gate folds their prose into the system prompt, so the files a skill ships are not readable here."}
+        </p>
+        {options.skills.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            This team has no skills yet. Import some on the Skills page — <span className="font-mono">superpowers</span>{" "}
+            is registered and one sync away.
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {options.skills.map((s) => (
+              <label key={s.id} className="flex items-start gap-1.5 text-[11px]">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={form.skills.includes(s.id)}
+                  onChange={(e) =>
+                    onChange({
+                      skills: e.target.checked ? [...form.skills, s.id] : form.skills.filter((x) => x !== s.id),
+                    })
+                  }
+                />
+                <span>
+                  <span className="font-mono">{s.id}</span>
+                  <span className="block leading-snug text-muted-foreground">{s.description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+        {/* A file written by hand can name a skill this team does not have; it
+            is refused on save, and saying so here beats a red banner later. */}
+        {form.skills.filter((id) => !options.skills.some((s) => s.id === id)).length > 0 && (
+          <p className="text-[10px] text-destructive">
+            Not in this team&apos;s library, and rejected on save:{" "}
+            <span className="font-mono">
+              {form.skills.filter((id) => !options.skills.some((s) => s.id === id)).join(", ")}
+            </span>
+          </p>
+        )}
+      </Section>
+
       <Section title="Tools">
         {claudeCode ? (
           <p className="text-xs leading-snug text-muted-foreground">

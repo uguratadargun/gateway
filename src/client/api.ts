@@ -41,10 +41,19 @@ export interface BundleWorkflow {
   sha: string;
 }
 
+/** A skill travels as its whole directory: prose plus whatever it points at. */
+export interface BundleSkill {
+  id: string;
+  name: string;
+  files: Array<{ path: string; base64: string }>;
+  sha: string;
+}
+
 export interface Bundle {
   team: string;
   hash: string;
   agents: Array<{ id: string; name: string; source: string; sha: string }>;
+  skills?: BundleSkill[];
   workflows: BundleWorkflow[];
   errors: Array<{ id: string; message: string }>;
 }
@@ -171,7 +180,7 @@ export class GateClient {
   /** Reports progress; the reply says whether someone asked the run to stop. */
   async report(
     executionId: string,
-    payload: { events: unknown[]; steps: unknown[] },
+    payload: { events: unknown[]; steps: unknown[]; workspace?: unknown },
   ): Promise<{ cancelRequested: boolean }> {
     const res = await this.request<{ cancelRequested: boolean }>(`/api/v1/executions/${executionId}/events`, {
       method: "POST",
@@ -208,6 +217,11 @@ export class GateClient {
       body: JSON.stringify(input),
     });
     return res.body;
+  }
+
+  /** One run and its steps — the memory a session-driven walk replays. */
+  async execution(executionId: string): Promise<{ execution: any; steps: any[] }> {
+    return (await this.request<{ execution: any; steps: any[] }>(`/api/v1/executions/${executionId}`)).body;
   }
 
   async listRuns(limit = 20): Promise<Array<Record<string, any>>> {

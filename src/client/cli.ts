@@ -13,6 +13,7 @@ import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
 import { runLocal } from "./run";
+import { begin, next, step, type Instruction, type SessionRunContext } from "./step";
 
 /**
  * `gate` — the command a developer runs, and what /gate:run calls.
@@ -35,10 +36,15 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate agents                                   the agents your team's pipelines use
   gate show <workflow|agent-id>                 print a definition as it is on the server
   gate push <file…> [--replace]                 save definitions to your team (needs an author key)
-  gate run <workflow> [task…]                   run one here, in this repository
+  gate run <workflow> [task…]                   run one here, headless, in this repository
        --input key=value                        (repeat for more than one input)
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
+
+  the protocol /gate:run drives, one node at a time in your own session:
+  gate begin <workflow> [task…]                 start a run, print the first instruction
+  gate next <execution-id>                      what to do next
+  gate step <execution-id> <node> --output-file <f>   hand back a node's answer
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
@@ -61,7 +67,7 @@ interface Args {
  * is short, and the alternative is a parser that is wrong in exactly the case
  * the tool exists for.
  */
-const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir"]);
+const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file"]);
 
 function parseArgs(argv: string[]): Args {
   const [command = "help", ...rest] = argv;
@@ -362,7 +368,11 @@ async function cmdPull(): Promise<number> {
   const client = connect();
   const config = readConfig()!;
   const manifest = await sync(client, await teamOf(client, config), true);
-  console.log(`pulled ${manifest.workflows.length} workflow(s) for team ${manifest.team} from ${manifest.from}`);
+  console.log(
+    `pulled ${manifest.workflows.length} workflow(s)` +
+      (manifest.skills?.length ? ` and ${manifest.skills.length} skill(s)` : "") +
+      ` for team ${manifest.team} from ${manifest.from}`,
+  );
   return 0;
 }
 
@@ -541,6 +551,65 @@ function cmdReset(): number {
   return 0;
 }
 
+/**
+ * The three commands a session drives a run with.
+ *
+ * Each prints one JSON instruction on stdout — what to do, or that the run is
+ * over — while everything a person should watch goes to stderr. That split is
+ * what lets the model read the answer without the terminal going quiet.
+ */
+async function sessionContext(): Promise<{ ctx: SessionRunContext; team: string }> {
+  const client = connect();
+  const config = readConfig()!;
+  const team = await teamOf(client, config);
+  await sync(client, team, true);
+  return { ctx: { client, team, say: (m) => console.error(m) }, team };
+}
+
+function printInstruction(instruction: Instruction): number {
+  console.log(JSON.stringify(instruction, null, 2));
+  return instruction.do === "failed" ? 1 : 0;
+}
+
+async function cmdBegin(args: Args): Promise<number> {
+  const [workflowId, ...trailing] = args.positional;
+  if (!workflowId) die("usage: gate begin <workflow> [task…]");
+  const { ctx, team } = await sessionContext();
+
+  const manifest = readManifest(team);
+  const entry = manifest?.workflows.find((w) => w.id === workflowId);
+  if (!entry) die(`no workflow "${workflowId}" for your team — \`gate list\` shows what there is`);
+  // The same approval a headless run asks for. A session makes the work
+  // visible, which is not the same as having agreed to it.
+  if (!(await confirmTrust(workflowId, entry.sha, team, args.flags.yes === true))) return 1;
+
+  return printInstruction(
+    await begin(ctx, workflowId, parseInputs(args.flags, trailing), process.cwd(), repoPaths()),
+  );
+}
+
+async function cmdNext(args: Args): Promise<number> {
+  const [executionId] = args.positional;
+  if (!executionId) die("usage: gate next <execution-id>");
+  const { ctx } = await sessionContext();
+  return printInstruction(await next(ctx, executionId));
+}
+
+async function cmdStep(args: Args): Promise<number> {
+  const [executionId, nodeId] = args.positional;
+  if (!executionId || !nodeId) die("usage: gate step <execution-id> <node> --output-file <file>");
+  const file = typeof args.flags["output-file"] === "string" ? args.flags["output-file"] : "";
+  if (!file) die("gate step needs --output-file <file>: the node's answer, as the agent declared it");
+  let answer: string;
+  try {
+    answer = readFileSync(file, "utf8");
+  } catch (e) {
+    die(`cannot read ${file}: ${(e as Error).message}`);
+  }
+  const { ctx } = await sessionContext();
+  return printInstruction(await step(ctx, executionId, nodeId, answer));
+}
+
 async function cmdStatus(args: Args): Promise<number> {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -595,6 +664,12 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdPush(args);
       case "run":
         return await cmdRun(args);
+      case "begin":
+        return await cmdBegin(args);
+      case "next":
+        return await cmdNext(args);
+      case "step":
+        return await cmdStep(args);
       case "repo":
         return cmdRepo(args);
       case "reset":

@@ -115,23 +115,52 @@ export interface AgentNodeResult {
   toolCalls: ToolCallRecord[];
 }
 
+/** Everything a node needs before anyone runs it: who, with what, saying what. */
+export interface PreparedAgentNode {
+  agent: AgentDefinition;
+  /** The declared inputs, resolved from upstream outputs. */
+  inputs: Record<string, unknown>;
+  /** The agent's prompt with those inputs filled in. */
+  prompt: string;
+}
+
+/**
+ * Resolves a node's inputs and renders its prompt — the half of running an
+ * agent that does not involve a model.
+ *
+ * Separated because there is now more than one thing that runs an agent: this
+ * file's own loop, a spawned Claude Code, and the session a developer is
+ * sitting in, which asks the CLI what to do next and does it with its own
+ * tools. All three have to be given the same prompt from the same inputs, and
+ * the way to guarantee that is for there to be one place that builds it.
+ */
+export function prepareAgentNode(
+  node: Extract<WorkflowNode, { type: "agent" }>,
+  state: WorkflowState,
+  loadAgent: (id: string) => AgentDefinition,
+): PreparedAgentNode {
+  const agent = loadAgent(node.agent);
+  // The node may narrow what the agent declared, never widen it.
+  const paths = node.inputs ?? agent.inputs;
+  const inputs = resolveInputs(paths, state, node.id);
+
+  try {
+    return { agent, inputs, prompt: renderTemplate(agent.prompt, { inputs, input: state.input }) };
+  } catch (e) {
+    const message = e instanceof TemplateError ? e.message : String(e);
+    throw new WorkflowError("AGENT_DEFINITION_INVALID", `node "${node.id}": ${message}`, {
+      nodeId: node.id,
+      agentId: agent.id,
+    });
+  }
+}
+
 export async function executeAgentNode(
   node: Extract<WorkflowNode, { type: "agent" }>,
   state: WorkflowState,
   deps: AgentExecutorDeps,
 ): Promise<AgentNodeResult> {
-  const agent = deps.loadAgent(node.agent);
-  // The node may narrow what the agent declared, never widen it.
-  const paths = node.inputs ?? agent.inputs;
-  const inputs = resolveInputs(paths, state, node.id);
-
-  let prompt: string;
-  try {
-    prompt = renderTemplate(agent.prompt, { inputs, input: state.input });
-  } catch (e) {
-    const message = e instanceof TemplateError ? e.message : String(e);
-    throw new WorkflowError("AGENT_DEFINITION_INVALID", `node "${node.id}": ${message}`, { nodeId: node.id, agentId: agent.id });
-  }
+  const { agent, inputs, prompt } = prepareAgentNode(node, state, deps.loadAgent);
 
   const skills = resolveSkills(agent, node.id, deps.loadSkill);
 

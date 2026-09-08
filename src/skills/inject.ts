@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { gateHome } from "@/lib/def-root";
 
 import { withSkillName } from "./loader";
+import { ORIGIN_FILE } from "./registry";
 import type { SkillDefinition } from "./types";
 
 /**
@@ -46,13 +47,21 @@ export function skillsBriefing(skills: SkillDefinition[]): string {
   );
 }
 
+/**
+ * The plugin gate builds is loaded under its own name, so the child sees each
+ * skill as `gate-skills:<id>` rather than as the bare id. Naming them the way
+ * the harness does is what lets the model invoke the right one instead of
+ * looking for a skill under a name that is not there.
+ */
+export const SKILL_PLUGIN_NAME = "gate-skills";
+
 /** What a spawned Claude Code is told about the plugin it has been handed. */
 export function skillsDirective(skills: SkillDefinition[]): string {
-  const list = skills.map((s) => `- ${s.id}: ${s.description}`).join("\n");
+  const list = skills.map((s) => `- ${SKILL_PLUGIN_NAME}:${s.id} — ${s.description}`).join("\n");
   return (
     `You have been given these skills, and this node is expected to be done the way they say:\n${list}\n\n` +
-    `Read each one before you start — they are available as skills in this session — and follow it. ` +
-    `A skill that describes a process is the process for this node, not background reading.`
+    `Use each one before you start, by its full name above, and follow it. A skill that describes a process is ` +
+    `the process for this node, not background reading.`
   );
 }
 
@@ -104,7 +113,7 @@ export function buildSkillPlugin(skills: SkillDefinition[]): string | null {
     join(staging, ".claude-plugin", "plugin.json"),
     `${JSON.stringify(
       {
-        name: "gate-skills",
+        name: SKILL_PLUGIN_NAME,
         description: "Skills this node's agent declared, assembled by gate.",
         version: "0.0.0",
       },
@@ -120,7 +129,7 @@ export function buildSkillPlugin(skills: SkillDefinition[]): string | null {
       recursive: true,
       // Provenance is gate's bookkeeping and would read to the model as part
       // of the skill.
-      filter: (src) => basename(src) !== ".gate-source.json",
+      filter: (src) => basename(src) !== ORIGIN_FILE,
     });
     writeFileSync(join(target, "SKILL.md"), withSkillName(readFileSync(join(skill.dir, "SKILL.md"), "utf8"), skill.id), {
       mode: 0o600,

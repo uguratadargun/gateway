@@ -1,13 +1,14 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { promisify } from "node:util";
 
 import { getDb } from "@/lib/db";
 import { gateHome, type DefinitionScope } from "@/lib/def-root";
 import { WorkflowError } from "@/runtime/errors";
 
 import { parseSkill, skillSha, withSkillName } from "./loader";
-import { resolveSkillDir, skillsDir, writeOrigin } from "./registry";
+import { ORIGIN_FILE, resolveSkillDir, skillsDir, writeOrigin } from "./registry";
 import { SKILL_ID_RE, type SkillOrigin } from "./types";
 
 /**
@@ -174,8 +175,17 @@ function setStatus(id: string, status: SkillSourceStatus, log?: string, headSha?
     .run(status, Date.now(), log?.slice(-MAX_LOG_BYTES) ?? null, headSha ?? null, id);
 }
 
-function git(args: string[], cwd?: string): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8", timeout: GIT_TIMEOUT_MS, stdio: "pipe" });
+const execFileAsync = promisify(execFile);
+
+/**
+ * Async on purpose: a clone is a network operation of unbounded length, and
+ * this runs inside the dashboard's request handler. The synchronous form would
+ * hold the whole server still for the duration — every other request, every
+ * running workflow's bookkeeping — for a repository somebody happened to add.
+ */
+async function git(args: string[], cwd?: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8", timeout: GIT_TIMEOUT_MS });
+  return stdout;
 }
 
 /**
@@ -186,7 +196,7 @@ function git(args: string[], cwd?: string): string {
  * always what was meant — and a clone that could end up half-merged would make
  * every import after it ambiguous.
  */
-export function syncSource(id: string): SkillSourceRecord | null {
+export async function syncSource(id: string): Promise<SkillSourceRecord | null> {
   const source = getSource(id);
   if (!source) return null;
   setStatus(id, "syncing");
@@ -195,14 +205,16 @@ export function syncSource(id: string): SkillSourceRecord | null {
     if (!existsSync(join(source.root, ".git"))) {
       rmSync(source.root, { recursive: true, force: true });
       mkdirSync(sourcesDir(), { recursive: true, mode: 0o700 });
-      log.push(git(["clone", ...(source.ref ? ["--branch", source.ref] : []), source.url, source.root]));
+      log.push(await git(["clone", ...(source.ref ? ["--branch", source.ref] : []), source.url, source.root]));
     } else {
-      log.push(git(["remote", "set-url", "origin", source.url], source.root));
-      log.push(git(["fetch", "--prune", "origin"], source.root));
-      const target = source.ref ? `origin/${source.ref}` : git(["symbolic-ref", "refs/remotes/origin/HEAD"], source.root).trim().replace("refs/remotes/", "");
-      log.push(git(["checkout", "--force", "--detach", target], source.root));
+      log.push(await git(["remote", "set-url", "origin", source.url], source.root));
+      log.push(await git(["fetch", "--prune", "origin"], source.root));
+      const target = source.ref
+        ? `origin/${source.ref}`
+        : (await git(["symbolic-ref", "refs/remotes/origin/HEAD"], source.root)).trim().replace("refs/remotes/", "");
+      log.push(await git(["checkout", "--force", "--detach", target], source.root));
     }
-    const head = git(["rev-parse", "HEAD"], source.root).trim();
+    const head = (await git(["rev-parse", "HEAD"], source.root)).trim();
     const dir = skillsRootOf(source);
     if (!existsSync(dir)) {
       setStatus(id, "failed", `${log.join("\n")}\n-> "${source.subdir}" is not a directory in this repository`, head);
@@ -270,13 +282,13 @@ export function importState(available: AvailableSkill, scope: DefinitionScope): 
   if (!dir) return "new";
   let origin: SkillOrigin | null = null;
   try {
-    origin = JSON.parse(readFileSync(join(dir, ".gate-source.json"), "utf8")) as SkillOrigin;
+    origin = JSON.parse(readFileSync(join(dir, ORIGIN_FILE), "utf8")) as SkillOrigin;
   } catch {
     return "edited";
   }
   const onDisk = skillSha(readFileSync(join(dir, "SKILL.md"), "utf8"));
   if (onDisk !== origin.sha) return "edited";
-  return origin.sha === available.sha ? "current" : "outdated";
+  return origin.upstreamSha === available.sha ? "current" : "outdated";
 }
 
 export interface ImportResult {
@@ -321,7 +333,8 @@ export function importSkills(sourceId: string, sourceSkills: string[], scope: De
     // survive here, still being pointed at by prose that no longer mentions them.
     rmSync(target, { recursive: true, force: true });
     mkdirSync(skillsDir(scope), { recursive: true, mode: 0o700 });
-    cpSync(join(root, wanted), target, { recursive: true, filter: (src) => !src.includes(`${"/"}.git${"/"}`) });
+    // A library that keeps a nested checkout inside a skill is not copying it here.
+    cpSync(join(root, wanted), target, { recursive: true, filter: (src) => basename(src) !== ".git" });
     // The copy is renamed to the id it is known by here, so the skill is
     // self-consistent wherever it is later handed to a harness.
     const file = join(target, "SKILL.md");
@@ -335,6 +348,7 @@ export function importSkills(sourceId: string, sourceSkills: string[], scope: De
       // Stamped with what is on disk after normalizing, so an untouched import
       // does not read as a local edit the moment it lands.
       sha: skillSha(readFileSync(file, "utf8")),
+      upstreamSha: skill.sha,
     };
     writeOrigin(target, origin);
     result.imported.push(skill.id);

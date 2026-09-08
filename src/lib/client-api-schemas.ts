@@ -69,10 +69,23 @@ export const eventSchema = z
   })
   .passthrough();
 
+const workspaceSchema = z.object({
+  root: z.string().max(1000),
+  repo: z.string().max(1000),
+  branch: z.string().max(200),
+  baseRef: z.string().max(200),
+});
+
 export const reportSchema = z
   .object({
     events: z.array(eventSchema).max(500).default([]),
     steps: z.array(stepSchema).max(100).default([]),
+    /**
+     * The run's worktree, sent once when it is created. A run driven from a
+     * session reads it back on every step, and the dashboard shows the branch
+     * while the run is going rather than only after it ends.
+     */
+    workspace: workspaceSchema.nullish(),
   })
   .strict();
 

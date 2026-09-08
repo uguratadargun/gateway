@@ -18,7 +18,7 @@ import { SKILL_ID_RE, type SkillDefinition, type SkillOrigin } from "./types";
  */
 
 /** Provenance, written beside SKILL.md when a skill is imported from a source. */
-const ORIGIN_FILE = ".gate-source.json";
+export const ORIGIN_FILE = ".gate-source.json";
 
 /** A skill's own files are prose and small scripts; a directory tree that deep is a mistake. */
 const MAX_RESOURCE_DEPTH = 4;
@@ -60,17 +60,27 @@ export function writeOrigin(dir: string, origin: SkillOrigin): void {
   writeFileSync(join(dir, ORIGIN_FILE), `${JSON.stringify(origin, null, 2)}\n`, { mode: 0o600 });
 }
 
+/**
+ * The parse is cached against SKILL.md's mtime; the file listing is not.
+ *
+ * A skill's other files change without SKILL.md changing — one is added by
+ * hand, or a re-import brings a new one — and a cached list would then say the
+ * skill ships something it does not, or miss something it does. Reading a
+ * handful of directory entries is cheap; parsing YAML and holding the prose is
+ * the part worth keeping.
+ */
 function loadDir(id: string, dir: string): SkillDefinition {
   const file = join(dir, "SKILL.md");
   if (!existsSync(file)) throw new SkillDefinitionError("no SKILL.md in this directory", id);
   const stat = statSync(file);
+  const resources = resourcesIn(dir).map((f) => relative(dir, f));
   const hit = cache.get(file);
-  if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
+  if (hit && hit.mtimeMs === stat.mtimeMs) return { ...hit.def, resources, origin: readOrigin(dir) };
   const def = parseSkill(id, readFileSync(file, "utf8"), {
     dir,
     sourcePath: file,
     updatedAt: stat.mtimeMs,
-    resources: resourcesIn(dir).map((f) => relative(dir, f)),
+    resources,
     origin: readOrigin(dir),
   });
   cache.set(file, { mtimeMs: stat.mtimeMs, def });

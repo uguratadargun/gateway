@@ -6,9 +6,9 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { mkdirSync as mkdirSync10, readFileSync as readFileSync8, writeFileSync as writeFileSync8 } from "node:fs";
+import { mkdirSync as mkdirSync11, readFileSync as readFileSync9, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { basename as basename2, join as join11, resolve as resolve6 } from "node:path";
+import { basename as basename2, join as join12, resolve as resolve6 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
@@ -40,11 +40,11 @@ function migrateLegacyDefinitions() {
   const target = join(home, "teams", DEFAULT_TEAM);
   for (const kind of ["agents", "workflows"]) {
     const legacy = join(home, kind);
-    const next = join(target, kind);
-    if (!existsSync(legacy) || existsSync(next)) continue;
+    const next2 = join(target, kind);
+    if (!existsSync(legacy) || existsSync(next2)) continue;
     try {
       mkdirSync(target, { recursive: true, mode: 448 });
-      renameSync(legacy, next);
+      renameSync(legacy, next2);
     } catch {
     }
   }
@@ -2745,13 +2745,13 @@ function indentString(string, spaces) {
   const length = string.length;
   while (position < length) {
     let line;
-    const next = string.indexOf("\n", position);
-    if (next === -1) {
+    const next2 = string.indexOf("\n", position);
+    if (next2 === -1) {
       line = string.slice(position);
       position = length;
     } else {
-      line = string.slice(position, next + 1);
-      position = next + 1;
+      line = string.slice(position, next2 + 1);
+      position = next2 + 1;
     }
     if (line.length && line !== "\n") result += indent;
     result += line;
@@ -2780,17 +2780,17 @@ function foldLine(line, width) {
   let start = 0;
   let end;
   let curr = 0;
-  let next = 0;
+  let next2 = 0;
   let result = "";
   while (match = breakRe.exec(line)) {
-    next = match.index;
-    if (next - start > width) {
-      end = curr > start ? curr : next;
+    next2 = match.index;
+    if (next2 - start > width) {
+      end = curr > start ? curr : next2;
       result += `
 ${line.slice(start, end)}`;
       start = end + 1;
     }
-    curr = next;
+    curr = next2;
   }
   result += "\n";
   if (line.length - start > width && curr > start) result += `${line.slice(start, curr)}
@@ -2940,10 +2940,10 @@ function writeFlowMapping(state, level, node) {
     const keyRender = writeNode(state, level, key, node, { iskey: true });
     const keyText = keyRender.text;
     const valueText = writeNode(state, level, value, node, {}).text;
-    const sep2 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
+    const sep3 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
     const keyIsBareProps = key.kind === "scalar" && keyRender.noBody && (key.tagged || key.anchor !== void 0);
     const keyColonSep = key.kind === "alias" || keyIsBareProps ? " " : "";
-    pairBuffer += `${keyText}${keyColonSep}:${sep2}${valueText}`;
+    pairBuffer += `${keyText}${keyColonSep}:${sep3}${valueText}`;
     result += pairBuffer;
   }
   const pad = state.flowBracketPadding && result !== "" ? " " : "";
@@ -3034,8 +3034,8 @@ function writeNode(state, level, node, parent, ctx) {
       if (anchor !== null) props.push(anchor);
       if (tag !== null) props.push(tag);
     }
-    const sep2 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
-    text = `${props.join(" ")}${sep2}${body}`;
+    const sep3 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
+    text = `${props.join(" ")}${sep3}${body}`;
   }
   return {
     text,
@@ -3077,8 +3077,8 @@ function present(documents, options) {
         block: true,
         compact: true
       }).text;
-      const sep2 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
-      result += `---${sep2}${body}
+      const sep3 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
+      result += `---${sep3}${body}
 `;
     } else result += writeNode(state, 0, doc.contents, null, {
       block: true,
@@ -4714,12 +4714,12 @@ ZodString.create = (params) => {
     ...processCreateParams(params)
   });
 };
-function floatSafeRemainder(val, step) {
+function floatSafeRemainder(val, step2) {
   const valDecCount = (val.toString().split(".")[1] || "").length;
-  const stepDecCount = (step.toString().split(".")[1] || "").length;
+  const stepDecCount = (step2.toString().split(".")[1] || "").length;
   const decCount = valDecCount > stepDecCount ? valDecCount : stepDecCount;
   const valInt = Number.parseInt(val.toFixed(decCount).replace(".", ""));
-  const stepInt = Number.parseInt(step.toFixed(decCount).replace(".", ""));
+  const stepInt = Number.parseInt(step2.toFixed(decCount).replace(".", ""));
   return valInt % stepInt / 10 ** decCount;
 }
 var ZodNumber = class _ZodNumber extends ZodType {
@@ -7290,13 +7290,14 @@ function loadDir(id, dir) {
   const file = join2(dir, "SKILL.md");
   if (!existsSync2(file)) throw new SkillDefinitionError("no SKILL.md in this directory", id);
   const stat = statSync(file);
+  const resources = resourcesIn(dir).map((f) => relative(dir, f));
   const hit = cache.get(file);
-  if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
+  if (hit && hit.mtimeMs === stat.mtimeMs) return { ...hit.def, resources, origin: readOrigin(dir) };
   const def = parseSkill(id, readFileSync(file, "utf8"), {
     dir,
     sourcePath: file,
     updatedAt: stat.mtimeMs,
-    resources: resourcesIn(dir).map((f) => relative(dir, f)),
+    resources,
     origin: readOrigin(dir)
   });
   cache.set(file, { mtimeMs: stat.mtimeMs, def });
@@ -8409,7 +8410,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.15.0";
+var GATE_VERSION = "0.16.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8565,6 +8566,10 @@ var GateClient = class {
     });
     return res.body;
   }
+  /** One run and its steps — the memory a session-driven walk replays. */
+  async execution(executionId) {
+    return (await this.request(`/api/v1/executions/${executionId}`)).body;
+  }
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
@@ -8573,7 +8578,7 @@ var GateClient = class {
 
 // src/client/cache.ts
 import { existsSync as existsSync6, mkdirSync as mkdirSync7, readFileSync as readFileSync6, readdirSync as readdirSync5, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
-import { join as join8 } from "node:path";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join8, normalize, relative as relative4, sep as sep2 } from "node:path";
 
 // src/client/config.ts
 import { mkdirSync as mkdirSync6, readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
@@ -8648,26 +8653,43 @@ function readManifest(team) {
     return null;
   }
 }
+function writeSkill(dir, skill) {
+  rmSync4(dir, { recursive: true, force: true });
+  for (const file of skill.files) {
+    const full = join8(dir, normalize(file.path));
+    const rel = relative4(dir, full);
+    if (!rel || rel.startsWith("..") || isAbsolute2(rel) || rel.split(sep2).includes("..")) continue;
+    mkdirSync7(dirname2(full), { recursive: true, mode: 448 });
+    writeFileSync6(full, Buffer.from(file.base64, "base64"), { mode: 384 });
+  }
+}
 function writeBundle(bundle, from) {
   const root = cacheDir(bundle.team);
   const agents = join8(root, "agents");
   const workflows = join8(root, "workflows");
+  const skills = join8(root, "skills");
   mkdirSync7(agents, { recursive: true, mode: 448 });
   mkdirSync7(workflows, { recursive: true, mode: 448 });
+  mkdirSync7(skills, { recursive: true, mode: 448 });
   for (const agent of bundle.agents) {
     writeFileSync6(join8(agents, `${agent.id}.md`), agent.source, { mode: 384 });
   }
   for (const workflow of bundle.workflows) {
     writeFileSync6(join8(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
   }
+  for (const skill of bundle.skills ?? []) {
+    writeSkill(join8(skills, skill.id), skill);
+  }
   prune(agents, new Set(bundle.agents.map((a) => `${a.id}.md`)));
   prune(workflows, new Set(bundle.workflows.map((w) => `${w.id}.yaml`)));
+  prune(skills, new Set((bundle.skills ?? []).map((s) => s.id)));
   const manifest = {
     team: bundle.team,
     hash: bundle.hash,
     pulledAt: Date.now(),
     from,
-    workflows: bundle.workflows.map(({ source: _source, ...rest }) => rest)
+    workflows: bundle.workflows.map(({ source: _source, ...rest }) => rest),
+    skills: (bundle.skills ?? []).map((s) => s.id)
   };
   writeFileSync6(manifestPath(bundle.team), `${JSON.stringify(manifest, null, 2)}
 `, { mode: 384 });
@@ -8676,7 +8698,7 @@ function writeBundle(bundle, from) {
 function prune(dir, keep) {
   if (!existsSync6(dir)) return;
   for (const entry of readdirSync5(dir)) {
-    if (!keep.has(entry)) rmSync4(join8(dir, entry), { force: true });
+    if (!keep.has(entry)) rmSync4(join8(dir, entry), { recursive: true, force: true });
   }
 }
 function clearLocalState() {
@@ -8816,12 +8838,13 @@ They are instructions, not references: where a skill describes a process, follow
 
 ${bodies}`;
 }
+var SKILL_PLUGIN_NAME = "gate-skills";
 function skillsDirective(skills) {
-  const list = skills.map((s) => `- ${s.id}: ${s.description}`).join("\n");
+  const list = skills.map((s) => `- ${SKILL_PLUGIN_NAME}:${s.id} \u2014 ${s.description}`).join("\n");
   return `You have been given these skills, and this node is expected to be done the way they say:
 ${list}
 
-Read each one before you start \u2014 they are available as skills in this session \u2014 and follow it. A skill that describes a process is the process for this node, not background reading.`;
+Use each one before you start, by its full name above, and follow it. A skill that describes a process is the process for this node, not background reading.`;
 }
 function bundlesDir() {
   return join9(gateHome(), "skill-bundles");
@@ -8856,7 +8879,7 @@ function buildSkillPlugin(skills) {
     join9(staging, ".claude-plugin", "plugin.json"),
     `${JSON.stringify(
       {
-        name: "gate-skills",
+        name: SKILL_PLUGIN_NAME,
         description: "Skills this node's agent declared, assembled by gate.",
         version: "0.0.0"
       },
@@ -8872,7 +8895,7 @@ function buildSkillPlugin(skills) {
       recursive: true,
       // Provenance is gate's bookkeeping and would read to the model as part
       // of the skill.
-      filter: (src) => basename(src) !== ".gate-source.json"
+      filter: (src) => basename(src) !== ORIGIN_FILE
     });
     writeFileSync7(join9(target, "SKILL.md"), withSkillName(readFileSync7(join9(skill.dir, "SKILL.md"), "utf8"), skill.id), {
       mode: 384
@@ -9027,7 +9050,7 @@ A type ending in "?" is optional.`
         if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
           const started = pending.get(b.tool_use_id);
           pending.delete(b.tool_use_id);
-          const record = {
+          const record2 = {
             tool: started?.tool ?? "tool",
             input: started?.input ?? null,
             ok: b.is_error !== true,
@@ -9035,8 +9058,8 @@ A type ending in "?" is optional.`
             startedAt: started?.startedAt ?? Date.now(),
             durationMs: started ? Date.now() - started.startedAt : 0
           };
-          toolCalls.push(record);
-          deps.onToolCall?.(record);
+          toolCalls.push(record2);
+          deps.onToolCall?.(record2);
         }
       }
     };
@@ -9165,17 +9188,22 @@ function outputCorrection(message) {
 
 Send the same answer again, corrected, as a single JSON object and nothing else \u2014 no prose, no code fence. Do not redo any work; only the shape of the final message was wrong.`;
 }
-async function executeAgentNode(node, state, deps) {
-  const agent = deps.loadAgent(node.agent);
+function prepareAgentNode(node, state, loadAgent) {
+  const agent = loadAgent(node.agent);
   const paths = node.inputs ?? agent.inputs;
   const inputs = resolveInputs(paths, state, node.id);
-  let prompt;
   try {
-    prompt = renderTemplate(agent.prompt, { inputs, input: state.input });
+    return { agent, inputs, prompt: renderTemplate(agent.prompt, { inputs, input: state.input }) };
   } catch (e) {
     const message = e instanceof TemplateError ? e.message : String(e);
-    throw new WorkflowError("AGENT_DEFINITION_INVALID", `node "${node.id}": ${message}`, { nodeId: node.id, agentId: agent.id });
+    throw new WorkflowError("AGENT_DEFINITION_INVALID", `node "${node.id}": ${message}`, {
+      nodeId: node.id,
+      agentId: agent.id
+    });
   }
+}
+async function executeAgentNode(node, state, deps) {
+  const { agent, inputs, prompt } = prepareAgentNode(node, state, deps.loadAgent);
   const skills = resolveSkills(agent, node.id, deps.loadSkill);
   const workspace = deps.workspace ?? null;
   const nodeTimeoutMs = agent.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
@@ -9258,11 +9286,11 @@ async function executeAgentNode(node, state, deps) {
       messages.push({ role: "assistant", content: result.content });
       const results = [];
       for (const use of result.toolUses) {
-        const record = await runTool(use, toolCtx, agent);
-        toolCalls.push(record);
-        deps.onToolCall?.(record);
-        if (record.ok && WRITE_TOOLS.has(use.name)) writes++;
-        results.push({ type: "tool_result", toolUseId: use.id, content: record.result, isError: !record.ok });
+        const record2 = await runTool(use, toolCtx, agent);
+        toolCalls.push(record2);
+        deps.onToolCall?.(record2);
+        if (record2.ok && WRITE_TOOLS.has(use.name)) writes++;
+        results.push({ type: "tool_result", toolUseId: use.id, content: record2.result, isError: !record2.ok });
       }
       const nudge = canWrite && writes === 0 ? reconNudge(iteration + 1, toolCalls.length) : null;
       if (nudge) results.push({ type: "text", text: nudge });
@@ -9374,12 +9402,12 @@ function withDeadline(p, deadline, nodeId2) {
 
 // src/runtime/executors/command.ts
 import { execFile as execFile2 } from "node:child_process";
-import { isAbsolute as isAbsolute2, resolve as resolve3 } from "node:path";
+import { isAbsolute as isAbsolute3, resolve as resolve3 } from "node:path";
 var DEFAULT_TIMEOUT_MS = 60 * 6e4;
 var MAX_OUTPUT_BYTES = 2e7;
 function cwdFor(node, options) {
   if (!node.cwd) return options?.defaultCwd;
-  if (isAbsolute2(node.cwd)) return node.cwd;
+  if (isAbsolute3(node.cwd)) return node.cwd;
   return options?.defaultCwd ? resolve3(options.defaultCwd, node.cwd) : node.cwd;
 }
 var runCommand = (node, options) => new Promise((resolvePromise, reject) => {
@@ -9488,7 +9516,7 @@ async function runWorkflow(workflow, opts) {
   const maxSteps = workflow.maxWorkflowSteps;
   const maxVisits = workflow.maxVisits;
   const maxCost = workflow.maxCostUsd;
-  let spentUsd = state.history.reduce((sum, step) => sum + costOfStep(step.usage), 0);
+  let spentUsd = state.history.reduce((sum, step2) => sum + costOfStep(step2.usage), 0);
   function halt(code, message, nodeId2) {
     if (state.status !== "running") return;
     state.status = "failed";
@@ -9579,7 +9607,7 @@ async function runWorkflow(workflow, opts) {
         const message = e.message;
         const finishedAt2 = now();
         const progress = e instanceof WorkflowError ? e.detail : void 0;
-        const step2 = {
+        const step3 = {
           nodeId: node.id,
           stepIndex,
           visit: visit2,
@@ -9592,15 +9620,15 @@ async function runWorkflow(workflow, opts) {
           toolCalls: progress?.toolCalls ?? toolCalls,
           usage: progress?.usage
         };
-        state.history.push(step2);
-        opts.onStep?.(step2);
-        spentUsd += costOfStep(step2.usage);
+        state.history.push(step3);
+        opts.onStep?.(step3);
+        spentUsd += costOfStep(step3.usage);
         emit({ type: "node.failed", executionId, at: finishedAt2, nodeId: node.id, stepIndex, code, message });
         return halt(code, message, node.id);
       }
       if (node.type !== "condition" && node.type !== "parallel") state.outputs[node.id] = output;
       const finishedAt = now();
-      const step = {
+      const step2 = {
         nodeId: node.id,
         stepIndex,
         visit: visit2,
@@ -9612,8 +9640,8 @@ async function runWorkflow(workflow, opts) {
         usage,
         toolCalls
       };
-      state.history.push(step);
-      opts.onStep?.(step);
+      state.history.push(step2);
+      opts.onStep?.(step2);
       emit({ type: "node.output", executionId, at: finishedAt, nodeId: node.id, stepIndex, output });
       emit({
         type: "node.completed",
@@ -9847,9 +9875,9 @@ var RunReporter = class {
     if (this.events.length >= MAX_BUFFERED_EVENTS) this.events.shift();
     this.events.push(event);
   }
-  step(step) {
+  step(step2) {
     if (this.steps.length >= MAX_BUFFERED_STEPS) this.steps.shift();
-    this.steps.push(step);
+    this.steps.push(step2);
   }
   /** Sends what is buffered. Safe to call concurrently; overlapping calls no-op. */
   async flush() {
@@ -9970,7 +9998,7 @@ async function runLocal(client, opts) {
         reporter.event(event);
         opts.onEvent?.(event);
       },
-      onStep: (step) => reporter.step(step),
+      onStep: (step2) => reporter.step(step2),
       signal: controller.signal
     });
   } finally {
@@ -9996,6 +10024,289 @@ async function runLocal(client, opts) {
   return { executionId, state, workspace };
 }
 
+// src/client/step.ts
+import { existsSync as existsSync11, mkdirSync as mkdirSync10, readFileSync as readFileSync8, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { hostname as hostname3 } from "node:os";
+import { join as join11 } from "node:path";
+
+// src/client/walk.ts
+function nextInSession(workflow, steps, input) {
+  const replay = { outputs: {}, visitCounts: {}, cursor: 0 };
+  const position = walk2(workflow, steps, input, replay, workflow.entry, null);
+  if (position) return position;
+  throw new WorkflowError("WORKFLOW_ROUTING_ERROR", "this run walked off the end of its workflow");
+}
+function walk2(workflow, steps, input, replay, from, stopAt) {
+  let currentId = from;
+  for (; ; ) {
+    if (currentId === stopAt) return null;
+    const node = findNode(workflow, currentId);
+    if (!node) {
+      throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `node "${currentId}" does not exist`, { nodeId: currentId });
+    }
+    if (node.type === "terminal") {
+      return { kind: "done", status: node.status, terminalNodeId: node.id, stepIndex: replay.cursor };
+    }
+    const step2 = steps[replay.cursor];
+    if (!step2 || step2.nodeId !== node.id) {
+      return {
+        kind: "node",
+        node,
+        visit: (replay.visitCounts[node.id] ?? 0) + 1,
+        outputs: { ...replay.outputs },
+        stepIndex: replay.cursor
+      };
+    }
+    replay.cursor++;
+    replay.visitCounts[node.id] = (replay.visitCounts[node.id] ?? 0) + 1;
+    if (step2.status === "failed") {
+      return {
+        kind: "failed",
+        nodeId: node.id,
+        error: step2.error ?? { code: "MODEL_EXECUTION_ERROR", message: "this node failed" }
+      };
+    }
+    if (node.type !== "condition" && node.type !== "parallel") replay.outputs[node.id] = step2.output;
+    if (node.type === "parallel") {
+      for (const branch of node.branches) {
+        const inside = walk2(workflow, steps, input, replay, branch, node.join);
+        if (inside) return inside;
+      }
+      currentId = node.join;
+      continue;
+    }
+    const state = { input, outputs: replay.outputs, visitCounts: replay.visitCounts };
+    currentId = selectEdge(node, state).to;
+  }
+}
+
+// src/client/step.ts
+function pendingPath(executionId) {
+  return join11(gateHome2(), "runs", `${executionId}.json`);
+}
+function readPending(executionId) {
+  try {
+    return JSON.parse(readFileSync8(pendingPath(executionId), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writePending(pending) {
+  const file = pendingPath(pending.executionId);
+  mkdirSync10(join11(gateHome2(), "runs"), { recursive: true, mode: 448 });
+  writeFileSync8(file, `${JSON.stringify(pending)}
+`, { mode: 384 });
+}
+function clearPending(executionId) {
+  rmSync7(pendingPath(executionId), { force: true });
+}
+function workspaceOf(execution) {
+  return execution.workspace ?? null;
+}
+async function begin(ctx, workflowId, input, cwd, repos) {
+  const scope = cacheScope(ctx.team);
+  const workflow = getWorkflow(workflowId, scope);
+  const runInput = { ...input };
+  let repo = null;
+  if (workflow.workspace) {
+    repo = resolveRepo(workflow, runInput, cwd, repos);
+    runInput.repo = repo;
+  }
+  const executionId = await ctx.client.startRun({
+    workflowId: workflow.id,
+    input: runInput,
+    client: { host: hostname3(), repo: repo ?? void 0, version: CLI_VERSION }
+  });
+  if (workflow.workspace) {
+    try {
+      const workspace = createRunWorkspace({ ...workflow.workspace, repo }, executionId);
+      ctx.say(`worktree ${workspace.root} on branch ${workspace.branch}`);
+      await ctx.client.report(executionId, { events: [], steps: [], workspace });
+    } catch (e) {
+      const error = { code: e instanceof WorkflowError ? e.code : "WORKSPACE_ERROR", message: e.message };
+      await ctx.client.finish(executionId, { status: "failed", error, stepCount: 0 }).catch(() => {
+      });
+      throw e;
+    }
+  }
+  return next(ctx, executionId);
+}
+async function next(ctx, executionId) {
+  for (; ; ) {
+    const { execution, steps } = await ctx.client.execution(executionId);
+    const scope = cacheScope(ctx.team);
+    const workflow = getWorkflow(execution.workflowId, scope);
+    const position = nextInSession(workflow, steps, execution.input);
+    if (position.kind === "failed") {
+      clearPending(executionId);
+      await settle(ctx, executionId, execution, steps.length, "failed", position.error);
+      return { do: "failed", executionId, nodeId: position.nodeId, error: position.error };
+    }
+    if (position.kind === "done") {
+      clearPending(executionId);
+      const workspace = workspaceOf(execution);
+      await settle(ctx, executionId, execution, steps.length, position.status, null);
+      return {
+        do: "done",
+        executionId,
+        status: position.status,
+        branch: workspace?.branch ?? null,
+        workspace: workspace?.root ?? null
+      };
+    }
+    const node = position.node;
+    const state = stateFor(execution, position.outputs);
+    if (node.type === "agent") {
+      const prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
+      writePending({
+        executionId,
+        nodeId: node.id,
+        stepIndex: position.stepIndex,
+        visit: position.visit,
+        startedAt: Date.now()
+      });
+      const workspace = workspaceOf(execution);
+      return {
+        do: "agent",
+        executionId,
+        nodeId: node.id,
+        agent: prepared.agent.id,
+        prompt: prepared.prompt,
+        output: prepared.agent.output.type === "json" ? { type: "json", schema: prepared.agent.output.schema } : { type: "text" },
+        workspace: workspace?.root ?? null,
+        tools: prepared.agent.tools,
+        timeoutMs: prepared.agent.timeoutMs ?? null
+      };
+    }
+    await runControlNode(ctx, executionId, node, state, position, workspaceOf(execution));
+  }
+}
+function stateFor(execution, outputs) {
+  return {
+    executionId: "",
+    workflowId: execution.workflowId,
+    status: "running",
+    input: execution.input,
+    outputs,
+    visitCounts: {},
+    stepCount: 0,
+    history: [],
+    error: null
+  };
+}
+async function runControlNode(ctx, executionId, node, state, position, workspace) {
+  const startedAt = Date.now();
+  let input = null;
+  let output = null;
+  let error;
+  try {
+    if (node.type === "command") {
+      const command = node.command.map(
+        (arg) => arg.includes("{{") ? renderTemplate(arg, conditionContext(state)) : arg
+      );
+      input = command;
+      ctx.say(`$ ${command.join(" ")}`);
+      const result = await runCommand({ ...node, command }, { defaultCwd: workspace?.root });
+      output = result;
+      if (result.stdout.trim()) ctx.say(result.stdout.trimEnd());
+      if (result.stderr.trim()) ctx.say(result.stderr.trimEnd());
+      ctx.say(result.ok ? `\u2713 ${node.id}` : `\u2717 ${node.id} (exit ${result.exitCode})`);
+    } else if (node.type === "parallel") {
+      input = { branches: node.branches, join: node.join };
+      ctx.say(`\u25B8 ${node.id}: ${node.branches.join(", ")} \u2014 one after another in this session`);
+    } else {
+      ctx.say(`\u25B8 ${node.id}`);
+    }
+  } catch (e) {
+    error = { code: e instanceof WorkflowError ? e.code : "COMMAND_FAILED", message: e.message };
+    ctx.say(`\u2717 ${node.id}: ${error.message}`);
+  }
+  await record(ctx, executionId, {
+    nodeId: node.id,
+    stepIndex: position.stepIndex,
+    visit: position.visit,
+    status: error ? "failed" : "completed",
+    startedAt,
+    finishedAt: Date.now(),
+    input,
+    output,
+    ...error ? { error } : {}
+  });
+}
+async function step(ctx, executionId, nodeId2, answer) {
+  const pending = readPending(executionId);
+  if (!pending || pending.executionId !== executionId) {
+    throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `nothing is waiting on an answer for run ${executionId}`);
+  }
+  if (pending.nodeId !== nodeId2) {
+    throw new WorkflowError(
+      "WORKFLOW_ROUTING_ERROR",
+      `this run is waiting on "${pending.nodeId}", not "${nodeId2}" \u2014 run \`gate next ${executionId}\` to see what it wants`
+    );
+  }
+  const { execution } = await ctx.client.execution(executionId);
+  const scope = cacheScope(ctx.team);
+  const workflow = getWorkflow(execution.workflowId, scope);
+  const node = workflow.nodes.find((n) => n.id === nodeId2);
+  if (!node || node.type !== "agent") {
+    throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `node "${nodeId2}" does not take an answer`);
+  }
+  const agent = getAgent(node.agent, scope);
+  const output = parseOutput(agent, answer, nodeId2);
+  await record(ctx, executionId, {
+    nodeId: nodeId2,
+    stepIndex: pending.stepIndex,
+    visit: pending.visit,
+    status: "completed",
+    startedAt: pending.startedAt,
+    finishedAt: Date.now(),
+    input: null,
+    output
+  });
+  clearPending(executionId);
+  return next(ctx, executionId);
+}
+async function record(ctx, executionId, step2) {
+  const res = await ctx.client.report(executionId, {
+    events: [
+      { type: "node.started", at: step2.startedAt, nodeId: step2.nodeId, stepIndex: step2.stepIndex, visit: step2.visit },
+      step2.status === "failed" ? {
+        type: "node.failed",
+        at: step2.finishedAt,
+        nodeId: step2.nodeId,
+        stepIndex: step2.stepIndex,
+        code: step2.error?.code,
+        message: step2.error?.message
+      } : {
+        type: "node.completed",
+        at: step2.finishedAt,
+        nodeId: step2.nodeId,
+        stepIndex: step2.stepIndex,
+        durationMs: step2.finishedAt - step2.startedAt
+      }
+    ],
+    steps: [step2]
+  });
+  if (res.cancelRequested) {
+    ctx.say("stop requested from the dashboard");
+    throw new WorkflowError("RUN_CANCELLED", "run cancelled");
+  }
+}
+async function settle(ctx, executionId, execution, stepCount, status, error) {
+  if (execution.status !== "running") return;
+  const workspace = workspaceOf(execution);
+  let diff = null;
+  let summary = null;
+  if (workspace && existsSync11(workspace.root)) {
+    summary = summarizeWorkspace(workspace);
+    try {
+      diff = readRunDiff(workspace.root).diff;
+    } catch {
+    }
+  }
+  await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
+}
+
 // src/client/cli.ts
 var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this machine
 
@@ -10009,17 +10320,22 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate agents                                   the agents your team's pipelines use
   gate show <workflow|agent-id>                 print a definition as it is on the server
   gate push <file\u2026> [--replace]                 save definitions to your team (needs an author key)
-  gate run <workflow> [task\u2026]                   run one here, in this repository
+  gate run <workflow> [task\u2026]                   run one here, headless, in this repository
        --input key=value                        (repeat for more than one input)
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
+
+  the protocol /gate:run drives, one node at a time in your own session:
+  gate begin <workflow> [task\u2026]                 start a run, print the first instruction
+  gate next <execution-id>                      what to do next
+  gate step <execution-id> <node> --output-file <f>   hand back a node's answer
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file"]);
 function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const positional = [];
@@ -10036,9 +10352,9 @@ function parseArgs(argv) {
       collect(inline);
       continue;
     }
-    const next = rest[i + 1];
-    if (VALUE_FLAGS.has(name) && next !== void 0 && !next.startsWith("--")) {
-      collect(next);
+    const next2 = rest[i + 1];
+    if (VALUE_FLAGS.has(name) && next2 !== void 0 && !next2.startsWith("--")) {
+      collect(next2);
       i++;
     } else {
       flags[name] = true;
@@ -10116,12 +10432,12 @@ async function cmdLogin(args) {
   return 0;
 }
 function cmdInstall(args) {
-  const target = typeof args.flags.dir === "string" ? args.flags.dir : join11(homedir6(), ".local", "bin");
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join12(homedir6(), ".local", "bin");
   const script = process.argv[1];
-  const shim = join11(target, "gate");
+  const shim = join12(target, "gate");
   try {
-    mkdirSync10(target, { recursive: true });
-    writeFileSync8(shim, `#!/bin/sh
+    mkdirSync11(target, { recursive: true });
+    writeFileSync9(shim, `#!/bin/sh
 exec node "${script}" "$@"
 `, { mode: 493 });
   } catch (e) {
@@ -10218,7 +10534,7 @@ async function cmdPush(args) {
   for (const item of items) {
     let source;
     try {
-      source = readFileSync8(item.file, "utf8");
+      source = readFileSync9(item.file, "utf8");
     } catch (e) {
       console.error(`${item.file}: ${e.message}`);
       failed++;
@@ -10244,7 +10560,9 @@ async function cmdPull() {
   const client = connect();
   const config = readConfig();
   const manifest = await sync(client, await teamOf(client, config), true);
-  console.log(`pulled ${manifest.workflows.length} workflow(s) for team ${manifest.team} from ${manifest.from}`);
+  console.log(
+    `pulled ${manifest.workflows.length} workflow(s)` + (manifest.skills?.length ? ` and ${manifest.skills.length} skill(s)` : "") + ` for team ${manifest.team} from ${manifest.from}`
+  );
   return 0;
 }
 function describeCapabilities(workflowId, team) {
@@ -10375,6 +10693,49 @@ function cmdReset() {
   console.log("this machine is disconnected \u2014 `/gate:login <token>` connects it again");
   return 0;
 }
+async function sessionContext() {
+  const client = connect();
+  const config = readConfig();
+  const team = await teamOf(client, config);
+  await sync(client, team, true);
+  return { ctx: { client, team, say: (m) => console.error(m) }, team };
+}
+function printInstruction(instruction) {
+  console.log(JSON.stringify(instruction, null, 2));
+  return instruction.do === "failed" ? 1 : 0;
+}
+async function cmdBegin(args) {
+  const [workflowId, ...trailing] = args.positional;
+  if (!workflowId) die("usage: gate begin <workflow> [task\u2026]");
+  const { ctx, team } = await sessionContext();
+  const manifest = readManifest(team);
+  const entry = manifest?.workflows.find((w) => w.id === workflowId);
+  if (!entry) die(`no workflow "${workflowId}" for your team \u2014 \`gate list\` shows what there is`);
+  if (!await confirmTrust(workflowId, entry.sha, team, args.flags.yes === true)) return 1;
+  return printInstruction(
+    await begin(ctx, workflowId, parseInputs(args.flags, trailing), process.cwd(), repoPaths())
+  );
+}
+async function cmdNext(args) {
+  const [executionId] = args.positional;
+  if (!executionId) die("usage: gate next <execution-id>");
+  const { ctx } = await sessionContext();
+  return printInstruction(await next(ctx, executionId));
+}
+async function cmdStep(args) {
+  const [executionId, nodeId2] = args.positional;
+  if (!executionId || !nodeId2) die("usage: gate step <execution-id> <node> --output-file <file>");
+  const file = typeof args.flags["output-file"] === "string" ? args.flags["output-file"] : "";
+  if (!file) die("gate step needs --output-file <file>: the node's answer, as the agent declared it");
+  let answer;
+  try {
+    answer = readFileSync9(file, "utf8");
+  } catch (e) {
+    die(`cannot read ${file}: ${e.message}`);
+  }
+  const { ctx } = await sessionContext();
+  return printInstruction(await step(ctx, executionId, nodeId2, answer));
+}
 async function cmdStatus(args) {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -10425,6 +10786,12 @@ async function main(argv) {
         return await cmdPush(args);
       case "run":
         return await cmdRun(args);
+      case "begin":
+        return await cmdBegin(args);
+      case "next":
+        return await cmdNext(args);
+      case "step":
+        return await cmdStep(args);
       case "repo":
         return cmdRepo(args);
       case "reset":

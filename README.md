@@ -132,9 +132,11 @@ rate-limit snapshot live in SQLite (`~/.gate/gate.db`, WAL) via Node's built-in
 `node:sqlite` — no native build. Account tokens and provider API keys are sealed
 blobs in their rows, not plain columns.
 Teams, people and their keys live in the same database. Definitions do not:
-`~/.gate/teams/<team>/agents/*.md` and `.../workflows/*.yaml` stay
-hand-editable and diffable files, and a client mirrors its own team's copy under
-`~/.gate/cache/<team>/`.
+`~/.gate/teams/<team>/agents/*.md`, `.../workflows/*.yaml` and
+`.../skills/<id>/SKILL.md` stay hand-editable and diffable files, and a client
+mirrors its own team's copy under `~/.gate/cache/<team>/`. Skill libraries gate
+pulls from are rows in the database, but their clones are ordinary checkouts
+under `~/.gate/skill-sources/`.
 Aggregations (spend, totals) are SQL `GROUP BY`s, so budget checks stay O(1) in
 request count. `settings.json` / `routing.json` stay as hand-editable files.
 Pre-SQLite JSONL files are imported once and renamed `*.migrated`, and the
@@ -312,6 +314,7 @@ name: Tester
 model: sonnet          # tier alias or a concrete claude-* id; routed as usual
 effort: medium         # optional: low | medium | high | xhigh | max
 maxTokens: 32000       # optional output ceiling; thinking counts against it
+skills: [superpowers-test-driven-development]   # optional; see Skills below
 inputs: [implementation.diff, reviewer.feedback?]
 output:
   type: json           # or: text
@@ -338,9 +341,71 @@ Test this change:
   kept); an invalid answer fails the node rather than propagating silently. An
   answer cut off by the output ceiling is reported as `AGENT_OUTPUT_TRUNCATED`,
   not as bad formatting — raise `maxTokens` for agents that return long output.
+- `skills` names entries from the team's skill library, and is how the agent
+  works rather than what it may touch. An agent that declares one is told to
+  follow it every run; a skill the team cannot resolve is refused at save time.
 - A workflow's run input is checked before anything starts: `/workflows/<id>`
   pre-fills the box with the `input.*` keys its agents read, and a run missing
   one is refused with `RUN_INPUT_MISSING` instead of failing at the first node.
+
+### Skills — `~/.gate/teams/<team>/skills/<id>/SKILL.md`
+
+A skill is a process an agent is told to follow, written as the same
+`SKILL.md` directory Claude Code and the published libraries already use:
+`name` and `description` in the frontmatter, the process below it, and
+whatever files that process points at beside it.
+
+```markdown
+---
+name: superpowers-brainstorming
+description: Use before any creative work — explores intent and design before implementation.
+---
+
+Ask clarifying questions one at a time. Propose 2–3 approaches with trade-offs.
+Present the design and get approval before writing code.
+```
+
+How it reaches the model depends on which loop is running the node, but it
+means the same thing either way:
+
+- **`executor: claude-code`** — gate assembles the skills that agent named into
+  a throwaway plugin and starts the child with `--plugin-dir`, so each one
+  loads as `gate-skills:<id>` with its own files beside it and the harness
+  opens it when it is due. The bundle is content-addressed under
+  `~/.gate/skill-bundles/`, so the same set is built once and a changed skill
+  gets a new address rather than a stale plugin.
+- **`executor: gate`** — gate's own loop has no notion of a skill and no way to
+  read a file outside the worktree, so the skill's prose is folded into the
+  system prompt. Files a skill ships are named and explicitly marked
+  unreadable, rather than being pointed at and quietly missing.
+
+Skills ride along in the client bundle, so a run on a developer's own machine
+follows the same process the server would.
+
+#### Pulling a library — the Skills page
+
+The skills worth having are mostly written elsewhere, so gate clones a library
+and imports from it as two separate acts. **Sync** fetches into gate's own
+clone and changes nothing a team runs; **Import** copies named skills into the
+team's library and stamps each with the commit it came from. Nothing an agent
+does changes until somebody asks for it.
+
+Because the stamp is kept, every skill on the page says where it stands:
+*not imported*, *up to date*, *update available*, or *edited here* — the last
+being the one an update would overwrite, said before you press the button.
+
+[`superpowers`](https://github.com/obra/superpowers) ships registered and
+unpulled, under the `superpowers-` prefix so a second library shipping its own
+`brainstorming` does not collide. One Sync, then import what you want:
+
+```
+Skills → Superpowers → Sync → browse → pick brainstorming → Import
+Agents → planner → Skills → ☑ superpowers-brainstorming → Save
+```
+
+Add your own library with a git URL, a ref, the subdirectory its skills live in
+and an id prefix. Forgetting a source deletes gate's clone; the skills already
+imported are the team's copies and stay.
 
 ### Workflows — `~/.gate/teams/<team>/workflows/<id>.yaml`
 
@@ -709,12 +774,12 @@ What travels where:
   `304` for, so every command re-syncs for nothing when nothing changed. The
   mirror is read-only in the sense that matters: it is *replaced* on the next
   pull, so definitions stay the team's, edited in the dashboard.
-- **Model calls go up.** Every call — including those a node makes as a spawned
-  Claude Code — goes to `<gate>/api/gateway` on your own key, carrying
-  `x-gate-session: workflow:<execution-id>`. Routing, effort, prompt caching,
-  the account pool, budget, throttling and the traffic log all apply exactly as
-  they do for a run on the server. No Claude credentials are needed on your
-  machine.
+- **Model calls go up.** Every call goes to `<gate>/api/gateway` on your own
+  key, carrying `x-gate-session: workflow:<execution-id>`. Routing, effort,
+  prompt caching, the account pool, budget, throttling and the traffic log all
+  apply exactly as they do for a run on the server. (In a session-driven run
+  that holds as long as your Claude Code points at gate — the dashboard's
+  one-click client setup is what does that.)
 - **Progress goes up.** Steps and events are batched to `/api/v1/executions/…`
   about once a second, so `/executions/<id>` animates a run on your laptop the
   same way it animates one of its own, and the history is in the same table.
@@ -764,6 +829,37 @@ them needs anybody to do anything.
   both ends. `MIN_CLIENT_VERSION` in `src/lib/protocol.ts` is raised only by a
   change that genuinely breaks older clients — it stops them dead, which is
   the point.
+
+**The run happens in your session, not beside it.** `/gate:run` does not start
+a second, headless Claude: it *is* the run. gate says what the next node is and
+your own session does it, in front of you, with your own tools and your own
+permissions — so you can watch it, interrupt it, and answer it when it asks
+something, which a headless child could never do (it was launched with
+`--permission-prompts none` precisely because nobody was there).
+
+The protocol is three commands, and the session loops them:
+
+```bash
+gate begin <workflow> "<task>"          # → the first instruction, as JSON
+gate next <execution-id>                # → what to do now (no side effects)
+gate step <execution-id> <node> --output-file <file>   # → hand back an answer
+```
+
+`begin`/`step` print the next instruction, so the loop is one call per node.
+Only **agent** nodes reach the session; `command` nodes are argv from the
+workflow file, so gate runs them itself and prints their output to the
+terminal. Where the run goes next is still gate's — from the graph's edges and
+the outputs handed back, never from the model's judgement — and an answer that
+does not match what the agent declared is refused with the reason
+(`agent "planner" output invalid — ok: Required`) instead of propagating.
+
+Progress is reconstructed from the run's own steps (`src/client/walk.ts`), because
+each command is a new process and the steps are its only memory. That replay is
+the same traversal the engine performs and reuses the same edge selection, with
+one deliberate difference: a `parallel` node's branches are walked one after
+another, since a session can only do one thing at a time. `gate run` still
+exists and still runs the engine headlessly — for CI, and for anything with no
+session to drive it.
 
 **Stop works in both directions.** The server cannot reach into a process on
 your laptop, so Stop on the execution page records the request and the answer
@@ -820,6 +916,7 @@ has the new pipeline at their next `gate` command.
 - `src/app/api/gateway/v1/messages/` — the proxy endpoint
 - `src/app/api/auth/` — login flow · `src/app/api/accounts/` · `src/app/api/providers/` · `src/app/api/routing/` · `src/app/api/usage/`
 - `src/agents/` — agent file format: parse, validate, render · `src/workflows/` — workflow YAML + condition language
+- `src/skills/` — the skill library: the `SKILL.md` directory format, the team-scoped registry, git-backed sources with import provenance (`sources.ts`), and how a skill reaches each executor (`inject.ts`)
 - `src/runtime/` — the deterministic engine, node executors, agent tools (`tools/`) and per-run worktrees (`workspace.ts`) · `src/providers/` — the `ModelProvider` seam onto the gateway
 - `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
 - `src/lib/teams.ts` / `apikeys.ts` / `tenancy.ts` / `def-root.ts` — people, teams, keys-as-identities, and which directory a team's definitions live in

@@ -29,6 +29,7 @@ interface AgentDetail {
   inputs: string[];
   output: { type: string; schema?: Record<string, string> };
   tools: string[];
+  skills?: string[];
   timeoutMs?: number;
   maxTokens?: number;
   maxToolIterations?: number;

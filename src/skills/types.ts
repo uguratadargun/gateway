@@ -42,8 +42,15 @@ export interface SkillOrigin {
   /** The commit the clone was on at import time; null when it could not be read. */
   commit: string | null;
   importedAt: number;
-  /** sha256 of SKILL.md as imported — a local edit shows up as a mismatch. */
+  /** sha256 of SKILL.md as it landed here — a local edit shows up as a mismatch. */
   sha: string;
+  /**
+   * sha256 of the file as it is upstream, which is not the same number: an
+   * import under a prefix rewrites the `name` field, so comparing the local
+   * copy against the remote one directly would report every prefixed skill as
+   * permanently out of date.
+   */
+  upstreamSha: string;
 }
 
 export interface SkillDefinition extends SkillFrontmatter {

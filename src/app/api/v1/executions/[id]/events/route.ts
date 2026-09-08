@@ -4,7 +4,7 @@ import { publishWorkflowEvent } from "@/events/bus";
 import type { WorkflowEvent } from "@/events/types";
 import { reportSchema } from "@/lib/client-api-schemas";
 import { ownsExecution, requireClient } from "@/lib/tenancy";
-import { getExecution, isCancelRequested, recordStep, touchExecution } from "@/executions/store";
+import { getExecution, isCancelRequested, recordStep, setExecutionWorkspace, touchExecution } from "@/executions/store";
 import type { StepRecord } from "@/runtime/state";
 
 export const runtime = "nodejs";
@@ -35,6 +35,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "Invalid report", issues: parsed.error.issues }, { status: 400 });
   }
 
+  if (parsed.data.workspace) {
+    setExecutionWorkspace(id, { ...parsed.data.workspace, commit: null, changedFiles: [] });
+  }
   for (const step of parsed.data.steps) recordStep(id, step as StepRecord);
   for (const event of parsed.data.events) {
     // The URL owns the id: an event may only ever be about the run it was sent to.
