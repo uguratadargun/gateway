@@ -59,25 +59,29 @@ has already spent its budget.
 
 ## 3. Write it
 
-Definitions belong to the team and live on the gate server; this machine only
-mirrors them, and anything written into that mirror is erased by the next pull.
-So write what you designed into files under `.gate-proposal/` in this
-repository — agents as `<id>.md`, the workflow as `<id>.yaml` — and hand them
-over for the user to add in their dashboard:
+Definitions live on the gate server and belong to the team, so write the files
+first and then save them there. Put them under `.gate-proposal/` in this
+repository — agents as `<id>.md`, the workflow as `<id>.yaml` — then:
 
-- **Agents**, one Markdown file each, frontmatter plus prompt.
-- **The workflow**, one YAML file, naming only agents that already exist or that
-  you are proposing alongside it.
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" push .gate-proposal/*.md .gate-proposal/*.yaml
+```
 
-Ids are lowercase letters, digits and dashes. Reusing an id that already exists
-(`gate list`, `gate agents` above) replaces someone else's definition, so pick
-another id unless the user asked for a replacement.
+Agents are saved before workflows whatever order you list them in, because a
+workflow naming an agent the server does not have yet is refused. Ids are
+lowercase letters, digits and dashes, taken from the filename. An id that
+already exists is refused unless you add `--replace`; never replace something
+the user did not agree to replace — pick another id instead.
 
-Tell the user, in order: the agents to create first (a workflow naming an agent
-that does not exist is rejected on save), then the workflow, and that both are
-added from **Agents** and **Workflows** in the dashboard — the same validation
-runs there, so an invalid definition is refused with the reason. `gate show
-<id>` prints what is on the server today, if they want to compare.
+The server validates every save, so a wrong definition comes back as `prompt
+references undeclared input: nobody.field` or `node "check" references unknown
+agent "does-not-exist"`. If it refuses, the definition is wrong: read the
+message, fix the file, push again. Do not route around it, and do not write
+into `~/.gate` by hand — that directory is a mirror and the next pull erases it.
+
+If the push is refused with **SCOPE_MISSING**, this person's key may read the
+team's definitions but not write them. Say so and stop: someone with the
+dashboard issues them a key with the author right; nothing here can grant it.
 
 ## 4. Check it before you save, then again after
 
@@ -90,7 +94,7 @@ the result — not "checked", but which items you verified and on which files.
 Anything you had to deviate from, say so and say why. A deviation you can defend
 is fine; a silent one is how a pipeline reaches the user needing hand-editing.
 
-When they have added it, `gate pull` brings it to this machine and `/gate-run
-<id>` starts it here. Tell them the workflow id, what run input it takes, and
-that the first run will ask them to approve the commands it wants to run on this
-machine. Do not start a run yourself unless they ask.
+When it is saved, tell the user the workflow id, that `/gate-run <id>` starts it
+here, what run input it takes, and that the first run will ask them to approve
+the commands it wants to run on this machine. Everyone else on the team gets it
+at their next `gate` command. Do not start a run yourself unless they ask.

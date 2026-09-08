@@ -15,10 +15,20 @@ import { getDb } from "./db";
  * default team's, which is what a single-person install has always been.
  */
 
-/** What a key may reach. A key with neither scope is inert. */
-export type KeyScope = "gateway" | "workflows";
+/**
+ * What a key may reach. A key with no scope at all is inert.
+ *
+ * `author` is deliberately not part of what a key gets by default: reading a
+ * team's definitions is what everyone on it needs, and writing them is a
+ * decision about that team's pipelines. Someone designing one — `/gate-design`
+ * on their own machine — is given it on purpose.
+ */
+export type KeyScope = "gateway" | "workflows" | "author";
 
-export const ALL_SCOPES: KeyScope[] = ["gateway", "workflows"];
+export const ALL_SCOPES: KeyScope[] = ["gateway", "workflows", "author"];
+
+/** What a new key gets unless the person issuing it says otherwise. */
+export const DEFAULT_SCOPES: KeyScope[] = ["gateway", "workflows"];
 
 export interface ApiKey {
   id: string;
@@ -48,7 +58,9 @@ function hashKey(raw: string): string {
 }
 
 function parseScopes(raw: unknown): KeyScope[] {
-  if (typeof raw !== "string") return [...ALL_SCOPES];
+  // A key issued before scopes existed reads as an ordinary one — it can do
+  // everything it could do then, and nothing that has since been added.
+  if (typeof raw !== "string") return [...DEFAULT_SCOPES];
   const parts = raw
     .split(",")
     .map((s) => s.trim())
@@ -103,7 +115,7 @@ export interface CreateKeyInput {
 /** Create a key; returns the plaintext ONCE (never recoverable afterward). */
 export function createKey(input: string | CreateKeyInput): { key: ApiKey; plaintext: string } {
   const opts: CreateKeyInput = typeof input === "string" ? { name: input } : input;
-  const scopes = opts.scopes?.length ? opts.scopes : [...ALL_SCOPES];
+  const scopes = opts.scopes?.length ? opts.scopes : [...DEFAULT_SCOPES];
   const plaintext = `gate_${randomBytes(24).toString("hex")}`;
   const key: ApiKey = {
     id: randomBytes(8).toString("hex"),

@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import { getAgent, listAgents, readAgentSource } from "@/agents/registry";
@@ -33,6 +33,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate list                                     what you can run, and what it needs
   gate agents                                   the agents your team's pipelines use
   gate show <workflow|agent-id>                 print a definition as it is on the server
+  gate push <file…> [--replace]                 save definitions to your team (needs an author key)
   gate run <workflow> [task…]                   run one here, in this repository
        --input key=value                        (repeat for more than one input)
        --yes                                    skip the first-run approval prompt
@@ -293,6 +294,62 @@ async function cmdShow(args: Args): Promise<number> {
   return 0;
 }
 
+/**
+ * Saves designed definitions to the team.
+ *
+ * Agents before workflows, whatever order the files were given in: a workflow
+ * naming an agent that is not on the server yet is refused, and having to
+ * discover that by reading an error is a worse experience than the tool simply
+ * knowing which goes first. The kind comes from the extension and the id from
+ * the filename, because that is how the dashboard names them too.
+ */
+async function cmdPush(args: Args): Promise<number> {
+  const files = args.positional;
+  if (!files.length) die("usage: gate push <file…>   (.md is an agent, .yaml a workflow)");
+
+  const client = connect();
+  const config = readConfig()!;
+  await teamOf(client, config);
+
+  const items = files.map((file) => {
+    const name = basename(file);
+    const kind: "agent" | "workflow" = name.endsWith(".md") ? "agent" : "workflow";
+    if (!/\.(md|ya?ml)$/.test(name)) die(`${file}: expected a .md agent or a .yaml workflow`);
+    return { kind, id: name.replace(/\.(md|ya?ml)$/, ""), file };
+  });
+  // Agents first — a workflow that names one is validated against what is
+  // already there.
+  items.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "agent" ? -1 : 1));
+
+  let failed = 0;
+  for (const item of items) {
+    let source: string;
+    try {
+      source = readFileSync(item.file, "utf8");
+    } catch (e) {
+      console.error(`${item.file}: ${(e as Error).message}`);
+      failed++;
+      continue;
+    }
+    try {
+      const res = await client.saveDefinition({
+        kind: item.kind,
+        id: item.id,
+        source,
+        replace: args.flags.replace === true,
+      });
+      console.log(`${res.replaced ? "replaced" : "saved"} ${item.kind} ${item.id}`);
+    } catch (e) {
+      // Named and counted, then on to the next: one workflow that will not
+      // validate should not strand the four agents behind it.
+      console.error(`${item.kind} ${item.id}: ${(e as Error).message}`);
+      failed++;
+    }
+  }
+  if (!failed) console.log("`gate list` now shows them, on every machine on your team");
+  return failed ? 1 : 0;
+}
+
 async function cmdPull(): Promise<number> {
   const client = connect();
   const config = readConfig()!;
@@ -503,6 +560,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdAgents();
       case "show":
         return await cmdShow(args);
+      case "push":
+        return await cmdPush(args);
       case "run":
         return await cmdRun(args);
       case "repo":

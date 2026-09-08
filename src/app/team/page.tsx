@@ -55,6 +55,8 @@ export default function TeamPage() {
   const [name, setName] = useState("");
   const [teamId, setTeamId] = useState("default");
   const [issued, setIssued] = useState<{ userId: string; key: string } | null>(null);
+  /** Whether the next key issued may write the team's definitions. */
+  const [canAuthor, setCanAuthor] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -109,7 +111,11 @@ export default function TeamPage() {
   async function issueKey(user: User) {
     setError(null);
     try {
-      const data = await post("/api/keys", { name: `${user.email}`, userId: user.id });
+      const data = await post("/api/keys", {
+        name: `${user.email}`,
+        userId: user.id,
+        scopes: canAuthor ? ["gateway", "workflows", "author"] : undefined,
+      });
       setIssued({ userId: user.id, key: data.plaintext });
       await load();
     } catch (e) {
@@ -187,6 +193,13 @@ export default function TeamPage() {
       <Card className="space-y-4 p-4">
         <div className="flex items-center gap-2 text-sm font-medium">
           <UserPlus className="size-4" /> People
+          {/* Reading the team's definitions is what everyone needs; writing
+              them is a decision about the team's pipelines, so it is asked for
+              rather than assumed. */}
+          <label className="ml-auto flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+            <input type="checkbox" checked={canAuthor} onChange={(e) => setCanAuthor(e.target.checked)} />
+            New keys may author definitions (<code>/gate-design</code>)
+          </label>
         </div>
         <div className="flex flex-wrap gap-2">
           <Input
@@ -281,6 +294,7 @@ export default function TeamPage() {
                     {theirKeys.map((k) => (
                       <div key={k.id} className="flex items-center gap-3 text-xs text-muted-foreground">
                         <code>{k.prefix}…</code>
+                        {k.scopes.includes("author") && <Badge variant="outline">author</Badge>}
                         {k.revoked && <Badge variant="destructive">revoked</Badge>}
                         <span>{k.lastUsedAt ? `last used ${new Date(k.lastUsedAt).toLocaleString()}` : "never used"}</span>
                         {k.lastHost && <span>from {k.lastHost}</span>}

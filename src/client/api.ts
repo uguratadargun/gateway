@@ -184,6 +184,20 @@ export class GateClient {
     return res.body;
   }
 
+  /** Writes one definition into the caller's team. Needs a key with `author`. */
+  async saveDefinition(input: {
+    kind: "agent" | "workflow";
+    id: string;
+    source: string;
+    replace?: boolean;
+  }): Promise<{ saved: boolean; replaced: boolean; name: string }> {
+    const res = await this.request<{ saved: boolean; replaced: boolean; name: string }>("/api/v1/definitions", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return res.body;
+  }
+
   async listRuns(limit = 20): Promise<Array<Record<string, any>>> {
     const res = await this.request<{ executions: Array<Record<string, any>> }>(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;

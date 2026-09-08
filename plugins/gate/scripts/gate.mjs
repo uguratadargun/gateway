@@ -6,9 +6,9 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { mkdirSync as mkdirSync8, writeFileSync as writeFileSync6 } from "node:fs";
+import { mkdirSync as mkdirSync8, readFileSync as readFileSync6, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join9, resolve as resolve6 } from "node:path";
+import { basename, join as join9, resolve as resolve6 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
@@ -7758,6 +7758,14 @@ var GateClient = class {
     );
     return res.body;
   }
+  /** Writes one definition into the caller's team. Needs a key with `author`. */
+  async saveDefinition(input) {
+    const res = await this.request("/api/v1/definitions", {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+    return res.body;
+  }
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
@@ -9043,6 +9051,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate list                                     what you can run, and what it needs
   gate agents                                   the agents your team's pipelines use
   gate show <workflow|agent-id>                 print a definition as it is on the server
+  gate push <file\u2026> [--replace]                 save definitions to your team (needs an author key)
   gate run <workflow> [task\u2026]                   run one here, in this repository
        --input key=value                        (repeat for more than one input)
        --yes                                    skip the first-run approval prompt
@@ -9230,6 +9239,45 @@ async function cmdShow(args) {
   }
   return 0;
 }
+async function cmdPush(args) {
+  const files = args.positional;
+  if (!files.length) die("usage: gate push <file\u2026>   (.md is an agent, .yaml a workflow)");
+  const client = connect();
+  const config = readConfig();
+  await teamOf(client, config);
+  const items = files.map((file) => {
+    const name = basename(file);
+    const kind = name.endsWith(".md") ? "agent" : "workflow";
+    if (!/\.(md|ya?ml)$/.test(name)) die(`${file}: expected a .md agent or a .yaml workflow`);
+    return { kind, id: name.replace(/\.(md|ya?ml)$/, ""), file };
+  });
+  items.sort((a, b) => a.kind === b.kind ? 0 : a.kind === "agent" ? -1 : 1);
+  let failed = 0;
+  for (const item of items) {
+    let source;
+    try {
+      source = readFileSync6(item.file, "utf8");
+    } catch (e) {
+      console.error(`${item.file}: ${e.message}`);
+      failed++;
+      continue;
+    }
+    try {
+      const res = await client.saveDefinition({
+        kind: item.kind,
+        id: item.id,
+        source,
+        replace: args.flags.replace === true
+      });
+      console.log(`${res.replaced ? "replaced" : "saved"} ${item.kind} ${item.id}`);
+    } catch (e) {
+      console.error(`${item.kind} ${item.id}: ${e.message}`);
+      failed++;
+    }
+  }
+  if (!failed) console.log("`gate list` now shows them, on every machine on your team");
+  return failed ? 1 : 0;
+}
 async function cmdPull() {
   const client = connect();
   const config = readConfig();
@@ -9402,6 +9450,8 @@ async function main(argv) {
         return await cmdAgents();
       case "show":
         return await cmdShow(args);
+      case "push":
+        return await cmdPush(args);
       case "run":
         return await cmdRun(args);
       case "repo":

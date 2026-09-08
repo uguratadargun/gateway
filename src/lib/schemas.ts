@@ -108,7 +108,7 @@ export const createKeySchema = z.object({
   /** The person this key is for. Omitted keeps the pre-multi-user behaviour. */
   userId: z.string().min(1).max(64).optional(),
   teamId: z.string().min(1).max(64).optional(),
-  scopes: z.array(z.enum(["gateway", "workflows"])).min(1).optional(),
+  scopes: z.array(z.enum(["gateway", "workflows", "author"])).min(1).optional(),
 });
 
 export const createTeamSchema = z.object({

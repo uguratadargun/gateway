@@ -119,8 +119,11 @@ existed before teams belongs to `default`, and an install that had
 `~/.gate/agents` and `~/.gate/workflows` has them moved under it on first read —
 a single-person gate keeps working with nothing to do.
 
-Keys carry scopes: `gateway` (model calls) and `workflows` (pull definitions,
-report runs). A key for a third-party tool can be issued `gateway` only.
+Keys carry scopes: `gateway` (model calls), `workflows` (pull definitions,
+report runs) and `author` (write them). A key for a third-party tool can be
+issued `gateway` only. `author` is off by default and ticked deliberately when
+the key is issued: reading a team's definitions is what everyone on it needs,
+writing them is a decision about that team's pipelines.
 
 ## Storage
 
@@ -782,14 +785,19 @@ found. It is given the authoring reference
 formats, and it is told to reuse the agents you already have instead of
 producing near-duplicates.
 
-It writes the proposal to `.gate-proposal/` and hands it over rather than
-saving it: definitions belong to the team, and a machine that can only mirror
-them is not the place to author them. You add them from **Agents** and
-**Workflows** in the dashboard, where the server parses and validates each one
-before it reaches disk — a wrong definition comes back as `prompt references
-undeclared input: nobody.field` or `node "check" references unknown agent
-"does-not-exist"` and gets fixed, rather than failing mid-run. Then `gate pull`
-puts it on every machine on the team.
+It writes the proposal to `.gate-proposal/` and then saves it with `gate push
+.gate-proposal/*.md .gate-proposal/*.yaml` — agents before workflows whatever
+order you list them in, because a workflow naming an agent the server does not
+have yet is refused. That refusal is the point: every push goes through the
+same validation the dashboard's editor does, so a wrong definition comes back
+as `prompt references undeclared input: nobody.field` or `node "check"
+references unknown agent "does-not-exist"` and gets fixed, rather than failing
+mid-run. An id that already exists needs `--replace`, so a generated name
+cannot quietly overwrite an agent you tuned.
+
+Pushing needs a key with the `author` scope; a key without it is told so
+(`SCOPE_MISSING`) rather than being left to wonder. Everyone else on the team
+has the new pipeline at their next `gate` command.
 
 ## Files
 
