@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { ensureDefaultWorkflows } from "@/workflows/defaults";
-import { listAgents, readAgentSource } from "@/agents/registry";
+import { inheritedAgents, listAgents, readAgentSource } from "@/agents/registry";
 import { getAgent } from "@/agents/registry";
 import { requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { requiredRunInputs } from "@/workflows/inputs";
-import { listWorkflows, readWorkflowSource } from "@/workflows/registry";
+import { inheritedWorkflows, listWorkflows, readWorkflowSource } from "@/workflows/registry";
 
 export const runtime = "nodejs";
 
@@ -35,12 +35,17 @@ export async function GET(req: Request) {
   // the dashboard does on first visit.
   ensureDefaultWorkflows(scope);
 
-  const agents = listAgents(scope).agents.map((a) => {
+  // Own first, then what the team inherits from the default team's library.
+  // The client writes them into one directory, which is the right shape there:
+  // a machine running a pipeline does not care whose it is, only that the
+  // agents it names resolve — and by this point they do.
+  const agents = [...listAgents(scope).agents, ...inheritedAgents(scope)].map((a) => {
     const source = readAgentSource(a.id, scope);
     return { id: a.id, name: a.name, source, sha: sha(source) };
   });
 
-  const { workflows, errors } = listWorkflows(scope);
+  const { workflows: own, errors } = listWorkflows(scope);
+  const workflows = [...own, ...inheritedWorkflows(scope)];
   const bundled = workflows.map((wf) => {
     const source = readWorkflowSource(wf.id, scope);
     return {

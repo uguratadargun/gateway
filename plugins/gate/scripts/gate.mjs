@@ -24,8 +24,10 @@ function gateHome() {
   return process.env.GATE_HOME || join(homedir(), ".gate");
 }
 function teamScope(teamId = DEFAULT_TEAM) {
-  if (teamId === DEFAULT_TEAM) migrateLegacyDefinitions();
-  return { root: join(gateHome(), "teams", teamId), teamId };
+  migrateLegacyDefinitions();
+  const root = join(gateHome(), "teams", teamId);
+  if (teamId === DEFAULT_TEAM) return { root, teamId };
+  return { root, teamId, fallback: { root: join(gateHome(), "teams", DEFAULT_TEAM), teamId: DEFAULT_TEAM } };
 }
 function scopeAt(root, teamId) {
   return { root, teamId };
@@ -7070,17 +7072,23 @@ function listAgents(scope = teamScope()) {
   }
   return { agents, errors };
 }
+function resolveFile(id, scope) {
+  const own = pathFor(id, scope);
+  if (existsSync3(own)) return own;
+  if (scope.fallback) return resolveFile(id, scope.fallback);
+  return null;
+}
 function getAgent(id, scope = teamScope()) {
-  const file = pathFor(id, scope);
-  if (!existsSync3(file)) throw new AgentDefinitionError("agent not found", id);
+  const file = resolveFile(id, scope);
+  if (!file) throw new AgentDefinitionError("agent not found", id);
   return loadFile(id, file);
 }
 function agentExists(id, scope = teamScope()) {
-  return existsSync3(pathFor(id, scope));
+  return resolveFile(id, scope) !== null;
 }
 function readAgentSource(id, scope = teamScope()) {
-  const file = pathFor(id, scope);
-  if (!existsSync3(file)) throw new AgentDefinitionError("agent not found", id);
+  const file = resolveFile(id, scope);
+  if (!file) throw new AgentDefinitionError("agent not found", id);
   return readFileSync2(file, "utf8");
 }
 
@@ -7561,24 +7569,31 @@ function pathFor2(id, scope) {
 var cache2 = /* @__PURE__ */ new Map();
 function loadFile2(id, file, scope) {
   const stat = statSync3(file);
-  const hit = cache2.get(file);
+  const key = `${scope.teamId ?? scope.root}\0${file}`;
+  const hit = cache2.get(key);
   if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
   const def = parseWorkflow(id, readFileSync3(file, "utf8"), {
     sourcePath: file,
     updatedAt: stat.mtimeMs,
     agentExists: (agentId) => agentExists(agentId, scope)
   });
-  cache2.set(file, { mtimeMs: stat.mtimeMs, def });
+  cache2.set(key, { mtimeMs: stat.mtimeMs, def });
   return def;
 }
+function resolveFile2(id, scope) {
+  const own = pathFor2(id, scope);
+  if (existsSync4(own)) return own;
+  if (scope.fallback) return resolveFile2(id, scope.fallback);
+  return null;
+}
 function getWorkflow(id, scope = teamScope()) {
-  const file = pathFor2(id, scope);
-  if (!existsSync4(file)) throw invalid2(id, "workflow not found");
+  const file = resolveFile2(id, scope);
+  if (!file) throw invalid2(id, "workflow not found");
   return loadFile2(id, file, scope);
 }
 function readWorkflowSource(id, scope = teamScope()) {
-  const file = pathFor2(id, scope);
-  if (!existsSync4(file)) throw invalid2(id, "workflow not found");
+  const file = resolveFile2(id, scope);
+  if (!file) throw invalid2(id, "workflow not found");
   return readFileSync3(file, "utf8");
 }
 
@@ -7766,6 +7781,18 @@ var GateClient = class {
     });
     return res.body;
   }
+  /**
+   * Deletes every definition the caller's team owns. The team's own id is sent
+   * back as the confirmation, so this cannot be reached by a stray request.
+   */
+  async wipeTeamDefinitions() {
+    const me = await this.me();
+    const res = await this.request(
+      `/api/v1/definitions?confirm=${encodeURIComponent(me.team.id)}`,
+      { method: "DELETE" }
+    );
+    return res.body;
+  }
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
@@ -7879,6 +7906,25 @@ function prune(dir, keep) {
   for (const entry of readdirSync4(dir)) {
     if (!keep.has(entry)) rmSync3(join7(dir, entry), { force: true });
   }
+}
+function clearLocalState() {
+  const removed = [];
+  const cache3 = join7(gateHome2(), "cache");
+  if (existsSync5(cache3)) {
+    rmSync3(cache3, { recursive: true, force: true });
+    removed.push(`removed the mirrored definitions (${cache3})`);
+  }
+  const config = join7(gateHome2(), "client.json");
+  if (existsSync5(config)) {
+    rmSync3(config, { force: true });
+    removed.push(`removed the login and its approvals (${config})`);
+  }
+  const workspaces = join7(gateHome2(), "workspaces");
+  if (existsSync5(workspaces)) {
+    const kept = readdirSync4(workspaces).length;
+    if (kept) removed.push(`kept ${kept} run worktree(s) in ${workspaces} \u2014 they are branches, not cache`);
+  }
+  return removed.length ? removed : ["nothing to remove \u2014 this machine was not connected"];
 }
 
 // src/client/run.ts
@@ -9057,6 +9103,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
   gate repo [<id> <path>]                       point a pinned repository at your clone
+  gate reset [--team]                           disconnect this machine (or wipe the team's definitions)
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
 
@@ -9096,7 +9143,7 @@ function connect() {
   const config = readConfig();
   if (!config) {
     die(
-      "not connected \u2014 run `/gate-login <token>` in Claude Code, with the token from your gate dashboard's Team page (or `gate login <token>` in a terminal)"
+      "not connected \u2014 run `/gate:login <token>` in Claude Code, with the token from your gate dashboard's Team page (or `gate login <token>` in a terminal)"
     );
   }
   return new GateClient(config);
@@ -9137,7 +9184,7 @@ async function cmdLogin(args) {
   if (token) {
     if (!looksLikeConnectionToken(token)) {
       die(
-        token.startsWith("gate_") ? "that is an API key, not a connection token \u2014 copy the whole `/gate-login \u2026` line from your dashboard, or pass --url and --key" : `that does not look like a gate token: ${token.slice(0, 12)}\u2026`
+        token.startsWith("gate_") ? "that is an API key, not a connection token \u2014 copy the whole `/gate:login \u2026` line from your dashboard, or pass --url and --key" : `that does not look like a gate token: ${token.slice(0, 12)}\u2026`
       );
     }
     try {
@@ -9408,6 +9455,37 @@ function cmdRepo(args) {
   console.log(`${id} \u2192 ${resolve6(path)}`);
   return 0;
 }
+async function cmdReset(args) {
+  const wipeTeam = args.flags.team === true;
+  if (wipeTeam) {
+    const client = connect();
+    const config = readConfig();
+    const team = await teamOf(client, config);
+    const manifest = readManifest(team);
+    const count = manifest?.workflows.length ?? 0;
+    if (!process.stdin.isTTY) {
+      die("refusing to delete a team's definitions unattended \u2014 run this in a terminal");
+    }
+    console.error(
+      `This deletes every agent and workflow team "${team}" owns (${count} workflow(s)), for everyone on it.`
+    );
+    console.error("Runs already recorded, their worktrees and your API keys are not touched.");
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    const answer = (await rl.question(`Type the team name to confirm: `)).trim();
+    rl.close();
+    if (answer !== team) {
+      console.log("nothing deleted");
+      return 1;
+    }
+    const removed2 = await client.wipeTeamDefinitions();
+    console.log(`deleted ${removed2.agents} agent(s) and ${removed2.workflows} workflow(s) from team ${team}`);
+    console.log("(anything the default team shares is untouched \u2014 it is not this team's to delete)");
+  }
+  const removed = clearLocalState();
+  for (const line of removed) console.log(line);
+  console.log("this machine is disconnected \u2014 `/gate:login <token>` connects it again");
+  return 0;
+}
 async function cmdStatus(args) {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -9456,6 +9534,8 @@ async function main(argv) {
         return await cmdRun(args);
       case "repo":
         return cmdRepo(args);
+      case "reset":
+        return await cmdReset(args);
       case "status":
         return await cmdStatus(args);
       case "cancel":
@@ -9473,7 +9553,7 @@ ${USAGE}`);
     }
   } catch (e) {
     if (e instanceof GateApiError) {
-      const hint = e.code === "NO_API_KEY" || e.code === "INVALID_API_KEY" ? "\nRun `/gate-login <token>` with the token from your dashboard's Team page." : "";
+      const hint = e.code === "NO_API_KEY" || e.code === "INVALID_API_KEY" ? "\nRun `/gate:login <token>` with the token from your dashboard's Team page." : "";
       console.error(`${e.message}${hint}`);
       return 1;
     }

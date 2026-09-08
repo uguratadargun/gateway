@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { WorkflowError } from "@/runtime/errors";
-import { scopeFromRequest, teamScope } from "@/lib/def-root";
+import { ownScope, scopeFromRequest, teamScope } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
 import { deleteWorkflow, readWorkflowSource, saveWorkflow, workflowExists } from "@/workflows/registry";
 
@@ -32,7 +32,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (target.id === from.teamId) return NextResponse.json({ error: "it is already in that team" }, { status: 400 });
 
   const to = teamScope(target.id);
-  if (workflowExists(id, to)) {
+  // Owns one, not merely inherits one: a team may shadow a shared workflow,
+  // and refusing that would make the default team's library a set of reserved
+  // names.
+  if (workflowExists(id, ownScope(to))) {
     return NextResponse.json({ error: `${target.name} already has a workflow called "${id}"` }, { status: 409 });
   }
 

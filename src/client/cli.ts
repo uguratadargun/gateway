@@ -10,12 +10,12 @@ import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
-import { cacheScope, readManifest, writeBundle, type Manifest } from "./cache";
+import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
 import { runLocal } from "./run";
 
 /**
- * `gate` — the command a developer runs, and what /gate-run calls.
+ * `gate` — the command a developer runs, and what /gate:run calls.
  *
  * It connects with the person's own API key, mirrors their team's definitions
  * onto this machine, and runs one of them here: this process is the engine,
@@ -39,6 +39,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
   gate repo [<id> <path>]                       point a pinned repository at your clone
+  gate reset [--team]                           disconnect this machine (or wipe the team's definitions)
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
 
@@ -100,7 +101,7 @@ function connect(): GateClient {
   const config = readConfig();
   if (!config) {
     die(
-      "not connected — run `/gate-login <token>` in Claude Code, with the token from your gate dashboard's Team page " +
+      "not connected — run `/gate:login <token>` in Claude Code, with the token from your gate dashboard's Team page " +
         "(or `gate login <token>` in a terminal)",
     );
   }
@@ -168,7 +169,7 @@ async function cmdLogin(args: Args): Promise<number> {
       // worth naming rather than reporting a malformed token.
       die(
         token.startsWith("gate_")
-          ? "that is an API key, not a connection token — copy the whole `/gate-login …` line from your dashboard, or pass --url and --key"
+          ? "that is an API key, not a connection token — copy the whole `/gate:login …` line from your dashboard, or pass --url and --key"
           : `that does not look like a gate token: ${token.slice(0, 12)}…`,
       );
     }
@@ -197,7 +198,7 @@ async function cmdLogin(args: Args): Promise<number> {
  * Puts `gate` on the PATH.
  *
  * The plugin ships one bundled script and Claude Code invokes it by absolute
- * path, which is all `/gate-run` needs — but everything written down for a
+ * path, which is all `/gate:run` needs — but everything written down for a
  * person to type ("gate login", the command the dashboard hands them) assumes
  * a `gate` that exists. A three-line shim is the whole of making the two
  * agree; it points at this exact bundle, so a plugin update moves with it.
@@ -273,7 +274,7 @@ async function cmdAgents(): Promise<number> {
   return 0;
 }
 
-/** The definition itself — what /gate-design reads before proposing a change to it. */
+/** The definition itself — what /gate:design reads before proposing a change to it. */
 async function cmdShow(args: Args): Promise<number> {
   const [id] = args.positional;
   if (!id) die("usage: gate show <workflow-id|agent-id>");
@@ -422,7 +423,7 @@ function parseInputs(flags: Args["flags"], trailing: string[]): Record<string, u
     }
   }
   // Everything after the workflow id is the task, which is what nearly every
-  // pipeline's single input is called — and what /gate-run passes.
+  // pipeline's single input is called — and what /gate:run passes.
   const task = trailing.join(" ").trim();
   if (task && input.task === undefined) input.task = task;
   return input;
@@ -514,6 +515,54 @@ function cmdRepo(args: Args): number {
   return 0;
 }
 
+/**
+ * Puts this machine back to how it was before anyone logged in.
+ *
+ * Local by default, and that is the whole of it: the login, the mirror, and the
+ * approvals this person gave for running workflows here. Nothing anyone else
+ * can see changes — the definitions are the team's and stay on the server.
+ *
+ * `--team` is the other thing people mean by "reset" and is deliberately not
+ * the default: it deletes what the team runs, for everyone on it. It asks for
+ * the team's name to be typed back, because a list of pipelines is not
+ * something to lose to a fast Enter.
+ */
+async function cmdReset(args: Args): Promise<number> {
+  const wipeTeam = args.flags.team === true;
+
+  if (wipeTeam) {
+    const client = connect();
+    const config = readConfig()!;
+    const team = await teamOf(client, config);
+    const manifest = readManifest(team);
+    const count = manifest?.workflows.length ?? 0;
+
+    if (!process.stdin.isTTY) {
+      die("refusing to delete a team's definitions unattended — run this in a terminal");
+    }
+    console.error(
+      `This deletes every agent and workflow team "${team}" owns (${count} workflow(s)), for everyone on it.`,
+    );
+    console.error("Runs already recorded, their worktrees and your API keys are not touched.");
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    const answer = (await rl.question(`Type the team name to confirm: `)).trim();
+    rl.close();
+    if (answer !== team) {
+      console.log("nothing deleted");
+      return 1;
+    }
+    const removed = await client.wipeTeamDefinitions();
+    console.log(`deleted ${removed.agents} agent(s) and ${removed.workflows} workflow(s) from team ${team}`);
+    console.log("(anything the default team shares is untouched — it is not this team's to delete)");
+  }
+
+  // Local, always: after wiping the team there is nothing left to mirror.
+  const removed = clearLocalState();
+  for (const line of removed) console.log(line);
+  console.log("this machine is disconnected — `/gate:login <token>` connects it again");
+  return 0;
+}
+
 async function cmdStatus(args: Args): Promise<number> {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -566,6 +615,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdRun(args);
       case "repo":
         return cmdRepo(args);
+      case "reset":
+        return await cmdReset(args);
       case "status":
         return await cmdStatus(args);
       case "cancel":
@@ -584,7 +635,7 @@ export async function main(argv: string[]): Promise<number> {
       // The server's own words, with the one hint that is not in them.
       const hint =
         e.code === "NO_API_KEY" || e.code === "INVALID_API_KEY"
-          ? "\nRun `/gate-login <token>` with the token from your dashboard's Team page."
+          ? "\nRun `/gate:login <token>` with the token from your dashboard's Team page."
           : "";
       console.error(`${e.message}${hint}`);
       return 1;

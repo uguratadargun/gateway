@@ -20,7 +20,7 @@ import { getDb } from "./db";
  *
  * `author` is deliberately not part of what a key gets by default: reading a
  * team's definitions is what everyone on it needs, and writing them is a
- * decision about that team's pipelines. Someone designing one — `/gate-design`
+ * decision about that team's pipelines. Someone designing one — `/gate:design`
  * on their own machine — is given it on purpose.
  */
 export type KeyScope = "gateway" | "workflows" | "author";

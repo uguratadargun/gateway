@@ -160,7 +160,7 @@ export default function TeamPage() {
       <div>
         <h1 className="text-xl font-semibold">Team</h1>
         <p className="text-sm text-muted-foreground">
-          Each person gets a key. They paste one <code>/gate-login</code> line into Claude Code, and their team&apos;s
+          Each person gets a key. They paste one <code>/gate:login</code> line into Claude Code, and their team&apos;s
           workflows run on their own machine — through this gateway.
         </p>
       </div>
@@ -198,7 +198,7 @@ export default function TeamPage() {
               rather than assumed. */}
           <label className="ml-auto flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
             <input type="checkbox" checked={canAuthor} onChange={(e) => setCanAuthor(e.target.checked)} />
-            New keys may author definitions (<code>/gate-design</code>)
+            New keys may author definitions (<code>/gate:design</code>)
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -264,14 +264,14 @@ export default function TeamPage() {
                         so nothing has to be typed twice or in the right order. */}
                     <div className="flex items-center gap-2">
                       <code className="flex-1 truncate rounded bg-background px-2 py-1 text-xs">
-                        /gate-login {encodeConnectionToken({ url: origin, key: issued.key })}
+                        /gate:login {encodeConnectionToken({ url: origin, key: issued.key })}
                       </code>
                       <Button
                         variant="outline"
                         size="icon"
                         onClick={() =>
                           navigator.clipboard.writeText(
-                            `/gate-login ${encodeConnectionToken({ url: origin, key: issued.key })}`,
+                            `/gate:login ${encodeConnectionToken({ url: origin, key: issued.key })}`,
                           )
                         }
                         aria-label="Copy command"
@@ -281,7 +281,7 @@ export default function TeamPage() {
                     </div>
                     <p className="text-xs text-muted-foreground">
                       They install the <code>gate</code> plugin in Claude Code and paste that line. It connects this
-                      machine and pulls your team&apos;s workflows; after it, <code>/gate-run</code> runs them on their
+                      machine and pulls your team&apos;s workflows; after it, <code>/gate:run</code> runs them on their
                       own machine. The raw key is <code>{issued.key}</code> if they need it for a tool that wants one.
                     </p>
                   </div>

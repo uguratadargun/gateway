@@ -198,6 +198,19 @@ export class GateClient {
     return res.body;
   }
 
+  /**
+   * Deletes every definition the caller's team owns. The team's own id is sent
+   * back as the confirmation, so this cannot be reached by a stray request.
+   */
+  async wipeTeamDefinitions(): Promise<{ agents: number; workflows: number }> {
+    const me = await this.me();
+    const res = await this.request<{ agents: number; workflows: number }>(
+      `/api/v1/definitions?confirm=${encodeURIComponent(me.team.id)}`,
+      { method: "DELETE" },
+    );
+    return res.body;
+  }
+
   async listRuns(limit = 20): Promise<Array<Record<string, any>>> {
     const res = await this.request<{ executions: Array<Record<string, any>> }>(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;

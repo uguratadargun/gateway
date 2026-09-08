@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { ensureDefaultAgents } from "@/agents/defaults";
 import { AgentDefinitionError } from "@/agents/loader";
-import { listAgents, saveAgent } from "@/agents/registry";
+import { inheritedAgents, listAgents, saveAgent } from "@/agents/registry";
 import { scopeFromRequest } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
 
@@ -16,7 +16,10 @@ const scopeOf = (req: Request) => scopeFromRequest(req, (id) => !!getTeam(id));
 export async function GET(req: Request) {
   const scope = scopeOf(req);
   ensureDefaultAgents(scope);
-  return NextResponse.json(listAgents(scope));
+  // `inherited` is what this team can use but does not own: the default team's
+  // library, minus anything this team has replaced. Read-only here — it is
+  // edited where it lives.
+  return NextResponse.json({ ...listAgents(scope), inherited: inheritedAgents(scope) });
 }
 
 export async function POST(req: Request) {

@@ -18,9 +18,9 @@ git clone https://github.com/uguratadargun/gateway.git
 ```
 
 The repository is also a Claude Code **marketplace** carrying one plugin, `gate`
-— `/gate-run` pulls your team's workflows and runs one **on your own machine**,
+— `/gate:run` pulls your team's workflows and runs one **on your own machine**,
 in a worktree of the repository you are in, with every model call still going
-through your gate; `/gate-design` designs one for that repository
+through your gate; `/gate:design` designs one for that repository
 ([details](#from-claude-code--runs-happen-on-your-machine)):
 
 ```
@@ -283,7 +283,7 @@ Practical notes:
 - **Analytics** — `/analytics`, tokens/cost/requests over time by tier, per-model breakdown, table view.
 - **Live tail + export** — SSE activity feed on `/traffic`; usage/traffic export as CSV/JSON.
 - **Agent workflows** — `/workflows`, a graph orchestrator that runs Markdown-defined agents through the gateway: conditional loops, parallel branches, file/command tools in a per-run git worktree, and a live node view.
-- **Runs on your own machine** — `gate run` (and `/gate-run`) executes the same workflow in your terminal, in a worktree of the repo you are in, with the model calls, the history and the live view still on the server.
+- **Runs on your own machine** — `gate run` (and `/gate:run`) executes the same workflow in your terminal, in a worktree of the repo you are in, with the model calls, the history and the live view still on the server.
 - **Teams and keys** — `/team`, a person per key, a team per set of definitions; revoke a key or disable a person and their access stops.
 
 Everything is configurable from the dashboard (persisted to `~/.gate/settings.json`).
@@ -439,7 +439,7 @@ workspace: {}                       # which repository comes from the run
 `repo` is deliberately not part of the pipeline: a workflow describes *how* work
 is done, and the project it is done in is a property of the run. Leave the
 workspace empty and `repo` becomes a required run input — the run box pre-fills
-it, and the `gate` plugin's `/gate-run` defaults it to the directory
+it, and the `gate` plugin's `/gate:run` defaults it to the directory
 you are working in, so the same pipeline serves every project. Pin one when a
 pipeline only ever makes sense for a single repository:
 
@@ -670,7 +670,7 @@ calls, and keeping the history.
 Then, once per machine, one line — the `/team` page hands it over ready to send:
 
 ```
-/gate-login gatec_eyJ1IjoiaHR0cHM6Ly9nYXRlLmludGVybmFsIiwiayI6ImdhdGVfL…
+/gate:login gatec_eyJ1IjoiaHR0cHM6Ly9nYXRlLmludGVybmFsIiwiayI6ImdhdGVfL…
 ```
 
 That token carries both the gate's address and the person's key, so there is
@@ -680,8 +680,8 @@ spot. A key pasted where a token goes says so rather than failing as a
 malformed token.
 
 In a terminal the same thing is `gate login <token>` — and `gate install`
-writes a `gate` shim into `~/.local/bin` for it, which `/gate-login` and
-`/gate-run` do not need (they call the bundled script by absolute path).
+writes a `gate` shim into `~/.local/bin` for it, which `/gate:login` and
+`/gate:run` do not need (they call the bundled script by absolute path).
 
 Nothing else is downloaded and nothing is added to `PATH`: the plugin ships one
 bundled Node script (`plugins/gate/scripts/gate.mjs`, built by `npm run
@@ -697,6 +697,8 @@ gate run repo-dev-team "…"      # run it here, in this repository
 gate status                     # your team's recent runs, and where each ran
 gate cancel <execution-id>      # ask one to stop, wherever it is running
 gate pull                       # refresh the mirror by hand (every command does it anyway)
+gate push <file…>               # save designed definitions to your team (needs an author key)
+gate reset [--team]             # disconnect this machine (or wipe what the team owns)
 ```
 
 What travels where:
@@ -716,7 +718,7 @@ What travels where:
   about once a second, so `/executions/<id>` animates a run on your laptop the
   same way it animates one of its own, and the history is in the same table.
 - **The work stays here.** The worktree is on your disk, on its own branch, from
-  *your* HEAD — so `/gate-run` is safe to start mid-task, and the diff is
+  *your* HEAD — so `/gate:run` is safe to start mid-task, and the diff is
   something you can review with `git` immediately. It is uploaded once when the
   run ends, so the dashboard can show what it did.
 
@@ -770,14 +772,14 @@ CLI lists what it will run and asks. The approval is recorded against the
 definition's hash, so an edited workflow asks again; `--yes` skips it for
 unattended use.
 
-`/gate-run` alone offers the list; `/gate-run repo-dev-team fix the flaky test`
+`/gate:run` alone offers the list; `/gate:run repo-dev-team fix the flaky test`
 starts that one and follows it to the end. A workflow that takes a `repo` input
 defaults to the repository you are standing in (`--input repo=…` to aim it
 elsewhere).
 
 ### Designing a pipeline for a repository
 
-`/gate-design <what it should do>` is the other half: Claude Code reads the
+`/gate:design <what it should do>` is the other half: Claude Code reads the
 repository it is in — package manager, real test and lint commands, layout,
 conventions — and proposes a set of agents and a workflow shaped around what it
 found. It is given the authoring reference
@@ -814,4 +816,4 @@ has the new pipeline at their next `gate` command.
 - `src/lib/teams.ts` / `apikeys.ts` / `tenancy.ts` / `def-root.ts` — people, teams, keys-as-identities, and which directory a team's definitions live in
 - `src/app/api/v1/` — the client API: identity, the definition bundle, run registration, progress and stop
 - `src/client/` — the CLI that runs a workflow on a developer's machine: the mirror, the HTTP provider onto the gateway, and the reporter · `scripts/build-cli.mjs` bundles it into the plugin
-- `plugins/gate/` — the Claude Code plugin: `/gate-run`, `/gate-design`, the authoring reference and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
+- `plugins/gate/` — the Claude Code plugin: `/gate:run`, `/gate:design`, the authoring reference and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace

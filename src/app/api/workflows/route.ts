@@ -5,7 +5,7 @@ import { getAgent } from "@/agents/registry";
 import { WorkflowError } from "@/runtime/errors";
 import { ensureDefaultWorkflows } from "@/workflows/defaults";
 import { requiredRunInputs } from "@/workflows/inputs";
-import { listWorkflows, saveWorkflow } from "@/workflows/registry";
+import { inheritedWorkflows, listWorkflows, saveWorkflow } from "@/workflows/registry";
 import { scopeFromRequest } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
 
@@ -24,9 +24,15 @@ export async function GET(req: Request) {
   const scope = scopeOf(req);
   ensureDefaultWorkflows(scope);
   const { workflows, errors } = listWorkflows(scope);
+  const withInputs = (wf: Parameters<typeof requiredRunInputs>[0]) => ({
+    ...wf,
+    inputs: requiredRunInputs(wf, (id) => getAgent(id, scope)),
+  });
   return NextResponse.json({
-    workflows: workflows.map((wf) => ({ ...wf, inputs: requiredRunInputs(wf, (id) => getAgent(id, scope)) })),
+    workflows: workflows.map(withInputs),
     errors,
+    // Runnable by this team, owned by the default team. See the agents route.
+    inherited: inheritedWorkflows(scope).map(withInputs),
   });
 }
 

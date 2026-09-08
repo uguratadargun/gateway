@@ -94,7 +94,7 @@ the result — not "checked", but which items you verified and on which files.
 Anything you had to deviate from, say so and say why. A deviation you can defend
 is fine; a silent one is how a pipeline reaches the user needing hand-editing.
 
-When it is saved, tell the user the workflow id, that `/gate-run <id>` starts it
+When it is saved, tell the user the workflow id, that `/gate:run <id>` starts it
 here, what run input it takes, and that the first run will ask them to approve
 the commands it wants to run on this machine. Everyone else on the team gets it
 at their next `gate` command. Do not start a run yourself unless they ask.

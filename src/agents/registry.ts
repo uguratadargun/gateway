@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { teamScope, type DefinitionScope } from "@/lib/def-root";
+import { ownScope, teamScope, type DefinitionScope } from "@/lib/def-root";
 
 import { AgentDefinitionError, parseAgent } from "./loader";
 import type { AgentDefinition } from "./types";
@@ -60,21 +60,45 @@ export function listAgents(scope: DefinitionScope = teamScope()): {
   return { agents, errors };
 }
 
+/**
+ * The file backing an id: this scope's own, or the one it inherits.
+ *
+ * Own always wins, so a team that writes its own `reviewer` replaces the shared
+ * one for itself and for nobody else.
+ */
+function resolveFile(id: string, scope: DefinitionScope): string | null {
+  const own = pathFor(id, scope);
+  if (existsSync(own)) return own;
+  if (scope.fallback) return resolveFile(id, scope.fallback);
+  return null;
+}
+
 export function getAgent(id: string, scope: DefinitionScope = teamScope()): AgentDefinition {
-  const file = pathFor(id, scope);
-  if (!existsSync(file)) throw new AgentDefinitionError("agent not found", id);
+  const file = resolveFile(id, scope);
+  if (!file) throw new AgentDefinitionError("agent not found", id);
   return loadFile(id, file);
 }
 
 export function agentExists(id: string, scope: DefinitionScope = teamScope()): boolean {
-  return existsSync(pathFor(id, scope));
+  return resolveFile(id, scope) !== null;
 }
 
 /** Raw Markdown source, for the editor. */
 export function readAgentSource(id: string, scope: DefinitionScope = teamScope()): string {
-  const file = pathFor(id, scope);
-  if (!existsSync(file)) throw new AgentDefinitionError("agent not found", id);
+  const file = resolveFile(id, scope);
+  if (!file) throw new AgentDefinitionError("agent not found", id);
   return readFileSync(file, "utf8");
+}
+
+/**
+ * What this scope can use but does not own — the default team's, minus
+ * anything it has replaced. Listed separately because it is read-only here:
+ * editing or deleting it happens where it lives.
+ */
+export function inheritedAgents(scope: DefinitionScope = teamScope()): AgentDefinition[] {
+  if (!scope.fallback) return [];
+  const own = new Set(listAgents(ownScope(scope)).agents.map((a) => a.id));
+  return listAgents(scope.fallback).agents.filter((a) => !own.has(a.id));
 }
 
 /** Validate then write. An invalid definition never reaches disk. */
@@ -88,6 +112,7 @@ export function saveAgent(id: string, raw: string, scope: DefinitionScope = team
   return getAgent(id, scope);
 }
 
+/** Removes the scope's own copy. An inherited agent is not this team's to delete. */
 export function deleteAgent(id: string, scope: DefinitionScope = teamScope()): boolean {
   const file = pathFor(id, scope);
   if (!existsSync(file)) return false;

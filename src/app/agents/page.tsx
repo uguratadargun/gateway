@@ -32,6 +32,8 @@ export default function AgentsPage() {
   const router = useRouter();
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [errors, setErrors] = useState<Array<{ id: string; message: string }>>([]);
+  /** Usable here, owned by the default team. */
+  const [inherited, setInherited] = useState<AgentSummary[]>([]);
   const [usage, setUsage] = useState<Map<string, string[]>>(new Map());
   const [newId, setNewId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +47,7 @@ export default function AgentsPage() {
     const data = await r.json();
     setAgents(data.agents);
     setErrors(data.errors);
+    setInherited(data.inherited ?? []);
     // Which workflows depend on these agents, so deleting one is a warned
     // decision rather than a pipeline that stops parsing later.
     const wr = await fetch(withTeam("/api/workflows", team));
@@ -165,6 +168,26 @@ export default function AgentsPage() {
             ))}
           </ul>
           <p className="mt-2 text-xs text-muted-foreground">Tick one to move or delete it.</p>
+        </Card>
+      )}
+
+      {inherited.length > 0 && (
+        <Card className="p-4">
+          <div className="text-sm font-medium">Shared by the Default team</div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            This team&apos;s workflows may name these; they belong to Default and are edited there. Save one here under
+            the same id to replace it for this team only.
+          </p>
+          <ul className="mt-2 space-y-1 text-sm">
+            {inherited.map((a) => (
+              <li key={a.id} className="flex items-center gap-2">
+                <span className="font-medium">{a.id}</span>
+                <span className="text-xs text-muted-foreground">
+                  {a.name} · {a.model}
+                </span>
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
 

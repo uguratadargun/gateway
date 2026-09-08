@@ -44,6 +44,8 @@ export default function WorkflowsPage() {
   const router = useRouter();
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [errors, setErrors] = useState<Array<{ id: string; message: string }>>([]);
+  /** Runnable here, owned by the default team. */
+  const [inherited, setInherited] = useState<WorkflowSummary[]>([]);
   const [newId, setNewId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,6 +61,7 @@ export default function WorkflowsPage() {
     const data = await r.json();
     setWorkflows(data.workflows);
     setErrors(data.errors);
+    setInherited(data.inherited ?? []);
   }, [team]);
   useEffect(() => {
     if (ready) void load();
@@ -178,6 +181,27 @@ export default function WorkflowsPage() {
           <p className="mt-2 text-xs text-muted-foreground">
             Tick one to move or delete it — an agent it names may have moved to another team.
           </p>
+        </Card>
+      )}
+
+      {inherited.length > 0 && (
+        <Card className="p-4">
+          <div className="text-sm font-medium">Shared by the Default team</div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            This team can run these; they belong to Default and are edited there. Save one here under the same id to
+            replace it for this team only.
+          </p>
+          <ul className="mt-2 space-y-1 text-sm">
+            {inherited.map((w) => (
+              <li key={w.id} className="flex items-center gap-2">
+                <span className="font-medium">{w.id}</span>
+                <span className="text-xs text-muted-foreground">
+                  {w.name}
+                  {w.description ? ` — ${w.description}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
 

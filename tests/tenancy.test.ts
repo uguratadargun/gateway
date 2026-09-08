@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getAgent, listAgents, saveAgent } from "@/agents/registry";
+import { getAgent, inheritedAgents, listAgents, saveAgent } from "@/agents/registry";
 import { createExecution, getExecution } from "@/executions/store";
 import { createKey, resolveKey, revokeKey, type Principal } from "@/lib/apikeys";
 import { decodeConnectionToken, encodeConnectionToken } from "@/lib/connect-token";
@@ -10,7 +10,7 @@ import { isOlderThan, MIN_CLIENT_VERSION, VERSION_HEADERS } from "@/lib/protocol
 import { ownsExecution, requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { createTeam, createUser, updateUser } from "@/lib/teams";
 import { ensureDefaultWorkflows } from "@/workflows/defaults";
-import { listWorkflows, saveWorkflow } from "@/workflows/registry";
+import { deleteWorkflow, getWorkflow, inheritedWorkflows, listWorkflows, saveWorkflow } from "@/workflows/registry";
 
 /**
  * Multi-user gate: a key is a person, a person is in a team, and a team's
@@ -227,5 +227,48 @@ describe("what a new team starts with", () => {
     const scope = teamScope("default");
     ensureDefaultWorkflows(scope);
     expect(listWorkflows(scope).workflows.map((w) => w.id)).toContain("repo-dev-team");
+  });
+});
+
+describe("the default team's library", () => {
+  it("is usable by every team, and a team's own copy wins", () => {
+    createTeam("Borrower", "borrower");
+    const shared = teamScope("default");
+    const borrower = teamScope("borrower");
+
+    saveAgent("house-reviewer", AGENT.replace("Solo", "House"), shared);
+    saveWorkflow(
+      "house-review",
+      `name: House review
+entry: only
+nodes:
+  - id: only
+    type: agent
+    agent: house-reviewer
+    next: done
+  - id: done
+    type: terminal
+`,
+      shared,
+    );
+
+    // Borrowed, not owned: usable, and listed apart from what the team wrote.
+    expect(getAgent("house-reviewer", borrower).name).toBe("House");
+    expect(getWorkflow("house-review", borrower).id).toBe("house-review");
+    expect(listAgents(borrower).agents).toHaveLength(0);
+    expect(inheritedAgents(borrower).map((a) => a.id)).toContain("house-reviewer");
+    expect(inheritedWorkflows(borrower).map((w) => w.id)).toContain("house-review");
+
+    // Its own copy replaces the shared one — for it, and for nobody else.
+    saveAgent("house-reviewer", AGENT.replace("Solo", "Ours"), borrower);
+    expect(getAgent("house-reviewer", borrower).name).toBe("Ours");
+    expect(getAgent("house-reviewer", shared).name).toBe("House");
+    // And it is no longer inherited, because it is no longer borrowed.
+    expect(inheritedAgents(borrower).map((a) => a.id)).not.toContain("house-reviewer");
+  });
+
+  it("does not let a team delete what it only borrows", () => {
+    expect(deleteWorkflow("house-review", teamScope("borrower"))).toBe(false);
+    expect(getWorkflow("house-review", teamScope("default")).id).toBe("house-review");
   });
 });

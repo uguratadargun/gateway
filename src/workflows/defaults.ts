@@ -105,7 +105,7 @@ const REPO_DEV_TEAM = `name: Repo dev team
 description: Plan, implement and test a change inside a per-run git worktree, then review and security-review it in parallel.
 entry: planner
 # Agents work in a git worktree of a real repository, never in the repository
-# itself. Which one is a run input ("repo") — the shell client and /gate-run
+# itself. Which one is a run input ("repo") — the shell client and /gate:run
 # default it to the directory you are in. Pin this pipeline to one project by
 # adding "repo: /path/to/it" here; add "baseRef:" to branch from something
 # other than HEAD, "branchPrefix:" to name the branch differently.

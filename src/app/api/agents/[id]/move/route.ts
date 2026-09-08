@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { AgentDefinitionError } from "@/agents/loader";
 import { agentExists, deleteAgent, readAgentSource, saveAgent } from "@/agents/registry";
-import { scopeFromRequest, teamScope } from "@/lib/def-root";
+import { ownScope, scopeFromRequest, teamScope } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
 import { agentUsage } from "@/workflows/usage";
 import { listWorkflows } from "@/workflows/registry";
@@ -32,7 +32,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (target.id === from.teamId) return NextResponse.json({ error: "it is already in that team" }, { status: 400 });
 
   const to = teamScope(target.id);
-  if (agentExists(id, to)) {
+  if (agentExists(id, ownScope(to))) {
     return NextResponse.json({ error: `${target.name} already has an agent called "${id}"` }, { status: 409 });
   }
 

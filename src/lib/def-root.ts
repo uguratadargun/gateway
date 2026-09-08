@@ -17,6 +17,16 @@ export interface DefinitionScope {
   root: string;
   /** The team these definitions belong to; absent for a client-side cache. */
   teamId?: string;
+  /**
+   * Where else to look for a definition this scope does not have.
+   *
+   * The default team is the house library: agents and pipelines every team can
+   * use, written once. A team's own copy of a name always wins — that is what
+   * makes borrowing safe, because a team can replace anything it inherits
+   * without asking anyone — and nothing here can write to the fallback, so
+   * "whose is this" has one answer.
+   */
+  fallback?: DefinitionScope;
 }
 
 export const DEFAULT_TEAM = "default";
@@ -25,10 +35,17 @@ export function gateHome(): string {
   return process.env.GATE_HOME || join(homedir(), ".gate");
 }
 
-/** A team's definitions on the server. */
+/** A team's definitions on the server, plus what it inherits from the default team. */
 export function teamScope(teamId: string = DEFAULT_TEAM): DefinitionScope {
-  if (teamId === DEFAULT_TEAM) migrateLegacyDefinitions();
-  return { root: join(gateHome(), "teams", teamId), teamId };
+  migrateLegacyDefinitions();
+  const root = join(gateHome(), "teams", teamId);
+  if (teamId === DEFAULT_TEAM) return { root, teamId };
+  return { root, teamId, fallback: { root: join(gateHome(), "teams", DEFAULT_TEAM), teamId: DEFAULT_TEAM } };
+}
+
+/** The same team, without what it inherits — what it owns, and may edit. */
+export function ownScope(scope: DefinitionScope): DefinitionScope {
+  return { root: scope.root, teamId: scope.teamId };
 }
 
 /** Any directory holding `agents/` and `workflows/` — the client cache uses this. */

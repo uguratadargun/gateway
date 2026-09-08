@@ -84,3 +84,30 @@ function prune(dir: string, keep: Set<string>): void {
     if (!keep.has(entry)) rmSync(join(dir, entry), { force: true });
   }
 }
+
+/**
+ * Removes everything this machine holds: the login, the mirror, the approvals.
+ *
+ * Not the worktrees. A run's worktree is work it produced — a branch someone
+ * may still want — and "reset" meaning "delete the output of every run you have
+ * ever done here" is a surprise nobody wants twice.
+ */
+export function clearLocalState(): string[] {
+  const removed: string[] = [];
+  const cache = join(gateHome(), "cache");
+  if (existsSync(cache)) {
+    rmSync(cache, { recursive: true, force: true });
+    removed.push(`removed the mirrored definitions (${cache})`);
+  }
+  const config = join(gateHome(), "client.json");
+  if (existsSync(config)) {
+    rmSync(config, { force: true });
+    removed.push(`removed the login and its approvals (${config})`);
+  }
+  const workspaces = join(gateHome(), "workspaces");
+  if (existsSync(workspaces)) {
+    const kept = readdirSync(workspaces).length;
+    if (kept) removed.push(`kept ${kept} run worktree(s) in ${workspaces} — they are branches, not cache`);
+  }
+  return removed.length ? removed : ["nothing to remove — this machine was not connected"];
+}

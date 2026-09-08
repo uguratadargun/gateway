@@ -5,7 +5,7 @@
  * terminal — a URL and a key — as flags on a command they had to be told about
  * first. Every one of those is a place to mistype something and get an error
  * that does not say which half is wrong. A connection token carries both, so
- * the dashboard hands out one thing and `/gate-login <token>` is the whole of
+ * the dashboard hands out one thing and `/gate:login <token>` is the whole of
  * what anyone types.
  *
  * It is not encryption and does not pretend to be: the key is in there in
