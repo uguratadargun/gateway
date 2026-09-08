@@ -8,7 +8,7 @@ import type { EventSink, WorkflowEvent } from "@/events/types";
 import type { ModelProvider } from "@/providers/types";
 import { costForUsage, tierOf } from "@/lib/pricing";
 import type { SkillDefinition } from "@/skills/types";
-import { findNode, type WorkflowDefinition, type WorkflowNode } from "@/workflows/types";
+import { findNode, skipTargetOf, type WorkflowDefinition, type WorkflowNode } from "@/workflows/types";
 
 import { WorkflowError, type WorkflowErrorCode } from "./errors";
 import { executeAgentNode } from "./executors/agent";
@@ -171,6 +171,18 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
 
       const node = findNode(workflow, currentId);
       if (!node) return halt("WORKFLOW_ROUTING_ERROR", `node "${currentId}" does not exist`, currentId);
+
+      // A node switched off in the workflow file is not run at all: no model
+      // call, no command, no output, no step, nothing spent, and no visit
+      // recorded — `visits.x` counts what ran, and this did not. The run
+      // leaves along one of the node's own edges, so a step turned off changes
+      // what a run does without changing where its graph goes.
+      const skipTo = skipTargetOf(node);
+      if (skipTo) {
+        emit({ type: "edge.selected", executionId, at: now(), from: node.id, to: skipTo, label: "off" });
+        currentId = skipTo;
+        continue;
+      }
 
       if (node.type === "terminal") {
         state.status = node.status;

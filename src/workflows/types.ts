@@ -27,10 +27,31 @@ const baseNode = {
   next: nodeId.optional(),
 };
 
+/**
+ * Switching a step off without taking it out of the graph.
+ *
+ * A `disabled` node is not run at all — no model call, no command, no output,
+ * no step, nothing spent — and the run carries straight on at `skipTo`, which
+ * must be one of the node's own edges: turning a step off changes what a run
+ * does, never where the graph can go. A node with a single edge needs no
+ * `skipTo`; one with several has to say which way a run leaves it, because the
+ * edge that would have decided reads an output nothing produced.
+ *
+ * Only the nodes that do work can be switched off. `condition` and `parallel`
+ * are routing, and a routing node that routes nowhere is a broken graph, not a
+ * paused one; `terminal` is the end of the run.
+ */
+const skippable = {
+  disabled: z.boolean().optional(),
+  /** Which edge a run takes past this node while it is off. */
+  skipTo: nodeId.optional(),
+};
+
 export const workflowNodeSchema = z.discriminatedUnion("type", [
   z
     .object({
       ...baseNode,
+      ...skippable,
       type: z.literal("agent"),
       agent: z.string().min(1).max(64),
       /** Dotted paths this node may read. Defaults to the agent's own declaration. */
@@ -40,6 +61,7 @@ export const workflowNodeSchema = z.discriminatedUnion("type", [
   z
     .object({
       ...baseNode,
+      ...skippable,
       type: z.literal("command"),
       /** argv, never a shell string: the runtime spawns it without a shell. */
       command: z.array(z.string().min(1)).min(1).max(50),
@@ -130,6 +152,19 @@ export interface WorkflowDefinition extends Omit<z.infer<typeof workflowDefiniti
 
 export function findNode(wf: WorkflowDefinition, id: string): WorkflowNode | undefined {
   return wf.nodes.find((n) => n.id === id);
+}
+
+/**
+ * Where a run continues instead of running this node, or null when the node is
+ * not switched off. Validated at load time, so a `disabled` node always has
+ * one: the engine, the session walk and the editor all ask here rather than
+ * each deciding for themselves what "off" routes to.
+ */
+export function skipTargetOf(node: WorkflowNode): string | null {
+  if (node.type !== "agent" && node.type !== "command") return null;
+  if (!node.disabled) return null;
+  if (node.skipTo) return node.skipTo;
+  return node.edges.length === 1 ? node.edges[0].to : null;
 }
 
 /**

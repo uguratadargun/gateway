@@ -131,6 +131,55 @@ export function WorkflowNodeEditor({
         </div>
       </div>
 
+      {(node.type === "agent" || node.type === "command") && (
+        <div className="space-y-2 rounded-md border p-2">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {node.disabled
+                ? "Off — runs walk straight past this step. Nothing is called, nothing is spent, and it produces no output for later nodes to read."
+                : "On — every run does this step."}
+            </p>
+            <Button
+              variant={node.disabled ? "default" : "outline"}
+              size="sm"
+              className="h-7 shrink-0 text-[11px]"
+              onClick={() =>
+                onChange(
+                  node.disabled
+                    ? { disabled: false, skipTo: undefined }
+                    : // Pre-filled rather than left blank: a node with one way
+                      // out needs no answer, and one with several would only
+                      // fail on save if this were left for the user to find.
+                      { disabled: true, skipTo: edges.length > 1 ? (node.skipTo ?? edges[0].to) : undefined },
+                )
+              }
+            >
+              {node.disabled ? "Turn on" : "Turn off"}
+            </Button>
+          </div>
+          {node.disabled && edges.length > 1 && (
+            <Field label="while off, continue at">
+              <select
+                value={node.skipTo ?? ""}
+                onChange={(e) => onChange({ skipTo: e.target.value })}
+                className={cn(selectClass, "font-mono")}
+              >
+                {edges.map((e, i) => (
+                  <option key={`${e.to}-${i}`} value={e.to}>
+                    {e.to}
+                    {e.when ? ` (when ${e.when})` : e.label ? ` (${e.label})` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] leading-snug text-muted-foreground">
+                The edge that would have decided reads this node&rsquo;s output, and there is none while it is off — so the
+                route past it is picked here, from the ones it already has.
+              </p>
+            </Field>
+          )}
+        </div>
+      )}
+
       <Field label="id">
         <Input
           value={idDraft}

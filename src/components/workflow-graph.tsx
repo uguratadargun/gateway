@@ -79,6 +79,8 @@ type CardData = {
   /** This node sends / receives a loop-back edge, which uses its own handles. */
   loopOut: boolean;
   loopIn: boolean;
+  /** Switched off: a run walks past it without doing it. */
+  disabled: boolean;
 };
 
 function NodeCard({ data }: NodeProps) {
@@ -89,6 +91,9 @@ function NodeCard({ data }: NodeProps) {
         "w-[180px] rounded-md border px-3 py-2 text-left shadow-sm",
         KIND_STYLE[d.kind],
         STATUS_STYLE[d.status],
+        // Still in its place in the graph, visibly not part of the run: a node
+        // that has been switched off has to read as "skipped", not "deleted".
+        d.disabled && "border-dashed opacity-50 saturate-0",
         d.selected && "outline outline-2 outline-offset-2 outline-foreground/40",
       )}
     >
@@ -122,7 +127,12 @@ function NodeCard({ data }: NodeProps) {
           className="!size-2 !border-none"
         />
       )}
-      <div className="truncate text-xs font-medium">{d.label}</div>
+      <div className="flex items-center gap-1.5">
+        <span className="truncate text-xs font-medium">{d.label}</span>
+        {d.disabled && (
+          <span className="shrink-0 rounded border px-1 text-[9px] uppercase tracking-wide text-muted-foreground">off</span>
+        )}
+      </div>
       <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
         <span className="uppercase tracking-wide">{d.kind}</span>
         {d.detail && <span className="truncate font-mono">{d.detail}</span>}
@@ -305,6 +315,7 @@ export function WorkflowGraph({
       connectable: editable,
       loopOut: [...loops].some((k) => k.startsWith(`${n.id}->`)),
       loopIn: [...loops].some((k) => k.endsWith(`->${n.id}`)),
+      disabled: !!n.disabled,
     }),
     [statuses, selected, editable, loops],
   );

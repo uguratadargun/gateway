@@ -3,7 +3,7 @@ import { load as parseYaml } from "js-yaml";
 import { WorkflowError } from "@/runtime/errors";
 
 import { ConditionError, conditionPaths, parseCondition } from "./condition";
-import { successorsOf, workflowDefinitionSchema, type WorkflowDefinition, type WorkflowEdge, type WorkflowNode } from "./types";
+import { skipTargetOf, successorsOf, workflowDefinitionSchema, type WorkflowDefinition, type WorkflowEdge, type WorkflowNode } from "./types";
 
 /** Parsing, schema validation and structural checks. No filesystem access. */
 
@@ -108,7 +108,9 @@ function validateStructure(wf: WorkflowDefinition, opts: ParseWorkflowOptions): 
     if (n.type === "agent" && opts.agentExists && !opts.agentExists(n.agent)) {
       throw invalid(wf.id, `node "${n.id}" references unknown agent "${n.agent}"`);
     }
+    if (n.type === "agent" || n.type === "command") validateSkip(wf, n);
   }
+  validateSkipChains(wf);
 
   const reachable = new Set<string>([wf.entry]);
   const queue = [wf.entry];
@@ -124,6 +126,48 @@ function validateStructure(wf: WorkflowDefinition, opts: ParseWorkflowOptions): 
   }
   const orphans = wf.nodes.filter((n) => !reachable.has(n.id)).map((n) => n.id);
   if (orphans.length) throw invalid(wf.id, `unreachable node${orphans.length > 1 ? "s" : ""}: ${orphans.join(", ")}`);
+}
+
+/**
+ * A switched-off node still has to leave a run somewhere, and only its own
+ * edges are somewhere it may leave to. The edge that would have decided reads
+ * an output the node never produced, so a node with more than one has to name
+ * the way out itself.
+ */
+function validateSkip(wf: WorkflowDefinition, node: Extract<WorkflowNode, { type: "agent" | "command" }>): void {
+  if (node.skipTo && !node.edges.some((e) => e.to === node.skipTo)) {
+    throw invalid(
+      wf.id,
+      `node "${node.id}" skips to "${node.skipTo}", which is not one of its edges; a node off can only take a route it already had`,
+    );
+  }
+  if (node.disabled && !skipTargetOf(node)) {
+    throw invalid(
+      wf.id,
+      `node "${node.id}" is off and has ${node.edges.length} edges; add "skipTo" to say which one a run takes past it`,
+    );
+  }
+}
+
+/**
+ * Off nodes that route into each other and back are a run with nothing to do
+ * and no way out — a hang, not a pipeline. Caught here, where the file is
+ * read, rather than as a run that never gets anywhere.
+ */
+function validateSkipChains(wf: WorkflowDefinition): void {
+  for (const start of wf.nodes) {
+    let target = skipTargetOf(start);
+    if (!target) continue;
+    const chain = [start.id];
+    while (target) {
+      if (chain.includes(target)) {
+        throw invalid(wf.id, `nodes ${[...chain, target].join(" → ")} are off and skip in a circle; a run would never leave them`);
+      }
+      chain.push(target);
+      const node = wf.nodes.find((n) => n.id === target);
+      target = node ? skipTargetOf(node) : null;
+    }
+  }
 }
 
 /**

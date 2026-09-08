@@ -8103,9 +8103,15 @@ var baseNode = {
   /** Sugar for a single unconditional edge. */
   next: nodeId.optional()
 };
+var skippable = {
+  disabled: external_exports.boolean().optional(),
+  /** Which edge a run takes past this node while it is off. */
+  skipTo: nodeId.optional()
+};
 var workflowNodeSchema = external_exports.discriminatedUnion("type", [
   external_exports.object({
     ...baseNode,
+    ...skippable,
     type: external_exports.literal("agent"),
     agent: external_exports.string().min(1).max(64),
     /** Dotted paths this node may read. Defaults to the agent's own declaration. */
@@ -8113,6 +8119,7 @@ var workflowNodeSchema = external_exports.discriminatedUnion("type", [
   }).strict(),
   external_exports.object({
     ...baseNode,
+    ...skippable,
     type: external_exports.literal("command"),
     /** argv, never a shell string: the runtime spawns it without a shell. */
     command: external_exports.array(external_exports.string().min(1)).min(1).max(50),
@@ -8165,6 +8172,12 @@ var workflowDefinitionSchema = external_exports.object({
 }).strict();
 function findNode(wf, id) {
   return wf.nodes.find((n) => n.id === id);
+}
+function skipTargetOf(node) {
+  if (node.type !== "agent" && node.type !== "command") return null;
+  if (!node.disabled) return null;
+  if (node.skipTo) return node.skipTo;
+  return node.edges.length === 1 ? node.edges[0].to : null;
 }
 function successorsOf(node) {
   if (node.type === "parallel") return [...node.branches, node.join];
@@ -8256,7 +8269,9 @@ function validateStructure(wf, opts) {
     if (n.type === "agent" && opts.agentExists && !opts.agentExists(n.agent)) {
       throw invalid(wf.id, `node "${n.id}" references unknown agent "${n.agent}"`);
     }
+    if (n.type === "agent" || n.type === "command") validateSkip(wf, n);
   }
+  validateSkipChains(wf);
   const reachable = /* @__PURE__ */ new Set([wf.entry]);
   const queue = [wf.entry];
   while (queue.length) {
@@ -8271,6 +8286,35 @@ function validateStructure(wf, opts) {
   }
   const orphans = wf.nodes.filter((n) => !reachable.has(n.id)).map((n) => n.id);
   if (orphans.length) throw invalid(wf.id, `unreachable node${orphans.length > 1 ? "s" : ""}: ${orphans.join(", ")}`);
+}
+function validateSkip(wf, node) {
+  if (node.skipTo && !node.edges.some((e) => e.to === node.skipTo)) {
+    throw invalid(
+      wf.id,
+      `node "${node.id}" skips to "${node.skipTo}", which is not one of its edges; a node off can only take a route it already had`
+    );
+  }
+  if (node.disabled && !skipTargetOf(node)) {
+    throw invalid(
+      wf.id,
+      `node "${node.id}" is off and has ${node.edges.length} edges; add "skipTo" to say which one a run takes past it`
+    );
+  }
+}
+function validateSkipChains(wf) {
+  for (const start of wf.nodes) {
+    let target = skipTargetOf(start);
+    if (!target) continue;
+    const chain = [start.id];
+    while (target) {
+      if (chain.includes(target)) {
+        throw invalid(wf.id, `nodes ${[...chain, target].join(" \u2192 ")} are off and skip in a circle; a run would never leave them`);
+      }
+      chain.push(target);
+      const node = wf.nodes.find((n) => n.id === target);
+      target = node ? skipTargetOf(node) : null;
+    }
+  }
 }
 function validateParallel(wf, node, ids) {
   const at = `parallel node "${node.id}"`;
@@ -8410,7 +8454,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.18.0";
+var GATE_VERSION = "0.19.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -9531,6 +9575,12 @@ async function runWorkflow(workflow, opts) {
       if (currentId === stopAt) return;
       const node = findNode(workflow, currentId);
       if (!node) return halt("WORKFLOW_ROUTING_ERROR", `node "${currentId}" does not exist`, currentId);
+      const skipTo = skipTargetOf(node);
+      if (skipTo) {
+        emit({ type: "edge.selected", executionId, at: now(), from: node.id, to: skipTo, label: "off" });
+        currentId = skipTo;
+        continue;
+      }
       if (node.type === "terminal") {
         state.status = node.status;
         emit({ type: "workflow.completed", executionId, at: now(), status: node.status, terminalNodeId: node.id });
@@ -10046,6 +10096,11 @@ function walk2(workflow, steps, input, replay, from, stopAt) {
     }
     if (node.type === "terminal") {
       return { kind: "done", status: node.status, terminalNodeId: node.id, stepIndex: replay.cursor };
+    }
+    const skipTo = skipTargetOf(node);
+    if (skipTo && steps[replay.cursor]?.nodeId !== node.id) {
+      currentId = skipTo;
+      continue;
     }
     const step2 = steps[replay.cursor];
     if (!step2 || step2.nodeId !== node.id) {

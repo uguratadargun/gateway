@@ -1,8 +1,14 @@
 ---
 description: Run one of your team's gate workflows here, in this session
 argument-hint: [workflow] [task…]
-allowed-tools: Bash(node:*), Read, Write, Edit, Glob, Grep
 ---
+
+<!-- No allowed-tools on purpose: it restricts a command to the tools it lists,
+     and this command is a whole pipeline. An implementer node has to run this
+     project's real test command, a reviewer has to read whatever it needs, and
+     any of them may need to ask the user something. Inheriting the
+     conversation's tools is the point — the run gets the user's own
+     permissions, which is what makes it answerable. -->
 
 Workflows your team has defined — id, then name, description and the run input each one needs:
 
@@ -39,8 +45,11 @@ Each call prints one JSON instruction:
     with absolute paths under it. Never edit files outside it.
   - `tools` is what the agent file says this role needs. Treat it as the shape of the job — a
     role listing only reads is reviewing, not implementing — and stay inside it.
-  - Ask the user if something is genuinely ambiguous or risky. That is the point of running
-    here; a question is better than a guess nobody sees.
+  - **Ask the user when you need to.** A choice the brief does not settle, something that
+    looks wrong, a destructive step, anything you would otherwise guess at — ask, and wait.
+    This is their session: they are there, they can answer, and a question costs a minute
+    where a wrong guess costs the rest of the run. The node's answer goes in a file, not in
+    what you say, so asking never gets in the way of finishing it.
   - When the work is done, write the answer to a file and hand it back:
     ```
     node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" step <execution-id> <node-id> --output-file <file>

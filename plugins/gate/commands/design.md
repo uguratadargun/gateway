@@ -1,7 +1,7 @@
 ---
 description: Analyse this repository and build gate agents and a workflow for it
 argument-hint: [what the pipeline should do]
-allowed-tools: Bash(node:*), Read, Glob, Grep
+allowed-tools: Bash(node:*), Read, Write, Glob, Grep
 ---
 
 Agents that already exist in gate:

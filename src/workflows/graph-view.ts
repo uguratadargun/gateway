@@ -18,6 +18,8 @@ export interface GraphNodeSpec {
   type: NodeKind;
   label?: string;
   detail?: string;
+  /** Switched off: drawn, but nothing a run will do. */
+  disabled?: boolean;
   edges: GraphEdgeSpec[];
   /**
    * A parallel node routes through these rather than through `edges`; they are
@@ -33,6 +35,8 @@ export interface ApiWorkflowNode {
   id: string;
   type: NodeKind;
   label?: string;
+  disabled?: boolean;
+  skipTo?: string;
   agent?: string;
   command?: string[];
   cwd?: string;
@@ -50,6 +54,7 @@ export function toGraphNodes(nodes: ApiWorkflowNode[]): GraphNodeSpec[] {
     id: n.id,
     type: n.type,
     label: n.label ?? n.id,
+    disabled: n.disabled,
     detail:
       n.type === "agent"
         ? n.agent

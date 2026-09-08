@@ -1,7 +1,7 @@
 import type { ExecutionStepRecord } from "@/executions/types";
 import { selectEdge } from "@/runtime/executors/condition";
 import { WorkflowError } from "@/runtime/errors";
-import { findNode, type WorkflowDefinition, type WorkflowNode } from "@/workflows/types";
+import { findNode, skipTargetOf, type WorkflowDefinition, type WorkflowNode } from "@/workflows/types";
 
 /**
  * Where a run has got to, worked out by replaying what it has already done.
@@ -67,6 +67,18 @@ function walk(
     }
     if (node.type === "terminal") {
       return { kind: "done", status: node.status, terminalNodeId: node.id, stepIndex: replay.cursor };
+    }
+
+    // Switched off in the workflow file: not handed to the session, no step of
+    // its own, and the walk carries on along one of the node's own edges. The
+    // guard is what happens when a node was switched off *during* a run — the
+    // step it already produced is what happened, so it is replayed rather than
+    // stepped over, which would leave every later step lined up against the
+    // wrong node.
+    const skipTo = skipTargetOf(node);
+    if (skipTo && steps[replay.cursor]?.nodeId !== node.id) {
+      currentId = skipTo;
+      continue;
     }
 
     const step = steps[replay.cursor];

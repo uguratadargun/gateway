@@ -25,6 +25,8 @@ const nodeDoc = z.object({
   id: z.string(),
   type: z.enum(["agent", "command", "condition", "parallel", "terminal"]),
   label: z.string().optional(),
+  disabled: z.boolean().optional(),
+  skipTo: z.string().optional(),
   agent: z.string().optional(),
   inputs: z.array(z.string()).optional(),
   command: z.array(z.string()).optional(),
@@ -68,6 +70,13 @@ function trimmedList(values: string[] | undefined): string[] | undefined {
 function serializeNode(node: NodeDoc): Record<string, unknown> {
   const out: Record<string, unknown> = { id: node.id.trim(), type: node.type };
   put(out, "label", node.label?.trim());
+  // Only where it means something: `disabled: false` on every node is noise,
+  // and a `skipTo` left behind by a node that has been switched back on is a
+  // stale route waiting to be wrong the next time its edges change.
+  if (node.disabled && (node.type === "agent" || node.type === "command")) {
+    out.disabled = true;
+    put(out, "skipTo", node.skipTo?.trim());
+  }
 
   switch (node.type) {
     case "agent":
