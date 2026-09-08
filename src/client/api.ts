@@ -83,7 +83,15 @@ export class GateClient {
         headers: this.headers(init.body ? { "content-type": "application/json" } : {}),
       });
     } catch (e) {
-      throw new GateApiError(`cannot reach gate at ${this.config.url} (${(e as Error).message})`, 0, "UNREACHABLE");
+      // fetch reports almost everything as the same three words; the cause is
+      // where the actual reason lives — a refused connection, DNS, a bad
+      // certificate, or a port the Fetch spec refuses to dial at all.
+      const cause = (e as { cause?: { message?: string } }).cause?.message;
+      throw new GateApiError(
+        `cannot reach gate at ${this.config.url} (${(e as Error).message}${cause ? `: ${cause}` : ""})`,
+        0,
+        "UNREACHABLE",
+      );
     }
     this.noteVersions(res);
     if (res.status === 304) return { status: 304, body: null as T };

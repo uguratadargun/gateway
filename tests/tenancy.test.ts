@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { getAgent, listAgents, saveAgent } from "@/agents/registry";
 import { createExecution, getExecution } from "@/executions/store";
 import { createKey, resolveKey, revokeKey, type Principal } from "@/lib/apikeys";
+import { decodeConnectionToken, encodeConnectionToken } from "@/lib/connect-token";
 import { getDb } from "@/lib/db";
 import { teamScope } from "@/lib/def-root";
 import { isOlderThan, MIN_CLIENT_VERSION, VERSION_HEADERS } from "@/lib/protocol";
@@ -190,5 +191,21 @@ describe("run ownership", () => {
     expect(run.origin).toBe("local");
     expect(run.teamId).toBe("alpha");
     expect(run.client).toMatchObject({ host: "laptop-1", repo: "/src/thing" });
+  });
+});
+
+describe("connection tokens", () => {
+  it("carries the address and the key through one string", () => {
+    const token = encodeConnectionToken({ url: "https://gate.internal/", key: "gate_abc123" });
+    expect(token.startsWith("gatec_")).toBe(true);
+    // The trailing slash is dropped, so the client never builds a double one.
+    expect(decodeConnectionToken(token)).toEqual({ url: "https://gate.internal", key: "gate_abc123" });
+    expect(decodeConnectionToken(`  ${token}  `).key).toBe("gate_abc123");
+  });
+
+  it("says what is wrong rather than just refusing", () => {
+    expect(() => decodeConnectionToken("gate_abc123")).toThrow(/start with gatec_/);
+    expect(() => decodeConnectionToken("gatec_not-base64!!")).toThrow(/damaged|missing/);
+    expect(() => decodeConnectionToken(encodeConnectionToken({ url: "ftp://x", key: "k" }))).toThrow(/not an http/);
   });
 });

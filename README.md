@@ -640,16 +640,21 @@ calls, and keeping the history.
 /plugin install gate@gateway
 ```
 
-Then, once per machine, with the key from your `/team` page:
+Then, once per machine, one line — the `/team` page hands it over ready to send:
 
-```bash
-node "$CLAUDE_PLUGIN_ROOT/scripts/gate.mjs" install    # a `gate` shim in ~/.local/bin
-gate login --url https://gate.internal --key gate_…    # ~/.gate/client.json (0600)
+```
+/gate-login gatec_eyJ1IjoiaHR0cHM6Ly9nYXRlLmludGVybmFsIiwiayI6ImdhdGVfL…
 ```
 
-`/gate-run` calls the bundled script by absolute path and needs neither step;
-`install` exists so that everything written down for a person to type — the
-command the dashboard hands them included — is a command that exists.
+That token carries both the gate's address and the person's key, so there is
+nothing to type twice and nothing to get in the wrong order; it is written to
+`~/.gate/client.json` (0600) and their team's definitions are pulled on the
+spot. A key pasted where a token goes says so rather than failing as a
+malformed token.
+
+In a terminal the same thing is `gate login <token>` — and `gate install`
+writes a `gate` shim into `~/.local/bin` for it, which `/gate-login` and
+`/gate-run` do not need (they call the bundled script by absolute path).
 
 Nothing else is downloaded and nothing is added to `PATH`: the plugin ships one
 bundled Node script (`plugins/gate/scripts/gate.mjs`, built by `npm run
@@ -700,10 +705,14 @@ own.
 **Keeping up to date.** Three things move at different speeds, and only one of
 them needs anybody to do anything.
 
-- *Definitions* look after themselves: every command re-syncs against the
-  bundle hash first, so a workflow edited in the dashboard is live on every
-  machine at the next `gate list` or `/gate-run`, and a workflow the team
-  deleted is gone from the mirror too.
+- *Definitions* look after themselves. There is no daemon and nothing to push:
+  every command — `list`, `run`, `agents`, `show` — sends the mirror's hash as
+  `If-None-Match` before doing anything else. Unchanged is a `304` with no
+  body; changed is the whole bundle written over the mirror, with anything the
+  server no longer has pruned. So a workflow edited in the dashboard is live on
+  every machine at that machine's next command, a deleted one disappears, and a
+  run can never use a definition older than the moment it started. Being
+  offline falls back to the mirror with a note saying when it was pulled.
 - *The server* is your deploy. Schema migrations are idempotent on open, and
   the one-time move of `~/.gate/agents` under `teams/default/` happens on the
   first read.

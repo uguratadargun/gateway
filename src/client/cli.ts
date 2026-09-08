@@ -7,6 +7,8 @@ import { getAgent, listAgents, readAgentSource } from "@/agents/registry";
 import type { WorkflowEvent } from "@/events/types";
 import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 
+import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
+
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, readManifest, writeBundle, type Manifest } from "./cache";
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
@@ -24,7 +26,8 @@ import { runLocal } from "./run";
 const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this machine
 
   gate install                                  put gate itself on your PATH
-  gate login --url <gate-url> --key <api-key>   connect this machine
+  gate login <token>                            connect this machine (one token from your dashboard)
+       --url <gate-url> --key <api-key>         …or the two halves separately
   gate whoami                                   who this key belongs to
   gate pull                                     refresh your team's definitions
   gate list                                     what you can run, and what it needs
@@ -55,7 +58,7 @@ interface Args {
  * is short, and the alternative is a parser that is wrong in exactly the case
  * the tool exists for.
  */
-const VALUE_FLAGS = new Set(["url", "key", "input", "limit", "team", "dir"]);
+const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir"]);
 
 function parseArgs(argv: string[]): Args {
   const [command = "help", ...rest] = argv;
@@ -95,7 +98,10 @@ function die(message: string): never {
 function connect(): GateClient {
   const config = readConfig();
   if (!config) {
-    die("not connected — run `gate login --url <gate-url> --key <api-key>` (your key comes from your gate dashboard)");
+    die(
+      "not connected — run `/gate-login <token>` in Claude Code, with the token from your gate dashboard's Team page " +
+        "(or `gate login <token>` in a terminal)",
+    );
   }
   return new GateClient(config);
 }
@@ -140,10 +146,41 @@ async function teamOf(client: GateClient, config: ClientConfig): Promise<string>
   return me.team.id;
 }
 
-async function cmdLogin(flags: Args["flags"]): Promise<number> {
-  const url = typeof flags.url === "string" ? flags.url.replace(/\/+$/, "") : "";
-  const key = typeof flags.key === "string" ? flags.key : "";
-  if (!url || !key) die("usage: gate login --url <gate-url> --key <api-key>");
+/**
+ * Connects this machine.
+ *
+ * A token is the ordinary way in — one string from the dashboard carrying both
+ * the address and the key, so nothing has to be typed twice or in the right
+ * order. The two flags stay for scripts and for anyone who has the halves
+ * rather than the token.
+ */
+async function cmdLogin(args: Args): Promise<number> {
+  const flags = args.flags;
+  const [positional] = args.positional;
+  let url = typeof flags.url === "string" ? flags.url.replace(/\/+$/, "") : "";
+  let key = typeof flags.key === "string" ? flags.key : "";
+
+  const token = positional ?? (typeof flags.token === "string" ? flags.token : "");
+  if (token) {
+    if (!looksLikeConnectionToken(token)) {
+      // A bare key pasted where a token goes is the likely mistake, and it is
+      // worth naming rather than reporting a malformed token.
+      die(
+        token.startsWith("gate_")
+          ? "that is an API key, not a connection token — copy the whole `/gate-login …` line from your dashboard, or pass --url and --key"
+          : `that does not look like a gate token: ${token.slice(0, 12)}…`,
+      );
+    }
+    try {
+      const connection = decodeConnectionToken(token);
+      url = connection.url;
+      key = connection.key;
+    } catch (e) {
+      die((e as Error).message);
+    }
+  }
+
+  if (!url || !key) die("usage: gate login <token>   (or: gate login --url <gate-url> --key <api-key>)");
 
   const client = new GateClient({ url, key });
   const me = await client.me();
@@ -455,7 +492,7 @@ export async function main(argv: string[]): Promise<number> {
       case "install":
         return cmdInstall(args);
       case "login":
-        return await cmdLogin(args.flags);
+        return await cmdLogin(args);
       case "whoami":
         return await cmdWhoami();
       case "pull":
@@ -488,7 +525,7 @@ export async function main(argv: string[]): Promise<number> {
       // The server's own words, with the one hint that is not in them.
       const hint =
         e.code === "NO_API_KEY" || e.code === "INVALID_API_KEY"
-          ? "\nRun `gate login --url <gate-url> --key <api-key>` with a key from your dashboard."
+          ? "\nRun `/gate-login <token>` with the token from your dashboard's Team page."
           : "";
       console.error(`${e.message}${hint}`);
       return 1;

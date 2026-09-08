@@ -7582,6 +7582,37 @@ function readWorkflowSource(id, scope = teamScope()) {
   return readFileSync3(file, "utf8");
 }
 
+// src/lib/connect-token.ts
+var CONNECT_TOKEN_PREFIX = "gatec_";
+function fromBase64Url(value) {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - value.length % 4) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+}
+function looksLikeConnectionToken(value) {
+  return value.trim().startsWith(CONNECT_TOKEN_PREFIX);
+}
+function decodeConnectionToken(value) {
+  const token = value.trim();
+  if (!looksLikeConnectionToken(token)) {
+    throw new Error(`that does not look like a gate token (they start with ${CONNECT_TOKEN_PREFIX})`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(fromBase64Url(token.slice(CONNECT_TOKEN_PREFIX.length))));
+  } catch {
+    throw new Error("this token is damaged \u2014 copy it again from your gate dashboard, all of it");
+  }
+  const { u, k } = parsed ?? {};
+  if (typeof u !== "string" || typeof k !== "string" || !u || !k) {
+    throw new Error("this token is missing the gate address or the key");
+  }
+  if (!/^https?:\/\//.test(u)) {
+    throw new Error(`this token points at "${u}", which is not an http(s) address`);
+  }
+  return { url: u.replace(/\/+$/, ""), key: k };
+}
+
 // src/client/api.ts
 import { hostname } from "node:os";
 
@@ -7651,7 +7682,12 @@ var GateClient = class {
         headers: this.headers(init.body ? { "content-type": "application/json" } : {})
       });
     } catch (e) {
-      throw new GateApiError(`cannot reach gate at ${this.config.url} (${e.message})`, 0, "UNREACHABLE");
+      const cause = e.cause?.message;
+      throw new GateApiError(
+        `cannot reach gate at ${this.config.url} (${e.message}${cause ? `: ${cause}` : ""})`,
+        0,
+        "UNREACHABLE"
+      );
     }
     this.noteVersions(res);
     if (res.status === 304) return { status: 304, body: null };
@@ -9000,7 +9036,8 @@ async function runLocal(client, opts) {
 var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this machine
 
   gate install                                  put gate itself on your PATH
-  gate login --url <gate-url> --key <api-key>   connect this machine
+  gate login <token>                            connect this machine (one token from your dashboard)
+       --url <gate-url> --key <api-key>         \u2026or the two halves separately
   gate whoami                                   who this key belongs to
   gate pull                                     refresh your team's definitions
   gate list                                     what you can run, and what it needs
@@ -9015,7 +9052,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate cancel <execution-id>                    ask a run to stop
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "input", "limit", "team", "dir"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir"]);
 function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const positional = [];
@@ -9049,7 +9086,9 @@ function die(message) {
 function connect() {
   const config = readConfig();
   if (!config) {
-    die("not connected \u2014 run `gate login --url <gate-url> --key <api-key>` (your key comes from your gate dashboard)");
+    die(
+      "not connected \u2014 run `/gate-login <token>` in Claude Code, with the token from your gate dashboard's Team page (or `gate login <token>` in a terminal)"
+    );
   }
   return new GateClient(config);
 }
@@ -9080,10 +9119,27 @@ async function teamOf(client, config) {
   writeConfig({ ...config, team: me.team.id, user: me.user?.email });
   return me.team.id;
 }
-async function cmdLogin(flags) {
-  const url = typeof flags.url === "string" ? flags.url.replace(/\/+$/, "") : "";
-  const key = typeof flags.key === "string" ? flags.key : "";
-  if (!url || !key) die("usage: gate login --url <gate-url> --key <api-key>");
+async function cmdLogin(args) {
+  const flags = args.flags;
+  const [positional] = args.positional;
+  let url = typeof flags.url === "string" ? flags.url.replace(/\/+$/, "") : "";
+  let key = typeof flags.key === "string" ? flags.key : "";
+  const token = positional ?? (typeof flags.token === "string" ? flags.token : "");
+  if (token) {
+    if (!looksLikeConnectionToken(token)) {
+      die(
+        token.startsWith("gate_") ? "that is an API key, not a connection token \u2014 copy the whole `/gate-login \u2026` line from your dashboard, or pass --url and --key" : `that does not look like a gate token: ${token.slice(0, 12)}\u2026`
+      );
+    }
+    try {
+      const connection = decodeConnectionToken(token);
+      url = connection.url;
+      key = connection.key;
+    } catch (e) {
+      die(e.message);
+    }
+  }
+  if (!url || !key) die("usage: gate login <token>   (or: gate login --url <gate-url> --key <api-key>)");
   const client = new GateClient({ url, key });
   const me = await client.me();
   writeConfig({ url, key, team: me.team.id, user: me.user?.email });
@@ -9335,7 +9391,7 @@ async function main(argv) {
       case "install":
         return cmdInstall(args);
       case "login":
-        return await cmdLogin(args.flags);
+        return await cmdLogin(args);
       case "whoami":
         return await cmdWhoami();
       case "pull":
@@ -9367,7 +9423,7 @@ ${USAGE}`);
     }
   } catch (e) {
     if (e instanceof GateApiError) {
-      const hint = e.code === "NO_API_KEY" || e.code === "INVALID_API_KEY" ? "\nRun `gate login --url <gate-url> --key <api-key>` with a key from your dashboard." : "";
+      const hint = e.code === "NO_API_KEY" || e.code === "INVALID_API_KEY" ? "\nRun `/gate-login <token>` with the token from your dashboard's Team page." : "";
       console.error(`${e.message}${hint}`);
       return 1;
     }

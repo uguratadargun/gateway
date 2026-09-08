@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { encodeConnectionToken } from "@/lib/connect-token";
 
 /**
  * Who may connect, and what they connect with.
@@ -133,8 +134,8 @@ export default function TeamPage() {
       <div>
         <h1 className="text-xl font-semibold">Team</h1>
         <p className="text-sm text-muted-foreground">
-          Each person gets a key. They run <code>gate login</code> once, and their team&apos;s workflows run on their own
-          machine — through this gateway.
+          Each person gets a key. They paste one <code>/gate-login</code> line into Claude Code, and their team&apos;s
+          workflows run on their own machine — through this gateway.
         </p>
       </div>
 
@@ -215,24 +216,29 @@ export default function TeamPage() {
                 {issued?.userId === user.id && (
                   <div className="space-y-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3">
                     <p className="font-medium">Send this to {user.name ?? user.email} — the key is shown once:</p>
+                    {/* One line, carrying both this gate's address and their key,
+                        so nothing has to be typed twice or in the right order. */}
                     <div className="flex items-center gap-2">
                       <code className="flex-1 truncate rounded bg-background px-2 py-1 text-xs">
-                        gate login --url {origin} --key {issued.key}
+                        /gate-login {encodeConnectionToken({ url: origin, key: issued.key })}
                       </code>
                       <Button
                         variant="outline"
                         size="icon"
-                        onClick={() => navigator.clipboard.writeText(`gate login --url ${origin} --key ${issued.key}`)}
+                        onClick={() =>
+                          navigator.clipboard.writeText(
+                            `/gate-login ${encodeConnectionToken({ url: origin, key: issued.key })}`,
+                          )
+                        }
                         aria-label="Copy command"
                       >
                         <Copy />
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      They install the <code>gate</code> plugin in Claude Code, run{" "}
-                      <code>node &quot;$CLAUDE_PLUGIN_ROOT/scripts/gate.mjs&quot; install</code> once to get the{" "}
-                      <code>gate</code> command, then the line above. After that <code>/gate-run</code> runs your
-                      team&apos;s workflows on their machine.
+                      They install the <code>gate</code> plugin in Claude Code and paste that line. It connects this
+                      machine and pulls your team&apos;s workflows; after it, <code>/gate-run</code> runs them on their
+                      own machine. The raw key is <code>{issued.key}</code> if they need it for a tool that wants one.
                     </p>
                   </div>
                 )}
