@@ -528,7 +528,11 @@ bar that deletes: tick the rows, pick a team. A workflow is written into the
 destination through the same validation a hand-edited file gets, so one whose
 agents are still behind is refused there — with that reason — and stays where
 it works, rather than landing broken and disappearing from where it ran. Move
-the agents first; the confirmation says so. An agent that leaves workflows
+the agents first; the confirmation says so. A definition that no longer parses —
+usually because the agents it names went somewhere else — is selectable in the
+error card for exactly this reason: it is the one you most need to move or
+delete, and listing it while making it untouchable is how a workflow becomes
+unreachable from the page that owns it. An agent that leaves workflows
 behind naming it is not refused, because it is your file and deleting one has
 never been refused either, but the workflows that will stop loading are named.
 

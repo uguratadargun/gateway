@@ -47,7 +47,11 @@ export default function WorkflowsPage() {
   const [newId, setNewId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const selection = useSelection(workflows.map((w) => w.id));
+  // Broken files are selectable too. A definition that does not parse is
+  // exactly the one you need to move or delete, and leaving it out of the
+  // selection was how a workflow whose agents had moved became unreachable:
+  // visible in the error card, actionable nowhere.
+  const selection = useSelection([...workflows.map((w) => w.id), ...errors.map((e) => e.id)]);
   const { team, setTeam, teams, ready } = useTeamScope();
 
   const load = useCallback(async () => {
@@ -158,11 +162,22 @@ export default function WorkflowsPage() {
           <div className="text-sm font-medium text-destructive">Files that failed to parse</div>
           <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
             {errors.map((e) => (
-              <li key={e.id}>
-                {e.id}.yaml — {e.message}
+              <li key={e.id} className="group flex items-center gap-2">
+                <SelectHandle
+                  checked={selection.selected.has(e.id)}
+                  active={selection.active}
+                  onChange={() => selection.toggle(e.id)}
+                  label={`Select ${e.id}`}
+                />
+                <span>
+                  {e.id}.yaml — {e.message}
+                </span>
               </li>
             ))}
           </ul>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Tick one to move or delete it — an agent it names may have moved to another team.
+          </p>
         </Card>
       )}
 
@@ -196,7 +211,7 @@ export default function WorkflowsPage() {
           ))}
           <SelectionBar
             selection={selection}
-            total={workflows.length}
+            total={workflows.length + errors.length}
             noun="workflows"
             onDelete={removeSelected}
             busy={busy}

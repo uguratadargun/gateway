@@ -36,7 +36,8 @@ export default function AgentsPage() {
   const [newId, setNewId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const selection = useSelection(agents.map((a) => a.id));
+  // Broken files are selectable too: see the workflows list for why.
+  const selection = useSelection([...agents.map((a) => a.id), ...errors.map((e) => e.id)]);
   const { team, setTeam, teams, ready } = useTeamScope();
 
   const load = useCallback(async () => {
@@ -150,11 +151,20 @@ export default function AgentsPage() {
           <div className="text-sm font-medium text-destructive">Files that failed to parse</div>
           <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
             {errors.map((e) => (
-              <li key={e.id}>
-                {e.id}.md — {e.message}
+              <li key={e.id} className="group flex items-center gap-2">
+                <SelectHandle
+                  checked={selection.selected.has(e.id)}
+                  active={selection.active}
+                  onChange={() => selection.toggle(e.id)}
+                  label={`Select ${e.id}`}
+                />
+                <span>
+                  {e.id}.md — {e.message}
+                </span>
               </li>
             ))}
           </ul>
+          <p className="mt-2 text-xs text-muted-foreground">Tick one to move or delete it.</p>
         </Card>
       )}
 
@@ -213,7 +223,7 @@ export default function AgentsPage() {
           })}
           <SelectionBar
             selection={selection}
-            total={agents.length}
+            total={agents.length + errors.length}
             noun="agents"
             onDelete={removeSelected}
             busy={busy}
