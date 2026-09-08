@@ -11,6 +11,7 @@ import type { StepRecord, WorkflowState } from "@/runtime/state";
 import { renderTemplate } from "@/agents/template";
 import { conditionContext } from "@/runtime/state";
 import { createRunWorkspace, readRunDiff, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
+import { getSkill, resolveSkillDir } from "@/skills/registry";
 import { getWorkflow } from "@/workflows/registry";
 import type { WorkflowDefinition } from "@/workflows/types";
 
@@ -52,6 +53,18 @@ export type Instruction =
       workspace: string | null;
       /** What the agent file says it needs; a session has its own tools. */
       tools: string[];
+      /**
+       * The skills this agent declares, unpacked on this machine.
+       *
+       * An agent that names a skill is an agent that follows it — that is what
+       * declaring one means, as opposed to a model deciding to reach for one.
+       * The headless executors hand them over their own way (a throwaway
+       * plugin for a spawned Claude Code, the prose folded into the system
+       * prompt for gate's own loop); a session gets the directory, because it
+       * already knows what a skill is and can read the files the skill points
+       * at.
+       */
+      skills: Array<{ id: string; description: string; path: string | null }>;
       timeoutMs: number | null;
       /**
        * The contract, restated with this node.
@@ -223,6 +236,23 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           `${position.visit > 1 ? ` · pass ${position.visit}` : ""}`,
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
+      // Named by the agent, resolved on this machine. A skill that has gone
+      // missing fails the node here rather than halfway through it.
+      const skills = prepared.agent.skills.map((id) => {
+        let description = "";
+        try {
+          description = getSkill(id, scope).description;
+        } catch {
+          throw new WorkflowError(
+            "AGENT_DEFINITION_INVALID",
+            `node "${node.id}": agent "${prepared.agent.id}" declares skill "${id}", which this machine did not pull — ` +
+              "run `gate pull`, or check it is in your team's skill library",
+            { nodeId: node.id, agentId: prepared.agent.id },
+          );
+        }
+        return { id, description, path: resolveSkillDir(id, scope) };
+      });
+
       const shape =
         prepared.agent.output.type === "json"
           ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema)
@@ -235,7 +265,16 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
         nodeId: node.id,
         agent: prepared.agent.id,
         prompt: prepared.prompt,
+        skills,
         remember: [
+          ...(skills.length
+            ? [
+                `This agent follows ${skills.length === 1 ? "a skill" : "skills"}: ` +
+                  `${skills.map((s) => s.id).join(", ")}. Open each one's SKILL.md and follow it — ` +
+                  "it is part of the node, not a suggestion. If a skill asks you to talk to the user, do that; " +
+                  "you are in their session and that is why the node runs here.",
+              ]
+            : []),
           workspace
             ? `Work in ${workspace.root} — the run's worktree, not the user's checkout.`
             : "This node has no workspace: reason over what the prompt gives you, do not touch files.",

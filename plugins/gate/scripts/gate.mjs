@@ -8454,7 +8454,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.21.0";
+var GATE_VERSION = "0.22.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -10240,6 +10240,19 @@ async function next(ctx, executionId) {
         `\u25B8 ${node.id} \xB7 agent ${prepared.agent.id} (${prepared.agent.model}${prepared.agent.effort ? `/${prepared.agent.effort}` : ""})${position.visit > 1 ? ` \xB7 pass ${position.visit}` : ""}`
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
+      const skills = prepared.agent.skills.map((id) => {
+        let description = "";
+        try {
+          description = getSkill(id, scope).description;
+        } catch {
+          throw new WorkflowError(
+            "AGENT_DEFINITION_INVALID",
+            `node "${node.id}": agent "${prepared.agent.id}" declares skill "${id}", which this machine did not pull \u2014 run \`gate pull\`, or check it is in your team's skill library`,
+            { nodeId: node.id, agentId: prepared.agent.id }
+          );
+        }
+        return { id, description, path: resolveSkillDir(id, scope) };
+      });
       const shape = prepared.agent.output.type === "json" ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema).map(([k, t]) => `${k} (${t})`).join(", ")}` : "the answer as plain text";
       return {
         do: "agent",
@@ -10247,7 +10260,11 @@ async function next(ctx, executionId) {
         nodeId: node.id,
         agent: prepared.agent.id,
         prompt: prepared.prompt,
+        skills,
         remember: [
+          ...skills.length ? [
+            `This agent follows ${skills.length === 1 ? "a skill" : "skills"}: ${skills.map((s) => s.id).join(", ")}. Open each one's SKILL.md and follow it \u2014 it is part of the node, not a suggestion. If a skill asks you to talk to the user, do that; you are in their session and that is why the node runs here.`
+          ] : [],
           workspace ? `Work in ${workspace.root} \u2014 the run's worktree, not the user's checkout.` : "This node has no workspace: reason over what the prompt gives you, do not touch files.",
           "Say what you are doing as you go; the user is watching this happen.",
           "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
