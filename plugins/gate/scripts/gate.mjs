@@ -7,8 +7,8 @@ var __export = (target, all) => {
 
 // src/client/cli.ts
 import { mkdirSync as mkdirSync8, writeFileSync as writeFileSync6 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { join as join9 } from "node:path";
+import { homedir as homedir6 } from "node:os";
+import { join as join9, resolve as resolve6 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
@@ -7736,6 +7736,14 @@ function trustWorkflow(id, sha) {
 function isTrusted(id, sha) {
   return readConfigFile()?.trusted?.[id] === sha;
 }
+function setRepoPath(id, path) {
+  const onDisk = readConfigFile();
+  const repos = { ...onDisk?.repos ?? {}, [id]: path };
+  writeConfig(onDisk ? { ...onDisk, repos } : { url: "", key: "", repos });
+}
+function repoPaths() {
+  return readConfigFile()?.repos ?? {};
+}
 
 // src/client/cache.ts
 function cacheDir(team) {
@@ -7788,7 +7796,7 @@ function prune(dir, keep) {
 
 // src/client/run.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { hostname as hostname2 } from "node:os";
+import { homedir as homedir5, hostname as hostname2 } from "node:os";
 import { resolve as resolve5 } from "node:path";
 
 // src/runtime/engine.ts
@@ -8024,14 +8032,14 @@ A type ending in "?" is optional.`
       }
     });
     child.stderr?.on("data", (c) => stderr += c.toString());
-    const settled = await new Promise((resolve6) => {
+    const settled = await new Promise((resolve7) => {
       let done = false;
       const finish = (r) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         deps.signal?.removeEventListener("abort", onAbort);
-        resolve6(r);
+        resolve7(r);
       };
       const timer = deadline === null ? void 0 : setTimeout(
         () => {
@@ -8315,12 +8323,12 @@ function withDeadline(p, deadline, nodeId2) {
   if (!deadline) return p;
   const remaining = deadline - Date.now();
   if (remaining <= 0) return Promise.reject(new WorkflowError("NODE_TIMEOUT", `node "${nodeId2}" ran out of time`, { nodeId: nodeId2 }));
-  return new Promise((resolve6, reject) => {
+  return new Promise((resolve7, reject) => {
     const timer = setTimeout(
       () => reject(new WorkflowError("NODE_TIMEOUT", `node "${nodeId2}" exceeded its timeout`, { nodeId: nodeId2 })),
       remaining
     );
-    p.then(resolve6, reject).finally(() => clearTimeout(timer));
+    p.then(resolve7, reject).finally(() => clearTimeout(timer));
   });
 }
 
@@ -8831,7 +8839,7 @@ var RunReporter = class {
     this.timer = null;
     for (let attempt = 0; attempt < 4 && (this.inFlight || this.events.length || this.steps.length); attempt++) {
       if (this.inFlight) {
-        await new Promise((resolve6) => setTimeout(resolve6, 100));
+        await new Promise((resolve7) => setTimeout(resolve7, 100));
         continue;
       }
       this.lastSentAt = 0;
@@ -8842,11 +8850,22 @@ var RunReporter = class {
 };
 
 // src/client/run.ts
-function resolveRepo(workflow, input, cwd) {
+function isPathLike(value) {
+  return value.startsWith("/") || value.startsWith("~") || value.startsWith(".") || value.includes("/");
+}
+function resolveRepo(workflow, input, cwd, repos = {}) {
   const given = typeof input.repo === "string" ? input.repo.trim() : "";
   const pinned = workflow.workspace?.repo?.trim() ?? "";
   const named = given || pinned;
-  if (named) return resolve5(named);
+  if (named && !isPathLike(named)) {
+    const mapped = repos[named];
+    if (mapped) return resolve5(mapped.replace(/^~(?=\/|$)/, homedir5()));
+    throw new WorkflowError(
+      "WORKSPACE_ERROR",
+      `this workflow works in the connected repository "${named}", which this machine has no checkout for \u2014 run \`gate repo ${named} /path/to/your/clone\` once, or pass --input repo=/path/to/your/clone`
+    );
+  }
+  if (named) return resolve5(named.replace(/^~(?=\/|$)/, homedir5()));
   try {
     return execFileSync2("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
   } catch {
@@ -8863,7 +8882,7 @@ async function runLocal(client, opts) {
   let workspace = null;
   let repo = null;
   if (workflow.workspace) {
-    repo = resolveRepo(workflow, input, opts.cwd);
+    repo = resolveRepo(workflow, input, opts.cwd, opts.repos ?? {});
     input.repo = repo;
   }
   const executionId = await client.startRun({
@@ -8948,6 +8967,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
        --input key=value                        (repeat for more than one input)
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
+  gate repo [<id> <path>]                       point a pinned repository at your clone
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
 
@@ -9030,7 +9050,7 @@ async function cmdLogin(flags) {
   return 0;
 }
 function cmdInstall(args) {
-  const target = typeof args.flags.dir === "string" ? args.flags.dir : join9(homedir5(), ".local", "bin");
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join9(homedir6(), ".local", "bin");
   const script = process.argv[1];
   const shim = join9(target, "gate");
   try {
@@ -9207,6 +9227,7 @@ async function cmdRun(args) {
     input,
     cwd: process.cwd(),
     team,
+    repos: repoPaths(),
     onEvent: quiet ? void 0 : printEvent,
     onNotice: (message) => console.error(`# ${message}`)
   });
@@ -9219,6 +9240,23 @@ async function cmdRun(args) {
   }
   console.log(`${client.url}/executions/${executionId}`);
   return state.status === "completed" ? 0 : 1;
+}
+function cmdRepo(args) {
+  const [id, path] = args.positional;
+  if (!id) {
+    const repos = repoPaths();
+    const entries = Object.entries(repos);
+    if (!entries.length) {
+      console.log("no repositories mapped \u2014 `gate repo <id> /path/to/your/clone` when a workflow asks for one");
+      return 0;
+    }
+    for (const [key, value] of entries) console.log(`${key}  ${value}`);
+    return 0;
+  }
+  if (!path) die(`usage: gate repo ${id} /path/to/your/clone`);
+  setRepoPath(id, resolve6(path));
+  console.log(`${id} \u2192 ${resolve6(path)}`);
+  return 0;
 }
 async function cmdStatus(args) {
   const client = connect();
@@ -9264,6 +9302,8 @@ async function main(argv) {
         return await cmdShow(args);
       case "run":
         return await cmdRun(args);
+      case "repo":
+        return cmdRepo(args);
       case "status":
         return await cmdStatus(args);
       case "cancel":

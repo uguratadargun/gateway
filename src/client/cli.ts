@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import { getAgent, listAgents, readAgentSource } from "@/agents/registry";
@@ -9,7 +9,7 @@ import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, readManifest, writeBundle, type Manifest } from "./cache";
-import { isTrusted, readConfig, trustWorkflow, writeConfig, type ClientConfig } from "./config";
+import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
 import { runLocal } from "./run";
 
 /**
@@ -34,6 +34,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
        --input key=value                        (repeat for more than one input)
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
+  gate repo [<id> <path>]                       point a pinned repository at your clone
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
 
@@ -372,6 +373,7 @@ async function cmdRun(args: Args): Promise<number> {
     input,
     cwd: process.cwd(),
     team,
+    repos: repoPaths(),
     onEvent: quiet ? undefined : printEvent,
     onNotice: (message) => console.error(`# ${message}`),
   });
@@ -385,6 +387,31 @@ async function cmdRun(args: Args): Promise<number> {
   }
   console.log(`${client.url}/executions/${executionId}`);
   return state.status === "completed" ? 0 : 1;
+}
+
+/**
+ * What a workflow's pinned repository means on this machine.
+ *
+ * A team's pipeline says `repo: ulak-desktop` — an id the server resolves to
+ * the checkout it manages. Here the same id can only mean this person's own
+ * clone, so they say once where it is and every run of that pipeline finds it.
+ */
+function cmdRepo(args: Args): number {
+  const [id, path] = args.positional;
+  if (!id) {
+    const repos = repoPaths();
+    const entries = Object.entries(repos);
+    if (!entries.length) {
+      console.log("no repositories mapped — `gate repo <id> /path/to/your/clone` when a workflow asks for one");
+      return 0;
+    }
+    for (const [key, value] of entries) console.log(`${key}  ${value}`);
+    return 0;
+  }
+  if (!path) die(`usage: gate repo ${id} /path/to/your/clone`);
+  setRepoPath(id, resolve(path));
+  console.log(`${id} → ${resolve(path)}`);
+  return 0;
 }
 
 async function cmdStatus(args: Args): Promise<number> {
@@ -435,6 +462,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdShow(args);
       case "run":
         return await cmdRun(args);
+      case "repo":
+        return cmdRepo(args);
       case "status":
         return await cmdStatus(args);
       case "cancel":

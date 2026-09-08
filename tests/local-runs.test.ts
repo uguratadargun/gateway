@@ -164,6 +164,13 @@ describe("which repository a local run works in", () => {
     expect(resolveRepo(workflow(), {}, process.cwd())).toBe(process.cwd());
   });
 
+  it("refuses a connected-repo id this machine has no clone for, and takes one it does", () => {
+    // The server resolves `ulak-desktop` to a checkout it manages; here that id
+    // means nothing until this machine says which of its clones it is.
+    expect(() => resolveRepo(workflow("ulak-desktop"), {}, "/anywhere")).toThrow(/gate repo ulak-desktop/);
+    expect(resolveRepo(workflow("ulak-desktop"), {}, "/anywhere", { "ulak-desktop": "/src/ulak" })).toBe("/src/ulak");
+  });
+
   it("says what to do when there is no repository at all", () => {
     const notARepo = mkdtempSync(join(tmpdir(), "gate-not-a-repo-"));
     expect(() => resolveRepo(workflow(), {}, notARepo)).toThrow(/not one|--input repo=/);

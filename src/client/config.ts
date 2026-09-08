@@ -20,6 +20,14 @@ export interface ClientConfig {
   user?: string;
   /** workflow id -> the definition hash this machine has approved. */
   trusted?: Record<string, string>;
+  /**
+   * Connected-repo id -> this machine's checkout of it.
+   *
+   * A workflow pinned to a repository names it by an id the server resolves to
+   * a checkout it manages. That checkout is not on this machine; what is, is
+   * the person's own clone, and only they can say where.
+   */
+  repos?: Record<string, string>;
 }
 
 export function gateHome(): string {
@@ -81,4 +89,15 @@ export function trustWorkflow(id: string, sha: string): void {
 
 export function isTrusted(id: string, sha: string): boolean {
   return readConfigFile()?.trusted?.[id] === sha;
+}
+
+/** Points a connected repository's id at this machine's clone of it. */
+export function setRepoPath(id: string, path: string): void {
+  const onDisk = readConfigFile();
+  const repos = { ...(onDisk?.repos ?? {}), [id]: path };
+  writeConfig(onDisk ? { ...onDisk, repos } : { url: "", key: "", repos });
+}
+
+export function repoPaths(): Record<string, string> {
+  return readConfigFile()?.repos ?? {};
 }

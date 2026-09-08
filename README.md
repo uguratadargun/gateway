@@ -658,6 +658,7 @@ own:
 
 ```bash
 gate list                       # your team's workflows, and what each needs
+gate repo <id> /path/to/clone   # where this machine keeps a repository a workflow pins
 gate agents                     # the agents behind them
 gate show <id>                  # a definition as it is on the server
 gate run repo-dev-team "…"      # run it here, in this repository
@@ -686,6 +687,15 @@ What travels where:
   *your* HEAD — so `/gate-run` is safe to start mid-task, and the diff is
   something you can review with `git` immediately. It is uploaded once when the
   run ends, so the dashboard can show what it did.
+
+A workflow that pins a **connected repository** (`workspace: {repo: ulak-desktop}`)
+names an id the server resolves to a checkout it manages — which is not on your
+machine. `gate repo ulak-desktop ~/Projects/ulak-desktop` says once which of
+your clones it means; without it the run refuses and says so rather than
+guessing at a directory. The connected repo's *prepare* commands (`npm ci` and
+the like, run in each worktree) are still the server's — a local run does not
+get them yet, so a pipeline that relies on them wants a `command` node of its
+own.
 
 **Stop works in both directions.** The server cannot reach into a process on
 your laptop, so Stop on the execution page records the request and the answer
