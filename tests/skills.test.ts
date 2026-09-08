@@ -152,6 +152,9 @@ describe("delivering a skill to a model", () => {
     const prompt = systemPrompt(agent, false, false, [skill]);
     expect(prompt).toContain("Ask one question at a time");
     expect(prompt).toContain("brainstorming");
+    // Gate's own loop cannot ask anyone, so the skill's questions are told
+    // where to go instead — before the skill, so it is read in that light.
+    expect(prompt.indexOf("running unattended")).toBeLessThan(prompt.indexOf("# Skills"));
     // Nothing is said about skills when none were declared.
     expect(systemPrompt(agent, false, false, [])).not.toContain("# Skills");
   });

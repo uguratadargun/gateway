@@ -311,9 +311,13 @@ with a person in it and a pipeline node often has none. Three things the
 `superpowers` skills do that a prompt has to answer for:
 
 - **They stop for a human.** Brainstorming will not proceed past its approval
-  gate; executing plans raises concerns "before starting". Headless, nobody
-  answers — the prompt has to say what to do instead (rule, and record the
-  ruling), or the node ends on a question.
+  gate; executing plans raises concerns "before starting". A node run headless
+  or on gate's own loop is told, in its system prompt, that it is running
+  unattended and should rule and record instead; a run driven from a session
+  is not told that, because the person is right there. Write the prompt to
+  follow the skill as written, with the unattended notice as the only
+  exception — never leave the agent to guess whether anyone is listening; it
+  guesses "nobody", and approves its own plan.
 - **They commit as they go.** Writing plans puts a commit step in every task;
   subagent-driven development commits after each one. A pipeline that then
   runs a plain `git diff` sees nothing. Diff against the run's base commit

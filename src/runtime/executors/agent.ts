@@ -4,7 +4,7 @@ import type { ModelProvider, ModelProviderMessage, ProviderContentBlock, ToolUse
 import { WorkflowError } from "@/runtime/errors";
 import { resolveInputs, type NodeUsageRecord, type ToolCallRecord, type WorkflowState } from "@/runtime/state";
 import { getTool, toolsFor } from "@/runtime/tools/registry";
-import { skillsBriefing } from "@/skills/inject";
+import { skillsBriefing, unattendedNotice } from "@/skills/inject";
 import { getSkill } from "@/skills/registry";
 import type { SkillDefinition } from "@/skills/types";
 import { ToolError, type ToolContext } from "@/runtime/tools/types";
@@ -330,6 +330,9 @@ export function systemPrompt(
             "what you need, and base what you report on what you actually read rather than on what a name suggests.",
     );
   }
+  // Before the skills, because it changes how they are to be read: this loop
+  // has no tool for asking, so a skill that would stop for a person cannot.
+  parts.push(unattendedNotice());
   // Before the output contract, never after it: the shape of the final message
   // is the last thing a model should have been told.
   const briefing = skillsBriefing(skills);

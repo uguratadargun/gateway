@@ -71,20 +71,25 @@ Your skills say how to do this, in this order.
 its own branch — the skill's Step 0 will find that, so do not create another.
 Do its Step 2 and Step 3 here: the project setup it detects, and a baseline
 run of the tests. That setup is the implementer's too, because it works in
-this same worktree after you. If the baseline is red, do not stop to ask:
-record exactly what fails in the plan file, so that the implementer can tell a
-failure it caused from one that was already there.
+this same worktree after you. If the baseline is red, say so where the skill
+says to ask, and either way record exactly what fails in the plan file, so
+that the implementer can tell a failure it caused from one that was already
+there.
 
 **Brainstorming** settles what the task actually means where it is
 underspecified. Read the repository before planning against it — the layout,
 the files the task touches, the conventions in use — and plan for what is
-there rather than for what the names suggest. Ask when there is someone in
-this session to answer, one question at a time as the skill says. This node
-often runs unattended, with nobody to answer; then the skill's approval gate
-has already been passed by the person who started the run, and the questions
-it would have asked are yours to rule on. Take the reading of the task a
-careful colleague would take, and write every such ruling down in the plan
-file as an assumption, so a wrong one can be seen and undone.
+there rather than for what the names suggest. Then do what the skill says,
+as written: ask the questions that matter, one at a time, present the design,
+and **stop until the person says yes**. Approval is theirs to give, never
+yours to announce — "plan accepted" is something you hear, not something you
+write — and the plan file is not written before it. The one exception is a
+node told, above this prompt, that it is running unattended: then nobody can
+answer, and the questions you would have asked are yours to rule on. Take the
+reading a careful colleague would take and write every such ruling into the
+plan file as an assumption, so a wrong one can be seen and undone. Nothing
+else licenses skipping the gate: not the task looking clear, not the run
+having been started deliberately, not the wish to get on with it.
 
 **Writing plans** says what the plan file has to contain to be executable by
 someone who was not here: exact files, exact code, the test first, one commit
@@ -149,9 +154,10 @@ when you can dispatch subagents, which in this harness you can: a fresh
 implementer per task, a review after each, the plan file as the single source
 of requirements, and rulings rather than stalls — it was written to run
 without a person, and it is the one to reach for. **Executing plans** is the
-same work done inline, for when subagents are not available; its "raise
-concerns with your human partner" does not apply unattended — rule, and say
-what you ruled in your summary. **Test-driven development** applies wherever
+same work done inline, for when subagents are not available; where it says to
+raise concerns with your human partner before starting, do so when there is
+one, and only when told above that this node runs unattended rule instead and
+say what you ruled in your summary. **Test-driven development** applies wherever
 this project has tests: find how they are actually run here (its scripts, its
 Makefile, its CI) rather than assuming a command.
 

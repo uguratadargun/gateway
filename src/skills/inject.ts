@@ -65,6 +65,28 @@ export function skillsDirective(skills: SkillDefinition[]): string {
   );
 }
 
+/**
+ * What a node is told when nothing it does can be answered.
+ *
+ * The skills an agent follows were written for a session with a person in it:
+ * brainstorming stops at an approval gate, executing plans raises concerns
+ * "before starting". Run headless, or on gate's own loop, a question has no
+ * one to reach — so the node is told so, and told what to do instead. A run
+ * driven from a session says nothing of the kind, because there the person is
+ * right there, and a skill that asks should ask. Deciding this from the
+ * prompt's wording was tried; the model guessed "unattended" with a user
+ * watching, and approved its own plan.
+ */
+export function unattendedNotice(): string {
+  return (
+    "This node is running unattended: there is no person in this session, and a question you ask reaches " +
+    "nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern " +
+    "before starting, do not wait — take the reading a careful colleague would take, act on it, and record the " +
+    "ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), " +
+    "so that a wrong one can be seen and undone."
+  );
+}
+
 export function bundlesDir(): string {
   return join(gateHome(), "skill-bundles");
 }

@@ -5,7 +5,7 @@ import type { AgentDefinition } from "@/agents/types";
 import { WorkflowError } from "@/runtime/errors";
 import type { NodeUsageRecord, ToolCallRecord } from "@/runtime/state";
 import type { RunWorkspace } from "@/runtime/workspace";
-import { buildSkillPlugin, skillsDirective } from "@/skills/inject";
+import { buildSkillPlugin, skillsDirective, unattendedNotice } from "@/skills/inject";
 import type { SkillDefinition } from "@/skills/types";
 
 import { outputCorrection, parseOutput } from "./agent";
@@ -208,6 +208,9 @@ export async function runClaudeCodeNode(
     // both are re-sent on a correction round, which resumes a session whose
     // system prompt is fixed at the turn it was given.
     const appended: string[] = [];
+    // First, because it changes how the skills after it are to be read: a
+    // headless child has nobody to answer it, whatever its skills expect.
+    appended.push(unattendedNotice());
     if (skills.length) appended.push(skillsDirective(skills));
     if (agent.output.type === "json") {
       const fields = Object.entries(agent.output.schema)

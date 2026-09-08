@@ -109,6 +109,11 @@ describe("claude-code executor", () => {
     // Full toolset on purpose — --allowed-tools gates prompts, not capability.
     expect(args).not.toContain("--allowed-tools");
     expect(args).not.toContain("--disallowed-tools");
+    // Told it is unattended, whatever its skills expect: a skill that stops for
+    // approval would otherwise wait on a question that reaches nobody — or,
+    // worse, decide for itself that nobody is there when somebody is.
+    const appended = args[args.indexOf("--append-system-prompt") + 1];
+    expect(appended).toContain("running unattended");
   });
 
   it("reports each tool call as it comes back, so the run is watchable", async () => {

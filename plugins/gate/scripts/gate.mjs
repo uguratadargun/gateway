@@ -54,7 +54,7 @@ function migrateLegacyDefinitions() {
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join as join2, relative } from "node:path";
 
-// node_modules/js-yaml/dist/js-yaml.mjs
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
 function defineScalarTag(tagName, options) {
   return {
@@ -3150,7 +3150,7 @@ var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
-// node_modules/zod/v3/external.js
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -3262,7 +3262,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// node_modules/zod/v3/helpers/util.js
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -3396,7 +3396,7 @@ var getParsedType = (data) => {
   }
 };
 
-// node_modules/zod/v3/ZodError.js
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -3514,7 +3514,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// node_modules/zod/v3/locales/en.js
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -3617,7 +3617,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// node_modules/zod/v3/errors.js
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -3626,7 +3626,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// node_modules/zod/v3/helpers/parseUtil.js
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -3736,14 +3736,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// node_modules/zod/v3/helpers/errorUtil.js
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// node_modules/zod/v3/types.js
+// ../../../../../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -8454,7 +8454,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.24.0";
+var GATE_VERSION = "0.24.1";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8890,6 +8890,9 @@ ${list}
 
 Use each one before you start, by its full name above, and follow it. A skill that describes a process is the process for this node, not background reading.`;
 }
+function unattendedNotice() {
+  return "This node is running unattended: there is no person in this session, and a question you ask reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait \u2014 take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
+}
 function bundlesDir() {
   return join9(gateHome(), "skill-bundles");
 }
@@ -9042,6 +9045,7 @@ async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
     if (resume) args.push("--resume", resume);
     if (skillPlugin) args.push("--plugin-dir", skillPlugin);
     const appended = [];
+    appended.push(unattendedNotice());
     if (skills.length) appended.push(skillsDirective(skills));
     if (agent.output.type === "json") {
       const fields = Object.entries(agent.output.schema).map(([field, type]) => `  "${field}": ${type}`).join("\n");
@@ -9373,6 +9377,7 @@ function systemPrompt(agent, hasTools, canWrite, skills = []) {
       canWrite ? "You are working in a git worktree of the target repository, and that worktree is your output: every change you decide on, you apply there yourself with the write and edit tools. Nothing reads your final answer for the change itself. Work change by change \u2014 read what the edit in front of you needs, make it, verify it, move on \u2014 rather than surveying the whole repository first and writing at the end. Tool paths are relative to the worktree root." : "You are working in a git worktree of the target repository. Tool paths are relative to its root. Read what you need, and base what you report on what you actually read rather than on what a name suggests."
     );
   }
+  parts.push(unattendedNotice());
   const briefing = skillsBriefing(skills);
   if (briefing) parts.push(briefing.trim());
   if (agent.output.type === "json") {
