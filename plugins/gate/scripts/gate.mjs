@@ -8467,7 +8467,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.24.3";
+var GATE_VERSION = "0.25.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -10157,7 +10157,8 @@ async function runLocal(client, opts) {
 }
 
 // src/client/step.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync10, readFileSync as readFileSync8, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { spawn as spawn2 } from "node:child_process";
+import { appendFileSync, closeSync, existsSync as existsSync11, mkdirSync as mkdirSync10, openSync, readFileSync as readFileSync8, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
 import { hostname as hostname3 } from "node:os";
 import { join as join12 } from "node:path";
 
@@ -10240,6 +10241,48 @@ function clearPending(executionId) {
 function workspaceOf(execution) {
   return execution.workspace ?? null;
 }
+function logPath(pending) {
+  return join12(gateHome2(), "runs", `${pending.executionId}-${pending.nodeId}-${pending.visit}.log`);
+}
+function spawnDetachedWorker(executionId, nodeId2, log) {
+  const fd = openSync(log, "a");
+  try {
+    const child = spawn2(process.execPath, [process.argv[1], "work", executionId, nodeId2], {
+      detached: true,
+      stdio: ["ignore", fd, fd],
+      env: process.env
+    });
+    child.unref();
+    if (child.pid === void 0) throw new WorkflowError("MODEL_EXECUTION_ERROR", "could not start the worker process");
+    return child.pid;
+  } finally {
+    closeSync(fd);
+  }
+}
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function waitInstruction(executionId, pending, agent) {
+  return {
+    do: "wait",
+    executionId,
+    nodeId: pending.nodeId,
+    agent: agent.id,
+    model: agent.model,
+    log: pending.worker.log,
+    startedAt: pending.startedAt,
+    remember: [
+      `Node "${pending.nodeId}" is running on its own as a spawned Claude Code, in ${agent.model} \u2014 the agent's model, not yours. You do nothing for it: do not touch the worktree, do not do its work, do not answer for it.`,
+      `Follow it with \`gate wait ${executionId}\`. That prints what the node is doing as it happens and returns when the node is done \u2014 with the next instruction \u2014 or after about ninety seconds, with this one again; run it again until it moves on.`,
+      "Between waits, tell the user what the log shows, in a line or two. They are watching this happen."
+    ]
+  };
+}
 async function begin(ctx, workflowId, input, cwd, repos) {
   const scope = cacheScope(ctx.team);
   const workflow = getWorkflow(workflowId, scope);
@@ -10296,6 +10339,33 @@ async function next(ctx, executionId) {
     const state = stateFor(execution, position.outputs);
     if (node.type === "agent") {
       const prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
+      if (prepared.agent.executor === "claude-code") {
+        const already = readPending(executionId);
+        if (already && already.worker && already.nodeId === node.id && already.visit === position.visit) {
+          if (alive(already.worker.pid)) return waitInstruction(executionId, already, prepared.agent);
+          clearPending(executionId);
+          await record(
+            ctx,
+            executionId,
+            {
+              nodeId: node.id,
+              stepIndex: position.stepIndex,
+              visit: position.visit,
+              status: "failed",
+              startedAt: already.startedAt,
+              finishedAt: Date.now(),
+              input: null,
+              output: null,
+              error: {
+                code: "MODEL_EXECUTION_ERROR",
+                message: `the worker running "${node.id}" exited without reporting; its log is ${already.worker.log}`
+              }
+            },
+            false
+          );
+          continue;
+        }
+      }
       const startedAt = Date.now();
       writePending({
         executionId,
@@ -10335,6 +10405,25 @@ async function next(ctx, executionId) {
         }
         return { id, description, path: resolveSkillDir(id, scope) };
       });
+      if (prepared.agent.executor === "claude-code") {
+        const log = logPath({ executionId, nodeId: node.id, visit: position.visit });
+        mkdirSync10(join12(gateHome2(), "runs"), { recursive: true, mode: 448 });
+        appendFileSync(log, `\u2500\u2500 ${node.id} \xB7 agent ${prepared.agent.id} \xB7 ${prepared.agent.model} \xB7 started ${new Date(startedAt).toISOString()}
+`, { mode: 384 });
+        const pid = (ctx.spawnWorker ?? spawnDetachedWorker)(executionId, node.id, log);
+        const pending = {
+          executionId,
+          nodeId: node.id,
+          stepIndex: position.stepIndex,
+          visit: position.visit,
+          startedAt,
+          worker: { pid, log },
+          shown: 0
+        };
+        writePending(pending);
+        ctx.say(`  running on its own in ${prepared.agent.model} \xB7 log ${log}`);
+        return waitInstruction(executionId, pending, prepared.agent);
+      }
       const shape = prepared.agent.output.type === "json" ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema).map(([k, t]) => `${k} (${t})`).join(", ")}` : "the answer as plain text";
       return {
         do: "agent",
@@ -10454,6 +10543,140 @@ async function step(ctx, executionId, nodeId2, answer) {
   clearPending(executionId);
   return next(ctx, executionId);
 }
+function logLine(call) {
+  const at = new Date(call.startedAt).toISOString().slice(11, 19);
+  const input = JSON.stringify(call.input ?? {});
+  const result = call.result.split("\n")[0].slice(0, 160);
+  return `${at}  ${call.ok ? " " : "\u2717"} ${call.tool} ${input.length > 140 ? `${input.slice(0, 140)}\u2026` : input} \u2192 ${result}
+`;
+}
+async function work(ctx, executionId, nodeId2) {
+  const pending = readPending(executionId);
+  if (!pending || pending.nodeId !== nodeId2 || !pending.worker) {
+    throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `run ${executionId} is not waiting on a worker for "${nodeId2}"`);
+  }
+  const { execution, steps } = await ctx.client.execution(executionId);
+  const scope = cacheScope(ctx.team);
+  const workflow = getWorkflow(execution.workflowId, scope);
+  const position = nextInSession(workflow, steps, execution.input);
+  if (position.kind !== "node" || position.node.id !== nodeId2 || position.node.type !== "agent") {
+    throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `run ${executionId} is not at "${nodeId2}"`);
+  }
+  const node = position.node;
+  const prepared = prepareAgentNode(node, stateFor(execution, position.outputs), (id) => getAgent(id, scope));
+  const skills = prepared.agent.skills.map((id) => getSkill(id, scope));
+  const workspace = workspaceOf(execution);
+  const log = pending.worker.log;
+  const controller = new AbortController();
+  const reporter = new RunReporter(ctx.client, executionId, () => {
+    appendFileSync(log, "\u2500\u2500 stop requested from the dashboard\n");
+    controller.abort();
+  });
+  reporter.start();
+  const timeoutMs = prepared.agent.timeoutMs ?? 60 * 6e4;
+  const deadline = timeoutMs > 0 ? pending.startedAt + timeoutMs : null;
+  let step2;
+  try {
+    const res = await runClaudeCodeNode(
+      prepared.agent,
+      prepared.prompt,
+      nodeId2,
+      {
+        skills,
+        workspace,
+        spawnCli: ctx.spawnCli,
+        signal: controller.signal,
+        gatewayUrl: ctx.client.gatewayUrl,
+        authToken: ctx.client.key,
+        sessionId: `workflow:${executionId}`,
+        onToolCall: (call) => {
+          appendFileSync(log, logLine(call));
+          reporter.event({
+            type: "tool.called",
+            executionId,
+            at: Date.now(),
+            nodeId: nodeId2,
+            stepIndex: pending.stepIndex,
+            tool: call.tool,
+            ok: call.ok,
+            summary: call.result.split("\n")[0].slice(0, 200),
+            durationMs: call.durationMs
+          });
+        }
+      },
+      deadline
+    );
+    step2 = {
+      nodeId: nodeId2,
+      stepIndex: pending.stepIndex,
+      visit: pending.visit,
+      status: "completed",
+      startedAt: pending.startedAt,
+      finishedAt: Date.now(),
+      input: prepared.inputs,
+      output: res.output,
+      usage: res.usage,
+      toolCalls: res.toolCalls
+    };
+  } catch (e) {
+    const error = { code: e instanceof WorkflowError ? e.code : "MODEL_EXECUTION_ERROR", message: e.message };
+    step2 = {
+      nodeId: nodeId2,
+      stepIndex: pending.stepIndex,
+      visit: pending.visit,
+      status: "failed",
+      startedAt: pending.startedAt,
+      finishedAt: Date.now(),
+      input: prepared.inputs,
+      output: null,
+      error
+    };
+  }
+  await reporter.stop();
+  try {
+    await record(ctx, executionId, step2, false);
+  } catch (e) {
+    if (!(e instanceof WorkflowError && e.code === "RUN_CANCELLED")) throw e;
+  }
+  const seconds = Math.max(1, Math.round((step2.finishedAt - step2.startedAt) / 1e3));
+  appendFileSync(
+    log,
+    step2.status === "completed" ? `\u2500\u2500 \u2713 ${nodeId2} (${seconds}s)
+` : `\u2500\u2500 \u2717 ${nodeId2}: ${step2.error?.message} (${seconds}s)
+`
+  );
+  clearPending(executionId);
+  return step2.status === "completed";
+}
+var WAIT_SLICE_MS = 9e4;
+var WAIT_POLL_MS = 2e3;
+async function wait(ctx, executionId, forMs = WAIT_SLICE_MS) {
+  const until = Date.now() + forMs;
+  for (; ; ) {
+    const pending = readPending(executionId);
+    if (!pending || !pending.worker) return next(ctx, executionId);
+    const shown = pending.shown ?? 0;
+    let text = "";
+    try {
+      text = readFileSync8(pending.worker.log, "utf8");
+    } catch {
+    }
+    if (text.length > shown) {
+      ctx.say(text.slice(shown).trimEnd());
+      writePending({ ...pending, shown: text.length });
+    }
+    if (!alive(pending.worker.pid)) return next(ctx, executionId);
+    if (Date.now() >= until) {
+      const scope = cacheScope(ctx.team);
+      const { execution } = await ctx.client.execution(executionId);
+      const workflow = getWorkflow(execution.workflowId, scope);
+      const node = workflow.nodes.find((n) => n.id === pending.nodeId);
+      const agent = node && node.type === "agent" ? getAgent(node.agent, scope) : { id: pending.nodeId, model: "?" };
+      return waitInstruction(executionId, pending, agent);
+    }
+    await new Promise((r) => setTimeout(r, Math.min(WAIT_POLL_MS, Math.max(0, until - Date.now()))));
+  }
+}
 async function record(ctx, executionId, step2, announceStart = true) {
   const res = await ctx.client.report(executionId, {
     events: [
@@ -10525,13 +10748,14 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate begin <workflow> [task\u2026]                 start a run, print the first instruction
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
+  gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for"]);
 function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const positional = [];
@@ -10937,6 +11161,19 @@ async function cmdStep(args) {
   const { ctx } = await sessionContext();
   return printInstruction(await step(ctx, executionId, nodeId2, answer));
 }
+async function cmdWait(args) {
+  const [executionId] = args.positional;
+  if (!executionId) die("usage: gate wait <execution-id> [--for <seconds>]");
+  const seconds = Number(args.flags.for);
+  const { ctx } = await sessionContext();
+  return printInstruction(await wait(ctx, executionId, Number.isFinite(seconds) && seconds > 0 ? seconds * 1e3 : void 0));
+}
+async function cmdWork(args) {
+  const [executionId, nodeId2] = args.positional;
+  if (!executionId || !nodeId2) die("usage: gate work <execution-id> <node>");
+  const { ctx } = await sessionContext();
+  return await work(ctx, executionId, nodeId2) ? 0 : 1;
+}
 async function cmdStatus(args) {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -10993,6 +11230,10 @@ async function main(argv) {
         return await cmdNext(args);
       case "step":
         return await cmdStep(args);
+      case "wait":
+        return await cmdWait(args);
+      case "work":
+        return await cmdWork(args);
       case "repo":
         return cmdRepo(args);
       case "reset":

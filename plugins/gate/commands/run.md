@@ -57,8 +57,16 @@ what was first typed.
 ## How a run works
 
 **You are the one running it.** gate decides *what* runs next and in *what order*; the work
-itself happens here, in this session, with your own tools, where the user can see it and answer
-you. There is no second Claude session and nothing headless.
+happens on this machine, where the user can see it. Which of you does a given node depends on
+the agent's `executor`, exactly as it does on the server:
+
+- `executor: gate` — the loop driving the run, which here is **you**: you do the node with your
+  own tools, in front of the user, and you can ask them. The shipped `acceptance` node is one.
+- `executor: claude-code` — a **spawned Claude Code on this machine, in the agent's own model**.
+  A planner on GLM, an implementer on a local model: your session's model cannot stand in for
+  that, so gate starts it as a worker and you follow it. The shipped planner, implementer and
+  reviewer are these. They run unattended — they were told so — and do not ask; what needed
+  settling was settled above, before the run, and the acceptance node asks at the end.
 
 Start it, then repeat until it says it is done:
 
@@ -101,6 +109,16 @@ Each call prints one JSON instruction:
     If gate refuses it, the message says what did not match: fix the file and hand it back
     again. Do not redo the work.
   - `step` prints the next instruction, so carry straight on.
+- **`{"do": "wait", …}`** — a node is running on its own, in its own model. `log` is where it
+  writes what it is doing, one tool call per line. You do nothing for it: do not touch the
+  worktree, do not do its work, do not answer for it. Run
+  ```
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" wait <execution-id>
+  ```
+  in the foreground: it prints what the node has done since you last looked and returns on its
+  own — with the next instruction when the node is over, or with `wait` again after about
+  ninety seconds. Between waits, tell the user what the log shows, in a line or two, and run it
+  again. A node can take an hour; that is the worker's hour, not yours.
 - **`{"do": "done", …}`** — the run is over. Report `status`, the `branch` and
   `git -C <workspace> diff` for reviewing it, then offer to review that diff.
 - **`{"do": "failed", …}`** — a node failed. Report the node and the error as they came; do not

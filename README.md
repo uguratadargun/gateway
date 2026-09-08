@@ -936,23 +936,31 @@ them needs anybody to do anything.
   change that genuinely breaks older clients — it stops them dead, which is
   the point.
 
-**The run happens in your session, not beside it.** `/gate:run` does not start
-a second, headless Claude: it *is* the run. gate says what the next node is and
-your own session does it, in front of you, with your own tools and your own
-permissions — so you can watch it, interrupt it, and answer it when it asks
-something, which a headless child could never do (it was launched with
-`--permission-prompts none` precisely because nobody was there).
+**The run happens in your session, not beside it.** `/gate:run` is the run:
+gate says what the next node is and it is done on your machine, in front of
+you. Who does it follows the agent's `executor`, the same split the server
+makes. An `executor: gate` node is done by your own session, with your tools
+and your permissions — you can watch it, interrupt it, and answer it when it
+asks, which is what the shipped `acceptance` node does. An
+`executor: claude-code` node runs as a spawned Claude Code on your machine
+**in the agent's own model** — a planner on GLM, an implementer on a local
+model, which your session's model cannot stand in for — started as a detached
+worker that writes every tool call to a log; your session follows the log with
+`gate wait`, relays it to you, and carries on when the node is over. Those
+nodes run unattended and do not ask; the brief is settled before the run, and
+the acceptance node asks at the end.
 
-The protocol is three commands, and the session loops them:
+The protocol is four commands, and the session loops them:
 
 ```bash
 gate begin <workflow> "<task>"          # → the first instruction, as JSON
 gate next <execution-id>                # → what to do now (no side effects)
 gate step <execution-id> <node> --output-file <file>   # → hand back an answer
+gate wait <execution-id>                # → follow a node running in its own model
 ```
 
-`begin`/`step` print the next instruction, so the loop is one call per node.
-Only **agent** nodes reach the session; `command` nodes are argv from the
+`begin`/`step`/`wait` print the next instruction, so the loop is one call per
+node. Only **agent** nodes reach the session; `command` nodes are argv from the
 workflow file, so gate runs them itself and prints their output to the
 terminal. Where the run goes next is still gate's — from the graph's edges and
 the outputs handed back, never from the model's judgement — and an answer that

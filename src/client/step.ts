@@ -1,22 +1,26 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 
 import { getAgent } from "@/agents/registry";
 import type { ExecutionStepRecord } from "@/executions/types";
 import { parseOutput, prepareAgentNode } from "@/runtime/executors/agent";
+import { runClaudeCodeNode } from "@/runtime/executors/claude-code";
 import { runCommand } from "@/runtime/executors/command";
 import { WorkflowError } from "@/runtime/errors";
-import type { StepRecord, WorkflowState } from "@/runtime/state";
+import type { StepRecord, ToolCallRecord, WorkflowState } from "@/runtime/state";
 import { renderTemplate } from "@/agents/template";
 import { conditionContext } from "@/runtime/state";
 import { createRunWorkspace, readRunDiff, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
 import { getSkill, resolveSkillDir } from "@/skills/registry";
+import type { SkillDefinition } from "@/skills/types";
 import { getWorkflow } from "@/workflows/registry";
 import type { WorkflowDefinition } from "@/workflows/types";
 
 import type { GateClient } from "./api";
 import { CLI_VERSION } from "./api";
+import { RunReporter } from "./reporter";
 import { cacheScope } from "./cache";
 import { gateHome } from "./config";
 import { resolveRepo } from "./run";
@@ -36,7 +40,15 @@ import { nextInSession } from "./walk";
  * the run goes next, from the graph and the outputs, never from the model.
  *
  * Command nodes are not handed over — they are argv from the workflow file, so
- * this runs them itself and moves on. Only agent nodes need a model.
+ * this runs them itself and moves on. Agent nodes split by executor, the same
+ * way they do on the server. `executor: gate` means the loop driving the run,
+ * which here is the session: it gets the node, in front of the user, and can
+ * ask them. `executor: claude-code` means a spawned Claude Code in the agent's
+ * own model — a planner on GLM, an implementer on a local model — which the
+ * session's model cannot stand in for. That node is run by this CLI as a
+ * detached worker (`gate work`), its tool calls written to a log the session
+ * follows with `gate wait` and relays to the person; the worker records the
+ * step itself when it is done, and the session carries on from there.
  */
 
 /** What the session is told to do next, as JSON on stdout. */
@@ -77,6 +89,22 @@ export type Instruction =
        */
       remember: string[];
     }
+  | {
+      /**
+       * A node running on its own, in its own model. The session has nothing
+       * to do for it but follow along: `gate wait` prints what the worker is
+       * doing and comes back with the next instruction when it is done.
+       */
+      do: "wait";
+      executionId: string;
+      nodeId: string;
+      agent: string;
+      model: string;
+      /** Where the worker writes what it is doing, one tool call per line. */
+      log: string;
+      startedAt: number;
+      remember: string[];
+    }
   | { do: "done"; executionId: string; status: "completed" | "failed"; branch: string | null; workspace: string | null }
   | { do: "failed"; executionId: string; nodeId: string; error: { code: string; message: string } };
 
@@ -87,6 +115,10 @@ interface Pending {
   stepIndex: number;
   visit: number;
   startedAt: number;
+  /** Set when the node is being run by a detached worker rather than the session. */
+  worker?: { pid: number; log: string };
+  /** How much of the log `gate wait` has already shown. */
+  shown?: number;
 }
 
 function pendingPath(executionId: string): string {
@@ -121,6 +153,65 @@ export interface SessionRunContext {
   team: string;
   /** Printed for the person watching; the session's own output is the rest. */
   say: (message: string) => void;
+  /** Starts the detached worker for a node; the CLI's own process by default. Injectable for tests. */
+  spawnWorker?: (executionId: string, nodeId: string, log: string) => number;
+  /** Handed to the claude-code executor inside the worker, so tests do not spawn a real CLI. */
+  spawnCli?: typeof spawn;
+}
+
+function logPath(pending: Pick<Pending, "executionId" | "nodeId" | "visit">): string {
+  return join(gateHome(), "runs", `${pending.executionId}-${pending.nodeId}-${pending.visit}.log`);
+}
+
+/**
+ * The worker is this same CLI, run again with `work`, detached: the session's
+ * Bash call has to return in minutes, and an implementer node takes an hour.
+ * stdout and stderr go to the log, so nothing it prints is lost, and the
+ * process is unref'd so the `gate next` that started it can exit.
+ */
+function spawnDetachedWorker(executionId: string, nodeId: string, log: string): number {
+  const fd = openSync(log, "a");
+  try {
+    const child = spawn(process.execPath, [process.argv[1], "work", executionId, nodeId], {
+      detached: true,
+      stdio: ["ignore", fd, fd],
+      env: process.env,
+    });
+    child.unref();
+    if (child.pid === undefined) throw new WorkflowError("MODEL_EXECUTION_ERROR", "could not start the worker process");
+    return child.pid;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function waitInstruction(executionId: string, pending: Pending, agent: { id: string; model: string }): Instruction {
+  return {
+    do: "wait",
+    executionId,
+    nodeId: pending.nodeId,
+    agent: agent.id,
+    model: agent.model,
+    log: pending.worker!.log,
+    startedAt: pending.startedAt,
+    remember: [
+      `Node "${pending.nodeId}" is running on its own as a spawned Claude Code, in ${agent.model} — the agent's model, not yours. ` +
+        "You do nothing for it: do not touch the worktree, do not do its work, do not answer for it.",
+      `Follow it with \`gate wait ${executionId}\`. That prints what the node is doing as it happens and returns ` +
+        "when the node is done — with the next instruction — or after about ninety seconds, with this one again; " +
+        "run it again until it moves on.",
+      "Between waits, tell the user what the log shows, in a line or two. They are watching this happen.",
+    ],
+  };
 }
 
 /** Starts a run and returns its first instruction. */
@@ -202,6 +293,41 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
 
     if (node.type === "agent") {
       const prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
+      if (prepared.agent.executor === "claude-code") {
+        // Not the session's to do: this node runs in the agent's own model,
+        // through the gateway, as a worker this process starts and leaves
+        // running. A second `gate next` while it runs finds the worker alive
+        // and says so; one that finds it dead with nothing recorded fails the
+        // node with the log to look at, rather than starting it over silently.
+        // Checked before anything is announced or written: the marker on disk
+        // is the only memory of a worker already running, and overwriting it
+        // here would start a second one on every `gate next`.
+        const already = readPending(executionId);
+        if (already && already.worker && already.nodeId === node.id && already.visit === position.visit) {
+          if (alive(already.worker.pid)) return waitInstruction(executionId, already, prepared.agent);
+          clearPending(executionId);
+          await record(
+            ctx,
+            executionId,
+            {
+              nodeId: node.id,
+              stepIndex: position.stepIndex,
+              visit: position.visit,
+              status: "failed",
+              startedAt: already.startedAt,
+              finishedAt: Date.now(),
+              input: null,
+              output: null,
+              error: {
+                code: "MODEL_EXECUTION_ERROR",
+                message: `the worker running "${node.id}" exited without reporting; its log is ${already.worker.log}`,
+              },
+            },
+            false,
+          );
+          continue;
+        }
+      }
       const startedAt = Date.now();
       writePending({
         executionId,
@@ -252,6 +378,28 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
         }
         return { id, description, path: resolveSkillDir(id, scope) };
       });
+
+      if (prepared.agent.executor === "claude-code") {
+        // Not the session's to do: this node runs in the agent's own model,
+        // through the gateway, as a worker this process starts and leaves
+        // running; the session follows its log with `gate wait`.
+        const log = logPath({ executionId, nodeId: node.id, visit: position.visit });
+        mkdirSync(join(gateHome(), "runs"), { recursive: true, mode: 0o700 });
+        appendFileSync(log, `── ${node.id} · agent ${prepared.agent.id} · ${prepared.agent.model} · started ${new Date(startedAt).toISOString()}\n`, { mode: 0o600 });
+        const pid = (ctx.spawnWorker ?? spawnDetachedWorker)(executionId, node.id, log);
+        const pending: Pending = {
+          executionId,
+          nodeId: node.id,
+          stepIndex: position.stepIndex,
+          visit: position.visit,
+          startedAt,
+          worker: { pid, log },
+          shown: 0,
+        };
+        writePending(pending);
+        ctx.say(`  running on its own in ${prepared.agent.model} · log ${log}`);
+        return waitInstruction(executionId, pending, prepared.agent);
+      }
 
       const shape =
         prepared.agent.output.type === "json"
@@ -422,6 +570,173 @@ export async function step(
   ctx.say(`✓ ${nodeId} (${Math.max(1, Math.round((finishedAt - pending.startedAt) / 1000))}s)`);
   clearPending(executionId);
   return next(ctx, executionId);
+}
+
+/** One line of the worker's log: what it called, and the first line of what came back. */
+function logLine(call: ToolCallRecord): string {
+  const at = new Date(call.startedAt).toISOString().slice(11, 19);
+  const input = JSON.stringify(call.input ?? {});
+  const result = call.result.split("\n")[0].slice(0, 160);
+  return `${at}  ${call.ok ? " " : "✗"} ${call.tool} ${input.length > 140 ? `${input.slice(0, 140)}…` : input} → ${result}\n`;
+}
+
+/**
+ * Runs one claude-code node to completion, as the detached worker.
+ *
+ * The same thing the engine does for such a node on the server — the same
+ * executor, the same gateway, the same metering — with two differences that
+ * come from running here: every tool call also goes to the log the session is
+ * following, and the step is recorded by this process, so the run advances
+ * whether or not anybody is watching. Stop from the dashboard reaches it the
+ * way it reaches a headless run: on the reply to a report.
+ */
+export async function work(ctx: SessionRunContext, executionId: string, nodeId: string): Promise<boolean> {
+  const pending = readPending(executionId);
+  if (!pending || pending.nodeId !== nodeId || !pending.worker) {
+    throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `run ${executionId} is not waiting on a worker for "${nodeId}"`);
+  }
+  const { execution, steps } = await ctx.client.execution(executionId);
+  const scope = cacheScope(ctx.team);
+  const workflow: WorkflowDefinition = getWorkflow(execution.workflowId, scope);
+  const position = nextInSession(workflow, steps as ExecutionStepRecord[], execution.input);
+  if (position.kind !== "node" || position.node.id !== nodeId || position.node.type !== "agent") {
+    throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `run ${executionId} is not at "${nodeId}"`);
+  }
+  const node = position.node;
+  const prepared = prepareAgentNode(node, stateFor(execution, position.outputs), (id) => getAgent(id, scope));
+  const skills: SkillDefinition[] = prepared.agent.skills.map((id) => getSkill(id, scope));
+  const workspace = workspaceOf(execution);
+  const log = pending.worker.log;
+
+  const controller = new AbortController();
+  const reporter = new RunReporter(ctx.client, executionId, () => {
+    appendFileSync(log, "── stop requested from the dashboard\n");
+    controller.abort();
+  });
+  reporter.start();
+
+  const timeoutMs = prepared.agent.timeoutMs ?? 60 * 60_000;
+  const deadline = timeoutMs > 0 ? pending.startedAt + timeoutMs : null;
+
+  let step: StepRecord;
+  try {
+    const res = await runClaudeCodeNode(
+      prepared.agent,
+      prepared.prompt,
+      nodeId,
+      {
+        skills,
+        workspace,
+        spawnCli: ctx.spawnCli,
+        signal: controller.signal,
+        gatewayUrl: ctx.client.gatewayUrl,
+        authToken: ctx.client.key,
+        sessionId: `workflow:${executionId}`,
+        onToolCall: (call) => {
+          appendFileSync(log, logLine(call));
+          reporter.event({
+            type: "tool.called",
+            executionId,
+            at: Date.now(),
+            nodeId,
+            stepIndex: pending.stepIndex,
+            tool: call.tool,
+            ok: call.ok,
+            summary: call.result.split("\n")[0].slice(0, 200),
+            durationMs: call.durationMs,
+          });
+        },
+      },
+      deadline,
+    );
+    step = {
+      nodeId,
+      stepIndex: pending.stepIndex,
+      visit: pending.visit,
+      status: "completed",
+      startedAt: pending.startedAt,
+      finishedAt: Date.now(),
+      input: prepared.inputs,
+      output: res.output,
+      usage: res.usage,
+      toolCalls: res.toolCalls,
+    };
+  } catch (e) {
+    const error = { code: e instanceof WorkflowError ? e.code : "MODEL_EXECUTION_ERROR", message: (e as Error).message };
+    step = {
+      nodeId,
+      stepIndex: pending.stepIndex,
+      visit: pending.visit,
+      status: "failed",
+      startedAt: pending.startedAt,
+      finishedAt: Date.now(),
+      input: prepared.inputs,
+      output: null,
+      error,
+    };
+  }
+
+  await reporter.stop();
+  try {
+    await record(ctx, executionId, step, false);
+  } catch (e) {
+    // A cancel that arrived on the very last report: the step is recorded
+    // either way, and the session's next `gate next` settles the run.
+    if (!(e instanceof WorkflowError && e.code === "RUN_CANCELLED")) throw e;
+  }
+  const seconds = Math.max(1, Math.round((step.finishedAt - step.startedAt) / 1000));
+  appendFileSync(
+    log,
+    step.status === "completed" ? `── ✓ ${nodeId} (${seconds}s)\n` : `── ✗ ${nodeId}: ${step.error?.message} (${seconds}s)\n`,
+  );
+  // Cleared last: the marker is what tells `gate wait` the node is still going.
+  clearPending(executionId);
+  return step.status === "completed";
+}
+
+/** How long one `gate wait` follows the log before handing back to the session. */
+const WAIT_SLICE_MS = 90_000;
+const WAIT_POLL_MS = 2_000;
+
+/**
+ * Follows the worker: prints what the log has gained, and returns with the
+ * next instruction once the node is over, or with `wait` again when this
+ * slice of time is up — short enough for the session's shell call, long
+ * enough that the person is not watching a prompt spin.
+ */
+export async function wait(ctx: SessionRunContext, executionId: string, forMs = WAIT_SLICE_MS): Promise<Instruction> {
+  const until = Date.now() + forMs;
+  for (;;) {
+    const pending = readPending(executionId);
+    // No marker means the worker finished and recorded its step (or nothing
+    // was ever running); `next` works out what follows either way.
+    if (!pending || !pending.worker) return next(ctx, executionId);
+
+    const shown = pending.shown ?? 0;
+    let text = "";
+    try {
+      text = readFileSync(pending.worker.log, "utf8");
+    } catch {
+      // A log not yet created is a worker that has not got going.
+    }
+    if (text.length > shown) {
+      ctx.say(text.slice(shown).trimEnd());
+      writePending({ ...pending, shown: text.length });
+    }
+
+    // A worker that has died leaves its marker; `next` turns that into a
+    // failed step with the log to look at.
+    if (!alive(pending.worker.pid)) return next(ctx, executionId);
+    if (Date.now() >= until) {
+      const scope = cacheScope(ctx.team);
+      const { execution } = await ctx.client.execution(executionId);
+      const workflow: WorkflowDefinition = getWorkflow(execution.workflowId, scope);
+      const node = workflow.nodes.find((n) => n.id === pending.nodeId);
+      const agent = node && node.type === "agent" ? getAgent(node.agent, scope) : { id: pending.nodeId, model: "?" };
+      return waitInstruction(executionId, pending, agent);
+    }
+    await new Promise((r) => setTimeout(r, Math.min(WAIT_POLL_MS, Math.max(0, until - Date.now()))));
+  }
 }
 
 /** Sends one step up, so the dashboard has it as it happens. */

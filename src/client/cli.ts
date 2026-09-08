@@ -13,7 +13,7 @@ import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
 import { runLocal } from "./run";
-import { begin, next, step, type Instruction, type SessionRunContext } from "./step";
+import { begin, next, step, wait, work, type Instruction, type SessionRunContext } from "./step";
 
 /**
  * `gate` — the command a developer runs, and what /gate:run calls.
@@ -45,6 +45,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate begin <workflow> [task…]                 start a run, print the first instruction
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
+  gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
@@ -67,7 +68,7 @@ interface Args {
  * is short, and the alternative is a parser that is wrong in exactly the case
  * the tool exists for.
  */
-const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file"]);
+const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for"]);
 
 function parseArgs(argv: string[]): Args {
   const [command = "help", ...rest] = argv;
@@ -623,6 +624,25 @@ async function cmdStep(args: Args): Promise<number> {
   return printInstruction(await step(ctx, executionId, nodeId, answer));
 }
 
+async function cmdWait(args: Args): Promise<number> {
+  const [executionId] = args.positional;
+  if (!executionId) die("usage: gate wait <execution-id> [--for <seconds>]");
+  const seconds = Number(args.flags.for);
+  const { ctx } = await sessionContext();
+  return printInstruction(await wait(ctx, executionId, Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined));
+}
+
+/**
+ * The detached worker `gate next` starts for a claude-code node. Not in the
+ * usage text: nothing but this CLI runs it, and its stdout is the node's log.
+ */
+async function cmdWork(args: Args): Promise<number> {
+  const [executionId, nodeId] = args.positional;
+  if (!executionId || !nodeId) die("usage: gate work <execution-id> <node>");
+  const { ctx } = await sessionContext();
+  return (await work(ctx, executionId, nodeId)) ? 0 : 1;
+}
+
 async function cmdStatus(args: Args): Promise<number> {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -683,6 +703,10 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdNext(args);
       case "step":
         return await cmdStep(args);
+      case "wait":
+        return await cmdWait(args);
+      case "work":
+        return await cmdWork(args);
       case "repo":
         return cmdRepo(args);
       case "reset":

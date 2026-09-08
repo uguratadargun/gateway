@@ -278,6 +278,14 @@ Code running in the worktree instead.
 | tools | the six above, with hard caps: 200KB reads, search stops at 100 matches, 30KB of command output | the whole Claude Code toolset — real ripgrep, ranged reads, uniqueness-checked edits, `Bash`, `TodoWrite` |
 | context | every tool result appended, never trimmed | compacted by the harness |
 | `tools:` | the allowlist, and it is enforced | **ignored** — see below |
+| in `/gate:run` | the session itself does the node, with its tools and its model, and can ask the user | a spawned Claude Code on that machine, in the agent's model, as a detached worker the session follows (`gate wait`) |
+
+The last row is what decides which executor an agent gets when its model is
+not a Claude tier. A `provider:` model only takes effect where the node runs
+in its own process — on the server, under `gate run`, and in a session-driven
+run for `claude-code` — because a session cannot change its own model for one
+node. A `gate` agent run from a session runs on the session's model, whatever
+its file says; put a provider model on a `claude-code` agent.
 
 The context row is the one that decides it. A node that reads its way through a
 large repository on the gate loop ends up re-sending a six-figure context every
