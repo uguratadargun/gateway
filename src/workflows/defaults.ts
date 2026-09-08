@@ -13,151 +13,65 @@ import { workflowsDir } from "./registry";
  * not exist yet, so deleting it sticks.
  */
 
-const SAMPLE_DEV_PIPELINE = `name: Sample dev pipeline
-description: Plan, implement and test a task, then review and security-review it in parallel, looping back to implementation on any rejection.
-entry: planner
-nodes:
-  - id: planner
-    type: agent
-    agent: planner
-    label: Plan
-    next: implementation
-
-  - id: implementation
-    type: agent
-    agent: implementation
-    label: Implement
-    next: tester
-
-  - id: tester
-    type: agent
-    agent: tester
-    label: Test
-    edges:
-      - when: outputs.tester.passed == true
-        to: checks
-        label: tests pass
-      # A loop-back edge without one of these has no end: an implementation
-      # that cannot fix a failure produces the same failure for as long as
-      # someone keeps paying for it.
-      - when: visits.tester >= 5
-        to: tests-stuck
-        label: still failing after 5 rounds
-      - to: implementation
-        label: tests failed
-
-  # Both reviews read the same diff and nothing else, so they run together.
-  - id: checks
-    type: parallel
-    label: Reviews
-    branches: [reviewer, security]
-    join: verdict
-
-  - id: reviewer
-    type: agent
-    agent: reviewer
-    label: Review
-    next: verdict
-
-  - id: security
-    type: agent
-    agent: security-reviewer
-    label: Security review
-    next: verdict
-
-  - id: verdict
-    type: condition
-    label: Both approved?
-    edges:
-      - when: outputs.reviewer.verdict == "approved" && outputs.security.verdict == "approved"
-        to: done
-        label: approved
-      - when: visits.verdict >= 4
-        to: review-stuck
-        label: still rejected after 4 rounds
-      - to: implementation
-        label: changes requested
-
-  - id: done
-    type: terminal
-    label: Done
-    status: completed
-
-  - id: tests-stuck
-    type: terminal
-    label: Tests never passed
-    status: failed
-
-  - id: review-stuck
-    type: terminal
-    label: Reviews kept rejecting
-    status: failed
-`;
-
-
 /**
- * The tool-using team: agents work in a per-run git worktree of a real
- * repository, the test suite is a deterministic command node, and any failure
- * or rejection routes back to the implementer. The repository comes from the
- * run, so the same pipeline serves every project.
+ * The pipeline gate ships.
+ *
+ * It has to work in a repository nobody has looked at, which is the whole
+ * reason it contains no `npm ci` and no `npm test`: those are facts about one
+ * project, and a default that assumes them is a default that fails on the
+ * first machine it meets. Verification lives inside the implementer, whose
+ * test-driven-development skill finds how this project actually runs its
+ * tests; a deterministic test node is something `/gate:design` adds once it
+ * has read the repository and knows the command.
+ *
+ * Review is one agent node, not a parallel node with one branch: a parallel
+ * node means two regions that genuinely run at once, and the loader is right to
+ * refuse one branch. Adding a project's own reviewers alongside this one is
+ * /gate:design's job, and the command file says exactly how — wrap them in a
+ * parallel node joining at `verdict`, and widen the verdict's condition.
  */
-const REPO_DEV_TEAM = `name: Repo dev team
-description: Plan, implement and test a change inside a per-run git worktree, then review and security-review it in parallel.
+const DEV = `name: Dev
+description: Plan a change, carry it out in a worktree, review it, and open a merge request.
 entry: planner
-# Agents work in a git worktree of a real repository, never in the repository
-# itself. Which one is a run input ("repo") — the shell client and /gate:run
-# default it to the directory you are in. Pin this pipeline to one project by
-# adding "repo: /path/to/it" here; add "baseRef:" to branch from something
-# other than HEAD, "branchPrefix:" to name the branch differently.
 workspace: {}
+# No ceilings: a change worth making can take a dozen passes, and cutting one
+# off mid-review throws away everything it has already spent. The loops end
+# themselves — the verdict sends work back, and a run that will not converge is
+# stopped from the dashboard, where it can be seen not converging.
+maxWorkflowSteps: 0
+maxVisits: 0
+maxCostUsd: 0
 nodes:
   - id: planner
     type: agent
     agent: planner
     label: Plan
-    next: install
+    next: implementer
 
-  # Dependencies once, before the loop: a worktree is a clean checkout, so
-  # node_modules is not in it. A failed install is an environment problem, not
-  # something the implementer can fix, so it ends the run instead of looping.
-  - id: install
-    type: command
-    label: npm ci
-    command: [npm, ci]
-    edges:
-      - when: outputs.install.ok == true
-        to: implementation
-        label: installed
-      - to: install-failed
-        label: install failed
-
-  - id: implementation
+  - id: implementer
     type: agent
-    agent: implementation
+    agent: implementer
     label: Implement
-    next: tests
+    next: stage
 
-  # Deterministic verification: the routing decision is an exit code, not a
-  # model's opinion. Runs in the worktree, because the workflow has a workspace.
-  - id: tests
+  - id: stage
     type: command
-    label: npm test
-    command: [npm, test]
-    edges:
-      - when: outputs.tests.ok == true
-        to: checks
-        label: tests pass
-      - when: visits.tests >= 5
-        to: tests-stuck
-        label: still red after 5 runs
-      - to: implementation
-        label: tests failed
+    label: Stage new files
+    # add -N records intent only: it makes files that did not exist before
+    # visible to \`git diff\` without staging their content.
+    command: [git, add, -N, .]
+    next: diff
 
-  - id: checks
-    type: parallel
-    label: Reviews
-    branches: [reviewer, security]
-    join: verdict
+  - id: diff
+    type: command
+    label: Diff
+    command: [git, diff]
+    edges:
+      - when: outputs.diff.stdout == ""
+        to: nothing-changed
+        label: nothing changed
+      - to: reviewer
+        label: has a diff
 
   - id: reviewer
     type: agent
@@ -165,49 +79,82 @@ nodes:
     label: Review
     next: verdict
 
-  - id: security
-    type: agent
-    agent: security-reviewer
-    label: Security review
-    next: verdict
-
   - id: verdict
     type: condition
-    label: Both approved?
+    label: Ships?
     edges:
-      - when: outputs.reviewer.verdict == "approved" && outputs.security.verdict == "approved"
-        to: done
+      - when: outputs.reviewer.verdict == "approved"
+        to: stage-all
         label: approved
-      - when: visits.verdict >= 4
-        to: review-stuck
-        label: still rejected after 4 rounds
-      - to: implementation
+      - to: planner
         label: changes requested
+
+  - id: stage-all
+    type: command
+    label: Stage everything
+    # add -A, not add -N: the stage node above recorded intent, and a commit
+    # needs the content.
+    command: [git, add, -A]
+    next: commit
+
+  - id: commit
+    type: command
+    label: Commit
+    # Two -m: the task is the subject, the implementer's own summary the body.
+    command: [git, commit, -m, "{{input.task}}", -m, "{{outputs.implementer.summary}}"]
+    edges:
+      - when: outputs.commit.ok == true
+        to: merge-request
+        label: committed
+      - to: not-shipped
+        label: commit failed
+
+  - id: merge-request
+    type: command
+    label: Push and open the merge request
+    # glab when it is there, and GitLab's push options when it is not: those
+    # need no CLI and no API token, because the SSH key that cloned the
+    # repository is already the whole authentication story.
+    #
+    # The task rides as \$1 rather than being pasted into the script. Nothing in
+    # gate ever builds a shell string out of a run's own values, and a task is
+    # the most user-written value there is.
+    command:
+      - sh
+      - -c
+      - >-
+        if command -v glab >/dev/null 2>&1; then
+        git push --set-upstream origin HEAD && glab mr create --fill --yes;
+        else
+        git push -o merge_request.create -o "merge_request.title=\$1" --set-upstream origin HEAD;
+        fi
+      - gate-open-mr
+      - "{{input.task}}"
+    edges:
+      - when: outputs.merge-request.ok == true
+        to: done
+        label: merge request opened
+      - to: not-shipped
+        label: push failed
 
   - id: done
     type: terminal
-    label: Done
+    label: Merge request opened
     status: completed
 
-  - id: install-failed
+  - id: nothing-changed
     type: terminal
-    label: Install failed
+    label: Nothing was changed
     status: failed
 
-  - id: tests-stuck
+  - id: not-shipped
     type: terminal
-    label: Tests never passed
-    status: failed
-
-  - id: review-stuck
-    type: terminal
-    label: Reviews kept rejecting
+    label: Reviewed, but not shipped
     status: failed
 `;
 
 export const DEFAULT_WORKFLOWS: Record<string, string> = {
-  "sample-dev-pipeline": SAMPLE_DEV_PIPELINE,
-  "repo-dev-team": REPO_DEV_TEAM,
+  dev: DEV,
 };
 
 /**

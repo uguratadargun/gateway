@@ -197,6 +197,11 @@ async function git(args: string[], cwd?: string): Promise<string> {
  * every import after it ambiguous.
  */
 export async function syncSource(id: string): Promise<SkillSourceRecord | null> {
+  // A sync addressed straight at a built-in — a link, an API call, the Skills
+  // page importing what the default agents need — must not 404 because nobody
+  // has opened the list yet. Seeded here rather than in `getSource`, which
+  // `ensureBuiltInSources` calls itself.
+  ensureBuiltInSources();
   const source = getSource(id);
   if (!source) return null;
   setStatus(id, "syncing");
@@ -304,6 +309,7 @@ export interface ImportResult {
  * of one produces prose that tells an agent to open a file that is not there.
  */
 export function importSkills(sourceId: string, sourceSkills: string[], scope: DefinitionScope, replace = false): ImportResult {
+  ensureBuiltInSources();
   const source = getSource(sourceId);
   if (!source) throw new WorkflowError("WORKSPACE_ERROR", `no skill source called "${sourceId}"`);
   const available = new Map(availableSkills(source).map((s) => [s.sourceSkill, s]));

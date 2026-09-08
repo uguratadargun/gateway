@@ -305,15 +305,27 @@ whose prompt no longer decides anything.
 
 ## Shape that works
 
+gate ships this as `dev`, using the team's `planner`, `implementer` and
+`reviewer`:
+
 ```
-setup ─▶ planner ─▶ implementer ─▶ stage ─▶ diff ─▶ tests ─┬─ pass ─▶ reviews ─┬─ reviewer ─┐
-           ▲                                     ▲         │                   └─ security ─┴─▶ verdict
-           │                                     └── fail ──┘                                     │
-           └──────────────── changes requested ───────────────────────────────────────────────────┘
+planner ─▶ implementer ─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
+   ▲                                     └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ commit ─▶ merge-request ─▶ done
+   └──────────────── changes requested ──────────────────────────┘
 ```
 
-Plan → implement → take the diff → run the project's real test command → review
-in parallel → a condition that either finishes or sends the work back.
+It contains no `npm ci` and no `npm test` on purpose: those are facts about one
+project, and a default that assumes them fails on the first machine it meets.
+What a particular repository needs goes around it — install and codegen before
+the planner, its real test command between the implementer and the review, and
+a merge-request node that matches its host. `/gate:design` writes those, reading
+them out of the repository rather than guessing.
+
+The shipped agents follow skills (brainstorming and writing plans for the
+planner, executing plans and test-driven development for the implementer,
+requesting code review for the reviewer), which is what makes them a team
+rather than three prompts. Name them; do not copy them into project-specific
+variants.
 
 Three things in that picture are easy to get wrong, and each one is a rule.
 

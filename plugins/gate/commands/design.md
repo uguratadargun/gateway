@@ -18,46 +18,99 @@ How the two file formats work, and what a save will reject:
 
 The user wants a pipeline for: $ARGUMENTS
 
-If that is empty there is no brief, which is fine: design the pipeline this
-repository obviously wants — plan, implement, run its own test command, review —
-and say that is what you are proposing and why it fits what you found. Do not
-stop to ask what they want first; read the repository, then put a concrete
-proposal in front of them.
+If that is empty there is no brief, which is fine: the shipped pipeline already
+knows how to plan, implement and review, so what is missing is this project's
+own steps. Read the repository, work out what those are, and put a concrete
+proposal in front of them rather than asking what they want first.
 
-Build it for **this repository**, in three passes.
+Build it for **this repository** — but not from nothing. gate ships a team with
+`planner`, `implementer` and `reviewer`, each following its skills, and a `dev`
+pipeline that plans, implements in a worktree, reviews, commits and opens a
+merge request. **That is the base. You write the ends.**
 
-## 1. Read the repository first
+## 1. Use the default team, do not rewrite it
+
+`planner`, `implementer` and `reviewer` are not starting points to improve on.
+They know nothing about any particular project on purpose — which is what lets
+every pipeline share them — and they carry the skills (brainstorming, writing
+plans, executing plans, test-driven development, requesting code review) that
+make them behave like a team rather than three prompts.
+
+So: **name them, never copy them.** Do not write a `my-project-planner` that is
+the shipped planner with a paragraph added; if a project genuinely needs
+something the planner cannot know, that belongs in the task or in a command
+node, not in a second planner. `gate agents` above lists what the team already
+has; anything there is yours to reuse the same way.
+
+## 2. Read the repository, and write only what is specific to it
 
 Do not design against assumptions. Establish, from the files:
 
-- language, package manager, and the **exact commands** the project uses to
-  test, lint and typecheck — take them from `package.json` scripts, `Makefile`,
-  `pyproject.toml`, CI workflow files, whatever is really there;
+- package manager and the **exact commands** this project uses to install,
+  generate, build, test, lint and typecheck — from `package.json` scripts,
+  `Makefile`, `pyproject.toml`, CI workflow files, whatever is really there;
 - how it is laid out — where source, tests and config live, whether it is a
   monorepo (then commands may need a `cwd`);
-- what a change here normally has to satisfy: existing test conventions, a
-  review checklist in `CONTRIBUTING`, generated files, migrations.
+- how changes reach it: the remote's host, the default branch, whether
+  `gh`/`glab` is used, what CI runs on a merge request;
+- what a change here normally has to satisfy: test conventions, a review
+  checklist in `CONTRIBUTING`, generated files, migrations.
+
+What you learn becomes `command` nodes, in three places:
+
+- **Before the planner** — what a fresh worktree needs before anyone can work
+  in it: dependency install, code generation, linking, a build that other
+  steps assume. (`pnpm install`, `pnpm build-protobuf`, linking `node_modules`
+  — whatever this project really does.) A worktree is a clean checkout: if
+  something is needed and is not tracked by git, it has to be a node.
+- **Between the implementer and the review** — this project's real
+  verification: its test command, its typecheck, its linter. The implementer
+  already tests as it works; this node is the deterministic gate that decides
+  whether the change reaches a reviewer at all. Route a failure back to the
+  implementer with a labelled edge, and give that loop its own terminal so a
+  test that never goes green ends with a reason rather than a ceiling.
+- **At the end** — the merge request. The shipped node prefers `glab` and falls
+  back to GitLab push options; if this project is on GitHub, make it
+  `gh pr create`, and set the target branch to whatever this repository's
+  default actually is (`master` and `main` are both common).
 
 If the repository has no test command at all, say so — the pipeline then has no
-deterministic gate, and you should propose a review-only shape instead of
-inventing an `npm test` that does not exist.
+deterministic gate, and a review-only shape is the honest proposal rather than
+an `npm test` that does not exist.
 
-## 2. Propose before writing
+## 3. Add a reviewer only when the project needs one
 
-Show the user, briefly: the nodes and how they route, which existing agents you
-will reuse, which new agents you will add and why, and the real commands the
-`command` nodes will run. Prefer reusing an agent over creating a near-duplicate
-of it; add a new one when this repository genuinely needs different knowledge in
-the prompt. Wait for confirmation.
+The shipped `reviewer` reviews the change as a change. A project sometimes has
+a second thing that must be checked every time and that a general reviewer will
+not reliably catch: a wire protocol or schema that must stay compatible, a
+security surface with rules of its own, a performance budget, a compliance
+requirement.
 
-Start from the canonical shape in the reference — plan → implement → stage →
-diff → test → parallel review → verdict — and change it only where this
-repository gives you a reason. It is not a suggestion to improve on: the diff
+If — and only if — this repository has such a thing, add **at most two**
+reviewers, each with its own narrow agent and one job. Then:
+
+- turn the single `reviewer` node into a `parallel` node (`review`) whose
+  branches are the default `reviewer` **and** yours, joined at `verdict`;
+- give each new reviewer `next: verdict` and the same `verdict` /
+  `feedback` output shape as the shipped one;
+- widen the verdict's condition so every reviewer has to approve:
+  `outputs.reviewer.verdict == "approved" && outputs.<yours>.verdict == "approved"`.
+
+The default reviewer stays a branch. It is not replaced, and it is not made
+optional.
+
+## 4. Propose before writing
+
+Show the user, briefly: the nodes you are adding and where, the real commands
+they run and which file you read them from, any extra reviewer and the specific
+risk it exists for. One sentence each. Wait for confirmation.
+
+Change the shipped shape only where the repository gives you a reason. The diff
 node, the empty-diff edge and the rejection-to-planner route are each there
-because the obvious alternative fails in a way that is invisible until a run
-has already spent its budget.
+because the obvious alternative fails in a way that is invisible until a run has
+already spent its budget.
 
-## 3. Write it
+## 5. Write it
 
 Definitions live on the gate server and belong to the team, so write the files
 first and then save them there. Put them under `.gate-proposal/` in this
@@ -83,7 +136,7 @@ If the push is refused with **SCOPE_MISSING**, this person's key may read the
 team's definitions but not write them. Say so and stop: someone with the
 dashboard issues them a key with the author right; nothing here can grant it.
 
-## 4. Check it before you save, then again after
+## 6. Check it before you save, then again after
 
 The server validates shape, not sense: it will happily accept a pipeline whose
 reviewers cannot see the diff, whose implementer has no timeout, or whose plan

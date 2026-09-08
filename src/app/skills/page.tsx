@@ -66,6 +66,8 @@ export default function SkillsPage() {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [inherited, setInherited] = useState<SkillSummary[]>([]);
   const [errors, setErrors] = useState<Array<{ id: string; message: string }>>([]);
+  /** What the shipped agents follow and this team has not imported. */
+  const [missing, setMissing] = useState<Array<{ id: string; source: string; sourceSkill: string }>>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -84,6 +86,7 @@ export default function SkillsPage() {
     setSkills(lib.skills ?? []);
     setInherited(lib.inherited ?? []);
     setErrors(lib.errors ?? []);
+    setMissing(lib.missingForDefaults ?? []);
     setSources(src.sources ?? []);
   }, [team]);
 
@@ -104,6 +107,39 @@ export default function SkillsPage() {
     if (data.source.status === "failed") setError(data.source.lastSyncLog ?? "sync failed");
     setOpen(id);
     await load();
+  }
+
+  /**
+   * Imports exactly what the shipped agents need, from one button.
+   *
+   * The alternative is a person reading a run that failed on
+   * "declares skill X, which is not in this team's skill library", finding
+   * this page, finding the source, syncing it and picking seven names out of
+   * fourteen. The list is known; the button is the honest shape.
+   */
+  async function importForDefaults() {
+    const source = missing[0]?.source;
+    if (!source) return;
+    setBusy("defaults");
+    setError(null);
+    try {
+      // The source has to have been fetched before anything can be copied out
+      // of it, and on a fresh install it never has been.
+      await fetch(withTeam(`/api/skill-sources/${source}/sync`, team), { method: "POST" });
+      const r = await fetch(withTeam(`/api/skill-sources/${source}/import`, team), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ skills: missing.map((m) => m.sourceSkill) }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "import failed");
+      setNote(`Imported ${data.imported.length} skill(s) the default agents follow`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+      await load();
+    }
   }
 
   /** Everything selected in this source, imported in one call. */
@@ -183,6 +219,19 @@ export default function SkillsPage() {
       </header>
 
       {error && <Card className="border-destructive/50 p-3 text-xs text-destructive">{error}</Card>}
+
+      {missing.length > 0 && (
+        <Card className="flex flex-wrap items-center gap-3 border-amber-500/40 bg-amber-500/10 p-3 text-xs">
+          <span>
+            The shipped agents follow {missing.length} skill{missing.length > 1 ? "s" : ""} this team does not have:{" "}
+            <span className="font-mono">{missing.map((m) => m.sourceSkill).join(", ")}</span>. Until they are here, a
+            run stops at the first node that needs one.
+          </span>
+          <Button size="sm" className="ml-auto" disabled={busy !== null} onClick={importForDefaults}>
+            {busy === "defaults" ? <Loader2 className="animate-spin" /> : <DownloadCloud />} Import them
+          </Button>
+        </Card>
+      )}
       {note && <Card className="p-3 text-xs text-muted-foreground">{note}</Card>}
 
       <section className="space-y-2">

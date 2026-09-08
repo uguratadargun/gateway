@@ -487,8 +487,28 @@ unwinding first (their in-flight model call is not cancelled) so the execution
 history stays complete. Real upstream concurrency is still bounded by gate's
 concurrency limiter.
 
-The **default team's** directories are seeded with five agents and this sample
-pipeline the first time you open `/agents` or `/workflows`; after that they are yours to edit (from
+gate ships one team that works in a repository nobody has looked at:
+**planner**, **implementer** and **reviewer**, each following skills from
+`superpowers` (brainstorming and writing plans; executing plans and
+test-driven development; requesting code review), and a `dev` pipeline that
+plans, implements in a worktree, reviews, commits and opens a merge request.
+
+It contains no `npm ci` and no `npm test` on purpose — those are facts about
+one project, and a default that assumes them fails on the first machine it
+meets. What a particular repository needs goes around it, and `/gate:design`
+writes exactly that: install and codegen before the planner, its real test
+command between the implementer and the review, a merge-request node matching
+its host, and — only where the project genuinely has a second thing that must
+be checked every time — one or two extra reviewers running alongside the
+default one. The three agents themselves are named, never copied.
+
+The skills are the point: without them these are three ordinary prompts. If the
+team has not imported them, `/skills` says which are missing and imports them in
+one button, and a run that needs one stops at that node with the reason rather
+than quietly proceeding without it.
+
+The **default team's** directories are seeded with the three agents below and
+the `dev` pipeline the first time you open `/agents` or `/workflows`; after that they are yours to edit (from
 the dashboard or in `$EDITOR`), and deletions stick. A team you create starts
 **empty**: it is a place someone made for their own work, and two pipelines
 nobody wrote — one of which runs `npm ci` on whichever machine picks it up — is
@@ -555,8 +575,8 @@ live, so `/executions/<id>` shows exactly what each agent read, wrote and ran.
 
 The same agent files still work in a workflow **without** a workspace: with no
 worktree there are no tools, and the agents fall back to reasoning over what the
-workflow hands them. That is the difference between the two seeded workflows —
-`sample-dev-pipeline` (prose) and `repo-dev-team` (tools, `npm ci` and `npm test`
+workflow hands them. That is the difference between a pipeline with a
+`workspace` and one without (tools, and a project's own `npm ci` / `npm test`
 as real command nodes — a worktree is a clean checkout, so dependencies are
 installed once before the loop, and an install that fails ends the run instead
 of sending the implementer after an error it cannot fix). The latter takes the repository it works in from the run, so it
@@ -650,8 +670,8 @@ ended.
 
 ### Running
 
-`/workflows/<id>` draws the graph and takes a JSON run input (both seeded
-pipelines expect `{"task": "…"}`). During a run the page follows
+`/workflows/<id>` draws the graph and takes a JSON run input (the seeded
+pipeline expects `{"task": "…"}`). During a run the page follows
 `/api/executions/<id>/stream` (SSE) and highlights nodes and edges as they fire,
 with a live tool-activity feed. `/executions` keeps the history — every step's
 input, output, tool calls, model, tokens and duration — and `/executions/<id>`
@@ -720,7 +740,7 @@ Runs can also be started over HTTP (the management API uses the admin cookie):
 curl -s -c /tmp/gate.jar -H 'content-type: application/json' \
   -d "{\"secret\":\"$GATE_ADMIN_SECRET\"}" http://127.0.0.1:4141/api/admin/login
 curl -s -b /tmp/gate.jar -H 'content-type: application/json' \
-  -d '{"workflowId":"repo-dev-team","input":{"task":"…"}}' \
+  -d '{"workflowId":"dev","input":{"task":"…"}}' \
   http://127.0.0.1:4141/api/executions
 ```
 
@@ -764,7 +784,7 @@ gate list                       # your team's workflows, and what each needs
 gate repo <id> /path/to/clone   # where this machine keeps a repository a workflow pins
 gate agents                     # the agents behind them
 gate show <id>                  # a definition as it is on the server
-gate run repo-dev-team "…"      # run it here, in this repository
+gate run dev "…"                # run it here, in this repository
 gate status                     # your team's recent runs, and where each ran
 gate cancel <execution-id>      # ask one to stop, wherever it is running
 gate pull                       # refresh the mirror by hand (every command does it anyway)
@@ -885,7 +905,7 @@ CLI lists what it will run and asks. The approval is recorded against the
 definition's hash, so an edited workflow asks again; `--yes` skips it for
 unattended use.
 
-`/gate:run` alone offers the list; `/gate:run repo-dev-team fix the flaky test`
+`/gate:run` alone offers the list; `/gate:run dev fix the flaky test`
 starts that one and follows it to the end. A workflow that takes a `repo` input
 defaults to the repository you are standing in (`--input repo=…` to aim it
 elsewhere).

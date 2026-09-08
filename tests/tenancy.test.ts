@@ -228,7 +228,7 @@ describe("what a new team starts with", () => {
   it("still seeds the default team, which is what a single-person install has always been", () => {
     const scope = teamScope("default");
     ensureDefaultWorkflows(scope);
-    expect(listWorkflows(scope).workflows.map((w) => w.id)).toContain("repo-dev-team");
+    expect(listWorkflows(scope).workflows.map((w) => w.id)).toContain("dev");
   });
 });
 
