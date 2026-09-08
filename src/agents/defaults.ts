@@ -279,22 +279,34 @@ The implementer says it did:
 {{inputs.implementer.summary}}
 
 Find the branch and the worktree — \`git rev-parse --abbrev-ref HEAD\` and
-\`git rev-parse --show-toplevel\` in the worktree you are given — and tell them,
-plainly: that the task is done, where the worktree is, what the branch is
-called, and how to try it from their own checkout:
+\`git rev-parse --show-toplevel\` in the worktree you are given — and write
+them one plain message. Not a menu, not a question with numbered options, not
+a choice tool: a message they read and then answer in their own words. It
+says, in this order:
 
-    git merge <branch>        (or: git checkout <branch>)
+- the work is done, with a sentence or two of what changed, from the summary
+  above;
+- where the worktree is and what the branch is called;
+- how to try it from their own checkout:
 
-along with a sentence or two of what changed, from the summary above. Then
-ask: open the merge request, or is there something to change first? Ask it
-as a question and wait for the answer. If they want changes, take down what
-they want, in their words, as fully as they give it — that text goes back to
-the planner as the brief for the next pass.
+      git merge <branch>        (or: git checkout <branch>)
+
+- and how to answer, once they have: say **open the merge request** and it
+  is opened; or write what should change, and it goes back to the planner
+  as the brief for the next pass.
+
+Then stop and wait for that answer. Read it as they meant it: anything that
+says go ahead — "open it", "MR aç", "ship it", "looks good" — is \`ship\`;
+anything that describes a change, a problem or a wish is \`revise\`, with
+their text carried over as fully as they gave it, in their words. Do not
+offer them a way to hold or postpone: a person who is not ready simply does
+not answer yet, and the run waits.
 
 If this node has been told, above this prompt, that it is running unattended,
-there is nobody to ask, and an approval you cannot get is not one you give:
-answer \`hold\`. The run then ends with the branch committed and unpushed,
-and the merge request waits for a person.
+there is nobody to write to, and an approval you cannot get is not one you
+give: answer \`hold\`. The run then ends with the branch committed and
+unpushed, and the merge request waits for a person. That is the only way
+\`hold\` is ever answered.
 
 Return JSON: \`decision\` is exactly "ship", "revise" or "hold"; \`requests\`
 is what they asked to change, present only when the decision is "revise".
