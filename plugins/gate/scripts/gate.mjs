@@ -6,6 +6,9 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
+import { mkdirSync as mkdirSync8, writeFileSync as writeFileSync6 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { join as join9 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
@@ -8934,6 +8937,7 @@ async function runLocal(client, opts) {
 // src/client/cli.ts
 var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this machine
 
+  gate install                                  put gate itself on your PATH
   gate login --url <gate-url> --key <api-key>   connect this machine
   gate whoami                                   who this key belongs to
   gate pull                                     refresh your team's definitions
@@ -8948,7 +8952,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate cancel <execution-id>                    ask a run to stop
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "input", "limit", "team"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "input", "limit", "team", "dir"]);
 function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const positional = [];
@@ -9023,6 +9027,26 @@ async function cmdLogin(flags) {
   console.log(`connected to ${url} as ${me.user?.email ?? "this key"} \xB7 team ${me.team.name}`);
   const manifest = await sync(client, me.team.id, true);
   console.log(`${manifest.workflows.length} workflow(s) available \u2014 \`gate list\` to see them`);
+  return 0;
+}
+function cmdInstall(args) {
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join9(homedir5(), ".local", "bin");
+  const script = process.argv[1];
+  const shim = join9(target, "gate");
+  try {
+    mkdirSync8(target, { recursive: true });
+    writeFileSync6(shim, `#!/bin/sh
+exec node "${script}" "$@"
+`, { mode: 493 });
+  } catch (e) {
+    die(`could not write ${shim}: ${e.message}`);
+  }
+  console.log(`installed ${shim}`);
+  const path = (process.env.PATH ?? "").split(":");
+  if (!path.includes(target)) {
+    console.log(`${target} is not on your PATH \u2014 add it, or run gate as ${shim}`);
+    console.log(`  echo 'export PATH="${target}:$PATH"' >> ~/.zshrc`);
+  }
   return 0;
 }
 async function cmdWhoami() {
@@ -9224,6 +9248,8 @@ async function main(argv) {
   const args = parseArgs(argv);
   try {
     switch (args.command) {
+      case "install":
+        return cmdInstall(args);
       case "login":
         return await cmdLogin(args.flags);
       case "whoami":

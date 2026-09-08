@@ -229,7 +229,9 @@ export default function TeamPage() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      They need the <code>gate</code> plugin installed in Claude Code; then <code>/gate-run</code> runs your
+                      They install the <code>gate</code> plugin in Claude Code, run{" "}
+                      <code>node &quot;$CLAUDE_PLUGIN_ROOT/scripts/gate.mjs&quot; install</code> once to get the{" "}
+                      <code>gate</code> command, then the line above. After that <code>/gate-run</code> runs your
                       team&apos;s workflows on their machine.
                     </p>
                   </div>

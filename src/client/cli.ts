@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import { getAgent, listAgents, readAgentSource } from "@/agents/registry";
@@ -20,6 +23,7 @@ import { runLocal } from "./run";
 
 const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this machine
 
+  gate install                                  put gate itself on your PATH
   gate login --url <gate-url> --key <api-key>   connect this machine
   gate whoami                                   who this key belongs to
   gate pull                                     refresh your team's definitions
@@ -50,7 +54,7 @@ interface Args {
  * is short, and the alternative is a parser that is wrong in exactly the case
  * the tool exists for.
  */
-const VALUE_FLAGS = new Set(["url", "key", "input", "limit", "team"]);
+const VALUE_FLAGS = new Set(["url", "key", "input", "limit", "team", "dir"]);
 
 function parseArgs(argv: string[]): Args {
   const [command = "help", ...rest] = argv;
@@ -147,6 +151,34 @@ async function cmdLogin(flags: Args["flags"]): Promise<number> {
 
   const manifest = await sync(client, me.team.id, true);
   console.log(`${manifest.workflows.length} workflow(s) available — \`gate list\` to see them`);
+  return 0;
+}
+
+/**
+ * Puts `gate` on the PATH.
+ *
+ * The plugin ships one bundled script and Claude Code invokes it by absolute
+ * path, which is all `/gate-run` needs — but everything written down for a
+ * person to type ("gate login", the command the dashboard hands them) assumes
+ * a `gate` that exists. A three-line shim is the whole of making the two
+ * agree; it points at this exact bundle, so a plugin update moves with it.
+ */
+function cmdInstall(args: Args): number {
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join(homedir(), ".local", "bin");
+  const script = process.argv[1];
+  const shim = join(target, "gate");
+  try {
+    mkdirSync(target, { recursive: true });
+    writeFileSync(shim, `#!/bin/sh\nexec node "${script}" "$@"\n`, { mode: 0o755 });
+  } catch (e) {
+    die(`could not write ${shim}: ${(e as Error).message}`);
+  }
+  console.log(`installed ${shim}`);
+  const path = (process.env.PATH ?? "").split(":");
+  if (!path.includes(target)) {
+    console.log(`${target} is not on your PATH — add it, or run gate as ${shim}`);
+    console.log(`  echo 'export PATH="${target}:$PATH"' >> ~/.zshrc`);
+  }
   return 0;
 }
 
@@ -387,6 +419,8 @@ export async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
   try {
     switch (args.command) {
+      case "install":
+        return cmdInstall(args);
       case "login":
         return await cmdLogin(args.flags);
       case "whoami":

@@ -643,8 +643,13 @@ calls, and keeping the history.
 Then, once per machine, with the key from your `/team` page:
 
 ```bash
-gate login --url https://gate.internal --key gate_…   # ~/.gate/client.json (0600)
+node "$CLAUDE_PLUGIN_ROOT/scripts/gate.mjs" install    # a `gate` shim in ~/.local/bin
+gate login --url https://gate.internal --key gate_…    # ~/.gate/client.json (0600)
 ```
+
+`/gate-run` calls the bundled script by absolute path and needs neither step;
+`install` exists so that everything written down for a person to type — the
+command the dashboard hands them included — is a command that exists.
 
 Nothing else is downloaded and nothing is added to `PATH`: the plugin ships one
 bundled Node script (`plugins/gate/scripts/gate.mjs`, built by `npm run
