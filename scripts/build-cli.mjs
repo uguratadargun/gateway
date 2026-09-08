@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { build } from "esbuild";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +13,31 @@ import { fileURLToPath } from "node:url";
  * definition is parsed by the same code on both sides of the connection.
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * The three places a version is written have to agree.
+ *
+ * Installs are cached by version — ~/.claude/plugins/cache/<marketplace>/<plugin>/<version> —
+ * so a plugin whose contents changed while its version did not is a plugin that
+ * never reaches anyone: `plugin update` sees the number it already has and does
+ * nothing, silently. Anything shipped under plugins/ or src/client/ therefore
+ * needs a bump, and these three must move together: the client compares its own
+ * GATE_VERSION against the server's.
+ */
+const versions = {
+  "plugin.json": JSON.parse(readFileSync(resolve(root, "plugins/gate/.claude-plugin/plugin.json"), "utf8")).version,
+  "marketplace.json": JSON.parse(readFileSync(resolve(root, ".claude-plugin/marketplace.json"), "utf8")).plugins.find(
+    (p) => p.name === "gate",
+  ).version,
+  "protocol.ts": /GATE_VERSION = "([^"]+)"/.exec(readFileSync(resolve(root, "src/lib/protocol.ts"), "utf8"))?.[1],
+};
+const distinct = [...new Set(Object.values(versions))];
+if (distinct.length !== 1) {
+  console.error("version mismatch — these must agree, or an update reaches nobody:");
+  for (const [file, version] of Object.entries(versions)) console.error(`  ${file}: ${version}`);
+  process.exit(1);
+}
+console.log(`gate ${distinct[0]}`);
 
 await build({
   entryPoints: [resolve(root, "src/client/entry.ts")],

@@ -745,7 +745,12 @@ them needs anybody to do anything.
 - *The server* is your deploy. Schema migrations are idempotent on open, and
   the one-time move of `~/.gate/agents` under `teams/default/` happens on the
   first read.
-- *The CLI* is `/plugin update gate@gateway`, per machine — and this is the one
+- *The CLI* is `/plugin update gate@gateway`, per machine. **Anything shipped
+  under `plugins/` or `src/client/` needs a version bump** — installs are cached
+  by version (`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>`), so a
+  plugin whose contents changed while its number did not is one `plugin update`
+  fetches and then ignores, silently. `npm run build:cli` refuses to build when
+  `plugin.json`, the marketplace entry and `GATE_VERSION` disagree — and this is the one
   that can silently drift, so it does not. Every `/api/v1` response carries the
   server's version and the oldest client it will serve (`x-gate-server`,
   `x-gate-min-cli`). A client behind the server says so once and carries on; a
