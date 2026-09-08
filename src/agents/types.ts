@@ -13,7 +13,7 @@ import { EFFORTS, type Effort } from "@/lib/reasoning";
  * answer, short enough to write by hand. A trailing "?" marks a field
  * optional.
  */
-const FIELD_TYPES = ["string", "number", "boolean", "string[]", "number[]", "object", "object[]", "any"] as const;
+export const FIELD_TYPES = ["string", "number", "boolean", "string[]", "number[]", "object", "object[]", "any"] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
 const fieldSpec = z.string().refine(

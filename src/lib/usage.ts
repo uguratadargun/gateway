@@ -3,6 +3,9 @@ import { costForUsage, tierOf, type TokenUsage } from "./pricing";
 import { loadSettings } from "./settings";
 
 function costOfModel(model: string, u: TokenUsage): number {
+  // A self-hosted model puts nothing on the Anthropic bill. Pricing it as the
+  // tier it stands in would inflate both spend and the "savings" figure.
+  if (model.toLowerCase().startsWith("local:")) return 0;
   return costForUsage(tierOf(model), u, { model, cacheTtl: loadSettings().promptCache.ttl });
 }
 
@@ -20,6 +23,10 @@ export interface UsageEvent {
   stream: boolean;
   sessionId?: string | null;
   sessionTitle?: string | null;
+  /** Which connected Claude account served it; null for a local model. */
+  accountId?: string | null;
+  /** Which local provider served it; null when Anthropic did. */
+  providerId?: string | null;
 }
 
 export interface UsageSummary {
@@ -45,11 +52,11 @@ export function recordUsage(e: UsageEvent): void {
   try {
     const db = getDb();
     db.prepare(
-      "INSERT INTO usage (ts,requested,model,tier,reason,status,stream,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,session_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO usage (ts,requested,model,tier,reason,status,stream,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,session_id,account_id,provider_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     ).run(
       e.ts, e.requested, e.model, e.tier, e.reason, e.status, e.stream ? 1 : 0,
       e.inputTokens ?? 0, e.outputTokens ?? 0, e.cacheReadTokens ?? 0, e.cacheCreationTokens ?? 0,
-      e.sessionId ?? null,
+      e.sessionId ?? null, e.accountId ?? null, e.providerId ?? null,
     );
     if (e.sessionId) {
       db.prepare(

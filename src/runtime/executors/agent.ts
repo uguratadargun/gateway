@@ -91,6 +91,12 @@ export interface AgentExecutorDeps {
   /** Cancels the run. Checked every tool round, not only between nodes: an
    *  agent working through a dozen tool calls must stop when asked. */
   signal?: AbortSignal;
+  /**
+   * How a spawned Claude Code reaches a gateway. Set by the client CLI, which
+   * runs the engine on a developer's machine against the company server;
+   * unset on the server, where the child talks to this process.
+   */
+  claudeCode?: { gatewayUrl?: string; authToken?: string };
 }
 
 export interface AgentNodeResult {
@@ -126,7 +132,20 @@ export async function executeAgentNode(
   // The other loop. Same inputs, same prompt, same output contract — only who
   // holds the conversation and serves the tools changes.
   if (agent.executor === "claude-code") {
-    const res = await runClaudeCodeNode(agent, prompt, node.id, { workspace, onToolCall: deps.onToolCall, signal: deps.signal }, nodeDeadline);
+    const res = await runClaudeCodeNode(
+      agent,
+      prompt,
+      node.id,
+      {
+        workspace,
+        onToolCall: deps.onToolCall,
+        signal: deps.signal,
+        gatewayUrl: deps.claudeCode?.gatewayUrl,
+        authToken: deps.claudeCode?.authToken,
+        sessionId: `workflow:${state.executionId}`,
+      },
+      nodeDeadline,
+    );
     return { input: inputs, output: res.output, usage: res.usage, toolCalls: res.toolCalls };
   }
 

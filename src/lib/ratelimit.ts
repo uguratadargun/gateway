@@ -53,8 +53,16 @@ function findRaw(raw: Record<string, string>, ...patterns: RegExp[]): string | n
   return null;
 }
 
-/** Extract a snapshot from upstream response headers and persist it. */
-export function recordRateLimit(headers: Headers): void {
+/**
+ * Extract a snapshot from upstream response headers and persist it.
+ *
+ * `history` controls the time series behind the forecast. One account's
+ * readings describe one rising window, which is what the slope assumes; two
+ * accounts interleaved describe neither, so a pooled gate keeps the snapshot
+ * (it is a true reading of the last reply) but stops feeding the forecast.
+ * Per-account windows live on the account rows instead.
+ */
+export function recordRateLimit(headers: Headers, { history = true }: { history?: boolean } = {}): void {
   const raw: Record<string, string> = {};
   headers.forEach((value, name) => {
     const n = name.toLowerCase();
@@ -76,6 +84,7 @@ export function recordRateLimit(headers: Headers): void {
 
   try {
     kvSet(KEY, JSON.stringify(snap));
+    if (!history) return;
     const db = getDb();
     db.prepare("INSERT INTO ratelimit_history (ts, util_5h, util_7d, status, reset_at) VALUES (?,?,?,?,?)").run(
       snap.updatedAt, snap.utilization5h, snap.utilization7d, snap.unifiedStatus, snap.resetAt,

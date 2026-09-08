@@ -6,7 +6,7 @@ import { conditionContext, type WorkflowState } from "../state";
 
 /** All selectEdge and its evaluator read from a state — resuming reconstructs
  *  just this much rather than a full run in progress. */
-export type ConditionState = Pick<WorkflowState, "outputs" | "input">;
+export type ConditionState = Pick<WorkflowState, "outputs" | "input" | "visitCounts">;
 
 /**
  * Edge selection — the only place the *next* node is decided, and it is pure

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Play, RefreshCw } from "lucide-react";
+import { Laptop, Play, RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -135,6 +135,18 @@ export default function ExecutionsPage() {
                     <span>{e.stepCount} steps</span>
                     <span>·</span>
                     <span className="tabular-nums">{duration(e, now)}</span>
+                    {/* Where the engine actually was. Two runs of the same
+                        workflow are otherwise indistinguishable, and for a
+                        local one the machine is where its branch is. */}
+                    {e.origin === "local" && (
+                      <>
+                        <span>·</span>
+                        <span className="flex items-center gap-1">
+                          <Laptop className="size-3" />
+                          {e.client?.host ?? "local"}
+                        </span>
+                      </>
+                    )}
                     {e.error && <span className="text-destructive">{e.error.code}</span>}
                   </div>
                 </div>

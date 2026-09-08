@@ -27,8 +27,15 @@ import { outputCorrection, parseOutput } from "./agent";
  * the loop inside one node moves.
  */
 
-/** Where the child sends its API calls. Gate's own gateway, so routing still applies. */
-function gatewayUrl(): string {
+/**
+ * Where the child sends its API calls. A gate gateway either way, so routing,
+ * metering and the run's budget still apply — but which gate depends on who is
+ * running the node. On the server it is this process; on a developer's machine
+ * the client passes the company server's URL and that person's API key, which
+ * is the whole of what makes a local run still a metered one.
+ */
+function gatewayUrl(override?: string): string {
+  if (override) return `${override.replace(/\/$/, "")}`;
   if (process.env.GATE_SELF_URL)
     return `${process.env.GATE_SELF_URL.replace(/\/$/, "")}/api/gateway`;
   return `http://127.0.0.1:${process.env.PORT ?? 4141}/api/gateway`;
@@ -40,6 +47,12 @@ export interface ClaudeCodeDeps {
   signal?: AbortSignal;
   /** Injectable so tests do not spawn a real CLI. */
   spawnCli?: typeof spawn;
+  /** Full gateway base URL for the child; defaults to this server's own. */
+  gatewayUrl?: string;
+  /** API key the child authenticates to that gateway with. */
+  authToken?: string;
+  /** Attribution the gateway reads back off the child's requests. */
+  sessionId?: string;
 }
 
 /** One line of `--output-format stream-json`, in the parts gate reads. */
@@ -185,7 +198,19 @@ export async function runClaudeCodeNode(
     const spawnCli = deps.spawnCli ?? spawn;
     const child = spawnCli("claude", args, {
       cwd: workspace.root,
-      env: { ...process.env, ANTHROPIC_BASE_URL: gatewayUrl() },
+      env: {
+        ...process.env,
+        ANTHROPIC_BASE_URL: gatewayUrl(deps.gatewayUrl),
+        // Only set when the caller has one: on the server the gateway is
+        // loopback and needs no key, and an empty value would be sent as one.
+        ...(deps.authToken ? { ANTHROPIC_AUTH_TOKEN: deps.authToken, ANTHROPIC_API_KEY: deps.authToken } : {}),
+        // Claude Code would otherwise send only its own session id, and the
+        // gateway would file a node's calls as unrelated traffic. This is the
+        // same header gate's own provider sets (`sessionFromRequest` prefers
+        // it), so a node run by the child groups, sticks to its tier and reuses
+        // its prompt cache exactly like one gate held itself.
+        ...(deps.sessionId ? { ANTHROPIC_CUSTOM_HEADERS: `x-gate-session: ${deps.sessionId}` } : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

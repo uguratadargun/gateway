@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { POOL_STRATEGIES, type PoolStrategy } from "./account-pool";
+
 /**
  * Central gate settings. Persisted at ~/.gate/settings.json and editable from
  * the dashboard.
@@ -64,6 +66,21 @@ export interface GateSettings {
   routingPrecision: {
     countTokens: boolean;
   };
+  /** How a request picks among several connected Claude accounts. */
+  accountPool: {
+    strategy: PoolStrategy;
+    /** round-robin only: requests one account serves in a row before rotating. */
+    stickyRoundRobinLimit: number;
+    /** Skip an account whose any quota window has this little left (0 = off). */
+    quotaMinRemainingPercent: number;
+    /**
+     * How often the daemon polls Claude's usage endpoint per account. Only
+     * idle accounts are polled at all — traffic refreshes the same windows for
+     * free — and Anthropic rate-limits that endpoint separately, so this is
+     * deliberately slow relative to a 5h window.
+     */
+    quotaRefreshMinutes: number;
+  };
 }
 
 export const DEFAULT_SETTINGS: GateSettings = {
@@ -89,6 +106,9 @@ export const DEFAULT_SETTINGS: GateSettings = {
   throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
   routingPrecision: { countTokens: false },
+  // fill-first keeps one account warm — its prompt cache stays hot and the
+  // others stay untouched until it runs out of window.
+  accountPool: { strategy: "fill-first", stickyRoundRobinLimit: 3, quotaMinRemainingPercent: 0, quotaRefreshMinutes: 30 },
 };
 
 const GATE_DIR = process.env.GATE_HOME || join(homedir(), ".gate");
@@ -124,6 +144,7 @@ export interface SettingsPatch {
   throttle?: Partial<GateSettings["throttle"]>;
   retry?: Partial<GateSettings["retry"]>;
   routingPrecision?: Partial<GateSettings["routingPrecision"]>;
+  accountPool?: Partial<GateSettings["accountPool"]>;
 }
 
 export function saveSettings(patch: SettingsPatch): GateSettings {
@@ -153,5 +174,14 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
     throttle: { ...base.throttle, ...patch.throttle },
     retry: { ...base.retry, ...patch.retry },
     routingPrecision: { ...base.routingPrecision, ...patch.routingPrecision },
+    accountPool: {
+      ...base.accountPool,
+      ...patch.accountPool,
+      // A config written by an older gate — or hand-edited — must not put an
+      // unknown strategy in front of the selector.
+      strategy: POOL_STRATEGIES.includes(patch.accountPool?.strategy as PoolStrategy)
+        ? (patch.accountPool!.strategy as PoolStrategy)
+        : base.accountPool.strategy,
+    },
   };
 }

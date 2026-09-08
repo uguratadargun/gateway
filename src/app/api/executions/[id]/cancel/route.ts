@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getExecution } from "@/executions/store";
+import { getExecution, requestExecutionCancel } from "@/executions/store";
 import { cancelExecution } from "@/executions/runner";
 
 export const runtime = "nodejs";
@@ -18,6 +18,18 @@ export async function POST(_req: Request, { params }: Params) {
   if (execution.status !== "running") {
     return NextResponse.json({ cancelled: false, reason: `run already ${execution.status}` });
   }
+  // A run on someone's own machine cannot be aborted from here; the request is
+  // recorded and the client picks it up on its next report, which is a moment
+  // away rather than a wait. Either way the answer is "asked", not "stopped".
+  if (execution.origin === "local") {
+    const requested = requestExecutionCancel(id);
+    return NextResponse.json({
+      cancelled: requested,
+      pending: requested,
+      ...(requested ? {} : { reason: "this run has already settled" }),
+    });
+  }
+
   const cancelled = cancelExecution(id);
   return NextResponse.json({
     cancelled,

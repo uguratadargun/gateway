@@ -151,6 +151,64 @@ CREATE TABLE IF NOT EXISTS repos (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  -- AES-256-GCM sealed StoredCredentials; never plaintext at rest.
+  sealed TEXT NOT NULL,
+  account_uuid TEXT,
+  email TEXT,
+  organization TEXT,
+  plan_tier TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  -- Lower = preferred. Pool order for fill-first and every tie-break.
+  priority INTEGER NOT NULL DEFAULT 100,
+  last_used_at INTEGER,
+  -- Sticky round-robin bookkeeping: requests served in a row.
+  consecutive_use_count INTEGER NOT NULL DEFAULT 0,
+  -- Exponential cooldown level; reset by a confirmed success.
+  backoff_level INTEGER NOT NULL DEFAULT 0,
+  cooldown_until INTEGER,
+  last_error TEXT,
+  -- Upstream quota snapshot: the 5h / 7d unified windows.
+  quota_json TEXT,
+  quota_fetched_at INTEGER,
+  connected_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_uuid ON accounts(account_uuid) WHERE account_uuid IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS providers (
+  id TEXT PRIMARY KEY,
+  -- Slug used in model references: local:<name>/<model>.
+  name TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'openai-compat',
+  base_url TEXT NOT NULL,
+  -- Sealed; null for an endpoint that needs no auth (Ollama, LM Studio).
+  api_key_sealed TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  -- Identity as the company knows it; one person, one row.
+  email TEXT NOT NULL UNIQUE,
+  name TEXT,
+  team_id TEXT NOT NULL,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS users_team ON users(team_id);
+
 CREATE TABLE IF NOT EXISTS workflow_layouts (
   workflow_id TEXT PRIMARY KEY,
   layout_json TEXT NOT NULL,
@@ -169,6 +227,28 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["workflow_execution_steps", "tool_calls_json", "tool_calls_json TEXT"],
   ["workflow_executions", "quota_json", "quota_json TEXT"],
   ["workflow_executions", "resumed_from", "resumed_from TEXT"],
+  ["usage", "account_id", "account_id TEXT"],
+  ["usage", "provider_id", "provider_id TEXT"],
+  ["traffic", "account_id", "account_id TEXT"],
+  // Multi-user: a key belongs to a person, and a person to a team. Legacy keys
+  // carry NULL and are read as the default team's.
+  ["apikeys", "user_id", "user_id TEXT"],
+  ["apikeys", "team_id", "team_id TEXT"],
+  ["apikeys", "last_host", "last_host TEXT"],
+  // What a key may reach: "gateway" (model calls) and/or "workflows" (the
+  // client API that hands out definitions and takes run reports).
+  ["apikeys", "scopes", "scopes TEXT NOT NULL DEFAULT 'gateway,workflows'"],
+  // Runs that happened on someone's own machine: who, where, and still alive?
+  ["workflow_executions", "user_id", "user_id TEXT"],
+  ["workflow_executions", "team_id", "team_id TEXT"],
+  ["workflow_executions", "origin", "origin TEXT NOT NULL DEFAULT 'server'"],
+  ["workflow_executions", "client_host", "client_host TEXT"],
+  ["workflow_executions", "client_repo", "client_repo TEXT"],
+  ["workflow_executions", "client_branch", "client_branch TEXT"],
+  ["workflow_executions", "last_seen_at", "last_seen_at INTEGER"],
+  ["workflow_executions", "cancel_requested", "cancel_requested INTEGER NOT NULL DEFAULT 0"],
+  // The worktree is on the client, so the diff it produced is uploaded here.
+  ["workflow_executions", "diff_text", "diff_text TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

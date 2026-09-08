@@ -16,6 +16,8 @@ export interface TrafficEntry {
   fromCache: boolean;
   requestPreview: string;
   responsePreview: string;
+  /** Which connected Claude account served it; null for a local model. */
+  accountId?: string | null;
 }
 
 const MAX_PREVIEW = 2000;
@@ -29,8 +31,8 @@ export function recordTraffic(e: TrafficEntry): void {
   try {
     const db = getDb();
     db.prepare(
-      "INSERT INTO traffic (ts,endpoint,requested,routed,tier,status,stream,from_cache,request_preview,response_preview) VALUES (?,?,?,?,?,?,?,?,?,?)",
-    ).run(e.ts, e.endpoint, e.requested, e.routed, e.tier, e.status, e.stream ? 1 : 0, e.fromCache ? 1 : 0, e.requestPreview, e.responsePreview);
+      "INSERT INTO traffic (ts,endpoint,requested,routed,tier,status,stream,from_cache,request_preview,response_preview,account_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(e.ts, e.endpoint, e.requested, e.routed, e.tier, e.status, e.stream ? 1 : 0, e.fromCache ? 1 : 0, e.requestPreview, e.responsePreview, e.accountId ?? null);
     // Bound the table; cheap because of the ts index.
     db.prepare(
       "DELETE FROM traffic WHERE id NOT IN (SELECT id FROM traffic ORDER BY ts DESC LIMIT ?)",
@@ -44,7 +46,7 @@ export function readTraffic(limit = 100): TrafficEntry[] {
   return (
     getDb()
       .prepare(
-        "SELECT ts,endpoint,requested,routed,tier,status,stream,from_cache,request_preview,response_preview FROM traffic ORDER BY ts DESC LIMIT ?",
+        "SELECT ts,endpoint,requested,routed,tier,status,stream,from_cache,request_preview,response_preview,account_id FROM traffic ORDER BY ts DESC LIMIT ?",
       )
       .all(limit) as any[]
   ).map((r) => ({
@@ -58,6 +60,7 @@ export function readTraffic(limit = 100): TrafficEntry[] {
     fromCache: !!r.from_cache,
     requestPreview: r.request_preview ?? "",
     responsePreview: r.response_preview ?? "",
+    accountId: r.account_id ?? null,
   }));
 }
 

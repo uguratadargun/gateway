@@ -1,4 +1,4 @@
-import { load as parseYaml } from "js-yaml";
+import { dump as dumpYaml, load as parseYaml } from "js-yaml";
 
 import { isKnownTool, knownToolNames } from "@/runtime/tools/registry";
 
@@ -81,11 +81,17 @@ function assertTemplateInputsDeclared(def: AgentDefinition): void {
   }
 }
 
-/** Serialize a definition back to Markdown (used when the UI saves an edit). */
+/**
+ * Serialize a definition back to Markdown — what the editor's form saves.
+ *
+ * Block YAML rather than a JSON blob per key: these files are meant to stay
+ * readable in a diff and editable by hand, and `output: {"type":"json",...}`
+ * on one line is neither. `lineWidth: -1` keeps a long input path or
+ * description on its own line instead of folding it across two, which YAML
+ * reads back correctly but a person does not.
+ */
 export function serializeAgent(front: Record<string, unknown>, prompt: string): string {
-  const yaml = Object.entries(front)
-    .filter(([, v]) => v !== undefined)
-    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-    .join("\n");
+  const defined = Object.fromEntries(Object.entries(front).filter(([, v]) => v !== undefined));
+  const yaml = dumpYaml(defined, { lineWidth: -1, noRefs: true }).trimEnd();
   return `---\n${yaml}\n---\n\n${prompt.trim()}\n`;
 }

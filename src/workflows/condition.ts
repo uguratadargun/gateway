@@ -7,6 +7,7 @@
  * execute arbitrary JavaScript.
  *
  *   outputs.tester.passed == false && outputs.reviewer.verdict != "approved"
+ *   visits.implementation >= 5
  */
 
 export class ConditionError extends Error {}
@@ -199,8 +200,14 @@ function evalNode(node: ConditionNode, ctx: unknown): unknown {
   switch (node.kind) {
     case "literal":
       return node.value;
-    case "path":
-      return lookup(node.path, ctx);
+    case "path": {
+      const v = lookup(node.path, ctx);
+      // A node that has not run yet has been visited zero times, not "absent".
+      // `visits.x >= 5` is how a loop is given an end, and it has to be false
+      // on the first pass rather than a comparison against undefined that
+      // throws — which would break the very edge written to stop the looping.
+      return v === undefined && node.path[0] === "visits" ? 0 : v;
+    }
     case "not":
       return !truthy(evalNode(node.expr, ctx));
     case "neg": {

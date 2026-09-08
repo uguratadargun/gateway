@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { ensureDefaultAgents } from "@/agents/defaults";
 
+import type { DefinitionScope } from "@/lib/def-root";
+
 import { workflowsDir } from "./registry";
 
 /**
@@ -35,6 +37,12 @@ nodes:
       - when: outputs.tester.passed == true
         to: checks
         label: tests pass
+      # A loop-back edge without one of these has no end: an implementation
+      # that cannot fix a failure produces the same failure for as long as
+      # someone keeps paying for it.
+      - when: visits.tester >= 5
+        to: tests-stuck
+        label: still failing after 5 rounds
       - to: implementation
         label: tests failed
 
@@ -64,6 +72,9 @@ nodes:
       - when: outputs.reviewer.verdict == "approved" && outputs.security.verdict == "approved"
         to: done
         label: approved
+      - when: visits.verdict >= 4
+        to: review-stuck
+        label: still rejected after 4 rounds
       - to: implementation
         label: changes requested
 
@@ -71,6 +82,16 @@ nodes:
     type: terminal
     label: Done
     status: completed
+
+  - id: tests-stuck
+    type: terminal
+    label: Tests never passed
+    status: failed
+
+  - id: review-stuck
+    type: terminal
+    label: Reviews kept rejecting
+    status: failed
 `;
 
 
@@ -126,6 +147,9 @@ nodes:
       - when: outputs.tests.ok == true
         to: checks
         label: tests pass
+      - when: visits.tests >= 5
+        to: tests-stuck
+        label: still red after 5 runs
       - to: implementation
         label: tests failed
 
@@ -154,6 +178,9 @@ nodes:
       - when: outputs.reviewer.verdict == "approved" && outputs.security.verdict == "approved"
         to: done
         label: approved
+      - when: visits.verdict >= 4
+        to: review-stuck
+        label: still rejected after 4 rounds
       - to: implementation
         label: changes requested
 
@@ -165,6 +192,16 @@ nodes:
   - id: install-failed
     type: terminal
     label: Install failed
+    status: failed
+
+  - id: tests-stuck
+    type: terminal
+    label: Tests never passed
+    status: failed
+
+  - id: review-stuck
+    type: terminal
+    label: Reviews kept rejecting
     status: failed
 `;
 
@@ -178,9 +215,9 @@ export const DEFAULT_WORKFLOWS: Record<string, string> = {
  * Agents are seeded first: a workflow that references a missing agent fails
  * validation at load time.
  */
-export function ensureDefaultWorkflows(): void {
-  ensureDefaultAgents();
-  const dir = workflowsDir();
+export function ensureDefaultWorkflows(scope?: DefinitionScope): void {
+  ensureDefaultAgents(scope);
+  const dir = workflowsDir(scope);
   if (existsSync(dir)) return;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   for (const [id, source] of Object.entries(DEFAULT_WORKFLOWS)) {

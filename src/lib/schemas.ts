@@ -67,14 +67,22 @@ export const settingsPatchSchema = z
       })
       .partial(),
     routingPrecision: z.object({ countTokens: z.boolean() }).partial(),
+    accountPool: z
+      .object({
+        strategy: z.enum(["fill-first", "round-robin", "least-used", "p2c", "random"]),
+        stickyRoundRobinLimit: z.number().int().min(1).max(1000),
+        quotaMinRemainingPercent: z.number().int().min(0).max(99),
+        quotaRefreshMinutes: z.number().int().min(10).max(1440),
+      })
+      .partial(),
   })
   .partial()
   .strict();
 
 export const routingPatchSchema = z
   .object({
-    tiers: perTier(z.string().min(1).max(100)),
-    aliases: z.record(z.string().min(1).max(100), z.string().min(1).max(100)),
+    tiers: perTier(z.string().min(1).max(200)),
+    aliases: z.record(z.string().min(1).max(100), z.string().min(1).max(200)),
     thresholds: z
       .object({
         largeContext: z.number().int().min(1),
@@ -95,7 +103,35 @@ export const routingPatchSchema = z
   .partial()
   .strict();
 
-export const createKeySchema = z.object({ name: z.string().min(1).max(64) });
+export const createKeySchema = z.object({
+  name: z.string().min(1).max(64),
+  /** The person this key is for. Omitted keeps the pre-multi-user behaviour. */
+  userId: z.string().min(1).max(64).optional(),
+  teamId: z.string().min(1).max(64).optional(),
+  scopes: z.array(z.enum(["gateway", "workflows"])).min(1).optional(),
+});
+
+export const createTeamSchema = z.object({
+  name: z.string().min(1).max(80),
+  id: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "use lowercase letters, digits and dashes")
+    .optional(),
+});
+
+export const createUserSchema = z.object({
+  email: z.string().email().max(160),
+  name: z.string().min(1).max(80).optional(),
+  teamId: z.string().min(1).max(64),
+});
+
+export const updateUserSchema = z
+  .object({
+    name: z.string().max(80),
+    teamId: z.string().min(1).max(64),
+    disabled: z.boolean(),
+  })
+  .partial();
 
 export const adminLoginSchema = z.object({ secret: z.string().min(1).max(512) });
 
@@ -104,3 +140,43 @@ export const clientApplySchema = z.object({
   action: z.enum(["apply", "revert"]),
   apiKey: z.string().max(200).optional(),
 });
+
+export const createAccountSchema = z.object({
+  code: z.string().min(1).max(2000),
+  label: z.string().min(1).max(80).optional(),
+});
+
+export const updateAccountSchema = z
+  .object({
+    label: z.string().min(1).max(80),
+    enabled: z.boolean(),
+    priority: z.number().int().min(0).max(9999),
+  })
+  .partial()
+  .strict();
+
+const baseUrl = z
+  .string()
+  .min(1)
+  .max(400)
+  .refine((v) => /^https?:\/\//i.test(v.trim()), "Base URL must start with http:// or https://");
+
+export const createProviderSchema = z.object({
+  name: z.string().min(1).max(40),
+  label: z.string().min(1).max(80).optional(),
+  baseUrl,
+  apiKey: z.string().max(400).optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const updateProviderSchema = z
+  .object({
+    name: z.string().min(1).max(40),
+    label: z.string().min(1).max(80),
+    baseUrl,
+    /** An empty string clears the stored key. */
+    apiKey: z.string().max(400),
+    enabled: z.boolean(),
+  })
+  .partial()
+  .strict();

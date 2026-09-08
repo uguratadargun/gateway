@@ -1,27 +1,35 @@
 import { NextResponse } from "next/server";
 
-import { clearCredentials, loadCredentials } from "@/lib/store";
+import { deleteAccount, listAccounts } from "@/lib/accounts";
+import { resetRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
-/** Current connection status for the dashboard. */
+/**
+ * Pool summary. `connected` and the identity fields describe the
+ * highest-priority account, so pre-pool clients of this endpoint keep working;
+ * `accounts` is the whole pool.
+ */
 export async function GET() {
-  const creds = loadCredentials();
-  if (!creds) return NextResponse.json({ connected: false });
+  const accounts = listAccounts();
+  const primary = accounts.find((a) => a.enabled) ?? accounts[0] ?? null;
+  if (!primary) return NextResponse.json({ connected: false, count: 0, accounts: [] });
   return NextResponse.json({
     connected: true,
-    email: creds.account?.account_email ?? null,
-    organization: creds.account?.organization_name ?? null,
-    tier: creds.account?.organization_rate_limit_tier ?? null,
+    count: accounts.length,
+    email: primary.email,
+    organization: primary.organization,
+    tier: primary.planTier,
     plan: null,
-    expiresAt: creds.expiresAt,
-    connectedAt: creds.connectedAt,
-    scopes: creds.scope ?? null,
+    connectedAt: primary.connectedAt,
+    accounts,
   });
 }
 
-/** Disconnect the account. */
+/** Disconnect every account. One at a time: DELETE /api/accounts/<id>. */
 export async function DELETE() {
-  clearCredentials();
+  for (const account of listAccounts()) deleteAccount(account.id);
+  // The snapshot describes an account gate no longer holds.
+  resetRateLimit();
   return NextResponse.json({ ok: true });
 }

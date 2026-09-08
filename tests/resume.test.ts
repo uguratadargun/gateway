@@ -153,6 +153,50 @@ describe("planResume", () => {
     expect(plan.visitCounts.implementation).toBe(3);
   });
 
+  it("routes a resumed run with the visit counts it rebuilt, not from zero", () => {
+    // A pipeline that ends its own loop with `visits.tests >= 2` has to decide
+    // the same way here as the engine did, or continuing a stopped run would
+    // walk straight back into the loop the run had already given up on.
+    const bounded = parseWorkflow(
+      "bounded",
+      `name: bounded
+entry: implementation
+nodes:
+  - id: implementation
+    type: agent
+    agent: implementation
+    next: tests
+  - id: tests
+    type: command
+    command: ["true"]
+    edges:
+      - when: outputs.tests.ok == true
+        to: done
+      - when: visits.tests >= 2
+        to: gave-up
+      - to: implementation
+  - id: done
+    type: terminal
+  - id: gave-up
+    type: terminal
+    status: failed
+`,
+      meta,
+    );
+    const plan = planResume(
+      bounded,
+      [
+        step("implementation", "completed", { diff: "1" }),
+        step("tests", "completed", { ok: false, exitCode: 1, stdout: "", stderr: "" }),
+        step("implementation", "completed", { diff: "2" }),
+        step("tests", "completed", { ok: false, exitCode: 1, stdout: "", stderr: "" }),
+      ],
+      {},
+    );
+    expect(plan.visitCounts.tests).toBe(2);
+    expect(plan.startNodeId).toBe("gave-up");
+  });
+
   it("refuses when nothing ran yet", () => {
     expect(() => planResume(workflow, [], {})).toThrow(/nothing ran/);
   });

@@ -9,8 +9,11 @@ import { ADMIN_COOKIE, adminConfigured, verifySessionToken } from "@/lib/admin-a
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Public surfaces.
+  // Surfaces with their own auth: the gateway takes an API key, and so does the
+  // client API the CLI on a developer's machine talks to. Neither can sit
+  // behind the admin cookie — there is no browser on the other end.
   if (pathname.startsWith("/api/gateway/")) return NextResponse.next();
+  if (pathname.startsWith("/api/v1/")) return NextResponse.next();
   if (pathname === "/login" || pathname === "/api/admin/login") return NextResponse.next();
 
   if (!adminConfigured()) {

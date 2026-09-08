@@ -26,6 +26,27 @@ export interface ExecutionRecord {
   quota: ExecutionQuota | null;
   /** The execution this one continued from, if it was resumed rather than started fresh. */
   resumedFrom: string | null;
+  /**
+   * Where the engine ran. "server" is a run started from the dashboard; "local"
+   * is one the client CLI ran on someone's own machine and reported here.
+   */
+  origin: "server" | "local";
+  /** Who ran it, when a key with an owner did. */
+  userId: string | null;
+  teamId: string;
+  client: ExecutionClient | null;
+  /** Last report from a local run; how a machine that went away is noticed. */
+  lastSeenAt: number | null;
+  /** Set when someone pressed Stop on a run this process does not own. */
+  cancelRequested: boolean;
+}
+
+/** The machine a local run happened on, as the client reported it. */
+export interface ExecutionClient {
+  host: string | null;
+  repo: string | null;
+  branch: string | null;
+  version: string | null;
 }
 
 export interface ExecutionStepRecord {

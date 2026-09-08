@@ -48,6 +48,8 @@ export interface RunWorkflowOptions {
   workspace?: RunWorkspace | null;
   /** How many tool rounds one agent may take before its node fails. */
   maxToolIterations?: number;
+  /** Passed through to agents that run as a spawned Claude Code. */
+  claudeCode?: { gatewayUrl?: string; authToken?: string };
   /** Called as each step lands in history, so a run can be persisted live. */
   onStep?: (step: StepRecord) => void;
   /**
@@ -212,6 +214,7 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
             loadAgent,
             workspace: opts.workspace ?? null,
             maxToolIterations: opts.maxToolIterations,
+            claudeCode: opts.claudeCode,
             signal: opts.signal,
             onToolCall: (call) =>
               emit({

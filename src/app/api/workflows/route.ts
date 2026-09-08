@@ -6,6 +6,8 @@ import { WorkflowError } from "@/runtime/errors";
 import { ensureDefaultWorkflows } from "@/workflows/defaults";
 import { requiredRunInputs } from "@/workflows/inputs";
 import { listWorkflows, saveWorkflow } from "@/workflows/registry";
+import { scopeFromRequest } from "@/lib/def-root";
+import { getTeam } from "@/lib/teams";
 
 export const runtime = "nodejs";
 
@@ -16,11 +18,14 @@ const createSchema = z.object({ id: z.string().min(1).max(64), source: z.string(
  * this list — the dashboard, or the shell/slash-command client — can build a
  * valid run without loading every definition itself.
  */
-export async function GET() {
-  ensureDefaultWorkflows();
-  const { workflows, errors } = listWorkflows();
+const scopeOf = (req: Request) => scopeFromRequest(req, (id) => !!getTeam(id));
+
+export async function GET(req: Request) {
+  const scope = scopeOf(req);
+  ensureDefaultWorkflows(scope);
+  const { workflows, errors } = listWorkflows(scope);
   return NextResponse.json({
-    workflows: workflows.map((wf) => ({ ...wf, inputs: requiredRunInputs(wf, getAgent) })),
+    workflows: workflows.map((wf) => ({ ...wf, inputs: requiredRunInputs(wf, (id) => getAgent(id, scope)) })),
     errors,
   });
 }
@@ -29,7 +34,7 @@ export async function POST(req: Request) {
   const parsed = createSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid workflow", issues: parsed.error.issues }, { status: 400 });
   try {
-    return NextResponse.json(saveWorkflow(parsed.data.id, parsed.data.source));
+    return NextResponse.json(saveWorkflow(parsed.data.id, parsed.data.source, scopeOf(req)));
   } catch (e) {
     if (e instanceof WorkflowError) return NextResponse.json({ error: e.message, code: e.code }, { status: 400 });
     throw e;

@@ -106,7 +106,10 @@ describe("parseWorkflow", () => {
     const bad = "name: X\nentry: a\nnodes:\n  - id: a\n    type: condition\n    edges: [{when: 'outputs.ghost.ok == true', to: done}, {to: done}]\n  - id: done\n    type: terminal\n";
     expect(() => parseWorkflow("x", bad, meta)).toThrow(/unknown node output "ghost"/);
     const root = "name: X\nentry: a\nnodes:\n  - id: a\n    type: condition\n    edges: [{when: 'env.SECRET == \"x\"', to: done}, {to: done}]\n  - id: done\n    type: terminal\n";
-    expect(() => parseWorkflow("x", root, meta)).toThrow(/only "outputs" and "input" are available/);
+    expect(() => parseWorkflow("x", root, meta)).toThrow(/only "outputs", "input" and "visits" are available/);
+    const visits =
+      "name: X\nentry: a\nnodes:\n  - id: a\n    type: condition\n    edges: [{when: 'visits.ghost >= 3', to: done}, {to: done}]\n  - id: done\n    type: terminal\n";
+    expect(() => parseWorkflow("x", visits, meta)).toThrow(/counts visits to unknown node "ghost"/);
   });
 
   it("reports a malformed condition expression", () => {

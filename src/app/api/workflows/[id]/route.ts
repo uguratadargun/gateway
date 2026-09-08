@@ -7,6 +7,8 @@ import { WorkflowError } from "@/runtime/errors";
 import { ensureDefaultWorkflows } from "@/workflows/defaults";
 import { requiredRunInputs } from "@/workflows/inputs";
 import { deleteWorkflow, getWorkflow, readWorkflowSource, saveWorkflow } from "@/workflows/registry";
+import { scopeFromRequest } from "@/lib/def-root";
+import { getTeam } from "@/lib/teams";
 import { toWorkflowYaml, workflowGraphDocSchema } from "@/workflows/serialize";
 
 export const runtime = "nodejs";
@@ -23,6 +25,8 @@ const saveSchema = z.union([
 
 type Params = { params: Promise<{ id: string }> };
 
+const scopeOf = (req: Request) => scopeFromRequest(req, (id) => !!getTeam(id));
+
 function fail(e: unknown): NextResponse {
   if (e instanceof WorkflowError) {
     const status = e.message === "workflow not found" ? 404 : 400;
@@ -31,16 +35,17 @@ function fail(e: unknown): NextResponse {
   return NextResponse.json({ error: (e as Error).message }, { status: 400 });
 }
 
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   const { id } = await params;
-  ensureDefaultWorkflows();
+  const scope = scopeOf(req);
+  ensureDefaultWorkflows(scope);
   try {
-    const workflow = getWorkflow(id);
+    const workflow = getWorkflow(id, scope);
     return NextResponse.json({
       workflow,
-      source: readWorkflowSource(id),
+      source: readWorkflowSource(id, scope),
       layout: getLayout(id),
-      requiredInput: requiredRunInputs(workflow, getAgent),
+      requiredInput: requiredRunInputs(workflow, (agentId) => getAgent(agentId, scope)),
     });
   } catch (e) {
     return fail(e);
@@ -53,16 +58,16 @@ export async function PUT(req: Request, { params }: Params) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid workflow", issues: parsed.error.issues }, { status: 400 });
   const source = "source" in parsed.data ? parsed.data.source : toWorkflowYaml(parsed.data.graph);
   try {
-    return NextResponse.json(saveWorkflow(id, source));
+    return NextResponse.json(saveWorkflow(id, source, scopeOf(req)));
   } catch (e) {
     return fail(e);
   }
 }
 
-export async function DELETE(_req: Request, { params }: Params) {
+export async function DELETE(req: Request, { params }: Params) {
   const { id } = await params;
   try {
-    return NextResponse.json({ deleted: deleteWorkflow(id) });
+    return NextResponse.json({ deleted: deleteWorkflow(id, scopeOf(req)) });
   } catch (e) {
     return fail(e);
   }

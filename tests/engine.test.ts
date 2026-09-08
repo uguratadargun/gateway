@@ -64,6 +64,17 @@ Security review:
 
 {{inputs.implementation.diff}}
 `,
+  fixer: `---
+name: Fixer
+model: sonnet
+inputs: [visits.fix]
+output:
+  type: json
+  schema:
+    summary: string
+---
+Attempt {{inputs.visits.fix}}.
+`,
   tester: `---
 name: Tester
 model: haiku
@@ -665,5 +676,94 @@ describe("resuming", () => {
     expect(state.status).toBe("failed");
     expect(state.error?.code).toBe("LOOP_LIMIT_EXCEEDED");
     expect(provider.calls).toHaveLength(0);
+  });
+});
+
+describe("a loop that is given an end", () => {
+  // `maxVisits` is the engine's ceiling: it fails the whole run and says only
+  // that a node repeated. A pipeline that knows how many attempts a fix is
+  // worth should be able to say so itself, and land somewhere that reports
+  // what is stuck — which is what `visits.<node>` on an edge is for.
+  const BOUNDED = `
+name: Bounded retries
+entry: fix
+nodes:
+  - id: fix
+    type: agent
+    agent: fixer
+    next: tests
+  - id: tests
+    type: command
+    command: [echo, hi]
+    edges:
+      - when: outputs.tests.ok == true
+        to: done
+      - when: visits.tests >= 3
+        to: gave-up
+      - to: fix
+  - id: done
+    type: terminal
+  - id: gave-up
+    type: terminal
+    status: failed
+`;
+
+  const red = async () => ({ ok: false, exitCode: 1, stdout: "", stderr: "still red" });
+
+  it("stops at the terminal the pipeline named, not at the engine's ceiling", async () => {
+    const state = await runWorkflow(parseWorkflow("bounded", BOUNDED, meta), {
+      provider: new FakeModelProvider(() => '{"summary": "tried"}'),
+      loadAgent,
+      runCommand: red,
+    });
+
+    // A deliberate terminal, so there is no error code and nothing to resume:
+    // the run did not hit a limit, it decided.
+    expect(state.status).toBe("failed");
+    expect(state.error).toBeNull();
+    expect(state.visitCounts).toMatchObject({ fix: 3, tests: 3 });
+  });
+
+  it("hands an agent the attempt it is on, counting from one", async () => {
+    const provider = new FakeModelProvider(() => '{"summary": "tried"}');
+    await runWorkflow(parseWorkflow("bounded", BOUNDED, meta), { provider, loadAgent, runCommand: red });
+
+    // The count is incremented before the node runs, so a node always reads
+    // its own visit as the attempt in progress rather than the one before it.
+    expect(provider.callsFor("fix").map((c) => c.messages[0].content)).toEqual(["Attempt 1.", "Attempt 2.", "Attempt 3."]);
+  });
+
+  it("reads zero for a node that has not run, rather than refusing to compare", async () => {
+    const wf = parseWorkflow(
+      "zero",
+      `name: Zero
+entry: gate
+nodes:
+  - id: gate
+    type: condition
+    edges:
+      - when: visits.later >= 1
+        to: never
+      - to: later
+  - id: later
+    type: command
+    command: [echo, hi]
+    next: done
+  - id: never
+    type: terminal
+    status: failed
+  - id: done
+    type: terminal
+`,
+      meta,
+    );
+    const state = await runWorkflow(wf, {
+      provider: new FakeModelProvider(() => "{}"),
+      loadAgent,
+      runCommand: async () => ({ ok: true, exitCode: 0, stdout: "", stderr: "" }),
+    });
+
+    expect(state.status).toBe("completed");
+    expect(state.history.map((h) => h.nodeId)).toEqual(["gate", "later"]);
   });
 });

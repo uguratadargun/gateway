@@ -85,8 +85,17 @@ function validateStructure(wf: WorkflowDefinition, opts: ParseWorkflowOptions): 
         if (path[0] === "outputs" && path[1] && !ids.has(path[1])) {
           throw invalid(wf.id, `node "${n.id}" condition reads unknown node output "${path[1]}"`);
         }
-        if (path[0] !== "outputs" && path[0] !== "input") {
-          throw invalid(wf.id, `node "${n.id}" condition reads "${path[0]}"; only "outputs" and "input" are available`);
+        // `visits.x` is how many times node x has run so far — what an edge
+        // reads to give a loop an end. A typo in the node id would otherwise
+        // read as zero forever and the edge would never fire.
+        if (path[0] === "visits" && path[1] && !ids.has(path[1])) {
+          throw invalid(wf.id, `node "${n.id}" condition counts visits to unknown node "${path[1]}"`);
+        }
+        if (path[0] !== "outputs" && path[0] !== "input" && path[0] !== "visits") {
+          throw invalid(
+            wf.id,
+            `node "${n.id}" condition reads "${path[0]}"; only "outputs", "input" and "visits" are available`,
+          );
         }
       }
     }

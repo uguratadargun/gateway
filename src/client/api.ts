@@ -1,0 +1,158 @@
+import { hostname } from "node:os";
+
+import type { ClientConfig } from "./config";
+
+/**
+ * The client half of `/api/v1`.
+ *
+ * Every call carries the person's API key and the machine's name — the key
+ * says who, the host says where, and the dashboard needs both to make sense of
+ * a run it did not itself execute. Failures are reported in the server's own
+ * words: a revoked key, a workflow that needs an input, a team that is gone are
+ * all things the person can act on, and inventing a friendlier sentence for
+ * them only hides which one happened.
+ */
+
+export const CLI_VERSION = "0.13.0";
+
+export class GateApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "GateApiError";
+  }
+}
+
+export interface BundleWorkflow {
+  id: string;
+  name: string;
+  description: string | null;
+  inputs: string[];
+  nodeCount: number;
+  workspace: { repo?: string; baseRef?: string; branchPrefix?: string } | null;
+  source: string;
+  sha: string;
+}
+
+export interface Bundle {
+  team: string;
+  hash: string;
+  agents: Array<{ id: string; name: string; source: string; sha: string }>;
+  workflows: BundleWorkflow[];
+  errors: Array<{ id: string; message: string }>;
+}
+
+export class GateClient {
+  constructor(private readonly config: ClientConfig) {}
+
+  get url(): string {
+    return this.config.url;
+  }
+
+  get gatewayUrl(): string {
+    return `${this.config.url}/api/gateway`;
+  }
+
+  get key(): string {
+    return this.config.key;
+  }
+
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
+    return {
+      authorization: `Bearer ${this.config.key}`,
+      "x-gate-host": hostname(),
+      "x-gate-cli": CLI_VERSION,
+      ...extra,
+    };
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<{ status: number; body: T }> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.config.url}${path}`, {
+        ...init,
+        headers: this.headers(init.body ? { "content-type": "application/json" } : {}),
+      });
+    } catch (e) {
+      throw new GateApiError(`cannot reach gate at ${this.config.url} (${(e as Error).message})`, 0, "UNREACHABLE");
+    }
+    if (res.status === 304) return { status: 304, body: null as T };
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      // Not JSON — the status and the raw text are what is left to report.
+    }
+    if (!res.ok) {
+      const detail = json?.error ?? text.slice(0, 200) ?? `HTTP ${res.status}`;
+      throw new GateApiError(detail, res.status, json?.code);
+    }
+    return { status: res.status, body: json as T };
+  }
+
+  async me(): Promise<{
+    user: { id: string; email: string; name: string | null } | null;
+    team: { id: string; name: string };
+    scopes: string[];
+    gatewayUrl: string;
+  }> {
+    return (await this.request<any>("/api/v1/me")).body;
+  }
+
+  /** null when the bundle has not changed since `etag`. */
+  async bundle(etag?: string | null): Promise<Bundle | null> {
+    const res = await this.request<Bundle>("/api/v1/bundle", {
+      headers: etag ? { "if-none-match": `"${etag}"` } : undefined,
+    } as RequestInit);
+    return res.status === 304 ? null : res.body;
+  }
+
+  async startRun(input: {
+    workflowId: string;
+    input: Record<string, unknown>;
+    client: { host?: string; repo?: string; branch?: string; version?: string };
+  }): Promise<string> {
+    const res = await this.request<{ executionId: string }>("/api/v1/executions", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return res.body.executionId;
+  }
+
+  /** Reports progress; the reply says whether someone asked the run to stop. */
+  async report(
+    executionId: string,
+    payload: { events: unknown[]; steps: unknown[] },
+  ): Promise<{ cancelRequested: boolean }> {
+    const res = await this.request<{ cancelRequested: boolean }>(`/api/v1/executions/${executionId}/events`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return res.body;
+  }
+
+  async finish(executionId: string, payload: Record<string, unknown>): Promise<void> {
+    await this.request(`/api/v1/executions/${executionId}/finish`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Asks a run to stop; it settles on its own next report. */
+  async cancel(executionId: string): Promise<{ requested: boolean; reason?: string }> {
+    const res = await this.request<{ requested: boolean; reason?: string }>(
+      `/api/v1/executions/${executionId}/cancel`,
+      { method: "POST", body: "{}" },
+    );
+    return res.body;
+  }
+
+  async listRuns(limit = 20): Promise<Array<Record<string, any>>> {
+    const res = await this.request<{ executions: Array<Record<string, any>> }>(`/api/v1/executions?limit=${limit}`);
+    return res.body.executions;
+  }
+}

@@ -1,3 +1,4 @@
+import { DEFAULT_TEAM } from "@/lib/def-root";
 import { getDb } from "@/lib/db";
 import type { StepRecord, WorkflowState } from "@/runtime/state";
 
@@ -5,7 +6,7 @@ import type { ToolCallRecord } from "@/runtime/state";
 
 import type { ExecutionQuota } from "./quota";
 import { summarizeExecutionQuota } from "./quota-summary";
-import type { ExecutionRecord, ExecutionStepRecord, ExecutionWorkspace, WorkflowLayout } from "./types";
+import type { ExecutionClient, ExecutionRecord, ExecutionStepRecord, ExecutionWorkspace, WorkflowLayout } from "./types";
 
 /**
  * Execution history in SQLite. Definitions stay in files; only what actually
@@ -55,20 +56,89 @@ function reconcileOnce(): void {
   }
 }
 
+/** Who a run belongs to and where its engine is. Absent means this server. */
+export interface ExecutionOrigin {
+  origin?: "server" | "local";
+  userId?: string | null;
+  teamId?: string;
+  client?: ExecutionClient | null;
+}
+
 export function createExecution(
   id: string,
   workflowId: string,
   input: Record<string, unknown>,
   startedAt = Date.now(),
   resumedFrom: string | null = null,
+  meta: ExecutionOrigin = {},
 ): void {
   // Sweep before this row exists, so it can never be swept.
   reconcileOnce();
   getDb()
     .prepare(
-      "INSERT INTO workflow_executions (id, workflow_id, status, started_at, input_json, resumed_from) VALUES (?,?,?,?,?,?)",
+      `INSERT INTO workflow_executions
+         (id, workflow_id, status, started_at, input_json, resumed_from,
+          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
-    .run(id, workflowId, "running", startedAt, json(input), resumedFrom);
+    .run(
+      id,
+      workflowId,
+      "running",
+      startedAt,
+      json(input),
+      resumedFrom,
+      meta.origin ?? "server",
+      meta.userId ?? null,
+      meta.teamId ?? DEFAULT_TEAM,
+      meta.client?.host ?? null,
+      meta.client?.repo ?? null,
+      meta.client?.branch ?? null,
+      startedAt,
+    );
+}
+
+/**
+ * A local run reporting that it is still going.
+ *
+ * This is the only thing that separates a run in progress on a laptop from one
+ * whose laptop went to sleep three hours ago: the server cannot see the
+ * process, so silence is the signal.
+ */
+export function touchExecution(id: string, at = Date.now()): void {
+  getDb().prepare("UPDATE workflow_executions SET last_seen_at = ? WHERE id = ?").run(at, id);
+}
+
+/**
+ * Stop, for a run this process is not running.
+ *
+ * Nothing here can abort someone else's engine; the flag is picked up by the
+ * client on its next report, which then aborts its own run — the same
+ * RUN_CANCELLED path a server-side stop takes.
+ */
+export function requestExecutionCancel(id: string): boolean {
+  return (
+    Number(
+      getDb()
+        .prepare("UPDATE workflow_executions SET cancel_requested = 1 WHERE id = ? AND status = 'running'")
+        .run(id).changes,
+    ) > 0
+  );
+}
+
+export function isCancelRequested(id: string): boolean {
+  const row = getDb().prepare("SELECT cancel_requested FROM workflow_executions WHERE id = ?").get(id);
+  return !!row?.cancel_requested;
+}
+
+/** The diff a local run produced, uploaded when it finished. */
+export function setExecutionDiff(id: string, diff: string): void {
+  getDb().prepare("UPDATE workflow_executions SET diff_text = ? WHERE id = ?").run(diff, id);
+}
+
+export function getExecutionDiff(id: string): string | null {
+  const row = getDb().prepare("SELECT diff_text FROM workflow_executions WHERE id = ?").get(id);
+  return (row?.diff_text as string | undefined) ?? null;
 }
 
 export function recordStep(executionId: string, step: StepRecord): void {
@@ -142,6 +212,14 @@ interface ExecutionRow {
   workspace_json: string | null;
   quota_json: string | null;
   resumed_from: string | null;
+  origin: string | null;
+  user_id: string | null;
+  team_id: string | null;
+  client_host: string | null;
+  client_repo: string | null;
+  client_branch: string | null;
+  last_seen_at: number | null;
+  cancel_requested: number | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -157,22 +235,48 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
     workspace: parse<ExecutionWorkspace | null>(r.workspace_json, null),
     quota: parse<ExecutionQuota | null>(r.quota_json, null),
     resumedFrom: r.resumed_from,
+    origin: r.origin === "local" ? "local" : "server",
+    userId: r.user_id,
+    teamId: r.team_id ?? DEFAULT_TEAM,
+    client:
+      r.client_host || r.client_repo || r.client_branch
+        ? { host: r.client_host, repo: r.client_repo, branch: r.client_branch, version: null }
+        : null,
+    lastSeenAt: r.last_seen_at,
+    cancelRequested: !!r.cancel_requested,
   };
 }
 
-export function listExecutions(opts: { workflowId?: string; limit?: number } = {}): ExecutionRecord[] {
+export function listExecutions(
+  opts: { workflowId?: string; limit?: number; teamId?: string; userId?: string } = {},
+): ExecutionRecord[] {
   reconcileOnce();
+  sweepAbandonedLocalRuns();
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
-  const rows = opts.workflowId
-    ? getDb()
-        .prepare("SELECT * FROM workflow_executions WHERE workflow_id = ? ORDER BY started_at DESC LIMIT ?")
-        .all(opts.workflowId, limit)
-    : getDb().prepare("SELECT * FROM workflow_executions ORDER BY started_at DESC LIMIT ?").all(limit);
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (opts.workflowId) {
+    where.push("workflow_id = ?");
+    params.push(opts.workflowId);
+  }
+  if (opts.teamId) {
+    where.push("COALESCE(team_id, ?) = ?");
+    params.push(DEFAULT_TEAM, opts.teamId);
+  }
+  if (opts.userId) {
+    where.push("user_id = ?");
+    params.push(opts.userId);
+  }
+  const sql = `SELECT * FROM workflow_executions${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY started_at DESC LIMIT ?`;
+  const rows = getDb()
+    .prepare(sql)
+    .all(...params, limit);
   return (rows as unknown as ExecutionRow[]).map(toExecution);
 }
 
 export function getExecution(id: string): ExecutionRecord | null {
   reconcileOnce();
+  sweepAbandonedLocalRuns();
   const row = getDb().prepare("SELECT * FROM workflow_executions WHERE id = ?").get(id);
   return row ? toExecution(row as unknown as ExecutionRow) : null;
 }
@@ -279,9 +383,53 @@ export function failInterruptedExecutions(startedBefore: number, at = Date.now()
       `UPDATE workflow_executions
           SET status = 'failed', finished_at = ?, error_code = 'RUN_INTERRUPTED',
               error_message = 'the server stopped while this run was going'
-        WHERE status = 'running' AND started_at < ?`,
+        WHERE status = 'running' AND started_at < ? AND COALESCE(origin, 'server') <> 'local'`,
     )
     .run(at, startedBefore);
+  return Number(res.changes ?? 0);
+}
+
+/**
+ * How long a local run may go quiet before it is written off.
+ *
+ * A run on someone's machine outlives this server: restarting gate must not
+ * declare it dead, which is why the sweep above skips it. What can be said is
+ * that a run reporting nothing for this long is not running any more — the
+ * laptop slept, the process was killed, the network went. Generous, because a
+ * single node can legitimately take half an hour without producing a step, and
+ * the client heartbeats between steps anyway.
+ */
+const LOCAL_RUN_SILENCE_MS = 15 * 60_000;
+
+/**
+ * The sweep, rate-limited to once a minute.
+ *
+ * Unlike the interrupted-run sweep this cannot be a once-per-process job: a
+ * local run goes stale while the server is up and doing nothing in particular,
+ * so it has to be re-checked as the run list is read.
+ */
+const sweepState = globalThis as unknown as { __gateLocalSweepAt?: number };
+
+export function sweepAbandonedLocalRuns(now = Date.now()): void {
+  if (sweepState.__gateLocalSweepAt && now - sweepState.__gateLocalSweepAt < 60_000) return;
+  sweepState.__gateLocalSweepAt = now;
+  try {
+    failAbandonedLocalExecutions(now);
+  } catch {
+    // Reporting hygiene; never break a read over it.
+  }
+}
+
+/** Settles local runs whose machine stopped reporting. */
+export function failAbandonedLocalExecutions(at = Date.now(), silenceMs = LOCAL_RUN_SILENCE_MS): number {
+  const res = getDb()
+    .prepare(
+      `UPDATE workflow_executions
+          SET status = 'failed', finished_at = ?, error_code = 'RUN_ABANDONED',
+              error_message = 'the machine running this stopped reporting'
+        WHERE status = 'running' AND origin = 'local' AND COALESCE(last_seen_at, started_at) < ?`,
+    )
+    .run(at, at - silenceMs);
   return Number(res.changes ?? 0);
 }
 

@@ -63,9 +63,17 @@ const PRESETS: Record<Preset, { categories: Record<string, Tier>; effort: Record
 
 const selectCls = "h-8 rounded-md border border-input bg-transparent px-2 text-sm";
 
+/** One source of models: the connected Claude account, or a local provider. */
+interface ModelGroup {
+  label: string;
+  kind: "anthropic" | "local";
+  models: string[];
+}
+
 export function RoutingRulesPanel() {
   const [cfg, setCfg] = useState<RoutingConfig | null>(null);
   const [models, setModels] = useState<string[]>([]);
+  const [groups, setGroups] = useState<ModelGroup[]>([]);
   const [modelsSource, setModelsSource] = useState<"live" | "fallback" | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -75,6 +83,7 @@ export function RoutingRulesPanel() {
       .then((r) => r.json())
       .then((d) => {
         setModels(d.models ?? []);
+        setGroups((d.groups ?? []).filter((g: ModelGroup) => g.models.length > 0));
         setModelsSource(d.source ?? null);
       })
       .catch(() => {});
@@ -245,7 +254,10 @@ export function RoutingRulesPanel() {
           <div className="mt-2 grid gap-2">
             {TIERS.map((t) => {
               const current = cfg.tiers[t];
-              const options = models.includes(current) ? models : [current, ...models];
+              // A tier may already point at a model this catalogue no longer
+              // lists (an endpoint that is down, a retired Claude id). Keep it
+              // selectable so saving the form does not silently re-route it.
+              const orphan = !models.includes(current);
               return (
                 <div key={t} className="flex items-center gap-2">
                   <span className="w-16 text-sm capitalize">{t}</span>
@@ -254,10 +266,15 @@ export function RoutingRulesPanel() {
                     onChange={(e) => setCfg({ ...cfg, tiers: { ...cfg.tiers, [t]: e.target.value } })}
                     className={`${selectCls} flex-1 font-mono text-xs`}
                   >
-                    {options.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
+                    {orphan && <option value={current}>{current}</option>}
+                    {groups.map((g) => (
+                      <optgroup key={g.label} label={g.kind === "local" ? `${g.label} (local)` : g.label}>
+                        {g.models.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </div>

@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { DefinitionScope } from "@/lib/def-root";
+
 import { agentsDir } from "./registry";
 
 /**
@@ -201,9 +203,9 @@ export const DEFAULT_AGENTS: Record<string, string> = {
   "security-reviewer": SECURITY_REVIEWER,
 };
 
-/** Write the default agents if ~/.gate/agents has never been created. */
-export function ensureDefaultAgents(): void {
-  const dir = agentsDir();
+/** Write the default agents if this scope's agents directory has never been created. */
+export function ensureDefaultAgents(scope?: DefinitionScope): void {
+  const dir = agentsDir(scope);
   if (existsSync(dir)) return;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   for (const [id, source] of Object.entries(DEFAULT_AGENTS)) {

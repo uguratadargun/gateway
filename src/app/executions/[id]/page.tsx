@@ -304,7 +304,19 @@ export default function ExecutionDetailPage() {
               <Square /> {stopping ? "Stopping…" : "Stop"}
             </Button>
           )}
-          {ex && !running && (
+          {/* A run that happened on someone's machine can only be restarted or
+              continued there: the worktree it would reuse is on that disk. The
+              buttons are replaced by the command that does it, rather than
+              offered and then refused. */}
+          {ex && !running && ex.origin === "local" && (
+            <code
+              className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground"
+              title={`this run worked on ${ex.client?.host ?? "another machine"}`}
+            >
+              gate run {ex.workflowId} — on {ex.client?.host ?? "that machine"}
+            </code>
+          )}
+          {ex && !running && ex.origin !== "local" && (
             <>
               <Button variant="outline" size="sm" onClick={restart} disabled={starting !== null}>
                 <RotateCcw /> {starting === "restart" ? "Starting…" : "Restart"}

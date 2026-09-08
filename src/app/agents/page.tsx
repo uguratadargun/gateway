@@ -21,6 +21,7 @@ interface AgentSummary {
   description?: string;
   model: string;
   effort?: string;
+  executor: string;
   inputs: string[];
   output: { type: string };
   updatedAt: number;
@@ -156,6 +157,13 @@ export default function AgentsPage() {
                     )}
                     {a.inputs.length > 0 && (
                       <span className="text-[11px] text-muted-foreground">{a.inputs.length} inputs</span>
+                    )}
+                    {/* Which loop runs it is not cosmetic — it decides the
+                        tools it gets and how its context is handled. */}
+                    {a.executor === "claude-code" && (
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        claude-code
+                      </Badge>
                     )}
                     <Badge variant="outline" className="font-mono text-[10px]">
                       {a.output.type}

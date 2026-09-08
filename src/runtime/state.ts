@@ -74,11 +74,18 @@ export function createState(
   };
 }
 
-/** Context for condition evaluation: the two roots a workflow may read. */
+/**
+ * Context for condition evaluation: the three roots a workflow may read.
+ *
+ * `visits` is how a loop is given an end. Without it a pipeline can only be
+ * bounded by `maxVisits`, which fails the whole run from the engine; with it
+ * an edge can say `visits.implementer >= 5` and route somewhere that reports
+ * what is stuck, and an agent can be told which attempt it is on.
+ */
 export function conditionContext(
-  state: Pick<WorkflowState, "outputs" | "input">,
-): { outputs: Record<string, unknown>; input: Record<string, unknown> } {
-  return { outputs: state.outputs, input: state.input };
+  state: Pick<WorkflowState, "outputs" | "input" | "visitCounts">,
+): { outputs: Record<string, unknown>; input: Record<string, unknown>; visits: Record<string, number> } {
+  return { outputs: state.outputs, input: state.input, visits: state.visitCounts };
 }
 
 function readPath(root: unknown, segments: string[]): unknown {
@@ -93,7 +100,8 @@ function readPath(root: unknown, segments: string[]): unknown {
 /**
  * Resolve a node's declared input paths into the nested object its prompt
  * renders against. Only declared paths are materialized — the full state is
- * never handed to an agent.
+ * never handed to an agent. The roots are the same three a condition reads:
+ * `outputs.<nodeId>`, `input.<key>` and `visits.<nodeId>`.
  *
  * A trailing "?" marks the path optional: it resolves to an empty string when
  * the value does not exist yet. That is what makes feedback loops expressible
@@ -107,8 +115,16 @@ export function resolveInputs(paths: string[], state: WorkflowState, nodeId: str
     const path = optional ? raw.slice(0, -1) : raw;
     const segments = path.split(".").filter(Boolean);
     if (!segments.length) continue;
-    const fromRunInput = segments[0] === "input";
-    const found = fromRunInput ? readPath(state.input, segments.slice(1)) : readPath(state.outputs, segments);
+    const root = segments[0];
+    const found =
+      root === "input"
+        ? readPath(state.input, segments.slice(1))
+        : root === "visits"
+          ? // A node that has not run yet has been visited zero times, not
+            // "absent" — an agent told which attempt this is reads 1 on the
+            // first pass rather than failing on an input nobody produced.
+            (readPath(state.visitCounts, segments.slice(1)) ?? 0)
+          : readPath(state.outputs, segments);
     if (found === undefined && !optional) {
       throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `node "${nodeId}" requires input "${path}", which has not been produced yet`, {
         nodeId,

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { parseLocalRef } from "./local-providers";
 import { normalizeEffort, type Effort } from "./reasoning";
 
 /**
@@ -273,23 +274,29 @@ export function routeModel(
   const reqLower = req.toLowerCase();
   const tokens = opts.tokenOverride ?? estimateTokens(body);
 
-  // 1. Explicit concrete Claude model → pass through unless configured otherwise.
+  // 1. An explicit local reference always wins: the caller named a specific
+  //    endpoint, and there is no tier ladder to second-guess it with.
+  if (parseLocalRef(req)) {
+    return { model: req, tier: inferTier(cfg, req), reason: "explicit local model", category: null, tokens };
+  }
+
+  // 2. Explicit concrete Claude model → pass through unless configured otherwise.
   if (cfg.overrideExplicit && reqLower.startsWith("claude-")) {
     return { model: req, tier: inferTier(cfg, req), reason: "explicit model", category: null, tokens };
   }
 
-  // 2. Alias mapping.
+  // 3. Alias mapping.
   const alias = cfg.aliases[reqLower];
   if (alias && alias !== "auto") {
     if (alias in cfg.tiers) {
       return { model: tierToModel(cfg, alias as any), tier: alias as any, reason: `alias:${reqLower}`, category: null, tokens };
     }
-    if (alias.toLowerCase().startsWith("claude-")) {
+    if (alias.toLowerCase().startsWith("claude-") || parseLocalRef(alias)) {
       return { model: alias, tier: inferTier(cfg, alias), reason: `alias:${reqLower}`, category: null, tokens };
     }
   }
 
-  // 3. Heuristic routing: classify the request into a difficulty category, then
+  // 4. Heuristic routing: classify the request into a difficulty category, then
   //    map that category to the tier the user configured for it.
   const text = lastUserText(body).toLowerCase();
   const sysText = systemText(body).toLowerCase();
@@ -344,6 +351,13 @@ export function cheaperTier(tier: Tier): Tier | null {
 }
 
 function inferTier(cfg: RoutingConfig, model: string): Tier {
+  // A local model carries no Claude family name. Its tier is whichever slot
+  // the user configured it into (that is what the fallback chain will use),
+  // and the routing default when it is not in the ladder at all.
+  if (parseLocalRef(model)) {
+    const slot = (Object.keys(cfg.tiers) as Tier[]).find((t) => cfg.tiers[t] === model);
+    return slot ?? cfg.default;
+  }
   const m = model.toLowerCase();
   if (m.includes("haiku")) return "haiku";
   if (m.includes("fable")) return "fable";

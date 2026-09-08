@@ -28,6 +28,8 @@ export const CLAUDE_OAUTH = {
 export const ANTHROPIC_API_BASE = "https://api.anthropic.com";
 export const ANTHROPIC_MESSAGES_URL = `${ANTHROPIC_API_BASE}/v1/messages`;
 export const ANTHROPIC_BOOTSTRAP_URL = `${ANTHROPIC_API_BASE}/api/claude_cli/bootstrap`;
+/** The CLI's own quota endpoint: 5h / 7d windows without sending any inference. */
+export const ANTHROPIC_OAUTH_USAGE_URL = `${ANTHROPIC_API_BASE}/api/oauth/usage`;
 
 /**
  * Pinned Claude Code CLI wire-image versions. These identify the request as a

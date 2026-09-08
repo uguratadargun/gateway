@@ -31,7 +31,17 @@ import type { ExecutionRecord, ExecutionStepRecord } from "./types";
  * a finished run with no error is done, and one with an error stopped
  * somewhere still in progress, which is exactly what "Continue" is for.
  */
-export function assertResumable(execution: Pick<ExecutionRecord, "status" | "error">): void {
+export function assertResumable(
+  execution: Pick<ExecutionRecord, "status" | "error"> & Partial<Pick<ExecutionRecord, "origin" | "client">>,
+): void {
+  // A run that happened on someone's machine can only be continued there: the
+  // worktree it would reuse is on that disk, and so is the engine.
+  if (execution.origin === "local") {
+    throw new WorkflowError(
+      "EXECUTION_NOT_RESUMABLE",
+      `this run worked on ${execution.client?.host ?? "another machine"}; continue it there with \`gate continue <id>\``,
+    );
+  }
   if (execution.status === "running") {
     throw new WorkflowError("EXECUTION_NOT_RESUMABLE", "this run is still going; stop it first, or wait for it to finish");
   }
@@ -74,7 +84,7 @@ export function planResume(
       `node "${last.nodeId}" no longer exists in this workflow; it was edited since this run`,
     );
   }
-  const startNodeId = last.status === "failed" ? last.nodeId : nextAfter(workflow, last, outputs, input);
+  const startNodeId = last.status === "failed" ? last.nodeId : nextAfter(workflow, last, outputs, input, visitCounts);
 
   return { outputs, visitCounts, stepCount: steps.length, startNodeId, history: steps.map(stripExecutionId) };
 }
@@ -85,6 +95,7 @@ function nextAfter(
   last: ExecutionStepRecord,
   outputs: Record<string, unknown>,
   input: Record<string, unknown>,
+  visitCounts: Record<string, number>,
 ): string {
   const node = findNode(workflow, last.nodeId);
   if (!node) {
@@ -103,7 +114,10 @@ function nextAfter(
   // the walk always goes straight to its join once it is recorded.
   if (node.type === "parallel") return node.join;
 
-  const edge = selectEdge(node, { input, outputs });
+  // The reconstructed visit counts go in too: an edge that ends a loop with
+  // `visits.x >= n` must decide the same way here as it did in the engine,
+  // or continuing a run would step straight back into the loop it left.
+  const edge = selectEdge(node, { input, outputs, visitCounts });
   return edge.to;
 }
 

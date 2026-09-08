@@ -128,8 +128,8 @@ Rules that reject a save:
 - A `condition` node needs at least one edge with a `when`.
 - A `parallel` node's branches must be disjoint, must each reach the `join`, must
   not contain a terminal, and nothing outside may point into one.
-- Conditions read only `outputs.<nodeId>.<field>` and `input.<key>`, and the node
-  id must exist.
+- Conditions read only `outputs.<nodeId>.<field>`, `input.<key>` and
+  `visits.<nodeId>`, and the node id must exist.
 - Node ids and the workflow id are lowercase letters, digits and dashes.
 
 ### Condition language
@@ -142,7 +142,15 @@ as code.
 outputs.tester.passed == true
 outputs.tests.ok == false && outputs.reviewer.verdict != "approved"
 input.mode == "strict"
+visits.tests >= 5
 ```
+
+`visits.<nodeId>` is how many times that node has run so far in this run,
+counting the attempt in progress — so a node reads its own visit as 1 the first
+time it runs. A node that has not run yet is 0, never absent, so an edge written
+to end a loop is simply false on the first pass. An agent can declare it as an
+input too (`inputs: [visits.implementer]`, read as `{{inputs.visits.implementer}}`)
+to be told which attempt it is on.
 
 ### Command node output
 
@@ -152,6 +160,13 @@ A `command` node's output is `{ ok, exitCode, stdout, stderr }` — route on
 output across the two and which half carries the failure is not yours to guess;
 an implementer handed only `stdout` can be told a run failed with nothing that
 says why.
+
+Each argument may carry `{{outputs.<id>.<field>}}`, `{{input.<key>}}` and
+`{{visits.<id>}}`, rendered per argument and never re-split — so a commit
+message full of spaces and newlines stays one argv entry. That is what lets a
+pipeline commit with the implementer's own summary instead of reaching for an
+agent to run `git`, which is a model doing a deterministic job. A reference to
+something never produced fails the node.
 
 A command node's `command` is an argv array run with no shell, which means no
 pipes, no `&&`, no globbing and no `$VAR`. It also means the interpreter is
@@ -288,6 +303,122 @@ inputs: [reviewer.findings?, security.findings?, implementer.summary?]
 
 They are empty on the first pass, which is how one planner file serves both.
 
+### A stale output is still an output
+
+A node's output stays in the run's state for the rest of the run. `outputs.tests`
+does not empty when the tests pass — it holds the *last* test run, green or red,
+and every later visit to the implementer reads it.
+
+So an agent handed a command node's output must be told when it is relevant, or
+it will read a passing suite as a failure and go hunting for it. Route on `ok`
+and hand `ok` over with the text:
+
+```yaml
+inputs: [tests.ok?, tests.stdout?, tests.stderr?]
+```
+
+```
+The suite exited with ok = {{inputs.tests.ok}}. Fixing it is this pass's job
+only when that is false; when it is true the report below is the last green run
+and there is nothing in it for you.
+```
+
+The same applies to a review's findings after the review has been re-run, and to
+anything else a loop can reach twice. "Empty on the first pass" is true exactly
+once; it is not true on the fourth.
+
+### A retry loop needs an end
+
+`tests fail → implementer → tests` is the right shape, but on its own it has no
+end: an implementer that cannot fix a failure produces the same failure forever,
+and the `nothing-changed` edge cannot catch it — after the first pass `git diff`
+is non-empty whether or not this visit changed anything.
+
+`maxVisits` is the engine's ceiling and it fails the whole run with "node ran N
+times". A pipeline that knows how many attempts a fix is worth should say so
+itself and land somewhere that reports what is stuck:
+
+```yaml
+  - id: tests
+    type: command
+    command: [npm, test]
+    edges:
+      - when: outputs.tests.ok == true
+        to: reviews
+        label: tests pass
+      - when: visits.tests >= 6
+        to: tests-stuck
+        label: still red after 6 runs
+      - to: implementer
+        label: tests failed
+
+  - id: tests-stuck
+    type: terminal
+    label: Tests never went green
+    status: failed
+```
+
+Order matters: edges are tried in declaration order and the first match wins, so
+the give-up edge goes after the success edge and before the loop-back fallback.
+Give the same treatment to the review-rejection loop (`visits.planner >= 4`).
+
+### Approved work has to ship
+
+A pipeline that ends at `done` the moment both reviewers approve leaves the
+change sitting uncommitted in a worktree nobody will look at. Approval is not
+delivery. Finish the graph with real command nodes:
+
+```yaml
+  - id: stage-all
+    type: command
+    label: Stage everything
+    command: [git, add, -A]          # add -N staged intent only; commit needs the content
+    next: commit
+
+  - id: commit
+    type: command
+    label: Commit
+    # Two -m: the task is the subject, the implementer's own summary is the body.
+    command: [git, commit, -m, "{{input.task}}", -m, "{{outputs.implementer.summary}}"]
+    edges:
+      - when: outputs.commit.ok == true
+        to: push
+      - to: not-shipped
+
+  - id: push
+    type: command
+    label: Push and open the merge request
+    # GitLab push options: no API token, because the SSH key that cloned the
+    # repository is already the whole authentication story. GitHub's equivalent
+    # is a [gh, pr, create, ...] node after a plain push.
+    command:
+      - git
+      - push
+      - -o
+      - merge_request.create
+      - -o
+      - merge_request.target=main
+      - -o
+      - "merge_request.title={{input.task}}"
+      - --set-upstream
+      - origin
+      - HEAD
+    edges:
+      - when: outputs.push.ok == true
+        to: done
+      - to: not-shipped
+        label: approved but not pushed
+
+  - id: not-shipped
+    type: terminal
+    label: Approved but not delivered
+    status: failed
+```
+
+The failed-push terminal is the point: "approved but not delivered" must not be
+reported as done. Check the repository's real default branch (`git symbolic-ref
+refs/remotes/origin/HEAD`) rather than assuming `main`.
+
 ### A worktree does not carry generated files
 
 Each run works in a fresh `git worktree`, so it contains what git tracks and
@@ -345,7 +476,17 @@ accept it. The server validates shape, not sense.
 - [ ] **The planner declares the optional review inputs** so a second pass can
       revise the plan.
 - [ ] **Command nodes that can fail feed both `stdout` and `stderr`** to whoever
-      must fix them.
+      must fix them, **and `ok` alongside them** — an output outlives the pass
+      that produced it, so an agent that is not told `ok` reads the last green
+      run as a failure.
+- [ ] **Every loop-back edge has a give-up edge**, `visits.<node> >= n`, declared
+      after the success edge and before the fallback, landing on a `status:
+      failed` terminal that names what is stuck.
+- [ ] **If the run is meant to deliver, the pipeline ships what it approved** —
+      stage, commit with `{{outputs.<implementer>.summary}}`, push — and a failed
+      push lands on its own `status: failed` terminal. Ending at `done` on
+      approval leaves the change in a worktree nobody opens; that is a choice to
+      make deliberately, not by omission.
 - [ ] **No absolute interpreter paths** in any `command` — `PATH` resolves them.
 - [ ] **No orphan output fields** — every one is read somewhere.
 - [ ] **No `tools:` on a `claude-code` agent** — it is ignored, and writing one

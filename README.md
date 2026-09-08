@@ -1,12 +1,15 @@
 # gate
 
-A personal Claude gateway. One Claude Code OAuth login, then an
-Anthropic-compatible endpoint that routes each request to the right model
-(Haiku / Sonnet / Opus) based on the prompt's context — so your account is used
-efficiently. Dashboard built with Next.js + shadcn/ui.
+A personal Claude gateway. Connect one or more Claude Code OAuth logins — and
+your own local models — then point any Anthropic-compatible tool at it and each
+request goes to the right model (Haiku / Sonnet / Opus / Fable, or something you
+host yourself) based on the prompt's context. Dashboard built with Next.js +
+shadcn/ui.
 
-> **Scope:** built for using **your own** Claude account through your own tools.
-> It does not do multi-account rotation or account sharing.
+> **Scope:** built around the Claude accounts *you* connect. It rotates between
+> those logins and serves them to the people you issue keys to — a small team
+> working through one gate, not account sharing with strangers: every key names
+> a person, belongs to a team, and can be revoked on its own.
 
 ## Where to get it
 
@@ -15,8 +18,10 @@ git clone https://github.com/uguratadargun/gateway.git
 ```
 
 The repository is also a Claude Code **marketplace** carrying one plugin, `gate`
-— `/gate-run` starts an agent workflow against the repository you are in,
-`/gate-design` builds one for it ([details](#from-claude-code)):
+— `/gate-run` pulls your team's workflows and runs one **on your own machine**,
+in a worktree of the repository you are in, with every model call still going
+through your gate; `/gate-design` designs one for that repository
+([details](#from-claude-code--runs-happen-on-your-machine)):
 
 ```
 /plugin marketplace add uguratadargun/gateway
@@ -28,6 +33,8 @@ The repository is also a Claude Code **marketplace** carrying one plugin, `gate`
 1. **Login** — the same Authorization-Code-with-PKCE flow Claude Code uses
    (`claude.ai/oauth/authorize` → token at `api.anthropic.com/v1/oauth/token`).
    Tokens are stored AES-256-GCM encrypted under `GATE_SECRET` and auto-refreshed.
+   Repeat it to add a second account; each login keeps its own device id, so one
+   machine's accounts are not correlated upstream.
 2. **Gateway** — `POST /api/gateway/v1/messages` proxies to Anthropic on your
    OAuth token, presenting the Claude Code request shape the `claude_code` scope
    requires (identity headers + `"You are Claude Code…"` system sentinel).
@@ -48,6 +55,12 @@ The repository is also a Claude Code **marketplace** carrying one plugin, `gate`
    - Sonnet 5 has a 1M window at standard pricing, so large context stays on
      Sonnet; Haiku (200K) has a hard guard plus a "prompt too long" fallback.
    Fully overridable via `~/.gate/routing.json` or the dashboard.
+4. **Account pool** — with more than one login connected, a rate-limited account
+   is parked until its window resets and the next one takes over *before* any
+   tier is downgraded (see [Account pool](#account-pool)).
+5. **Local models** — a tier can point at your own OpenAI-compatible endpoint
+   instead of a Claude model; gate translates the traffic both ways (see
+   [Local models](#local-models)).
 
 ## Setup
 
@@ -69,23 +82,61 @@ login**, approve, and paste the code Anthropic shows you.
   `GATE_ADMIN_SECRET`, enforced in `src/middleware.ts`.
 - **Gateway** (`/api/gateway/*`) uses its own auth: issued API keys (hashed at
   rest) or `GATE_API_KEY`; open when neither is configured (localhost only).
+- **Client API** (`/api/v1/*`) — what the `gate` CLI on a developer's machine
+  talks to — takes the same keys but is **never open**: it hands out a team's
+  definitions and accepts run reports, so an unauthenticated caller there would
+  be handed every workflow the team has written. A key names a person and a
+  team; a revoked key, or a disabled person's key, stops resolving at once.
 - OAuth tokens are AES-256-GCM encrypted under `GATE_SECRET`; the server binds
   to loopback by default.
 - Management write endpoints validate bodies with zod (`src/lib/schemas.ts`).
 
-Rate-limit state belongs to the account, not to gate: connecting a different
-account (or logging out) forgets the windows and their history. Kept, they would
-describe someone else's quota — and the throttle would refuse a fresh account's
-requests on the strength of an exhausted one. When the throttle does refuse, it
-says so in the response: that 429 is gate's, not Anthropic's.
+Rate-limit state belongs to an account, not to gate: each connected login
+carries its own 5h / 7d window snapshot, and disconnecting the last one forgets
+the shared history. Kept across accounts they would describe someone else's
+quota — and the throttle would refuse a fresh account's requests on the strength
+of an exhausted one. When the throttle does refuse, it says so in the response:
+that 429 is gate's, not Anthropic's, and it names how many accounts it tried.
+
+Local providers get the same treatment as accounts: their API keys are sealed
+under `GATE_SECRET` and never returned by the API — the dashboard sees only
+whether a key is set.
+
+## Teams and people
+
+`/team` is where a person becomes able to connect: add a team, add someone to
+it, issue them a key. The key is shown once, as the command they run:
+
+```bash
+gate login --url https://gate.internal --key gate_…
+```
+
+A **team owns its agents and workflows** — `~/.gate/teams/<team>/` — and a key
+can only ever read its own team's. A **person** has one team and one or more
+keys; moving them to another team moves their keys with them, disabling them
+stops every key they hold, and deleting them revokes the lot. Everything that
+existed before teams belongs to `default`, and an install that had
+`~/.gate/agents` and `~/.gate/workflows` has them moved under it on first read —
+a single-person gate keeps working with nothing to do.
+
+Keys carry scopes: `gateway` (model calls) and `workflows` (pull definitions,
+report runs). A key for a third-party tool can be issued `gateway` only.
 
 ## Storage
 
-Usage, traffic, cache, API keys, and the rate-limit snapshot live in SQLite
-(`~/.gate/gate.db`, WAL) via Node's built-in `node:sqlite` — no native build.
+Usage, traffic, cache, API keys, connected accounts, local providers, and the
+rate-limit snapshot live in SQLite (`~/.gate/gate.db`, WAL) via Node's built-in
+`node:sqlite` — no native build. Account tokens and provider API keys are sealed
+blobs in their rows, not plain columns.
+Teams, people and their keys live in the same database. Definitions do not:
+`~/.gate/teams/<team>/agents/*.md` and `.../workflows/*.yaml` stay
+hand-editable and diffable files, and a client mirrors its own team's copy under
+`~/.gate/cache/<team>/`.
 Aggregations (spend, totals) are SQL `GROUP BY`s, so budget checks stay O(1) in
 request count. `settings.json` / `routing.json` stay as hand-editable files.
-Pre-SQLite JSONL files are imported once and renamed `*.migrated`.
+Pre-SQLite JSONL files are imported once and renamed `*.migrated`, and the
+pre-pool `credentials.json` is folded into the accounts table the same way — an
+existing single-account install keeps its login on upgrade.
 
 ## Using the gateway
 
@@ -103,9 +154,108 @@ Requests to `model: "auto"` are routed by context. Response headers
 OpenAI SDK clients work too — point them at the same base URL and call
 `/v1/chat/completions` (translated to/from Anthropic, streaming included).
 
+## Account pool
+
+Connect a second login from the dashboard and gate stops being a single-account
+proxy. Every request picks an account first, and only then a model.
+
+```
+Claude Code ──▶ gate ──▶ pick account ──▶ pick tier ──▶ api.anthropic.com
+                              │
+                              └─ 429 (account-wide) ─▶ park it, next account, same model
+                                 429 (model-specific) ─▶ same account, cheaper tier
+```
+
+That order is the point. A cheaper model on an **exhausted account** is served
+by the same exhausted quota, so rotating accounts has to come first; a
+**model-specific** limit is the opposite — the account is healthy, and dropping
+a tier is the cheap fix. Parking a healthy account for the second case would
+take it out of the pool for everything else, so gate does not.
+
+**Rotation strategies** (Settings → the accounts card):
+
+| Strategy | Picks |
+| --- | --- |
+| `fill-first` (default) | The highest-priority account until its window runs out. One prompt cache stays hot. |
+| `round-robin` | Sticks for N requests, then rotates to the least-recently-used account. |
+| `least-used` | Always the account idle longest. Never-used accounts go first. |
+| `p2c` | Two at random, the healthier of the two. |
+| `random` | Uniform among available accounts. |
+
+Availability is not just "enabled": an account is skipped while it is cooling
+down after a rate limit, and — if you set a floor — while any quota window has
+less than that percentage left. Cooldowns follow the upstream: `Retry-After`
+wins, an exhausted quota waits for its window reset, and anything else backs off
+5 s · 2ⁿ up to two minutes.
+
+Each account's 5h / 7d windows come from the `anthropic-ratelimit-unified-*`
+headers on every reply, so a busy account's bars stay current for free. Those
+headers only exist on a reply, though — a **just-connected account has no window
+reading at all** — so gate also reads Claude's own usage endpoint
+(`/api/oauth/usage`, the one the CLI uses; no inference, no tokens spent).
+
+Anthropic rate-limits that endpoint separately from `/v1/messages`, so gate asks
+it as little as it can get away with:
+
+- **A busy account is never polled.** Its replies already stamped the same
+  snapshot, so it never looks stale.
+- **The dashboard polls only an account that has never been polled at all** —
+  enough to fill a new account's bar, and nothing more. A page left open, or
+  reloaded while reordering the pool, triggers nothing.
+- **Periodic refresh is the daemon's job**, once per `quotaRefreshMinutes`
+  (default 30 — slow on purpose against a 5h window).
+- **Failures back off**: 10 min, doubling per consecutive failure, capped at 4 h;
+  a 429 additionally pauses that token for three minutes. Chat is untouched
+  either way, and the panel shows the reason instead of a blank bar.
+
+`x-gate-account` on the response names the login that served the request.
+
+## Local models
+
+Anything that speaks `POST {baseUrl}/chat/completions` can serve a tier: Ollama,
+vLLM, LM Studio, llama.cpp, or a hosted OpenAI-compatible endpoint. Add it under
+**Local models** on the dashboard (there are one-click presets for the usual
+ports), and its models appear as `local:<name>/<model>` in every model picker.
+
+```
+routing.json → tiers.haiku = "local:ollama/qwen3-coder"
+
+Claude Code ──▶ /v1/messages (Anthropic)
+                   │  anthropicToOpenAIRequest
+                   ▼
+              POST localhost:11434/v1/chat/completions
+                   │  openAIStreamToAnthropic
+                   ▼
+Claude Code ◀── Anthropic SSE
+```
+
+gate speaks Anthropic end to end, so the translation is a real round trip, not a
+passthrough: system blocks are hoisted into a system message, `tool_use` becomes
+`tool_calls`, `tool_result` becomes the `role: "tool"` messages OpenAI expects
+(ordered so each answers the call before it), images become data URLs, and
+thinking blocks — whose signatures only Anthropic can verify — are dropped. On
+the way back, the OpenAI chunk stream is rebuilt into the full Anthropic event
+sequence, `message_start` through `message_stop`, with tool arguments streamed as
+`input_json_delta`. `stream_options.include_usage` is requested on every stream,
+because without it most OpenAI-compatible servers report no usage at all and the
+request would be accounted as zero tokens.
+
+Practical notes:
+
+- A local model **costs nothing on the Anthropic bill**, and usage accounting
+  prices it at zero rather than as the tier it stands in.
+- An endpoint on loopback, RFC1918, or a `.local` / `.internal` / `.lan` name is
+  labelled *on your network*; anything routable publicly is labelled *remote*.
+- If the box is down, the tier fallback chain takes over — an unplugged Ollama
+  drops to the next tier rather than failing the request.
+- You can also address one directly, without touching routing:
+  `model: "local:ollama/qwen3-coder"`.
+
 ## Features
 
-- **Model routing** — context-aware Haiku/Sonnet/Opus selection with aliases.
+- **Model routing** — context-aware Haiku/Sonnet/Opus/Fable selection with aliases.
+- **Account pool** — several Claude logins behind one endpoint, with five rotation strategies and per-account quota.
+- **Local models** — route any tier to Ollama / vLLM / LM Studio / llama.cpp, translated both ways, streaming included.
 - **Rate-limit tracking** — reads Anthropic `anthropic-ratelimit-*` headers; shown live on the dashboard.
 - **Tier fallback** — on 429/529, drops to a cheaper tier automatically.
 - **Context compression** — trims oversized & duplicate blocks before sending.
@@ -117,7 +267,7 @@ OpenAI SDK clients work too — point them at the same base URL and call
 - **Gateway API keys** — issue/revoke keys per tool; required once any exists.
 - **Playground** — `/playground`, a chat UI over the gateway.
 - **Traffic inspector** — `/traffic`, local request/response log.
-- **Health daemon** — keeps the token warm; `/api/health` reports expiry.
+- **Health daemon** — keeps every account's token warm; `/api/health` reports expiry per account.
 - **Prompt-cache optimizer** — auto `cache_control` breakpoints on system/tools/last turn; cache reads tracked and priced at 10%.
 - **Concurrency limiter** — max in-flight upstream requests, FIFO queue with timeout.
 - **Rate-limit forecast + soft throttle** — reads the unified 5h/7d utilization headers, estimates time-to-limit, downgrades a tier at 85% and refuses at 98% (configurable).
@@ -130,6 +280,8 @@ OpenAI SDK clients work too — point them at the same base URL and call
 - **Analytics** — `/analytics`, tokens/cost/requests over time by tier, per-model breakdown, table view.
 - **Live tail + export** — SSE activity feed on `/traffic`; usage/traffic export as CSV/JSON.
 - **Agent workflows** — `/workflows`, a graph orchestrator that runs Markdown-defined agents through the gateway: conditional loops, parallel branches, file/command tools in a per-run git worktree, and a live node view.
+- **Runs on your own machine** — `gate run` (and `/gate-run`) executes the same workflow in your terminal, in a worktree of the repo you are in, with the model calls, the history and the live view still on the server.
+- **Teams and keys** — `/team`, a person per key, a team per set of definitions; revoke a key or disable a person and their access stops.
 
 Everything is configurable from the dashboard (persisted to `~/.gate/settings.json`).
 
@@ -147,7 +299,7 @@ interpreted (`src/workflows/condition.ts`) — there is no `eval`/`new Function`
 anywhere in that path, and a `command` node is spawned from an argv array in the
 YAML, never a shell string built from model output.
 
-### Agents — `~/.gate/agents/<id>.md`
+### Agents — `~/.gate/teams/<team>/agents/<id>.md`
 
 Markdown: YAML frontmatter says how the agent runs, the body is the prompt.
 
@@ -187,7 +339,7 @@ Test this change:
   pre-fills the box with the `input.*` keys its agents read, and a run missing
   one is refused with `RUN_INPUT_MISSING` instead of failing at the first node.
 
-### Workflows — `~/.gate/workflows/<id>.yaml`
+### Workflows — `~/.gate/teams/<team>/workflows/<id>.yaml`
 
 ```yaml
 name: Sample dev pipeline
@@ -407,18 +559,18 @@ with a live tool-activity feed. `/executions` keeps the history — every step's
 input, output, tool calls, model, tokens and duration — and `/executions/<id>`
 replays the exact path a run took and links the branch it produced.
 
-A run can be stopped: **Stop** on the execution page, or
-`gate-workflow.mjs cancel <execution-id>`. The engine checks for it before every
+A run can be stopped: **Stop** on the execution page, or `gate cancel
+<execution-id>`. The engine checks for it before every
 node *and* inside an agent's tool loop, so a stop does not wait out a step that
 is making a dozen tool calls; the upstream model request is really aborted, and
 a running command node's child process is killed rather than abandoned. The run
 settles as `failed` with `RUN_CANCELLED`, and its worktree is kept — half-done
 work is still work, and `git diff` will show it.
 
-A stopped run offers two ways back, both on the execution page and as CLI
-commands: **Restart** (`gate-workflow.mjs restart <id>`) begins the workflow
-fresh — a new worktree from HEAD, the same input — and **Continue**
-(`gate-workflow.mjs resume <id>`) picks up in the *same* worktree, at the node
+A stopped run offers two ways back on the execution page — for a run that
+happened here; one that happened on someone's machine is continued there.
+**Restart** begins the workflow fresh — a new worktree from HEAD, the same
+input — and **Continue** picks up in the *same* worktree, at the node
 it stopped on, without redoing what already ran. Where it resumes falls out of
 history alone: a step that failed is retried; a step that finished cleanly
 means the run stopped between nodes, so the node after it is re-derived with
@@ -474,86 +626,115 @@ curl -s -b /tmp/gate.jar -H 'content-type: application/json' \
   http://127.0.0.1:4141/api/executions
 ```
 
-### From Claude Code
+### From Claude Code — runs happen on your machine
 
-Workflows do not run inside Claude Code — the engine calls the model through
-gate's own proxy pipeline, so routing, caching and budget apply exactly as they
-do for any client. What Claude Code needs is a way to start a run and read the
-result. This repository is a Claude Code **marketplace** carrying one plugin,
-`gate`, which is exactly that:
+A run does not have to happen on the server. The engine is a library: give it
+definitions, a worktree and a way to reach a model, and it walks the same graph
+wherever it is. The `gate` plugin does exactly that — it runs the workflow **in
+your terminal**, in a worktree of the repository you are in, and leaves the
+server doing what only it can do: holding the definitions, serving the model
+calls, and keeping the history.
 
 ```
 /plugin marketplace add uguratadargun/gateway
 /plugin install gate@gateway
 ```
 
-Then, once, from the gate checkout — the plugin is installed as a copy with no
-`.env` beside it, and this is how it is given a way in:
+Then, once per machine, with the key from your `/team` page:
 
 ```bash
-plugins/gate/scripts/gate-workflow.mjs login    # stores the admin secret in ~/.gate/cli-secret (0600)
+gate login --url https://gate.internal --key gate_…   # ~/.gate/client.json (0600)
 ```
 
-Nothing else is downloaded and nothing is added to `PATH`: the plugin is a
-command file and a dependency-free Node script, and it finds its own files
-through `${CLAUDE_PLUGIN_ROOT}`. The script can also be used on its own:
+Nothing else is downloaded and nothing is added to `PATH`: the plugin ships one
+bundled Node script (`plugins/gate/scripts/gate.mjs`, built by `npm run
+build:cli`) and finds it through `${CLAUDE_PLUGIN_ROOT}`. It can be used on its
+own:
 
 ```bash
-plugins/gate/scripts/gate-workflow.mjs list                          # what exists, and what each needs
-plugins/gate/scripts/gate-workflow.mjs agents                        # what agents exist, and what each reads
-plugins/gate/scripts/gate-workflow.mjs run repo-dev-team --watch "…" # start one and follow it
-plugins/gate/scripts/gate-workflow.mjs watch <execution-id>          # follow one already going
-plugins/gate/scripts/gate-workflow.mjs cancel <execution-id>         # stop one (its worktree is kept)
-plugins/gate/scripts/gate-workflow.mjs resume <execution-id>         # continue it in the same worktree
-plugins/gate/scripts/gate-workflow.mjs restart <execution-id>        # start the same workflow fresh
-plugins/gate/scripts/gate-workflow.mjs save-agent <id> <file.md>     # create or replace an agent
-plugins/gate/scripts/gate-workflow.mjs save-workflow <id> <file.yaml> # create or replace a workflow
-plugins/gate/scripts/gate-workflow.mjs delete-agent <id>             # refused while a workflow names it
-plugins/gate/scripts/gate-workflow.mjs delete-workflow <id>          # recorded runs are kept
-plugins/gate/scripts/gate-workflow.mjs login                         # store the secret for an installed plugin
-plugins/gate/scripts/gate-workflow.mjs install                       # /gate-run without the plugin
+gate list                       # your team's workflows, and what each needs
+gate agents                     # the agents behind them
+gate show <id>                  # a definition as it is on the server
+gate run repo-dev-team "…"      # run it here, in this repository
+gate status                     # your team's recent runs, and where each ran
+gate cancel <execution-id>      # ask one to stop, wherever it is running
+gate pull                       # refresh the mirror by hand (every command does it anyway)
 ```
 
-It talks to `GATE_URL` (default `http://127.0.0.1:4141`) and logs in with the
-admin secret, taken from the first of: `GATE_ADMIN_SECRET`, the `.env` of a
-checkout named by `GATE_DIR`, a `.env` above the script itself (which is what
-makes it work straight out of the repository), and finally `~/.gate/cli-secret`
-as written by `login`.
+What travels where:
 
-The command lists the workflows you actually have every time it is invoked, so
-`/gate-run` needs no ids memorised — `/gate-run` alone offers the list, and
-`/gate-run repo-dev-team fix the flaky test` starts that one and follows it.
-A workflow that takes a `repo` input runs against the directory you are in
-(`--input repo=…` to aim it elsewhere). Because that run works in its own
-worktree on its own branch, starting one from a Claude Code session never
-disturbs the checkout that session is editing; when it ends, the branch and its
-`git diff` are what you review.
+- **Definitions come down.** `gate pull` mirrors your team's agents and
+  workflows into `~/.gate/cache/<team>/`, keyed by a hash the server answers
+  `304` for, so every command re-syncs for nothing when nothing changed. The
+  mirror is read-only in the sense that matters: it is *replaced* on the next
+  pull, so definitions stay the team's, edited in the dashboard.
+- **Model calls go up.** Every call — including those a node makes as a spawned
+  Claude Code — goes to `<gate>/api/gateway` on your own key, carrying
+  `x-gate-session: workflow:<execution-id>`. Routing, effort, prompt caching,
+  the account pool, budget, throttling and the traffic log all apply exactly as
+  they do for a run on the server. No Claude credentials are needed on your
+  machine.
+- **Progress goes up.** Steps and events are batched to `/api/v1/executions/…`
+  about once a second, so `/executions/<id>` animates a run on your laptop the
+  same way it animates one of its own, and the history is in the same table.
+- **The work stays here.** The worktree is on your disk, on its own branch, from
+  *your* HEAD — so `/gate-run` is safe to start mid-task, and the diff is
+  something you can review with `git` immediately. It is uploaded once when the
+  run ends, so the dashboard can show what it did.
+
+**Stop works in both directions.** The server cannot reach into a process on
+your laptop, so Stop on the execution page records the request and the answer
+rides back on the run's next report — within a few seconds — where it aborts
+the run exactly as a local Ctrl-C would. The reverse is also true: a server
+restart no longer kills your run, and a run whose machine goes quiet for fifteen
+minutes is settled as `RUN_ABANDONED` rather than claiming to be alive for ever.
+**Restart** and **Continue** stay where the worktree is: the execution page
+shows the command instead of the buttons.
+
+**The first run of a workflow asks.** A team's `command` nodes and `run_command`
+tools now execute on a developer's machine rather than in gate's own sandbox, so
+before running a definition this machine has not seen at this exact version, the
+CLI lists what it will run and asks. The approval is recorded against the
+definition's hash, so an edited workflow asks again; `--yes` skips it for
+unattended use.
+
+`/gate-run` alone offers the list; `/gate-run repo-dev-team fix the flaky test`
+starts that one and follows it to the end. A workflow that takes a `repo` input
+defaults to the repository you are standing in (`--input repo=…` to aim it
+elsewhere).
 
 ### Designing a pipeline for a repository
 
 `/gate-design <what it should do>` is the other half: Claude Code reads the
 repository it is in — package manager, real test and lint commands, layout,
-conventions — proposes a set of agents and a workflow shaped around what it
-found, and, once you agree, writes them through the same validating API. It is
-given the authoring reference (`plugins/gate/reference/authoring.md`) rather
-than left to guess the file formats, and it is told to reuse the agents you
-already have instead of producing near-duplicates.
+conventions — and proposes a set of agents and a workflow shaped around what it
+found. It is given the authoring reference
+(`plugins/gate/reference/authoring.md`) rather than left to guess the file
+formats, and it is told to reuse the agents you already have instead of
+producing near-duplicates.
 
-Saving is where the safety is: the server parses and validates every agent and
-workflow before it reaches disk, so a wrong definition comes back as
-`prompt references undeclared input: nobody.field` or `node "check" references
-unknown agent "does-not-exist"` and gets fixed, rather than failing mid-run. An
-id that already exists is refused unless `--replace` is passed, so a generated
-name cannot quietly overwrite an agent you tuned.
+It writes the proposal to `.gate-proposal/` and hands it over rather than
+saving it: definitions belong to the team, and a machine that can only mirror
+them is not the place to author them. You add them from **Agents** and
+**Workflows** in the dashboard, where the server parses and validates each one
+before it reaches disk — a wrong definition comes back as `prompt references
+undeclared input: nobody.field` or `node "check" references unknown agent
+"does-not-exist"` and gets fixed, rather than failing mid-run. Then `gate pull`
+puts it on every machine on the team.
 
 ## Files
 
 - `src/lib/claude/` — OAuth config, PKCE, token flow, Claude Code identity headers
 - `src/lib/router.ts` — context-aware model routing
-- `src/lib/store.ts` / `token-manager.ts` — encrypted token store + refresh
+- `src/lib/accounts.ts` / `account-pool.ts` / `token-manager.ts` — the account pool: sealed token store, selection strategies, cooldowns, per-account refresh
+- `src/lib/local-providers.ts` / `local-exec.ts` / `anthropic-openai.ts` — local endpoints, and the Anthropic↔OpenAI translation that lets them serve Anthropic traffic
+- `src/lib/seal.ts` / `store.ts` — AES-256-GCM sealing; the credential shape and the pre-pool file reader
 - `src/app/api/gateway/v1/messages/` — the proxy endpoint
-- `src/app/api/auth/` — login flow · `src/app/api/routing/` · `src/app/api/usage/`
+- `src/app/api/auth/` — login flow · `src/app/api/accounts/` · `src/app/api/providers/` · `src/app/api/routing/` · `src/app/api/usage/`
 - `src/agents/` — agent file format: parse, validate, render · `src/workflows/` — workflow YAML + condition language
 - `src/runtime/` — the deterministic engine, node executors, agent tools (`tools/`) and per-run worktrees (`workspace.ts`) · `src/providers/` — the `ModelProvider` seam onto the gateway
 - `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
-- `plugins/gate/` — the Claude Code plugin: `/gate-run`, `/gate-design`, the authoring reference and the shell client behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
+- `src/lib/teams.ts` / `apikeys.ts` / `tenancy.ts` / `def-root.ts` — people, teams, keys-as-identities, and which directory a team's definitions live in
+- `src/app/api/v1/` — the client API: identity, the definition bundle, run registration, progress and stop
+- `src/client/` — the CLI that runs a workflow on a developer's machine: the mirror, the HTTP provider onto the gateway, and the reporter · `scripts/build-cli.mjs` bundles it into the plugin
+- `plugins/gate/` — the Claude Code plugin: `/gate-run`, `/gate-design`, the authoring reference and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace

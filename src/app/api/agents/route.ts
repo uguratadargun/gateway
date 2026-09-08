@@ -4,21 +4,26 @@ import { z } from "zod";
 import { ensureDefaultAgents } from "@/agents/defaults";
 import { AgentDefinitionError } from "@/agents/loader";
 import { listAgents, saveAgent } from "@/agents/registry";
+import { scopeFromRequest } from "@/lib/def-root";
+import { getTeam } from "@/lib/teams";
 
 export const runtime = "nodejs";
 
 const createSchema = z.object({ id: z.string().min(1).max(64), source: z.string().min(1).max(100_000) }).strict();
 
-export async function GET() {
-  ensureDefaultAgents();
-  return NextResponse.json(listAgents());
+const scopeOf = (req: Request) => scopeFromRequest(req, (id) => !!getTeam(id));
+
+export async function GET(req: Request) {
+  const scope = scopeOf(req);
+  ensureDefaultAgents(scope);
+  return NextResponse.json(listAgents(scope));
 }
 
 export async function POST(req: Request) {
   const parsed = createSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid agent", issues: parsed.error.issues }, { status: 400 });
   try {
-    return NextResponse.json(saveAgent(parsed.data.id, parsed.data.source));
+    return NextResponse.json(saveAgent(parsed.data.id, parsed.data.source, scopeOf(req)));
   } catch (e) {
     if (e instanceof AgentDefinitionError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;

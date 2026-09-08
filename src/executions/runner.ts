@@ -11,6 +11,7 @@ import { createRunWorkspace, summarizeWorkspace, type ResolvedWorkspaceSpec, typ
 import { getRepo, type RepoRecord } from "@/repos/store";
 import { isPathLike, prepareWorktree } from "@/repos/setup";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
+import { teamScope, type DefinitionScope } from "@/lib/def-root";
 import { getWorkflow } from "@/workflows/registry";
 import type { WorkflowDefinition, WorkspaceSpec } from "@/workflows/types";
 
@@ -100,9 +101,13 @@ function resolveWorkspace(
   };
 }
 
-export function startExecution(workflowId: string, input: Record<string, unknown> = {}): StartExecutionResult {
-  const workflow = getWorkflow(workflowId);
-  const missing = missingRunInputs(requiredRunInputs(workflow, getAgent), input);
+export function startExecution(
+  workflowId: string,
+  input: Record<string, unknown> = {},
+  scope: DefinitionScope = teamScope(),
+): StartExecutionResult {
+  const workflow = getWorkflow(workflowId, scope);
+  const missing = missingRunInputs(requiredRunInputs(workflow, (id) => getAgent(id, scope)), input);
   if (missing.length) {
     throw new WorkflowError(
       "RUN_INPUT_MISSING",
@@ -112,7 +117,7 @@ export function startExecution(workflowId: string, input: Record<string, unknown
   }
 
   const executionId = randomUUID();
-  createExecution(executionId, workflow.id, input);
+  createExecution(executionId, workflow.id, input, Date.now(), null, { teamId: scope.teamId });
 
   // The worktree is created before the first node runs: a workflow that cannot
   // get its workspace fails immediately rather than half-way through a plan.
@@ -134,7 +139,7 @@ export function startExecution(workflowId: string, input: Record<string, unknown
     }
   }
 
-  return { executionId, done: launch(workflow, input, executionId, workspace, undefined, connected) };
+  return { executionId, done: launch(workflow, input, executionId, workspace, scope, undefined, connected) };
 }
 
 /**
@@ -154,7 +159,8 @@ export function resumeExecution(parentId: string): StartExecutionResult {
   if (!parent) throw new WorkflowError("EXECUTION_NOT_RESUMABLE", `no execution "${parentId}"`);
   assertResumable(parent);
 
-  const workflow = getWorkflow(parent.workflowId);
+  const scope = teamScope(parent.teamId);
+  const workflow = getWorkflow(parent.workflowId, scope);
   const lineage = getExecutionLineage(parentId);
   if (!lineage) throw new WorkflowError("EXECUTION_NOT_RESUMABLE", "could not read this run's history");
   const plan = planResume(workflow, lineage.steps, lineage.input);
@@ -162,7 +168,10 @@ export function resumeExecution(parentId: string): StartExecutionResult {
   const workspace = reuseWorkspace(lineage.workspace);
 
   const executionId = randomUUID();
-  createExecution(executionId, parent.workflowId, lineage.input, Date.now(), parentId);
+  createExecution(executionId, parent.workflowId, lineage.input, Date.now(), parentId, {
+    teamId: parent.teamId,
+    userId: parent.userId,
+  });
   if (workspace) setExecutionWorkspace(executionId, workspaceSummary(workspace)!);
 
   const resume: RunWorkflowOptions["resume"] = {
@@ -172,7 +181,7 @@ export function resumeExecution(parentId: string): StartExecutionResult {
     history: plan.history,
     startNodeId: plan.startNodeId,
   };
-  return { executionId, done: launch(workflow, lineage.input, executionId, workspace, resume) };
+  return { executionId, done: launch(workflow, lineage.input, executionId, workspace, scope, resume) };
 }
 
 /** The worktree a resumed run reuses. Refuses cleanly if it is no longer there. */
@@ -193,6 +202,8 @@ async function launch(
   input: Record<string, unknown>,
   executionId: string,
   workspace: RunWorkspace | null,
+  /** Which team's agents this workflow's nodes name. */
+  scope: DefinitionScope,
   resume?: RunWorkflowOptions["resume"],
   /** Connected repo, when the run named one: its worktree preparation runs first. */
   connected?: RepoRecord | null,
@@ -212,6 +223,7 @@ async function launch(
       input,
       executionId,
       workspace,
+      loadAgent: (id) => getAgent(id, scope),
       emit: publishWorkflowEvent,
       onStep: (step) => recordStep(executionId, step),
       signal: controller.signal,

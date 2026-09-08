@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, Bot, FolderGit2, GitBranch, History, LayoutDashboard, ListTree, LogOut, MessagesSquare, ScrollText } from "lucide-react";
+import { BarChart3, Bot, FolderGit2, GitBranch, History, LayoutDashboard, ListTree, LogOut, MessagesSquare, ScrollText, Users } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -16,6 +16,7 @@ const links = [
   { href: "/repos", label: "Repos", icon: FolderGit2 },
   { href: "/workflows", label: "Workflows", icon: GitBranch },
   { href: "/executions", label: "Executions", icon: History },
+  { href: "/team", label: "Team", icon: Users },
 ];
 
 export function Sidebar() {

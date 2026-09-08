@@ -5,7 +5,8 @@ import { cacheClear, cacheGet, cacheKey, cacheSet, cacheStats } from "@/lib/cach
 import { costFor, savingsVsOpus, tierOf } from "@/lib/pricing";
 import { readRateLimit, recordRateLimit } from "@/lib/ratelimit";
 import type { ClaudeAccount } from "@/lib/claude/oauth";
-import { clearCredentials, loadCredentials, saveCredentials, type StoredCredentials } from "@/lib/store";
+import { addAccount, deleteAccount, listAccounts, loadAccountCredentials } from "@/lib/accounts";
+import type { StoredCredentials } from "@/lib/store";
 import { saveSettings } from "@/lib/settings";
 import { clearTraffic, readTraffic, recordTraffic } from "@/lib/traffic";
 import { getSpend, readUsage, recordUsage } from "@/lib/usage";
@@ -96,48 +97,50 @@ describe("traffic + ratelimit (sqlite)", () => {
   });
 });
 
-describe("rate-limit state across accounts", () => {
-  const headers = () =>
-    new Headers({
-      "anthropic-ratelimit-unified-5h-utilization": "0.97",
-      "anthropic-ratelimit-unified-status": "allowed_warning",
-    });
-
-  const creds = (uuid: string): StoredCredentials => ({
-    accessToken: "a",
+describe("account pool storage", () => {
+  const creds = (uuid: string, token = "a"): StoredCredentials => ({
+    accessToken: token,
     refreshToken: "r",
     expiresAt: Date.now() + 3_600_000,
-    account: { account_uuid: uuid } as ClaudeAccount,
+    account: { account_uuid: uuid, account_email: `${uuid}@example.test` } as ClaudeAccount,
     cliUserID: "0".repeat(64),
     connectedAt: 0,
     updatedAt: 0,
   });
 
-  it("keeps what it knows when the same account refreshes its token", () => {
-    saveCredentials(creds("account-1"));
-    recordRateLimit(headers());
-    expect(readRateLimit()?.utilization5h).toBe(0.97);
-
-    // A refresh rewrites the same account's tokens many times a day.
-    saveCredentials({ ...creds("account-1"), accessToken: "a2" });
-    expect(readRateLimit()?.utilization5h).toBe(0.97);
+  it("keeps several logins side by side, each with its own sealed tokens", () => {
+    const one = addAccount(creds("account-1"), "personal");
+    const two = addAccount(creds("account-2", "b"), "work");
+    expect(listAccounts().map((a) => a.label)).toEqual(["personal", "work"]);
+    expect(loadAccountCredentials(one.id)?.accessToken).toBe("a");
+    expect(loadAccountCredentials(two.id)?.accessToken).toBe("b");
+    // Nothing readable leaves the store: the row the dashboard sees has no
+    // token fields at all.
+    expect(Object.keys(one)).not.toContain("sealed");
+    deleteAccount(one.id);
+    deleteAccount(two.id);
   });
 
-  it("forgets it when a different account signs in", () => {
-    saveCredentials(creds("account-1"));
-    recordRateLimit(headers());
-    expect(readRateLimit()?.utilization5h).toBe(0.97);
-
-    // Otherwise the throttle refuses a fresh account on the old one's quota.
-    saveCredentials(creds("account-2"));
-    expect(readRateLimit()).toBeNull();
-    expect(loadCredentials()?.account?.account_uuid).toBe("account-2");
+  it("re-authorizing the same account refreshes it in place, not as a duplicate", () => {
+    const first = addAccount(creds("account-1"), "personal");
+    const again = addAccount(creds("account-1", "rotated"));
+    expect(again.id).toBe(first.id);
+    expect(listAccounts().length).toBe(1);
+    // Two rows for one Anthropic account would share — and double-count — one
+    // quota, and the pool would rotate between two views of the same window.
+    expect(loadAccountCredentials(first.id)?.accessToken).toBe("rotated");
+    // A re-login is also how a user clears a cooled-down account.
+    expect(again.enabled).toBe(true);
+    expect(again.cooldownUntil).toBeNull();
+    deleteAccount(first.id);
   });
 
-  it("forgets it on logout", () => {
-    saveCredentials(creds("account-3"));
-    recordRateLimit(headers());
-    clearCredentials();
-    expect(readRateLimit()).toBeNull();
+  it("orders the pool by priority, newest login last", () => {
+    const a = addAccount(creds("account-1"), "first");
+    const b = addAccount(creds("account-2"), "second");
+    expect(listAccounts().map((x) => x.id)).toEqual([a.id, b.id]);
+    expect(b.priority).toBeGreaterThan(a.priority);
+    deleteAccount(a.id);
+    deleteAccount(b.id);
   });
 });

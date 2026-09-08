@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { deleteExecution, getExecution, getExecutionLineage, getResumedAs } from "@/executions/store";
+import { teamScope } from "@/lib/def-root";
 import { getWorkflow } from "@/workflows/registry";
 
 export const runtime = "nodejs";
@@ -22,7 +23,9 @@ export async function GET(_req: Request, { params }: Params) {
   if (!execution) return NextResponse.json({ error: "execution not found" }, { status: 404 });
   let workflow = null;
   try {
-    workflow = getWorkflow(execution.workflowId);
+    // Read from the run's own team: the same workflow id can exist in two
+    // teams, and a run's graph must be the one it actually walked.
+    workflow = getWorkflow(execution.workflowId, teamScope(execution.teamId));
   } catch {
     // The definition may have been edited or removed since the run; steps stand alone.
   }

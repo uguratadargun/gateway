@@ -1,15 +1,21 @@
 import { NextResponse } from "next/server";
 
+import { addAccount } from "@/lib/accounts";
 import { exchangeToken, fetchAccount } from "@/lib/claude/oauth";
 import { clearPending, loadPending } from "@/lib/pkce-session";
-import { newCliUserID, saveCredentials, type StoredCredentials } from "@/lib/store";
+import { createAccountSchema } from "@/lib/schemas";
+import { newCliUserID, type StoredCredentials } from "@/lib/store";
 
 export const runtime = "nodejs";
 
-/** Complete login: exchange the pasted `code#state` for tokens and persist. */
+/**
+ * Complete a login: exchange the pasted `code#state` for tokens and add the
+ * account to the pool. Re-authorizing an account already in the pool refreshes
+ * it in place rather than adding a duplicate.
+ */
 export async function POST(req: Request) {
-  const { code } = (await req.json().catch(() => ({}))) as { code?: string };
-  if (!code || typeof code !== "string") {
+  const parsed = createAccountSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
     return NextResponse.json({ error: "Missing authorization code" }, { status: 400 });
   }
 
@@ -19,7 +25,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const tokens = await exchangeToken(code, pending.verifier, pending.state);
+    const tokens = await exchangeToken(parsed.data.code, pending.verifier, pending.state);
     const account = await fetchAccount(tokens.access_token);
     const creds: StoredCredentials = {
       accessToken: tokens.access_token,
@@ -27,18 +33,15 @@ export async function POST(req: Request) {
       expiresAt: Date.now() + tokens.expires_in * 1000,
       scope: tokens.scope,
       account,
+      // Each login gets its own Claude Code device_id, so one machine's
+      // accounts cannot be correlated with each other upstream.
       cliUserID: newCliUserID(),
       connectedAt: Date.now(),
       updatedAt: Date.now(),
     };
-    saveCredentials(creds);
+    const added = addAccount(creds, parsed.data.label);
     clearPending();
-    return NextResponse.json({
-      ok: true,
-      email: account?.account_email ?? null,
-      organization: account?.organization_name ?? null,
-      tier: account?.organization_rate_limit_tier ?? null,
-    });
+    return NextResponse.json({ ok: true, account: added });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Token exchange failed" },
