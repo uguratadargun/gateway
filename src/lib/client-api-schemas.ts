@@ -24,6 +24,8 @@ export const startRunSchema = z
     workflowId: z.string().min(1).max(64),
     input: z.record(z.string(), z.unknown()).default({}),
     client: clientInfo.default({}),
+    /** "session" when a Claude Code session walks the graph a node at a time. */
+    driver: z.enum(["engine", "session"]).default("engine"),
   })
   .strict();
 

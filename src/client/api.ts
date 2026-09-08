@@ -169,6 +169,8 @@ export class GateClient {
     workflowId: string;
     input: Record<string, unknown>;
     client: { host?: string; repo?: string; branch?: string; version?: string };
+    /** Who walks the graph — see the execution's `driver`. */
+    driver?: "engine" | "session";
   }): Promise<string> {
     const res = await this.request<{ executionId: string }>("/api/v1/executions", {
       method: "POST",

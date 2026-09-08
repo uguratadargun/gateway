@@ -59,6 +59,8 @@ function reconcileOnce(): void {
 /** Who a run belongs to and where its engine is. Absent means this server. */
 export interface ExecutionOrigin {
   origin?: "server" | "local";
+  /** Defaults to the engine, which is what everything but a session is. */
+  driver?: "engine" | "session";
   userId?: string | null;
   teamId?: string;
   client?: ExecutionClient | null;
@@ -78,8 +80,8 @@ export function createExecution(
     .prepare(
       `INSERT INTO workflow_executions
          (id, workflow_id, status, started_at, input_json, resumed_from,
-          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       id,
@@ -95,6 +97,7 @@ export function createExecution(
       meta.client?.repo ?? null,
       meta.client?.branch ?? null,
       startedAt,
+      meta.driver ?? "engine",
     );
 }
 
@@ -220,6 +223,7 @@ interface ExecutionRow {
   client_branch: string | null;
   last_seen_at: number | null;
   cancel_requested: number | null;
+  driver: string | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -244,6 +248,7 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
         : null,
     lastSeenAt: r.last_seen_at,
     cancelRequested: !!r.cancel_requested,
+    driver: r.driver === "session" ? "session" : "engine",
   };
 }
 
@@ -402,6 +407,17 @@ export function failInterruptedExecutions(startedBefore: number, at = Date.now()
 const LOCAL_RUN_SILENCE_MS = 15 * 60_000;
 
 /**
+ * The same question for a run a session is driving, where silence is normal.
+ *
+ * Such a run reports when a node starts and when it ends, and a node is a
+ * person and a model working — an implementer given a real change routinely
+ * takes half an hour, and nobody should come back to find the run declared
+ * dead underneath them. What this catches is the session that was closed and
+ * never came back, which is worth catching eventually and not quickly.
+ */
+const SESSION_RUN_SILENCE_MS = 6 * 60 * 60_000;
+
+/**
  * The sweep, rate-limited to once a minute.
  *
  * Unlike the interrupted-run sweep this cannot be a once-per-process job: a
@@ -421,15 +437,20 @@ export function sweepAbandonedLocalRuns(now = Date.now()): void {
 }
 
 /** Settles local runs whose machine stopped reporting. */
-export function failAbandonedLocalExecutions(at = Date.now(), silenceMs = LOCAL_RUN_SILENCE_MS): number {
+export function failAbandonedLocalExecutions(
+  at = Date.now(),
+  silenceMs = LOCAL_RUN_SILENCE_MS,
+  sessionSilenceMs = SESSION_RUN_SILENCE_MS,
+): number {
   const res = getDb()
     .prepare(
       `UPDATE workflow_executions
           SET status = 'failed', finished_at = ?, error_code = 'RUN_ABANDONED',
               error_message = 'the machine running this stopped reporting'
-        WHERE status = 'running' AND origin = 'local' AND COALESCE(last_seen_at, started_at) < ?`,
+        WHERE status = 'running' AND origin = 'local'
+          AND COALESCE(last_seen_at, started_at) < (CASE WHEN driver = 'session' THEN ? ELSE ? END)`,
     )
-    .run(at, at - silenceMs);
+    .run(at, at - sessionSilenceMs, at - silenceMs);
   return Number(res.changes ?? 0);
 }
 

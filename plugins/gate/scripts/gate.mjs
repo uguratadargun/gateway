@@ -8410,7 +8410,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.17.0";
+var GATE_VERSION = "0.18.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -10115,7 +10115,8 @@ async function begin(ctx, workflowId, input, cwd, repos) {
   const executionId = await ctx.client.startRun({
     workflowId: workflow.id,
     input: runInput,
-    client: { host: hostname3(), repo: repo ?? void 0, version: CLI_VERSION }
+    client: { host: hostname3(), repo: repo ?? void 0, version: CLI_VERSION },
+    driver: "session"
   });
   if (workflow.workspace) {
     try {
@@ -10158,14 +10159,32 @@ async function next(ctx, executionId) {
     const state = stateFor(execution, position.outputs);
     if (node.type === "agent") {
       const prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
+      const startedAt = Date.now();
       writePending({
         executionId,
         nodeId: node.id,
         stepIndex: position.stepIndex,
         visit: position.visit,
-        startedAt: Date.now()
+        startedAt
       });
       const workspace = workspaceOf(execution);
+      await ctx.client.report(executionId, {
+        events: [
+          {
+            type: "node.started",
+            at: startedAt,
+            nodeId: node.id,
+            stepIndex: position.stepIndex,
+            visit: position.visit
+          }
+        ],
+        steps: []
+      }).catch(() => {
+      });
+      ctx.say(
+        `\u25B8 ${node.id} \xB7 agent ${prepared.agent.id} (${prepared.agent.model}${prepared.agent.effort ? `/${prepared.agent.effort}` : ""})${position.visit > 1 ? ` \xB7 pass ${position.visit}` : ""}`
+      );
+      if (workspace) ctx.say(`  in ${workspace.root}`);
       return {
         do: "agent",
         executionId,
@@ -10253,23 +10272,38 @@ async function step(ctx, executionId, nodeId2, answer) {
   }
   const agent = getAgent(node.agent, scope);
   const output = parseOutput(agent, answer, nodeId2);
-  await record(ctx, executionId, {
-    nodeId: nodeId2,
-    stepIndex: pending.stepIndex,
-    visit: pending.visit,
-    status: "completed",
-    startedAt: pending.startedAt,
-    finishedAt: Date.now(),
-    input: null,
-    output
-  });
+  const finishedAt = Date.now();
+  await record(
+    ctx,
+    executionId,
+    {
+      nodeId: nodeId2,
+      stepIndex: pending.stepIndex,
+      visit: pending.visit,
+      status: "completed",
+      startedAt: pending.startedAt,
+      finishedAt,
+      input: null,
+      output
+    },
+    false
+  );
+  ctx.say(`\u2713 ${nodeId2} (${Math.max(1, Math.round((finishedAt - pending.startedAt) / 1e3))}s)`);
   clearPending(executionId);
   return next(ctx, executionId);
 }
-async function record(ctx, executionId, step2) {
+async function record(ctx, executionId, step2, announceStart = true) {
   const res = await ctx.client.report(executionId, {
     events: [
-      { type: "node.started", at: step2.startedAt, nodeId: step2.nodeId, stepIndex: step2.stepIndex, visit: step2.visit },
+      ...announceStart ? [
+        {
+          type: "node.started",
+          at: step2.startedAt,
+          nodeId: step2.nodeId,
+          stepIndex: step2.stepIndex,
+          visit: step2.visit
+        }
+      ] : [],
       step2.status === "failed" ? {
         type: "node.failed",
         at: step2.finishedAt,

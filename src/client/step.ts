@@ -122,6 +122,7 @@ export async function begin(
     workflowId: workflow.id,
     input: runInput,
     client: { host: hostname(), repo: repo ?? undefined, version: CLI_VERSION },
+    driver: "session",
   });
 
   if (workflow.workspace) {
@@ -178,14 +179,40 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
 
     if (node.type === "agent") {
       const prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
+      const startedAt = Date.now();
       writePending({
         executionId,
         nodeId: node.id,
         stepIndex: position.stepIndex,
         visit: position.visit,
-        startedAt: Date.now(),
+        startedAt,
       });
       const workspace = workspaceOf(execution);
+
+      // Said now, not when the answer comes back. A node a session works on
+      // takes as long as the work takes, and until this the run looked idle:
+      // the dashboard lit the node up only once it was already over, and the
+      // terminal said nothing at all about whose turn it was.
+      await ctx.client
+        .report(executionId, {
+          events: [
+            {
+              type: "node.started",
+              at: startedAt,
+              nodeId: node.id,
+              stepIndex: position.stepIndex,
+              visit: position.visit,
+            },
+          ],
+          steps: [],
+        })
+        .catch(() => {});
+      ctx.say(
+        `▸ ${node.id} · agent ${prepared.agent.id} (${prepared.agent.model}` +
+          `${prepared.agent.effort ? `/${prepared.agent.effort}` : ""})` +
+          `${position.visit > 1 ? ` · pass ${position.visit}` : ""}`,
+      );
+      if (workspace) ctx.say(`  in ${workspace.root}`);
       return {
         do: "agent",
         executionId,
@@ -312,25 +339,48 @@ export async function step(
   // three nodes later.
   const output = parseOutput(agent, answer, nodeId);
 
-  await record(ctx, executionId, {
-    nodeId,
-    stepIndex: pending.stepIndex,
-    visit: pending.visit,
-    status: "completed",
-    startedAt: pending.startedAt,
-    finishedAt: Date.now(),
-    input: null,
-    output,
-  });
+  const finishedAt = Date.now();
+  await record(
+    ctx,
+    executionId,
+    {
+      nodeId,
+      stepIndex: pending.stepIndex,
+      visit: pending.visit,
+      status: "completed",
+      startedAt: pending.startedAt,
+      finishedAt,
+      input: null,
+      output,
+    },
+    false,
+  );
+  ctx.say(`✓ ${nodeId} (${Math.max(1, Math.round((finishedAt - pending.startedAt) / 1000))}s)`);
   clearPending(executionId);
   return next(ctx, executionId);
 }
 
 /** Sends one step up, so the dashboard has it as it happens. */
-async function record(ctx: SessionRunContext, executionId: string, step: StepRecord): Promise<void> {
+async function record(
+  ctx: SessionRunContext,
+  executionId: string,
+  step: StepRecord,
+  /** False for a node whose start was announced when it was handed out. */
+  announceStart = true,
+): Promise<void> {
   const res = await ctx.client.report(executionId, {
     events: [
-      { type: "node.started", at: step.startedAt, nodeId: step.nodeId, stepIndex: step.stepIndex, visit: step.visit },
+      ...(announceStart
+        ? [
+            {
+              type: "node.started",
+              at: step.startedAt,
+              nodeId: step.nodeId,
+              stepIndex: step.stepIndex,
+              visit: step.visit,
+            },
+          ]
+        : []),
       step.status === "failed"
         ? {
             type: "node.failed",

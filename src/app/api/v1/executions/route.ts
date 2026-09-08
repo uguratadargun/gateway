@@ -57,6 +57,7 @@ export async function POST(req: Request) {
     const executionId = randomUUID();
     createExecution(executionId, workflow.id, parsed.data.input, Date.now(), null, {
       origin: "local",
+      driver: parsed.data.driver,
       userId: auth.userId,
       teamId: auth.teamId,
       client: {

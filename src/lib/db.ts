@@ -270,6 +270,10 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["workflow_executions", "cancel_requested", "cancel_requested INTEGER NOT NULL DEFAULT 0"],
   // The worktree is on the client, so the diff it produced is uploaded here.
   ["workflow_executions", "diff_text", "diff_text TEXT"],
+  // How the run is driven: "engine" is a process looping over the graph and
+  // heartbeating every few seconds; "session" is a Claude Code session doing
+  // one node at a time, which reports only at node boundaries.
+  ["workflow_executions", "driver", "driver TEXT NOT NULL DEFAULT 'engine'"],
 ];
 
 let db: SqlDatabase | null = null;

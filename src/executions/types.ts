@@ -39,6 +39,12 @@ export interface ExecutionRecord {
   lastSeenAt: number | null;
   /** Set when someone pressed Stop on a run this process does not own. */
   cancelRequested: boolean;
+  /**
+   * What is walking the graph. An engine-driven run reports every few seconds,
+   * so silence means its machine went away; a session-driven one reports when
+   * a node begins and ends, and a node can legitimately take an hour.
+   */
+  driver: "engine" | "session";
 }
 
 /** The machine a local run happened on, as the client reported it. */

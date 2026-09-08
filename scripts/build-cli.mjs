@@ -52,7 +52,9 @@ console.log(`gate ${distinct[0]}`);
  */
 try {
   const git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
-  const lastBump = git(["log", "-1", "--format=%H", "-S", '"version"', "--", "plugins/gate/.claude-plugin/plugin.json"]);
+  // -G, not -S: a bump changes the value on the version line, not how many
+  // times the word appears, and -S only notices the latter.
+  const lastBump = git(["log", "-1", "--format=%H", "-G", '"version":', "--", "plugins/gate/.claude-plugin/plugin.json"]);
   if (lastBump) {
     const since = git(["log", "--oneline", `${lastBump}..HEAD`, "--", "plugins", "src/client"]);
     if (since) {
