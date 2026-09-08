@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { DEFAULT_TEAM, type DefinitionScope } from "@/lib/def-root";
+import { DEFAULT_TEAM, ownScope, type DefinitionScope } from "@/lib/def-root";
 
-import { agentsDir } from "./registry";
+import { agentExists, agentsDir } from "./registry";
 
 /**
  * The agents gate ships with. They are written to ~/.gate/agents on first
@@ -275,15 +275,21 @@ export const DEFAULT_AGENTS: Record<string, string> = {
  *
  * Nothing is overwritten. A shipped id already here is left as it is, edits
  * and all.
+ *
+ * "Missing" is judged with inheritance: a team that reaches the shipped
+ * planner through the default team has it, and writing a copy into that team
+ * would shadow the house library's — the thing every pipeline is meant to
+ * share, and the thing the design command says never to copy. What is
+ * written goes into the team's own directory, which is the only one a scope
+ * may write to.
  */
 export function writeMissingDefaultAgents(scope?: DefinitionScope): string[] {
-  const dir = agentsDir(scope);
+  const dir = agentsDir(scope && ownScope(scope));
   const written: string[] = [];
   for (const [id, source] of Object.entries(DEFAULT_AGENTS)) {
-    const file = join(dir, `${id}.md`);
-    if (existsSync(file)) continue;
+    if (agentExists(id, scope)) continue;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(file, source, { mode: 0o600 });
+    writeFileSync(join(dir, `${id}.md`), source, { mode: 0o600 });
     written.push(id);
   }
   return written;

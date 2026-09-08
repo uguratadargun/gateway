@@ -3,12 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { DEFAULT_AGENTS, ensureDefaultAgents } from "@/agents/defaults";
-import { agentsDir, deleteAgent, listAgents, saveAgent } from "@/agents/registry";
+import { DEFAULT_AGENTS, ensureDefaultAgents, writeMissingDefaultAgents } from "@/agents/defaults";
+import { agentExists, agentsDir, deleteAgent, listAgents, saveAgent } from "@/agents/registry";
+import { teamScope } from "@/lib/def-root";
 import { runWorkflow } from "@/runtime/engine";
 import type { WorkflowEvent } from "@/events/types";
-import { DEFAULT_WORKFLOWS, ensureDefaultWorkflows } from "@/workflows/defaults";
-import { getWorkflow, listWorkflows, workflowsDir } from "@/workflows/registry";
+import { DEFAULT_WORKFLOWS, ensureDefaultWorkflows, writeMissingDefaultWorkflows } from "@/workflows/defaults";
+import { deleteWorkflow, getWorkflow, listWorkflows, workflowsDir } from "@/workflows/registry";
 
 import { FakeModelProvider } from "./fakes/fake-model-provider";
 
@@ -51,6 +52,34 @@ describe("seeded defaults", () => {
       ensureDefaultAgents();
       expect(existsSync(join(agentsDir(), "reviewer.md"))).toBe(false);
       expect(existsSync(workflowsDir())).toBe(true);
+    } finally {
+      process.env.GATE_HOME = home;
+    }
+  });
+});
+
+describe("restoring the shipped definitions", () => {
+  it("counts what a team inherits from the default team as present", () => {
+    const home = process.env.GATE_HOME;
+    process.env.GATE_HOME = mkdtempSync(join(tmpdir(), "gate-seed-"));
+    try {
+      ensureDefaultWorkflows();
+      const ulak = teamScope("ulak");
+      // The team owns nothing, and is missing nothing: the house library is
+      // reachable through the fallback, and a copy would only shadow it.
+      expect(Object.keys(DEFAULT_AGENTS).filter((id) => !agentExists(id, ulak))).toEqual([]);
+      expect(writeMissingDefaultAgents(ulak)).toEqual([]);
+      expect(writeMissingDefaultWorkflows(ulak)).toEqual([]);
+      expect(existsSync(join(ulak.root, "agents"))).toBe(false);
+
+      // Once the default team has lost one, the team really is missing it,
+      // and restoring writes it into the team's own directory — never the
+      // default team's, which is not this scope's to write.
+      expect(deleteWorkflow("dev")).toBe(true);
+      expect(writeMissingDefaultWorkflows(ulak)).toEqual(["dev"]);
+      expect(existsSync(join(ulak.root, "workflows", "dev.yaml"))).toBe(true);
+      expect(existsSync(join(teamScope().root, "workflows", "dev.yaml"))).toBe(false);
+      expect(writeMissingDefaultWorkflows(ulak)).toEqual([]);
     } finally {
       process.env.GATE_HOME = home;
     }

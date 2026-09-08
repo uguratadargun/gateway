@@ -12,7 +12,8 @@
     "start:lan": "next start -p 4141 -H 0.0.0.0",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "defaults:restore": "node scripts/restore-defaults.mjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.6",

@@ -3,9 +3,9 @@ import { join } from "node:path";
 
 import { ensureDefaultAgents } from "@/agents/defaults";
 
-import { DEFAULT_TEAM, type DefinitionScope } from "@/lib/def-root";
+import { DEFAULT_TEAM, ownScope, type DefinitionScope } from "@/lib/def-root";
 
-import { workflowsDir } from "./registry";
+import { workflowExists, workflowsDir } from "./registry";
 
 /**
  * The sample pipeline gate ships with, seeded next to the default agents on
@@ -207,15 +207,17 @@ export const DEFAULT_WORKFLOWS: Record<string, string> = {
   dev: DEV,
 };
 
-/** The shipped workflows this scope does not have. See `writeMissingDefaultAgents`. */
+/**
+ * The shipped workflows this scope cannot resolve, inheritance included.
+ * See `writeMissingDefaultAgents`.
+ */
 export function writeMissingDefaultWorkflows(scope?: DefinitionScope): string[] {
-  const dir = workflowsDir(scope);
+  const dir = workflowsDir(scope && ownScope(scope));
   const written: string[] = [];
   for (const [id, source] of Object.entries(DEFAULT_WORKFLOWS)) {
-    const file = join(dir, `${id}.yaml`);
-    if (existsSync(file)) continue;
+    if (workflowExists(id, scope)) continue;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(file, source, { mode: 0o600 });
+    writeFileSync(join(dir, `${id}.yaml`), source, { mode: 0o600 });
     written.push(id);
   }
   return written;

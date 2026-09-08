@@ -3,14 +3,22 @@ import { NextResponse } from "next/server";
 import { DEFAULT_AGENTS, DEFAULT_AGENT_SKILLS, writeMissingDefaultAgents } from "@/agents/defaults";
 import { agentExists } from "@/agents/registry";
 import { inheritedSkills, listSkills } from "@/skills/registry";
-import { ownScope, scopeFromRequest } from "@/lib/def-root";
+import { scopeFromRequest } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
 import { DEFAULT_WORKFLOWS, writeMissingDefaultWorkflows } from "@/workflows/defaults";
 import { workflowExists } from "@/workflows/registry";
 
 export const runtime = "nodejs";
 
-const scopeOf = (req: Request) => ownScope(scopeFromRequest(req, (id) => !!getTeam(id)));
+/**
+ * The full scope, inheritance included — not `ownScope`. A team that reaches
+ * the shipped planner through the default team is not missing it, and was
+ * being told it was: every team but the default saw the warning on its first
+ * visit, and pressing Restore would have shadowed the house library's copy
+ * with one of its own. The write itself goes to the team's own directory;
+ * `writeMissingDefault*` see to that.
+ */
+const scopeOf = (req: Request) => scopeFromRequest(req, (id) => !!getTeam(id));
 
 /**
  * Putting the shipped definitions back, on purpose.
