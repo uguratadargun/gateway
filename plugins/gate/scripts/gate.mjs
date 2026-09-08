@@ -6,14 +6,14 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { mkdirSync as mkdirSync8, readFileSync as readFileSync6, writeFileSync as writeFileSync6 } from "node:fs";
+import { mkdirSync as mkdirSync10, readFileSync as readFileSync8, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { basename, join as join9, resolve as resolve6 } from "node:path";
+import { basename as basename2, join as join11, resolve as resolve6 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, readdirSync as readdirSync2, rmSync, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync3, readdirSync as readdirSync3, rmSync as rmSync2, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 
 // src/lib/def-root.ts
 import { existsSync, mkdirSync, renameSync } from "node:fs";
@@ -49,6 +49,10 @@ function migrateLegacyDefinitions() {
     }
   }
 }
+
+// src/skills/registry.ts
+import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join as join2, relative } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -1258,12 +1262,24 @@ var DEFAULT_TAG_HANDLERS = Object.assign(/* @__PURE__ */ Object.create(null), {
   "!": "!",
   "!!": "tag:yaml.org,2002:"
 });
+function tagPercentEncode(source) {
+  return encodeURI(source).replace(/!/g, "%21");
+}
 function tagNameFull(rawTag, tagHandlers) {
   if (rawTag.startsWith("!<") && rawTag.endsWith(">")) return decodeURIComponent(rawTag.slice(2, -1));
   const handleEnd = rawTag.indexOf("!", 1);
   const handle = handleEnd === -1 ? "!" : rawTag.slice(0, handleEnd + 1);
   const prefix = tagHandlers?.[handle] ?? DEFAULT_TAG_HANDLERS[handle] ?? handle;
   return decodeURIComponent(prefix) + decodeURIComponent(rawTag.slice(handle.length));
+}
+function tagNameShort(fullTag) {
+  let tag = fullTag;
+  if (tag.charCodeAt(0) === 33) {
+    tag = tag.slice(1);
+    return `!${tagPercentEncode(tag)}`;
+  }
+  if (tag.slice(0, 18) === "tag:yaml.org,2002:") return `!!${tagPercentEncode(tag.slice(18))}`;
+  return `!<${tagPercentEncode(tag)}>`;
 }
 var NO_RANGE$2 = -1;
 var MERGE_TAG_NAME = "tag:yaml.org,2002:merge";
@@ -2369,6 +2385,164 @@ function load(input, options) {
   if (documents.length === 1) return documents[0];
   throw new YAMLException("expected a single document in the stream, but found more");
 }
+var INVALID = /* @__PURE__ */ Symbol("INVALID");
+function buildRepresentTypes(schema) {
+  const defaultTags = new Set([
+    schema.defaultScalarTag,
+    schema.defaultSequenceTag,
+    schema.defaultMappingTag
+  ].filter((t) => t !== void 0));
+  const implicitScalars = schema.implicitScalarTags;
+  const explicitTags = schema.tags.filter((t) => !(t.nodeKind === "scalar" && t.implicit) && !defaultTags.has(t));
+  const defaultTagsLast = schema.tags.filter((t) => defaultTags.has(t));
+  return [
+    ...implicitScalars.map((tag) => ({
+      tag,
+      implicitTag: true
+    })),
+    ...explicitTags.map((tag) => ({
+      tag,
+      implicitTag: false
+    })),
+    ...defaultTagsLast.map((tag) => ({
+      tag,
+      implicitTag: true
+    }))
+  ];
+}
+function matchTag(state, object) {
+  for (let index = 0, length = state.representTypes.length; index < length; index += 1) {
+    const { tag, implicitTag } = state.representTypes[index];
+    if (tag.identify(object)) {
+      let tagName;
+      if (tag.matchByTagPrefix) tagName = tag.representTagName(object);
+      else tagName = tag.tagName;
+      return {
+        tag,
+        tagName,
+        implicitTag
+      };
+    }
+  }
+  return null;
+}
+function build(state, object) {
+  if (!state.noRefs && object !== null && typeof object === "object") {
+    const existing = state.refs.get(object);
+    if (existing) {
+      if (existing.anchor === void 0) existing.anchor = `ref_${state.refCounter++}`;
+      return {
+        kind: "alias",
+        anchor: existing.anchor
+      };
+    }
+  }
+  const matched = matchTag(state, object);
+  if (!matched) {
+    if (object === void 0) return INVALID;
+    if (state.skipInvalid) return INVALID;
+    throw new YAMLException(`unacceptable kind of an object to dump ${Object.prototype.toString.call(object)}`);
+  }
+  const { tag, tagName, implicitTag } = matched;
+  const nodeTagName = implicitTag ? tagName : tagNameShort(tagName);
+  if (tag.nodeKind === "scalar") return {
+    kind: "scalar",
+    tag: nodeTagName,
+    tagged: !implicitTag,
+    style: SCALAR_STYLE.PLAIN,
+    value: tag.represent(object)
+  };
+  if (tag.nodeKind === "sequence") {
+    const container = tag.represent(object);
+    const node2 = {
+      kind: "sequence",
+      tag: nodeTagName,
+      tagged: !implicitTag,
+      style: COLLECTION_STYLE.BLOCK,
+      items: []
+    };
+    if (!state.noRefs) state.refs.set(object, node2);
+    for (let index = 0, length = container.length; index < length; index += 1) {
+      let item = build(state, container[index]);
+      if (item === INVALID && container[index] === void 0) item = build(state, null);
+      if (item === INVALID) continue;
+      node2.items.push(item);
+    }
+    return node2;
+  }
+  const map = tag.represent(object);
+  const node = {
+    kind: "mapping",
+    tag: nodeTagName,
+    tagged: !implicitTag,
+    style: COLLECTION_STYLE.BLOCK,
+    items: []
+  };
+  if (!state.noRefs) state.refs.set(object, node);
+  for (const [objectKey, objectValue] of map) {
+    const key = build(state, objectKey);
+    if (key === INVALID) continue;
+    const value = build(state, objectValue);
+    if (value === INVALID) continue;
+    node.items.push({
+      key,
+      value
+    });
+  }
+  return node;
+}
+function jsToAst(input, schema, options = {}) {
+  const root = build({
+    representTypes: buildRepresentTypes(schema),
+    noRefs: options.noRefs ?? false,
+    skipInvalid: options.skipInvalid ?? false,
+    refs: /* @__PURE__ */ new Map(),
+    refCounter: 0
+  }, input);
+  return [{
+    contents: root === INVALID ? null : root,
+    directives: []
+  }];
+}
+var VISIT_BREAK = /* @__PURE__ */ Symbol("visit:break");
+var VISIT_SKIP = /* @__PURE__ */ Symbol("visit:skip");
+function visitNode(node, visitor, ctx) {
+  const control = visitor(node, ctx);
+  if (control === VISIT_BREAK) return true;
+  if (control === VISIT_SKIP) return false;
+  const depth = ctx.depth + 1;
+  switch (node.kind) {
+    case "sequence":
+      for (const item of node.items) if (visitNode(item, visitor, {
+        depth,
+        parent: node,
+        isKey: false
+      })) return true;
+      break;
+    case "mapping":
+      for (const { key, value } of node.items) {
+        if (visitNode(key, visitor, {
+          depth,
+          parent: node,
+          isKey: true
+        })) return true;
+        if (visitNode(value, visitor, {
+          depth,
+          parent: node,
+          isKey: false
+        })) return true;
+      }
+      break;
+  }
+  return false;
+}
+function visit(documents, visitor) {
+  for (const doc of documents) if (doc.contents && visitNode(doc.contents, visitor, {
+    depth: 0,
+    parent: null,
+    isKey: false
+  })) return;
+}
 function hasBit(mask, bit) {
   return (mask & 1 << bit) !== 0;
 }
@@ -2435,6 +2609,9 @@ function quoteInvalidPlain(layout) {
 function fallbackToDoubleQuoted(layout) {
   if (!hasBit(layout.allowedStylesMask, layout.style)) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
 }
+function setBit(mask, bit) {
+  return mask | 1 << bit;
+}
 var SRC_C_PRINTABLE = "[\\x09\\x0A\\x0D\\x20-\\x7E\\x85\\xA0-\\uD7FF\\uE000-\\uFFFD\\u{10000}-\\u{10FFFF}]";
 var SRC_B_CHAR = "[\\n\\r]";
 var SRC_C_BYTE_ORDER_MARK = "\\uFEFF";
@@ -2467,6 +2644,221 @@ var NS_PLAIN_FLOW_KEY = new RegExp(`^(?:${SRC_NS_PLAIN_ONE_LINE_FLOW_KEY})$`, "u
 var NB_SINGLE_ONE_LINE = new RegExp(`^(?:${SRC_NB_JSON})*$`, "u");
 var NB_SINGLE_MULTI_LINE = new RegExp(`^(?:${SRC_NB_JSON}|\\n)*$`, "u");
 var BLOCK_SCALAR_CONTENT = new RegExp(`^(?:${SRC_NB_CHAR}|\\n)*$`, "u");
+var C_FORBIDDEN_FIRST_LINE = /^(?:---|\.\.\.)(?=$|[ \t\n\r])/;
+var C_FORBIDDEN_CONTENT = /^(?:---|\.\.\.)(?=$|[ \t\n\r])/m;
+function canUsePlain(layout) {
+  const str2 = layout.node.value;
+  if (str2 !== "") {
+    if (!(layout.isKey ? layout.flowOnly ? NS_PLAIN_FLOW_KEY : NS_PLAIN_BLOCK_KEY : layout.flowOnly ? NS_PLAIN_FLOW_IN : NS_PLAIN_FLOW_OUT).test(str2)) return false;
+    if (layout.shiftOfFirstLine === 0 && C_FORBIDDEN_FIRST_LINE.test(str2)) return false;
+    if (layout.shiftOfContent === 0) {
+      const firstLineBreak = str2.indexOf("\n");
+      if (firstLineBreak !== -1) {
+        const content = str2.slice(firstLineBreak + 1);
+        if (C_FORBIDDEN_CONTENT.test(content)) return false;
+      }
+    }
+  }
+  const resolvedTag = layout.presenterOptions.schema.resolveImplicitScalarTag(str2).tag.tagName;
+  if (!layout.node.tagged && resolvedTag !== layout.node.tag) return false;
+  if (!layout.node.tagged && str2 === "=" && resolvedTag === layout.presenterOptions.schema.defaultScalarTag.tagName) return false;
+  return true;
+}
+function canUseSingleQuoted(layout) {
+  const str2 = layout.node.value;
+  if (!(layout.isKey ? NB_SINGLE_ONE_LINE : NB_SINGLE_MULTI_LINE).test(str2)) return false;
+  if (/[ \t]\n|\n[ \t]/.test(str2)) return false;
+  if (!layout.isKey && layout.shiftOfContent === 0) {
+    const firstLineBreak = str2.indexOf("\n");
+    if (firstLineBreak !== -1 && C_FORBIDDEN_CONTENT.test(str2.slice(firstLineBreak + 1))) return false;
+  }
+  return true;
+}
+function canUseBlock(layout) {
+  if (layout.flowOnly || !BLOCK_SCALAR_CONTENT.test(layout.node.value)) return false;
+  const contentIndent = layout.shiftOfContent - layout.shiftOfParent;
+  if (contentIndent < 1) return false;
+  if (contentIndent > 9 && /^\n* /.test(layout.node.value)) return false;
+  if (layout.shiftOfContent === 0 && C_FORBIDDEN_CONTENT.test(layout.node.value)) return false;
+  return true;
+}
+function detectAllowedStyles(layout) {
+  let mask = setBit(0, SCALAR_STYLE.DOUBLE_QUOTED);
+  if (canUsePlain(layout)) mask = setBit(mask, SCALAR_STYLE.PLAIN);
+  if (canUseSingleQuoted(layout)) mask = setBit(mask, SCALAR_STYLE.SINGLE_QUOTED);
+  if (canUseBlock(layout)) mask = setBit(setBit(mask, SCALAR_STYLE.LITERAL_BLOCK), SCALAR_STYLE.FOLDED_BLOCK);
+  layout.allowedStylesMask = mask;
+}
+function renderScalar(layout) {
+  switch (layout.style) {
+    case SCALAR_STYLE.PLAIN:
+      return renderPlain(layout);
+    case SCALAR_STYLE.SINGLE_QUOTED:
+      return renderSingleQuoted(layout);
+    case SCALAR_STYLE.LITERAL_BLOCK:
+      return renderLiteralBlock(layout);
+    case SCALAR_STYLE.FOLDED_BLOCK:
+      return renderFoldedBlock(layout);
+    case SCALAR_STYLE.DOUBLE_QUOTED:
+      return renderDoubleQuoted(layout);
+  }
+}
+function renderPlain(layout) {
+  return encodeFlowBreaks(layout.node.value, layout.shiftOfContent);
+}
+function renderSingleQuoted(layout) {
+  return `'${encodeFlowBreaks(layout.node.value, layout.shiftOfContent).replace(/'/g, "''")}'`;
+}
+function renderLiteralBlock(layout) {
+  const value = layout.node.value;
+  return "|" + blockHeader(value, layout.shiftOfParent, layout.shiftOfContent) + dropEndingNewline(indentString(value, layout.shiftOfContent));
+}
+function renderFoldedBlock(layout) {
+  const value = layout.node.value;
+  const w = layout.presenterOptions.lineWidth;
+  let availableWidth = Infinity;
+  if (w !== -1) availableWidth = Math.max(Math.min(w, 40), w - layout.shiftOfContent);
+  return ">" + blockHeader(value, layout.shiftOfParent, layout.shiftOfContent) + dropEndingNewline(indentString(foldBlockScalar(value, availableWidth), layout.shiftOfContent));
+}
+function renderDoubleQuoted(layout) {
+  return `"${escapeString(layout.node.value)}"`;
+}
+function encodeFlowBreaks(string, shiftOfContent) {
+  let nextLF = string.indexOf("\n");
+  if (nextLF === -1) return string;
+  const pad = " ".repeat(shiftOfContent);
+  let result = string.slice(0, nextLF);
+  const lineRe = /(\n+)([^\n]*)/g;
+  lineRe.lastIndex = nextLF;
+  let match;
+  while (match = lineRe.exec(string)) {
+    const breaks = match[1].length;
+    const line = match[2];
+    result += "\n".repeat(breaks + 1) + pad + line;
+  }
+  return result;
+}
+function indentString(string, spaces) {
+  const indent = " ".repeat(spaces);
+  let position = 0;
+  let result = "";
+  const length = string.length;
+  while (position < length) {
+    let line;
+    const next = string.indexOf("\n", position);
+    if (next === -1) {
+      line = string.slice(position);
+      position = length;
+    } else {
+      line = string.slice(position, next + 1);
+      position = next + 1;
+    }
+    if (line.length && line !== "\n") result += indent;
+    result += line;
+  }
+  return result;
+}
+function needIndentIndicator(string) {
+  return /^\n* /.test(string);
+}
+function blockHeader(string, shiftOfParent, shiftOfContent) {
+  const indentIndicator = needIndentIndicator(string) ? String(shiftOfContent - shiftOfParent) : "";
+  const clip = string[string.length - 1] === "\n";
+  return `${indentIndicator}${clip && (string[string.length - 2] === "\n" || string === "\n") ? "+" : clip ? "" : "-"}
+`;
+}
+function dropEndingNewline(string) {
+  return string[string.length - 1] === "\n" ? string.slice(0, -1) : string;
+}
+function isMoreIndented(char) {
+  return char === " " || char === "	";
+}
+function foldLine(line, width) {
+  if (line === "" || isMoreIndented(line[0])) return line;
+  const breakRe = / [^ \t]/g;
+  let match;
+  let start = 0;
+  let end;
+  let curr = 0;
+  let next = 0;
+  let result = "";
+  while (match = breakRe.exec(line)) {
+    next = match.index;
+    if (next - start > width) {
+      end = curr > start ? curr : next;
+      result += `
+${line.slice(start, end)}`;
+      start = end + 1;
+    }
+    curr = next;
+  }
+  result += "\n";
+  if (line.length - start > width && curr > start) result += `${line.slice(start, curr)}
+${line.slice(curr + 1)}`;
+  else result += line.slice(start);
+  return result.slice(1);
+}
+function foldBlockScalar(string, width) {
+  const lineRe = /(\n+)([^\n]*)/g;
+  let nextLF = string.indexOf("\n");
+  if (nextLF === -1) nextLF = string.length;
+  lineRe.lastIndex = nextLF;
+  let result = foldLine(string.slice(0, nextLF), width);
+  let prevMoreIndented = string[0] === "\n" || isMoreIndented(string[0]);
+  let moreIndented;
+  let match;
+  while (match = lineRe.exec(string)) {
+    const prefix = match[1];
+    const line = match[2];
+    moreIndented = line !== "" && isMoreIndented(line[0]);
+    result += prefix + (!prevMoreIndented && !moreIndented && line !== "" ? "\n" : "") + foldLine(line, width);
+    prevMoreIndented = moreIndented;
+  }
+  return result;
+}
+var CHARACTERS_TO_ESCAPE = /["\\\x00-\x1F\x7F-\xA0\u2028\u2029\uD800-\uDFFF\uFEFF\uFFFE\uFFFF]/gu;
+function escapeCharacter(character) {
+  switch (character) {
+    case "\0":
+      return "\\0";
+    case "\x07":
+      return "\\a";
+    case "\b":
+      return "\\b";
+    case "	":
+      return "\\t";
+    case "\n":
+      return "\\n";
+    case "\v":
+      return "\\v";
+    case "\f":
+      return "\\f";
+    case "\r":
+      return "\\r";
+    case "\x1B":
+      return "\\e";
+    case '"':
+      return '\\"';
+    case "\\":
+      return "\\\\";
+    case "\x85":
+      return "\\N";
+    case "\xA0":
+      return "\\_";
+    case "\u2028":
+      return "\\L";
+    case "\u2029":
+      return "\\P";
+  }
+  const code = character.charCodeAt(0);
+  const hex = code.toString(16).toUpperCase();
+  if (code <= 255) return `\\x${"0".repeat(2 - hex.length)}${hex}`;
+  return `\\u${"0".repeat(4 - hex.length)}${hex}`;
+}
+function escapeString(string) {
+  return string.replace(CHARACTERS_TO_ESCAPE, escapeCharacter);
+}
+var CHAR_LINE_FEED = 10;
 var DEFAULT_PRESENTER_OPTIONS = {
   indent: 2,
   seqNoIndent: false,
@@ -2481,6 +2873,222 @@ var DEFAULT_PRESENTER_OPTIONS = {
   scalarStyleRules: Object.keys(DEFAULT_SCALAR_STYLE_RULES).map((name) => Reflect.get(DEFAULT_SCALAR_STYLE_RULES, name)),
   tagBeforeAnchor: false
 };
+function nodeTagShort(node) {
+  return node.tagged ? node.tag : tagNameShort(node.tag);
+}
+function createPresenterState(options) {
+  const opts = {
+    ...DEFAULT_PRESENTER_OPTIONS,
+    ...options
+  };
+  if (opts.flowSkipColonSpace) opts.quoteFlowKeys = true;
+  return {
+    ...opts,
+    defaultScalarTagName: opts.schema.defaultScalarTag.tagName,
+    openEnded: false
+  };
+}
+function generateNextLine(state, level) {
+  return `
+${" ".repeat(state.indent * level)}`;
+}
+function scalarLayout(state, node, parent, level, isKey, flowOnly) {
+  return {
+    node,
+    parent,
+    level,
+    isKey,
+    flowOnly,
+    shiftOfParent: level === 0 ? -1 : state.indent * (level - 1),
+    shiftOfContent: state.indent * Math.max(1, level),
+    shiftOfFirstLine: level === 0 ? 0 : state.indent * level,
+    presenterOptions: state,
+    allowedStylesMask: 0,
+    style: node.style
+  };
+}
+function writeFlowSequence(state, level, node) {
+  let result = "";
+  for (let index = 0, length = node.items.length; index < length; index += 1) {
+    const item = writeNode(state, level, node.items[index], node, {}).text;
+    if (index > 0) result += `,${!state.flowSkipCommaSpace ? " " : ""}`;
+    result += item;
+  }
+  const pad = state.flowBracketPadding && node.items.length > 0 ? " " : "";
+  return `[${pad}${result}${pad}]`;
+}
+function writeBlockSequence(state, level, node, compact) {
+  let result = "";
+  for (let index = 0, length = node.items.length; index < length; index += 1) {
+    const item = writeNode(state, level + 1, node.items[index], node, {
+      block: true,
+      compact: state.seqInlineFirst,
+      isblockseq: true
+    }).text;
+    if (!compact || result !== "") result += generateNextLine(state, level);
+    if (item === "" || CHAR_LINE_FEED === item.charCodeAt(0)) result += "-";
+    else result += "- ";
+    result += item;
+  }
+  return result;
+}
+function writeFlowMapping(state, level, node) {
+  let result = "";
+  for (const { key, value } of node.items) {
+    let pairBuffer = "";
+    if (result !== "") pairBuffer += `,${!state.flowSkipCommaSpace ? " " : ""}`;
+    const keyRender = writeNode(state, level, key, node, { iskey: true });
+    const keyText = keyRender.text;
+    const valueText = writeNode(state, level, value, node, {}).text;
+    const sep2 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
+    const keyIsBareProps = key.kind === "scalar" && keyRender.noBody && (key.tagged || key.anchor !== void 0);
+    const keyColonSep = key.kind === "alias" || keyIsBareProps ? " " : "";
+    pairBuffer += `${keyText}${keyColonSep}:${sep2}${valueText}`;
+    result += pairBuffer;
+  }
+  const pad = state.flowBracketPadding && result !== "" ? " " : "";
+  return `{${pad}${result}${pad}}`;
+}
+function writeBlockMapping(state, level, node, compact) {
+  let result = "";
+  for (let index = 0, length = node.items.length; index < length; index += 1) {
+    let pairBuffer = "";
+    if (!compact || result !== "") pairBuffer += generateNextLine(state, level);
+    const { key, value } = node.items[index];
+    const keyIsBlock = (key.kind === "mapping" || key.kind === "sequence") && key.style === COLLECTION_STYLE.BLOCK && key.items.length !== 0 || key.kind === "scalar" && (key.style === SCALAR_STYLE.LITERAL_BLOCK || key.style === SCALAR_STYLE.FOLDED_BLOCK);
+    const keyRender = keyIsBlock ? writeNode(state, level + 1, key, node, {
+      block: true,
+      compact: true,
+      isblockseq: !cannotBeCompact(state, key, level + 1)
+    }) : writeNode(state, level + 1, key, node, {
+      block: true,
+      compact: true,
+      iskey: true
+    });
+    const keyText = keyRender.text;
+    const keyHasLineBreak = key.kind === "scalar" && key.value.indexOf("\n") !== -1;
+    const keyIsTooLong = keyText.length > 1024 && /^[\s\S]{1025}/u.test(keyText);
+    const explicitPair = keyIsBlock || keyHasLineBreak || keyIsTooLong;
+    if (explicitPair) if (keyText && CHAR_LINE_FEED === keyText.charCodeAt(0)) pairBuffer += "?";
+    else pairBuffer += "? ";
+    pairBuffer += keyText;
+    if (explicitPair) pairBuffer += generateNextLine(state, level);
+    const valueText = writeNode(state, level + 1, value, node, {
+      block: true,
+      compact: explicitPair,
+      isblockseq: explicitPair && !cannotBeCompact(state, value, level + 1)
+    }).text;
+    const keyIsBareProps = key.kind === "scalar" && keyRender.noBody && (key.tagged || key.anchor !== void 0);
+    const keyColonSep = !explicitPair && (key.kind === "alias" || keyIsBareProps) ? " " : "";
+    if (valueText === "" || CHAR_LINE_FEED === valueText.charCodeAt(0)) pairBuffer += `${keyColonSep}:`;
+    else pairBuffer += `${keyColonSep}: `;
+    pairBuffer += valueText;
+    result += pairBuffer;
+  }
+  return result;
+}
+function cannotBeCompact(state, node, level) {
+  if (node.kind === "alias") return true;
+  return node.tagged || node.anchor !== void 0 || state.indent < 2 && level > 0;
+}
+function writeNode(state, level, node, parent, ctx) {
+  if (node.kind === "alias") {
+    state.openEnded = false;
+    return {
+      text: `*${node.anchor}`,
+      noBody: false
+    };
+  }
+  const { block = false, iskey = false, isblockseq = false } = ctx;
+  let compact = ctx.compact ?? false;
+  const hasAnchor = node.anchor !== void 0;
+  if (cannotBeCompact(state, node, level)) compact = false;
+  let body;
+  let shouldPrintTag = node.tagged;
+  const useBlockCollection = block && (node.kind === "mapping" || node.kind === "sequence") && node.style === COLLECTION_STYLE.BLOCK && node.items.length !== 0;
+  if (node.kind === "mapping") if (useBlockCollection) body = writeBlockMapping(state, level, node, compact);
+  else body = writeFlowMapping(state, level, node);
+  else if (node.kind === "sequence") if (useBlockCollection) if (state.seqNoIndent && !isblockseq && level > 0) body = writeBlockSequence(state, level - 1, node, compact);
+  else body = writeBlockSequence(state, level, node, compact);
+  else body = writeFlowSequence(state, level, node);
+  else {
+    const layout = scalarLayout(state, node, parent, level, iskey, !block);
+    detectAllowedStyles(layout);
+    for (const rule of state.scalarStyleRules) rule(layout);
+    body = renderScalar(layout);
+    state.openEnded = (layout.style === SCALAR_STYLE.LITERAL_BLOCK || layout.style === SCALAR_STYLE.FOLDED_BLOCK) && (node.value === "\n" || node.value.endsWith("\n\n"));
+    shouldPrintTag = node.tagged || body === "" && layout.flowOnly && parent?.kind === "sequence" && !hasAnchor || layout.style !== SCALAR_STYLE.PLAIN && node.tag !== state.defaultScalarTagName;
+  }
+  if ((node.kind === "mapping" || node.kind === "sequence") && !useBlockCollection) state.openEnded = false;
+  if (useBlockCollection && compact && level > 0 && state.indent > 2) body = `${" ".repeat(state.indent - 2)}${body}`;
+  const noBody = body === "";
+  let text = body;
+  if (shouldPrintTag || hasAnchor) {
+    const props = [];
+    const tag = shouldPrintTag ? nodeTagShort(node) : null;
+    const anchor = hasAnchor ? `&${node.anchor}` : null;
+    if (state.tagBeforeAnchor) {
+      if (tag !== null) props.push(tag);
+      if (anchor !== null) props.push(anchor);
+    } else {
+      if (anchor !== null) props.push(anchor);
+      if (tag !== null) props.push(tag);
+    }
+    const sep2 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
+    text = `${props.join(" ")}${sep2}${body}`;
+  }
+  return {
+    text,
+    noBody
+  };
+}
+function rootStartsOwnLine(node) {
+  return (node.kind === "sequence" || node.kind === "mapping") && node.style === COLLECTION_STYLE.BLOCK && node.items.length !== 0 && !node.tagged && node.anchor === void 0;
+}
+function writeDocumentDirectives(doc) {
+  let result = "";
+  for (const directive of doc.directives) {
+    if (directive.kind === "yaml") {
+      result += `%YAML ${directive.version}
+`;
+      continue;
+    }
+    const { handle, prefix } = directive;
+    result += `%TAG ${handle} ${prefix}
+`;
+  }
+  return result;
+}
+function present(documents, options) {
+  const state = createPresenterState(options);
+  let result = "";
+  let previousEnded = false;
+  for (let index = 0; index < documents.length; index += 1) {
+    const doc = documents[index];
+    state.openEnded = false;
+    const directives = writeDocumentDirectives(doc);
+    const hasDirectives = directives !== "";
+    const marker = doc.explicitStart || hasDirectives || index > 0 && !previousEnded;
+    result += directives;
+    if (doc.contents === null) {
+      if (marker) result += "---\n";
+    } else if (marker) {
+      const body = writeNode(state, 0, doc.contents, null, {
+        block: true,
+        compact: true
+      }).text;
+      const sep2 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
+      result += `---${sep2}${body}
+`;
+    } else result += writeNode(state, 0, doc.contents, null, {
+      block: true,
+      compact: true
+    }).text + "\n";
+    previousEnded = doc.explicitEnd || state.openEnded;
+    if (previousEnded) result += "...\n";
+  }
+  return result;
+}
 var DEFAULT_DUMP_OPTIONS = {
   ...DEFAULT_PRESENTER_OPTIONS,
   schema: DUMP_SCHEMA,
@@ -2491,6 +3099,40 @@ var DEFAULT_DUMP_OPTIONS = {
   transform: () => {
   }
 };
+function defaultCompareFn(a, b) {
+  const x = String(a);
+  const y = String(b);
+  if (x < y) return -1;
+  if (x > y) return 1;
+  return 0;
+}
+function dump(input, options = {}) {
+  const opts = {
+    ...DEFAULT_DUMP_OPTIONS,
+    ...options
+  };
+  const documents = jsToAst(input, opts.schema, {
+    noRefs: opts.noRefs,
+    skipInvalid: opts.skipInvalid
+  });
+  if (opts.flowLevel >= 0) visit(documents, (node, ctx) => {
+    if (ctx.depth < opts.flowLevel) return;
+    if (node.kind === "sequence" || node.kind === "mapping") node.style = COLLECTION_STYLE.FLOW;
+    return VISIT_SKIP;
+  });
+  if (opts.sortKeys) {
+    const compareFn = opts.sortKeys === true ? defaultCompareFn : opts.sortKeys;
+    visit(documents, (node) => {
+      if (node.kind !== "mapping") return;
+      node.items.sort((a, b) => compareFn(a.key.kind === "scalar" ? a.key.value : "", b.key.kind === "scalar" ? b.key.value : ""));
+    });
+  }
+  opts.transform(documents);
+  return present(documents, {
+    ...pick(opts, Object.keys(DEFAULT_PRESENTER_OPTIONS)),
+    schema: opts.schema
+  });
+}
 var EVENT_DOCUMENT = EVENT_ID.DOCUMENT;
 var EVENT_SEQUENCE = EVENT_ID.SEQUENCE;
 var EVENT_MAPPING = EVENT_ID.MAPPING;
@@ -2508,344 +3150,13 @@ var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
-// src/runtime/tools/workspace-tools.ts
-import { execFile } from "node:child_process";
-import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync2, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join as join2, relative as relative2, resolve as resolve2 } from "node:path";
-
-// src/runtime/tools/paths.ts
-import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
-
-// src/runtime/tools/types.ts
-var ToolError = class extends Error {
-};
-
-// src/runtime/tools/paths.ts
-function resolveInWorkspace(root, input, label = "path") {
-  if (typeof input !== "string" || !input.trim()) throw new ToolError(`${label} is required`);
-  const candidate = isAbsolute(input) ? input : resolve(root, input);
-  const full = resolve(candidate);
-  assertInside(root, full, input);
-  const real = realPathIfExists(full);
-  if (real) assertInside(realPathIfExists(root) ?? root, real, input);
-  return full;
-}
-function assertInside(root, full, shown) {
-  const rel = relative(root, full);
-  if (rel === "") return;
-  if (rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("..")) {
-    throw new ToolError(`"${shown}" is outside the workspace`);
-  }
-}
-function realPathIfExists(p) {
-  try {
-    return realpathSync(p);
-  } catch {
-    return null;
-  }
-}
-
-// src/runtime/tools/workspace-tools.ts
-var MAX_READ_BYTES = 2e5;
-var MAX_WRITE_BYTES = 2e6;
-var MAX_LIST_ENTRIES = 500;
-var MAX_MATCHES = 100;
-var MAX_COMMAND_OUTPUT = 3e4;
-var DEFAULT_COMMAND_TIMEOUT_MS = 3e5;
-var SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".next", "dist", "build", ".venv", "__pycache__", ".turbo"]);
-function str(input, key, required = true) {
-  const v = input[key];
-  if (typeof v === "string" && v.length) return v;
-  if (required) throw new ToolError(`"${key}" is required`);
-  return "";
-}
-function truncate(s, max, what) {
-  return s.length > max ? `${s.slice(0, max)}
-\u2026 [${what} truncated at ${max} characters]` : s;
-}
-var readFile = {
-  name: "read_file",
-  description: "Read a file from the workspace. Returns its content with 1-based line numbers.",
-  mutates: false,
-  inputSchema: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Path relative to the workspace root." },
-      offset: { type: "integer", description: "1-based line to start at (optional)." },
-      limit: { type: "integer", description: "How many lines to read (optional)." }
-    },
-    required: ["path"]
-  },
-  async execute(input, ctx) {
-    const file = resolveInWorkspace(ctx.root, input.path);
-    if (!existsSync2(file)) throw new ToolError(`no such file: ${str(input, "path")}`);
-    if (statSync(file).isDirectory()) throw new ToolError(`"${str(input, "path")}" is a directory; use list_files`);
-    const raw = readFileSync(file, "utf8");
-    const lines = raw.split("\n");
-    const offset = Math.max(1, Number(input.offset ?? 1));
-    const limit = Math.max(1, Number(input.limit ?? lines.length));
-    const slice = lines.slice(offset - 1, offset - 1 + limit);
-    const numbered = slice.map((l, i) => `${offset + i}	${l}`).join("\n");
-    return truncate(numbered, MAX_READ_BYTES, "file");
-  }
-};
-var writeFile = {
-  name: "write_file",
-  description: "Create a file or replace its whole content. Parent directories are created as needed.",
-  mutates: true,
-  inputSchema: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Path relative to the workspace root." },
-      content: { type: "string", description: "The complete new file content." }
-    },
-    required: ["path", "content"]
-  },
-  async execute(input, ctx) {
-    const file = resolveInWorkspace(ctx.root, input.path);
-    const content = typeof input.content === "string" ? input.content : "";
-    if (content.length > MAX_WRITE_BYTES) throw new ToolError(`content is larger than ${MAX_WRITE_BYTES} bytes`);
-    if (existsSync2(file) && statSync(file).isDirectory()) throw new ToolError(`"${str(input, "path")}" is a directory`);
-    mkdirSync2(resolve2(file, ".."), { recursive: true });
-    writeFileSync(file, content);
-    return `wrote ${content.length} characters to ${relative2(ctx.root, file)}`;
-  }
-};
-var editFile = {
-  name: "edit_file",
-  description: "Replace an exact string in a file. The old string must appear exactly once unless replace_all is true \u2014 read the file first.",
-  mutates: true,
-  inputSchema: {
-    type: "object",
-    properties: {
-      path: { type: "string" },
-      old_string: { type: "string", description: "Exact text to replace, including indentation." },
-      new_string: { type: "string", description: "Replacement text." },
-      replace_all: { type: "boolean", description: "Replace every occurrence (default false)." }
-    },
-    required: ["path", "old_string", "new_string"]
-  },
-  async execute(input, ctx) {
-    const file = resolveInWorkspace(ctx.root, input.path);
-    if (!existsSync2(file)) throw new ToolError(`no such file: ${str(input, "path")}`);
-    const oldString = str(input, "old_string");
-    const newString = typeof input.new_string === "string" ? input.new_string : "";
-    const raw = readFileSync(file, "utf8");
-    const count = raw.split(oldString).length - 1;
-    if (count === 0) throw new ToolError("old_string was not found in the file");
-    if (count > 1 && input.replace_all !== true) {
-      throw new ToolError(`old_string appears ${count} times; pass replace_all or include more context`);
-    }
-    const parts = raw.split(oldString);
-    const updated = input.replace_all === true ? parts.join(newString) : [parts[0], parts.slice(1).join(oldString)].join(newString);
-    writeFileSync(file, updated);
-    return `edited ${relative2(ctx.root, file)} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""})`;
-  }
-};
-function walk(root, dir, depth, out) {
-  if (out.length >= MAX_LIST_ENTRIES || depth < 0) return;
-  let entries;
-  try {
-    entries = readdirSync(dir).sort();
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (out.length >= MAX_LIST_ENTRIES) return;
-    if (SKIP_DIRS.has(entry) || entry.startsWith(".DS_Store")) continue;
-    const full = join2(dir, entry);
-    let isDir = false;
-    try {
-      const st = lstatSync(full);
-      if (st.isSymbolicLink()) continue;
-      isDir = st.isDirectory();
-    } catch {
-      continue;
-    }
-    out.push(relative2(root, full) + (isDir ? "/" : ""));
-    if (isDir) walk(root, full, depth - 1, out);
-  }
-}
-var listFiles = {
-  name: "list_files",
-  description: "List files and directories in the workspace. Skips .git, node_modules and build output.",
-  mutates: false,
-  inputSchema: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Directory to list, relative to the workspace root (default: the root)." },
-      depth: { type: "integer", description: "How deep to recurse (default 2)." }
-    }
-  },
-  async execute(input, ctx) {
-    const dir = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
-    if (!existsSync2(dir)) throw new ToolError(`no such directory: ${String(input.path)}`);
-    const out = [];
-    walk(ctx.root, dir, Math.max(0, Number(input.depth ?? 2) - 1), out);
-    if (!out.length) return "(empty)";
-    const capped = out.length >= MAX_LIST_ENTRIES ? `
-\u2026 [listing truncated at ${MAX_LIST_ENTRIES} entries]` : "";
-    return out.join("\n") + capped;
-  }
-};
-var searchFiles = {
-  name: "search_files",
-  description: "Search file contents with a regular expression. Returns path:line:text for each match.",
-  mutates: false,
-  inputSchema: {
-    type: "object",
-    properties: {
-      pattern: { type: "string", description: "JavaScript regular expression." },
-      path: { type: "string", description: "Directory to search in (default: the workspace root)." },
-      extension: { type: "string", description: 'Only search files with this extension, e.g. "ts" (optional).' }
-    },
-    required: ["pattern"]
-  },
-  async execute(input, ctx) {
-    const dir = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
-    let re;
-    try {
-      re = new RegExp(str(input, "pattern"));
-    } catch (e) {
-      throw new ToolError(`invalid regular expression: ${e.message}`);
-    }
-    const ext = typeof input.extension === "string" ? input.extension.replace(/^\./, "") : null;
-    const files = [];
-    walk(ctx.root, dir, 12, files);
-    const matches = [];
-    for (const rel of files) {
-      if (rel.endsWith("/")) continue;
-      if (ext && !rel.endsWith(`.${ext}`)) continue;
-      if (matches.length >= MAX_MATCHES) break;
-      let content;
-      try {
-        const full = join2(ctx.root, rel);
-        if (statSync(full).size > MAX_READ_BYTES) continue;
-        content = readFileSync(full, "utf8");
-      } catch {
-        continue;
-      }
-      content.split("\n").forEach((line, i) => {
-        if (matches.length >= MAX_MATCHES || !re.test(line)) return;
-        matches.push(`${rel}:${i + 1}:${line.trim().slice(0, 200)}`);
-      });
-    }
-    return matches.length ? matches.join("\n") : "(no matches)";
-  }
-};
-var runCommandTool = {
-  name: "run_command",
-  description: "Run a command in the workspace. Pass argv as an array (no shell string). Returns the exit code with stdout and stderr.",
-  mutates: true,
-  inputSchema: {
-    type: "object",
-    properties: {
-      command: {
-        type: "array",
-        items: { type: "string" },
-        description: 'Program and arguments, e.g. ["npm", "test"].'
-      },
-      cwd: { type: "string", description: "Directory to run in, relative to the workspace root (optional)." },
-      timeout_ms: { type: "integer", description: "Timeout in milliseconds (default 300000)." }
-    },
-    required: ["command"]
-  },
-  async execute(input, ctx) {
-    const argv = Array.isArray(input.command) ? input.command.map(String).filter(Boolean) : [];
-    if (!argv.length) throw new ToolError("command must be a non-empty array of strings");
-    const cwd = input.cwd ? resolveInWorkspace(ctx.root, input.cwd) : ctx.root;
-    const timeout = Math.min(Math.max(Number(input.timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS), 1e3), 6e5);
-    const [file, ...args] = argv;
-    return new Promise((resolvePromise, reject) => {
-      execFile(file, args, { cwd, timeout, maxBuffer: 1e7, shell: false }, (error, stdout, stderr) => {
-        const err = error;
-        if (err?.killed) {
-          reject(new ToolError(`command timed out after ${timeout}ms`));
-          return;
-        }
-        if (err && typeof err.code !== "number") {
-          reject(new ToolError(err.message));
-          return;
-        }
-        const exitCode = typeof err?.code === "number" ? err.code : 0;
-        const out = truncate(String(stdout).trim(), MAX_COMMAND_OUTPUT, "stdout");
-        const errOut = truncate(String(stderr).trim(), MAX_COMMAND_OUTPUT, "stderr");
-        resolvePromise(
-          [`exit code: ${exitCode}`, out && `stdout:
-${out}`, errOut && `stderr:
-${errOut}`].filter(Boolean).join("\n\n")
-        );
-      });
-    });
-  }
-};
-var WORKSPACE_TOOLS = [readFile, writeFile, editFile, listFiles, searchFiles, runCommandTool];
-
-// src/runtime/tools/registry.ts
-var BY_NAME = new Map(WORKSPACE_TOOLS.map((t) => [t.name, t]));
-function knownToolNames() {
-  return [...BY_NAME.keys()].sort();
-}
-function isKnownTool(name) {
-  return BY_NAME.has(name);
-}
-function getTool(name) {
-  return BY_NAME.get(name);
-}
-function toolsFor(names, hasWorkspace) {
-  if (!hasWorkspace) return [];
-  const out = [];
-  for (const name of names) {
-    const tool = BY_NAME.get(name);
-    if (tool) out.push(tool);
-  }
-  return out;
-}
-
-// src/agents/template.ts
-var TemplateError = class extends Error {
-};
-var PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)\s*\}\}/g;
-function templatePaths(tpl) {
-  const out = /* @__PURE__ */ new Set();
-  for (const m of tpl.matchAll(PLACEHOLDER)) out.add(m[1]);
-  return [...out];
-}
-function lookup(path, ctx) {
-  let cur = ctx;
-  for (const seg of path.split(".")) {
-    if (cur == null || typeof cur !== "object") return void 0;
-    cur = cur[seg];
-  }
-  return cur;
-}
-function stringify(v) {
-  if (typeof v === "string") return v;
-  if (v === null || typeof v === "number" || typeof v === "boolean") return String(v);
-  return JSON.stringify(v, null, 2);
-}
-function renderTemplate(tpl, ctx) {
-  const missing = [];
-  const out = tpl.replace(PLACEHOLDER, (_m, path) => {
-    const v = lookup(path, ctx);
-    if (v === void 0) {
-      missing.push(path);
-      return "";
-    }
-    return stringify(v);
-  });
-  if (missing.length) throw new TemplateError(`unresolved template ${missing.length > 1 ? "values" : "value"}: ${missing.join(", ")}`);
-  return out;
-}
-
 // node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
   DIRTY: () => DIRTY,
   EMPTY_PATH: () => EMPTY_PATH,
-  INVALID: () => INVALID,
+  INVALID: () => INVALID2,
   NEVER: () => NEVER,
   OK: () => OK,
   ParseStatus: () => ParseStatus,
@@ -3377,7 +3688,7 @@ var ParseStatus = class _ParseStatus {
     const arrayValue = [];
     for (const s of results) {
       if (s.status === "aborted")
-        return INVALID;
+        return INVALID2;
       if (s.status === "dirty")
         status.dirty();
       arrayValue.push(s.value);
@@ -3401,9 +3712,9 @@ var ParseStatus = class _ParseStatus {
     for (const pair of pairs) {
       const { key, value } = pair;
       if (key.status === "aborted")
-        return INVALID;
+        return INVALID2;
       if (value.status === "aborted")
-        return INVALID;
+        return INVALID2;
       if (key.status === "dirty")
         status.dirty();
       if (value.status === "dirty")
@@ -3415,7 +3726,7 @@ var ParseStatus = class _ParseStatus {
     return { status: status.value, value: finalObject };
   }
 };
-var INVALID = Object.freeze({
+var INVALID2 = Object.freeze({
   status: "aborted"
 });
 var DIRTY = (value) => ({ status: "dirty", value });
@@ -3870,7 +4181,7 @@ var ZodString = class _ZodString extends ZodType {
         expected: ZodParsedType.string,
         received: ctx2.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     const status = new ParseStatus();
     let ctx = void 0;
@@ -4430,7 +4741,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
         expected: ZodParsedType.number,
         received: ctx2.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     let ctx = void 0;
     const status = new ParseStatus();
@@ -4713,7 +5024,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
       expected: ZodParsedType.bigint,
       received: ctx.parsedType
     });
-    return INVALID;
+    return INVALID2;
   }
   gte(value, message) {
     return this.setLimit("min", value, true, errorUtil.toString(message));
@@ -4828,7 +5139,7 @@ var ZodBoolean = class extends ZodType {
         expected: ZodParsedType.boolean,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     return OK(input.data);
   }
@@ -4853,14 +5164,14 @@ var ZodDate = class _ZodDate extends ZodType {
         expected: ZodParsedType.date,
         received: ctx2.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     if (Number.isNaN(input.data.getTime())) {
       const ctx2 = this._getOrReturnCtx(input);
       addIssueToContext(ctx2, {
         code: ZodIssueCode.invalid_date
       });
-      return INVALID;
+      return INVALID2;
     }
     const status = new ParseStatus();
     let ctx = void 0;
@@ -4959,7 +5270,7 @@ var ZodSymbol = class extends ZodType {
         expected: ZodParsedType.symbol,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     return OK(input.data);
   }
@@ -4980,7 +5291,7 @@ var ZodUndefined = class extends ZodType {
         expected: ZodParsedType.undefined,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     return OK(input.data);
   }
@@ -5001,7 +5312,7 @@ var ZodNull = class extends ZodType {
         expected: ZodParsedType.null,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     return OK(input.data);
   }
@@ -5050,7 +5361,7 @@ var ZodNever = class extends ZodType {
       expected: ZodParsedType.never,
       received: ctx.parsedType
     });
-    return INVALID;
+    return INVALID2;
   }
 };
 ZodNever.create = (params) => {
@@ -5069,7 +5380,7 @@ var ZodVoid = class extends ZodType {
         expected: ZodParsedType.void,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     return OK(input.data);
   }
@@ -5090,7 +5401,7 @@ var ZodArray = class _ZodArray extends ZodType {
         expected: ZodParsedType.array,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     if (def.exactLength !== null) {
       const tooBig = ctx.data.length > def.exactLength.value;
@@ -5231,7 +5542,7 @@ var ZodObject = class _ZodObject extends ZodType {
         expected: ZodParsedType.object,
         received: ctx2.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     const { status, ctx } = this._processInputParams(input);
     const { shape, keys: shapeKeys } = this._getCached();
@@ -5566,7 +5877,7 @@ var ZodUnion = class extends ZodType {
         code: ZodIssueCode.invalid_union,
         unionErrors
       });
-      return INVALID;
+      return INVALID2;
     }
     if (ctx.common.async) {
       return Promise.all(options.map(async (option) => {
@@ -5622,7 +5933,7 @@ var ZodUnion = class extends ZodType {
         code: ZodIssueCode.invalid_union,
         unionErrors
       });
-      return INVALID;
+      return INVALID2;
     }
   }
   get options() {
@@ -5676,7 +5987,7 @@ var ZodDiscriminatedUnion = class _ZodDiscriminatedUnion extends ZodType {
         expected: ZodParsedType.object,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     const discriminator = this.discriminator;
     const discriminatorValue = ctx.data[discriminator];
@@ -5687,7 +5998,7 @@ var ZodDiscriminatedUnion = class _ZodDiscriminatedUnion extends ZodType {
         options: Array.from(this.optionsMap.keys()),
         path: [discriminator]
       });
-      return INVALID;
+      return INVALID2;
     }
     if (ctx.common.async) {
       return option._parseAsync({
@@ -5786,14 +6097,14 @@ var ZodIntersection = class extends ZodType {
     const { status, ctx } = this._processInputParams(input);
     const handleParsed = (parsedLeft, parsedRight) => {
       if (isAborted(parsedLeft) || isAborted(parsedRight)) {
-        return INVALID;
+        return INVALID2;
       }
       const merged = mergeValues(parsedLeft.value, parsedRight.value);
       if (!merged.valid) {
         addIssueToContext(ctx, {
           code: ZodIssueCode.invalid_intersection_types
         });
-        return INVALID;
+        return INVALID2;
       }
       if (isDirty(parsedLeft) || isDirty(parsedRight)) {
         status.dirty();
@@ -5843,7 +6154,7 @@ var ZodTuple = class _ZodTuple extends ZodType {
         expected: ZodParsedType.array,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     if (ctx.data.length < this._def.items.length) {
       addIssueToContext(ctx, {
@@ -5853,7 +6164,7 @@ var ZodTuple = class _ZodTuple extends ZodType {
         exact: false,
         type: "array"
       });
-      return INVALID;
+      return INVALID2;
     }
     const rest = this._def.rest;
     if (!rest && ctx.data.length > this._def.items.length) {
@@ -5916,7 +6227,7 @@ var ZodRecord = class _ZodRecord extends ZodType {
         expected: ZodParsedType.object,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     const pairs = [];
     const keyType = this._def.keyType;
@@ -5969,7 +6280,7 @@ var ZodMap = class extends ZodType {
         expected: ZodParsedType.map,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     const keyType = this._def.keyType;
     const valueType = this._def.valueType;
@@ -5986,7 +6297,7 @@ var ZodMap = class extends ZodType {
           const key = await pair.key;
           const value = await pair.value;
           if (key.status === "aborted" || value.status === "aborted") {
-            return INVALID;
+            return INVALID2;
           }
           if (key.status === "dirty" || value.status === "dirty") {
             status.dirty();
@@ -6001,7 +6312,7 @@ var ZodMap = class extends ZodType {
         const key = pair.key;
         const value = pair.value;
         if (key.status === "aborted" || value.status === "aborted") {
-          return INVALID;
+          return INVALID2;
         }
         if (key.status === "dirty" || value.status === "dirty") {
           status.dirty();
@@ -6029,7 +6340,7 @@ var ZodSet = class _ZodSet extends ZodType {
         expected: ZodParsedType.set,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     const def = this._def;
     if (def.minSize !== null) {
@@ -6063,7 +6374,7 @@ var ZodSet = class _ZodSet extends ZodType {
       const parsedSet = /* @__PURE__ */ new Set();
       for (const element of elements2) {
         if (element.status === "aborted")
-          return INVALID;
+          return INVALID2;
         if (element.status === "dirty")
           status.dirty();
         parsedSet.add(element.value);
@@ -6118,7 +6429,7 @@ var ZodFunction = class _ZodFunction extends ZodType {
         expected: ZodParsedType.function,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     function makeArgsIssue(args, error) {
       return makeIssue({
@@ -6236,7 +6547,7 @@ var ZodLiteral = class extends ZodType {
         code: ZodIssueCode.invalid_literal,
         expected: this._def.value
       });
-      return INVALID;
+      return INVALID2;
     }
     return { status: "valid", value: input.data };
   }
@@ -6268,7 +6579,7 @@ var ZodEnum = class _ZodEnum extends ZodType {
         received: ctx.parsedType,
         code: ZodIssueCode.invalid_type
       });
-      return INVALID;
+      return INVALID2;
     }
     if (!this._cache) {
       this._cache = new Set(this._def.values);
@@ -6281,7 +6592,7 @@ var ZodEnum = class _ZodEnum extends ZodType {
         code: ZodIssueCode.invalid_enum_value,
         options: expectedValues
       });
-      return INVALID;
+      return INVALID2;
     }
     return OK(input.data);
   }
@@ -6334,7 +6645,7 @@ var ZodNativeEnum = class extends ZodType {
         received: ctx.parsedType,
         code: ZodIssueCode.invalid_type
       });
-      return INVALID;
+      return INVALID2;
     }
     if (!this._cache) {
       this._cache = new Set(util.getValidEnumValues(this._def.values));
@@ -6346,7 +6657,7 @@ var ZodNativeEnum = class extends ZodType {
         code: ZodIssueCode.invalid_enum_value,
         options: expectedValues
       });
-      return INVALID;
+      return INVALID2;
     }
     return OK(input.data);
   }
@@ -6373,7 +6684,7 @@ var ZodPromise = class extends ZodType {
         expected: ZodParsedType.promise,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     const promisified = ctx.parsedType === ZodParsedType.promise ? ctx.data : Promise.resolve(ctx.data);
     return OK(promisified.then((data) => {
@@ -6420,14 +6731,14 @@ var ZodEffects = class extends ZodType {
       if (ctx.common.async) {
         return Promise.resolve(processed).then(async (processed2) => {
           if (status.value === "aborted")
-            return INVALID;
+            return INVALID2;
           const result = await this._def.schema._parseAsync({
             data: processed2,
             path: ctx.path,
             parent: ctx
           });
           if (result.status === "aborted")
-            return INVALID;
+            return INVALID2;
           if (result.status === "dirty")
             return DIRTY(result.value);
           if (status.value === "dirty")
@@ -6436,14 +6747,14 @@ var ZodEffects = class extends ZodType {
         });
       } else {
         if (status.value === "aborted")
-          return INVALID;
+          return INVALID2;
         const result = this._def.schema._parseSync({
           data: processed,
           path: ctx.path,
           parent: ctx
         });
         if (result.status === "aborted")
-          return INVALID;
+          return INVALID2;
         if (result.status === "dirty")
           return DIRTY(result.value);
         if (status.value === "dirty")
@@ -6469,7 +6780,7 @@ var ZodEffects = class extends ZodType {
           parent: ctx
         });
         if (inner.status === "aborted")
-          return INVALID;
+          return INVALID2;
         if (inner.status === "dirty")
           status.dirty();
         executeRefinement(inner.value);
@@ -6477,7 +6788,7 @@ var ZodEffects = class extends ZodType {
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
           if (inner.status === "aborted")
-            return INVALID;
+            return INVALID2;
           if (inner.status === "dirty")
             status.dirty();
           return executeRefinement(inner.value).then(() => {
@@ -6494,7 +6805,7 @@ var ZodEffects = class extends ZodType {
           parent: ctx
         });
         if (!isValid(base))
-          return INVALID;
+          return INVALID2;
         const result = effect.transform(base.value, checkCtx);
         if (result instanceof Promise) {
           throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
@@ -6503,7 +6814,7 @@ var ZodEffects = class extends ZodType {
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
           if (!isValid(base))
-            return INVALID;
+            return INVALID2;
           return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
             status: status.value,
             value: result
@@ -6656,7 +6967,7 @@ var ZodNaN = class extends ZodType {
         expected: ZodParsedType.nan,
         received: ctx.parsedType
       });
-      return INVALID;
+      return INVALID2;
     }
     return { status: "valid", value: input.data };
   }
@@ -6693,7 +7004,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
           parent: ctx
         });
         if (inResult.status === "aborted")
-          return INVALID;
+          return INVALID2;
         if (inResult.status === "dirty") {
           status.dirty();
           return DIRTY(inResult.value);
@@ -6713,7 +7024,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
         parent: ctx
       });
       if (inResult.status === "aborted")
-        return INVALID;
+        return INVALID2;
       if (inResult.status === "dirty") {
         status.dirty();
         return {
@@ -6878,11 +7189,465 @@ var coerce = {
   bigint: ((arg) => ZodBigInt.create({ ...arg, coerce: true })),
   date: ((arg) => ZodDate.create({ ...arg, coerce: true }))
 };
-var NEVER = INVALID;
+var NEVER = INVALID2;
+
+// src/skills/types.ts
+var SKILL_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+var skillFrontmatterSchema = external_exports.object({
+  name: external_exports.string().min(1).max(100),
+  /**
+   * What this skill is for, in one line. It is not decoration: it is the
+   * whole of how a model decides to reach for the skill, so a description
+   * that says "helps with planning" is a skill that never fires.
+   */
+  description: external_exports.string().min(1).max(2e3)
+}).passthrough();
+
+// src/skills/loader.ts
+var SkillDefinitionError = class extends Error {
+  constructor(message, skillId) {
+    super(message);
+    this.skillId = skillId;
+  }
+  skillId;
+};
+var FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+function parseSkill(id, raw, meta) {
+  const m = FRONTMATTER.exec(raw.replace(/^﻿/, ""));
+  if (!m) throw new SkillDefinitionError("missing YAML frontmatter (SKILL.md must start with a --- block)", id);
+  let front;
+  try {
+    front = load(m[1]) ?? {};
+  } catch (e) {
+    throw new SkillDefinitionError(`invalid YAML frontmatter: ${e.message}`, id);
+  }
+  const parsed = skillFrontmatterSchema.safeParse(front);
+  if (!parsed.success) {
+    const detail = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+    throw new SkillDefinitionError(`invalid frontmatter: ${detail}`, id);
+  }
+  const body = m[2].trim();
+  if (!body) throw new SkillDefinitionError("SKILL.md has frontmatter but no body", id);
+  return {
+    ...parsed.data,
+    id,
+    body,
+    resources: meta.resources ?? [],
+    dir: meta.dir,
+    sourcePath: meta.sourcePath,
+    updatedAt: meta.updatedAt,
+    origin: meta.origin ?? null
+  };
+}
+function serializeSkill(front, body) {
+  const defined = Object.fromEntries(Object.entries(front).filter(([, v]) => v !== void 0));
+  const yaml = dump(defined, { lineWidth: -1, noRefs: true }).trimEnd();
+  return `---
+${yaml}
+---
+
+${body.trim()}
+`;
+}
+function withSkillName(raw, id) {
+  const m = FRONTMATTER.exec(raw.replace(/^﻿/, ""));
+  if (!m) return raw;
+  const front = load(m[1]) ?? {};
+  if (front.name === id) return raw;
+  return serializeSkill({ ...front, name: id }, m[2]);
+}
+
+// src/skills/registry.ts
+var ORIGIN_FILE = ".gate-source.json";
+var MAX_RESOURCE_DEPTH = 4;
+function skillsDir(scope = teamScope()) {
+  return join2(scope.root, "skills");
+}
+function dirFor(id, scope) {
+  if (!SKILL_ID_RE.test(id)) throw new SkillDefinitionError("invalid skill id (use lowercase letters, digits and dashes)", id);
+  return join2(skillsDir(scope), id);
+}
+var cache = /* @__PURE__ */ new Map();
+function resourcesIn(dir, depth = 0) {
+  if (depth > MAX_RESOURCE_DEPTH) return [];
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.name === ORIGIN_FILE) continue;
+    const full = join2(dir, entry.name);
+    if (entry.isDirectory()) out.push(...resourcesIn(full, depth + 1));
+    else if (!(depth === 0 && entry.name === "SKILL.md")) out.push(full);
+  }
+  return out;
+}
+function readOrigin(dir) {
+  try {
+    return JSON.parse(readFileSync(join2(dir, ORIGIN_FILE), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function loadDir(id, dir) {
+  const file = join2(dir, "SKILL.md");
+  if (!existsSync2(file)) throw new SkillDefinitionError("no SKILL.md in this directory", id);
+  const stat = statSync(file);
+  const hit = cache.get(file);
+  if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
+  const def = parseSkill(id, readFileSync(file, "utf8"), {
+    dir,
+    sourcePath: file,
+    updatedAt: stat.mtimeMs,
+    resources: resourcesIn(dir).map((f) => relative(dir, f)),
+    origin: readOrigin(dir)
+  });
+  cache.set(file, { mtimeMs: stat.mtimeMs, def });
+  return def;
+}
+function resolveSkillDir(id, scope) {
+  const own = dirFor(id, scope);
+  if (existsSync2(join2(own, "SKILL.md"))) return own;
+  if (scope.fallback) return resolveSkillDir(id, scope.fallback);
+  return null;
+}
+function getSkill(id, scope = teamScope()) {
+  const dir = resolveSkillDir(id, scope);
+  if (!dir) throw new SkillDefinitionError("skill not found", id);
+  return loadDir(id, dir);
+}
+
+// src/runtime/tools/workspace-tools.ts
+import { execFile } from "node:child_process";
+import { existsSync as existsSync3, lstatSync, mkdirSync as mkdirSync3, readFileSync as readFileSync2, readdirSync as readdirSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join3, relative as relative3, resolve as resolve2 } from "node:path";
+
+// src/runtime/tools/paths.ts
+import { realpathSync } from "node:fs";
+import { isAbsolute, relative as relative2, resolve, sep } from "node:path";
+
+// src/runtime/tools/types.ts
+var ToolError = class extends Error {
+};
+
+// src/runtime/tools/paths.ts
+function resolveInWorkspace(root, input, label = "path") {
+  if (typeof input !== "string" || !input.trim()) throw new ToolError(`${label} is required`);
+  const candidate = isAbsolute(input) ? input : resolve(root, input);
+  const full = resolve(candidate);
+  assertInside(root, full, input);
+  const real = realPathIfExists(full);
+  if (real) assertInside(realPathIfExists(root) ?? root, real, input);
+  return full;
+}
+function assertInside(root, full, shown) {
+  const rel = relative2(root, full);
+  if (rel === "") return;
+  if (rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("..")) {
+    throw new ToolError(`"${shown}" is outside the workspace`);
+  }
+}
+function realPathIfExists(p) {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+// src/runtime/tools/workspace-tools.ts
+var MAX_READ_BYTES = 2e5;
+var MAX_WRITE_BYTES = 2e6;
+var MAX_LIST_ENTRIES = 500;
+var MAX_MATCHES = 100;
+var MAX_COMMAND_OUTPUT = 3e4;
+var DEFAULT_COMMAND_TIMEOUT_MS = 3e5;
+var SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".next", "dist", "build", ".venv", "__pycache__", ".turbo"]);
+function str(input, key, required = true) {
+  const v = input[key];
+  if (typeof v === "string" && v.length) return v;
+  if (required) throw new ToolError(`"${key}" is required`);
+  return "";
+}
+function truncate(s, max, what) {
+  return s.length > max ? `${s.slice(0, max)}
+\u2026 [${what} truncated at ${max} characters]` : s;
+}
+var readFile = {
+  name: "read_file",
+  description: "Read a file from the workspace. Returns its content with 1-based line numbers.",
+  mutates: false,
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path relative to the workspace root." },
+      offset: { type: "integer", description: "1-based line to start at (optional)." },
+      limit: { type: "integer", description: "How many lines to read (optional)." }
+    },
+    required: ["path"]
+  },
+  async execute(input, ctx) {
+    const file = resolveInWorkspace(ctx.root, input.path);
+    if (!existsSync3(file)) throw new ToolError(`no such file: ${str(input, "path")}`);
+    if (statSync2(file).isDirectory()) throw new ToolError(`"${str(input, "path")}" is a directory; use list_files`);
+    const raw = readFileSync2(file, "utf8");
+    const lines = raw.split("\n");
+    const offset = Math.max(1, Number(input.offset ?? 1));
+    const limit = Math.max(1, Number(input.limit ?? lines.length));
+    const slice = lines.slice(offset - 1, offset - 1 + limit);
+    const numbered = slice.map((l, i) => `${offset + i}	${l}`).join("\n");
+    return truncate(numbered, MAX_READ_BYTES, "file");
+  }
+};
+var writeFile = {
+  name: "write_file",
+  description: "Create a file or replace its whole content. Parent directories are created as needed.",
+  mutates: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path relative to the workspace root." },
+      content: { type: "string", description: "The complete new file content." }
+    },
+    required: ["path", "content"]
+  },
+  async execute(input, ctx) {
+    const file = resolveInWorkspace(ctx.root, input.path);
+    const content = typeof input.content === "string" ? input.content : "";
+    if (content.length > MAX_WRITE_BYTES) throw new ToolError(`content is larger than ${MAX_WRITE_BYTES} bytes`);
+    if (existsSync3(file) && statSync2(file).isDirectory()) throw new ToolError(`"${str(input, "path")}" is a directory`);
+    mkdirSync3(resolve2(file, ".."), { recursive: true });
+    writeFileSync2(file, content);
+    return `wrote ${content.length} characters to ${relative3(ctx.root, file)}`;
+  }
+};
+var editFile = {
+  name: "edit_file",
+  description: "Replace an exact string in a file. The old string must appear exactly once unless replace_all is true \u2014 read the file first.",
+  mutates: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string" },
+      old_string: { type: "string", description: "Exact text to replace, including indentation." },
+      new_string: { type: "string", description: "Replacement text." },
+      replace_all: { type: "boolean", description: "Replace every occurrence (default false)." }
+    },
+    required: ["path", "old_string", "new_string"]
+  },
+  async execute(input, ctx) {
+    const file = resolveInWorkspace(ctx.root, input.path);
+    if (!existsSync3(file)) throw new ToolError(`no such file: ${str(input, "path")}`);
+    const oldString = str(input, "old_string");
+    const newString = typeof input.new_string === "string" ? input.new_string : "";
+    const raw = readFileSync2(file, "utf8");
+    const count = raw.split(oldString).length - 1;
+    if (count === 0) throw new ToolError("old_string was not found in the file");
+    if (count > 1 && input.replace_all !== true) {
+      throw new ToolError(`old_string appears ${count} times; pass replace_all or include more context`);
+    }
+    const parts = raw.split(oldString);
+    const updated = input.replace_all === true ? parts.join(newString) : [parts[0], parts.slice(1).join(oldString)].join(newString);
+    writeFileSync2(file, updated);
+    return `edited ${relative3(ctx.root, file)} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""})`;
+  }
+};
+function walk(root, dir, depth, out) {
+  if (out.length >= MAX_LIST_ENTRIES || depth < 0) return;
+  let entries;
+  try {
+    entries = readdirSync2(dir).sort();
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (out.length >= MAX_LIST_ENTRIES) return;
+    if (SKIP_DIRS.has(entry) || entry.startsWith(".DS_Store")) continue;
+    const full = join3(dir, entry);
+    let isDir = false;
+    try {
+      const st = lstatSync(full);
+      if (st.isSymbolicLink()) continue;
+      isDir = st.isDirectory();
+    } catch {
+      continue;
+    }
+    out.push(relative3(root, full) + (isDir ? "/" : ""));
+    if (isDir) walk(root, full, depth - 1, out);
+  }
+}
+var listFiles = {
+  name: "list_files",
+  description: "List files and directories in the workspace. Skips .git, node_modules and build output.",
+  mutates: false,
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Directory to list, relative to the workspace root (default: the root)." },
+      depth: { type: "integer", description: "How deep to recurse (default 2)." }
+    }
+  },
+  async execute(input, ctx) {
+    const dir = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
+    if (!existsSync3(dir)) throw new ToolError(`no such directory: ${String(input.path)}`);
+    const out = [];
+    walk(ctx.root, dir, Math.max(0, Number(input.depth ?? 2) - 1), out);
+    if (!out.length) return "(empty)";
+    const capped = out.length >= MAX_LIST_ENTRIES ? `
+\u2026 [listing truncated at ${MAX_LIST_ENTRIES} entries]` : "";
+    return out.join("\n") + capped;
+  }
+};
+var searchFiles = {
+  name: "search_files",
+  description: "Search file contents with a regular expression. Returns path:line:text for each match.",
+  mutates: false,
+  inputSchema: {
+    type: "object",
+    properties: {
+      pattern: { type: "string", description: "JavaScript regular expression." },
+      path: { type: "string", description: "Directory to search in (default: the workspace root)." },
+      extension: { type: "string", description: 'Only search files with this extension, e.g. "ts" (optional).' }
+    },
+    required: ["pattern"]
+  },
+  async execute(input, ctx) {
+    const dir = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
+    let re;
+    try {
+      re = new RegExp(str(input, "pattern"));
+    } catch (e) {
+      throw new ToolError(`invalid regular expression: ${e.message}`);
+    }
+    const ext = typeof input.extension === "string" ? input.extension.replace(/^\./, "") : null;
+    const files = [];
+    walk(ctx.root, dir, 12, files);
+    const matches = [];
+    for (const rel of files) {
+      if (rel.endsWith("/")) continue;
+      if (ext && !rel.endsWith(`.${ext}`)) continue;
+      if (matches.length >= MAX_MATCHES) break;
+      let content;
+      try {
+        const full = join3(ctx.root, rel);
+        if (statSync2(full).size > MAX_READ_BYTES) continue;
+        content = readFileSync2(full, "utf8");
+      } catch {
+        continue;
+      }
+      content.split("\n").forEach((line, i) => {
+        if (matches.length >= MAX_MATCHES || !re.test(line)) return;
+        matches.push(`${rel}:${i + 1}:${line.trim().slice(0, 200)}`);
+      });
+    }
+    return matches.length ? matches.join("\n") : "(no matches)";
+  }
+};
+var runCommandTool = {
+  name: "run_command",
+  description: "Run a command in the workspace. Pass argv as an array (no shell string). Returns the exit code with stdout and stderr.",
+  mutates: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      command: {
+        type: "array",
+        items: { type: "string" },
+        description: 'Program and arguments, e.g. ["npm", "test"].'
+      },
+      cwd: { type: "string", description: "Directory to run in, relative to the workspace root (optional)." },
+      timeout_ms: { type: "integer", description: "Timeout in milliseconds (default 300000)." }
+    },
+    required: ["command"]
+  },
+  async execute(input, ctx) {
+    const argv = Array.isArray(input.command) ? input.command.map(String).filter(Boolean) : [];
+    if (!argv.length) throw new ToolError("command must be a non-empty array of strings");
+    const cwd = input.cwd ? resolveInWorkspace(ctx.root, input.cwd) : ctx.root;
+    const timeout = Math.min(Math.max(Number(input.timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS), 1e3), 6e5);
+    const [file, ...args] = argv;
+    return new Promise((resolvePromise, reject) => {
+      execFile(file, args, { cwd, timeout, maxBuffer: 1e7, shell: false }, (error, stdout, stderr) => {
+        const err = error;
+        if (err?.killed) {
+          reject(new ToolError(`command timed out after ${timeout}ms`));
+          return;
+        }
+        if (err && typeof err.code !== "number") {
+          reject(new ToolError(err.message));
+          return;
+        }
+        const exitCode = typeof err?.code === "number" ? err.code : 0;
+        const out = truncate(String(stdout).trim(), MAX_COMMAND_OUTPUT, "stdout");
+        const errOut = truncate(String(stderr).trim(), MAX_COMMAND_OUTPUT, "stderr");
+        resolvePromise(
+          [`exit code: ${exitCode}`, out && `stdout:
+${out}`, errOut && `stderr:
+${errOut}`].filter(Boolean).join("\n\n")
+        );
+      });
+    });
+  }
+};
+var WORKSPACE_TOOLS = [readFile, writeFile, editFile, listFiles, searchFiles, runCommandTool];
+
+// src/runtime/tools/registry.ts
+var BY_NAME = new Map(WORKSPACE_TOOLS.map((t) => [t.name, t]));
+function knownToolNames() {
+  return [...BY_NAME.keys()].sort();
+}
+function isKnownTool(name) {
+  return BY_NAME.has(name);
+}
+function getTool(name) {
+  return BY_NAME.get(name);
+}
+function toolsFor(names, hasWorkspace) {
+  if (!hasWorkspace) return [];
+  const out = [];
+  for (const name of names) {
+    const tool = BY_NAME.get(name);
+    if (tool) out.push(tool);
+  }
+  return out;
+}
+
+// src/agents/template.ts
+var TemplateError = class extends Error {
+};
+var PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)\s*\}\}/g;
+function templatePaths(tpl) {
+  const out = /* @__PURE__ */ new Set();
+  for (const m of tpl.matchAll(PLACEHOLDER)) out.add(m[1]);
+  return [...out];
+}
+function lookup(path, ctx) {
+  let cur = ctx;
+  for (const seg of path.split(".")) {
+    if (cur == null || typeof cur !== "object") return void 0;
+    cur = cur[seg];
+  }
+  return cur;
+}
+function stringify(v) {
+  if (typeof v === "string") return v;
+  if (v === null || typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v, null, 2);
+}
+function renderTemplate(tpl, ctx) {
+  const missing = [];
+  const out = tpl.replace(PLACEHOLDER, (_m, path) => {
+    const v = lookup(path, ctx);
+    if (v === void 0) {
+      missing.push(path);
+      return "";
+    }
+    return stringify(v);
+  });
+  if (missing.length) throw new TemplateError(`unresolved template ${missing.length > 1 ? "values" : "value"}: ${missing.join(", ")}`);
+  return out;
+}
 
 // src/lib/settings.ts
 import { homedir as homedir2 } from "node:os";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 
 // src/lib/account-pool.ts
 var BACKOFF = { baseMs: 5e3, maxMs: 2 * 60 * 1e3, maxLevel: 15 };
@@ -6890,8 +7655,8 @@ var QUOTA_FALLBACK_COOLDOWN_MS = 15 * 60 * 1e3;
 var MAX_HINT_COOLDOWN_MS = 8 * 60 * 60 * 1e3;
 
 // src/lib/settings.ts
-var GATE_DIR = process.env.GATE_HOME || join3(homedir2(), ".gate");
-var FILE = join3(GATE_DIR, "settings.json");
+var GATE_DIR = process.env.GATE_HOME || join4(homedir2(), ".gate");
+var FILE = join4(GATE_DIR, "settings.json");
 
 // src/lib/reasoning.ts
 var EFFORTS = ["default", "low", "medium", "high", "xhigh", "max"];
@@ -6932,6 +7697,18 @@ var agentFrontmatterSchema = external_exports.object({
    * (`Read`, `Edit`, `Grep`, `Bash`, …).
    */
   tools: external_exports.array(external_exports.string().min(1).max(64)).max(50).default([]),
+  /**
+   * Skills this agent works by, named as ids from the team's skill library.
+   *
+   * Not a hint: an agent that declares one is told to follow it, every run.
+   * A spawned Claude Code gets them as a plugin, so a skill loads with its
+   * own files beside it and the harness opens it when it is due; gate's own
+   * loop has nowhere to put a file and folds the prose into the system
+   * prompt instead. Either way the skill's instructions reach the model,
+   * which is what makes "the planner brainstorms" a property of the
+   * definition rather than of how the prompt happened to be worded.
+   */
+  skills: external_exports.array(external_exports.string().regex(SKILL_ID_RE, "use lowercase letters, digits and dashes")).max(20).default([]),
   /**
    * Wall-clock cap on one visit to this agent's node — every tool round it
    * takes counts against it, not each model call separately. Left out, it is
@@ -6997,9 +7774,9 @@ var AgentDefinitionError = class extends Error {
   }
   agentId;
 };
-var FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+var FRONTMATTER2 = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 function parseAgent(id, raw, meta) {
-  const m = FRONTMATTER.exec(raw.replace(/^﻿/, ""));
+  const m = FRONTMATTER2.exec(raw.replace(/^﻿/, ""));
   if (!m) throw new AgentDefinitionError("missing YAML frontmatter (a file must start with a --- block)", id);
   let front;
   try {
@@ -7041,31 +7818,31 @@ function assertTemplateInputsDeclared(def) {
 // src/agents/registry.ts
 var ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 function agentsDir(scope = teamScope()) {
-  return join4(scope.root, "agents");
+  return join5(scope.root, "agents");
 }
 function pathFor(id, scope) {
   if (!ID_RE.test(id)) throw new AgentDefinitionError("invalid agent id (use lowercase letters, digits and dashes)", id);
-  return join4(agentsDir(scope), `${id}.md`);
+  return join5(agentsDir(scope), `${id}.md`);
 }
-var cache = /* @__PURE__ */ new Map();
+var cache2 = /* @__PURE__ */ new Map();
 function loadFile(id, file) {
-  const stat = statSync2(file);
-  const hit = cache.get(file);
+  const stat = statSync3(file);
+  const hit = cache2.get(file);
   if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
-  const def = parseAgent(id, readFileSync2(file, "utf8"), { sourcePath: file, updatedAt: stat.mtimeMs });
-  cache.set(file, { mtimeMs: stat.mtimeMs, def });
+  const def = parseAgent(id, readFileSync3(file, "utf8"), { sourcePath: file, updatedAt: stat.mtimeMs });
+  cache2.set(file, { mtimeMs: stat.mtimeMs, def });
   return def;
 }
 function listAgents(scope = teamScope()) {
   const dir = agentsDir(scope);
-  if (!existsSync3(dir)) return { agents: [], errors: [] };
+  if (!existsSync4(dir)) return { agents: [], errors: [] };
   const agents = [];
   const errors = [];
-  for (const entry of readdirSync2(dir).sort()) {
+  for (const entry of readdirSync3(dir).sort()) {
     if (!entry.endsWith(".md")) continue;
     const id = entry.slice(0, -3);
     try {
-      agents.push(loadFile(id, join4(dir, entry)));
+      agents.push(loadFile(id, join5(dir, entry)));
     } catch (e) {
       errors.push({ id, message: e.message });
     }
@@ -7074,7 +7851,7 @@ function listAgents(scope = teamScope()) {
 }
 function resolveFile(id, scope) {
   const own = pathFor(id, scope);
-  if (existsSync3(own)) return own;
+  if (existsSync4(own)) return own;
   if (scope.fallback) return resolveFile(id, scope.fallback);
   return null;
 }
@@ -7089,12 +7866,12 @@ function agentExists(id, scope = teamScope()) {
 function readAgentSource(id, scope = teamScope()) {
   const file = resolveFile(id, scope);
   if (!file) throw new AgentDefinitionError("agent not found", id);
-  return readFileSync2(file, "utf8");
+  return readFileSync3(file, "utf8");
 }
 
 // src/workflows/registry.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync3, readdirSync as readdirSync3, rmSync as rmSync2, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync4, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join6 } from "node:path";
 
 // src/runtime/errors.ts
 var WorkflowError = class extends Error {
@@ -7554,35 +8331,35 @@ function regionOf(wf, start, stop) {
 // src/workflows/registry.ts
 var ID_RE2 = /^[a-z0-9][a-z0-9-]{0,63}$/;
 function workflowsDir(scope = teamScope()) {
-  return join5(scope.root, "workflows");
+  return join6(scope.root, "workflows");
 }
 function invalid2(id, message) {
   return new WorkflowError("WORKFLOW_DEFINITION_INVALID", message, { workflowId: id });
 }
 function pathFor2(id, scope) {
   if (!ID_RE2.test(id)) throw invalid2(id, "invalid workflow id (use lowercase letters, digits and dashes)");
-  const yaml = join5(workflowsDir(scope), `${id}.yaml`);
-  if (existsSync4(yaml)) return yaml;
-  const yml = join5(workflowsDir(scope), `${id}.yml`);
-  return existsSync4(yml) ? yml : yaml;
+  const yaml = join6(workflowsDir(scope), `${id}.yaml`);
+  if (existsSync5(yaml)) return yaml;
+  const yml = join6(workflowsDir(scope), `${id}.yml`);
+  return existsSync5(yml) ? yml : yaml;
 }
-var cache2 = /* @__PURE__ */ new Map();
+var cache3 = /* @__PURE__ */ new Map();
 function loadFile2(id, file, scope) {
-  const stat = statSync3(file);
+  const stat = statSync4(file);
   const key = `${scope.teamId ?? scope.root}\0${file}`;
-  const hit = cache2.get(key);
+  const hit = cache3.get(key);
   if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
-  const def = parseWorkflow(id, readFileSync3(file, "utf8"), {
+  const def = parseWorkflow(id, readFileSync4(file, "utf8"), {
     sourcePath: file,
     updatedAt: stat.mtimeMs,
     agentExists: (agentId) => agentExists(agentId, scope)
   });
-  cache2.set(key, { mtimeMs: stat.mtimeMs, def });
+  cache3.set(key, { mtimeMs: stat.mtimeMs, def });
   return def;
 }
 function resolveFile2(id, scope) {
   const own = pathFor2(id, scope);
-  if (existsSync4(own)) return own;
+  if (existsSync5(own)) return own;
   if (scope.fallback) return resolveFile2(id, scope.fallback);
   return null;
 }
@@ -7594,7 +8371,7 @@ function getWorkflow(id, scope = teamScope()) {
 function readWorkflowSource(id, scope = teamScope()) {
   const file = resolveFile2(id, scope);
   if (!file) throw invalid2(id, "workflow not found");
-  return readFileSync3(file, "utf8");
+  return readFileSync4(file, "utf8");
 }
 
 // src/lib/connect-token.ts
@@ -7632,7 +8409,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.14.0";
+var GATE_VERSION = "0.15.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -7795,25 +8572,25 @@ var GateClient = class {
 };
 
 // src/client/cache.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync6, readFileSync as readFileSync5, readdirSync as readdirSync4, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join7 } from "node:path";
+import { existsSync as existsSync6, mkdirSync as mkdirSync7, readFileSync as readFileSync6, readdirSync as readdirSync5, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join8 } from "node:path";
 
 // src/client/config.ts
-import { mkdirSync as mkdirSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { dirname, join as join6 } from "node:path";
+import { dirname, join as join7 } from "node:path";
 function gateHome2() {
-  return process.env.GATE_HOME || join6(homedir3(), ".gate");
+  return process.env.GATE_HOME || join7(homedir3(), ".gate");
 }
 function configPath() {
-  return join6(gateHome2(), "client.json");
+  return join7(gateHome2(), "client.json");
 }
 function readConfig() {
   const url = process.env.GATE_URL;
   const key = process.env.GATE_KEY;
   if (url && key) return { url: url.replace(/\/+$/, ""), key };
   try {
-    const raw = JSON.parse(readFileSync4(configPath(), "utf8"));
+    const raw = JSON.parse(readFileSync5(configPath(), "utf8"));
     if (!raw?.url || !raw?.key) return null;
     return { ...raw, url: raw.url.replace(/\/+$/, "") };
   } catch {
@@ -7822,13 +8599,13 @@ function readConfig() {
 }
 function writeConfig(config) {
   const file = configPath();
-  mkdirSync5(dirname(file), { recursive: true, mode: 448 });
-  writeFileSync4(file, `${JSON.stringify(config, null, 2)}
+  mkdirSync6(dirname(file), { recursive: true, mode: 448 });
+  writeFileSync5(file, `${JSON.stringify(config, null, 2)}
 `, { mode: 384 });
 }
 function readConfigFile() {
   try {
-    return JSON.parse(readFileSync4(configPath(), "utf8"));
+    return JSON.parse(readFileSync5(configPath(), "utf8"));
   } catch {
     return null;
   }
@@ -7856,32 +8633,32 @@ function repoPaths() {
 
 // src/client/cache.ts
 function cacheDir(team) {
-  return join7(gateHome2(), "cache", team);
+  return join8(gateHome2(), "cache", team);
 }
 function cacheScope(team) {
   return scopeAt(cacheDir(team), team);
 }
 function manifestPath(team) {
-  return join7(cacheDir(team), "manifest.json");
+  return join8(cacheDir(team), "manifest.json");
 }
 function readManifest(team) {
   try {
-    return JSON.parse(readFileSync5(manifestPath(team), "utf8"));
+    return JSON.parse(readFileSync6(manifestPath(team), "utf8"));
   } catch {
     return null;
   }
 }
 function writeBundle(bundle, from) {
   const root = cacheDir(bundle.team);
-  const agents = join7(root, "agents");
-  const workflows = join7(root, "workflows");
-  mkdirSync6(agents, { recursive: true, mode: 448 });
-  mkdirSync6(workflows, { recursive: true, mode: 448 });
+  const agents = join8(root, "agents");
+  const workflows = join8(root, "workflows");
+  mkdirSync7(agents, { recursive: true, mode: 448 });
+  mkdirSync7(workflows, { recursive: true, mode: 448 });
   for (const agent of bundle.agents) {
-    writeFileSync5(join7(agents, `${agent.id}.md`), agent.source, { mode: 384 });
+    writeFileSync6(join8(agents, `${agent.id}.md`), agent.source, { mode: 384 });
   }
   for (const workflow of bundle.workflows) {
-    writeFileSync5(join7(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
+    writeFileSync6(join8(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
   }
   prune(agents, new Set(bundle.agents.map((a) => `${a.id}.md`)));
   prune(workflows, new Set(bundle.workflows.map((w) => `${w.id}.yaml`)));
@@ -7892,31 +8669,31 @@ function writeBundle(bundle, from) {
     from,
     workflows: bundle.workflows.map(({ source: _source, ...rest }) => rest)
   };
-  writeFileSync5(manifestPath(bundle.team), `${JSON.stringify(manifest, null, 2)}
+  writeFileSync6(manifestPath(bundle.team), `${JSON.stringify(manifest, null, 2)}
 `, { mode: 384 });
   return manifest;
 }
 function prune(dir, keep) {
-  if (!existsSync5(dir)) return;
-  for (const entry of readdirSync4(dir)) {
-    if (!keep.has(entry)) rmSync3(join7(dir, entry), { force: true });
+  if (!existsSync6(dir)) return;
+  for (const entry of readdirSync5(dir)) {
+    if (!keep.has(entry)) rmSync4(join8(dir, entry), { force: true });
   }
 }
 function clearLocalState() {
   const removed = [];
-  const cache3 = join7(gateHome2(), "cache");
-  if (existsSync5(cache3)) {
-    rmSync3(cache3, { recursive: true, force: true });
-    removed.push(`removed the mirrored definitions (${cache3})`);
+  const cache4 = join8(gateHome2(), "cache");
+  if (existsSync6(cache4)) {
+    rmSync4(cache4, { recursive: true, force: true });
+    removed.push(`removed the mirrored definitions (${cache4})`);
   }
-  const config = join7(gateHome2(), "client.json");
-  if (existsSync5(config)) {
-    rmSync3(config, { force: true });
+  const config = join8(gateHome2(), "client.json");
+  if (existsSync6(config)) {
+    rmSync4(config, { force: true });
     removed.push(`removed the login and its approvals (${config})`);
   }
-  const workspaces = join7(gateHome2(), "workspaces");
-  if (existsSync5(workspaces)) {
-    const kept = readdirSync4(workspaces).length;
+  const workspaces = join8(gateHome2(), "workspaces");
+  if (existsSync6(workspaces)) {
+    const kept = readdirSync5(workspaces).length;
     if (kept) removed.push(`kept ${kept} run worktree(s) in ${workspaces} \u2014 they are branches, not cache`);
   }
   return removed.length ? removed : ["nothing to remove \u2014 this machine was not connected"];
@@ -7929,7 +8706,7 @@ import { resolve as resolve5 } from "node:path";
 
 // src/runtime/engine.ts
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync7 } from "node:fs";
+import { existsSync as existsSync9 } from "node:fs";
 
 // src/lib/pricing.ts
 var PRICE_PER_MTOK = {
@@ -8012,9 +8789,120 @@ function resolveInputs(paths, state, nodeId2) {
   return out;
 }
 
+// src/skills/inject.ts
+import { createHash } from "node:crypto";
+import { cpSync, existsSync as existsSync7, mkdirSync as mkdirSync8, readFileSync as readFileSync7, readdirSync as readdirSync6, renameSync as renameSync2, rmSync as rmSync5, statSync as statSync5, writeFileSync as writeFileSync7 } from "node:fs";
+import { basename, join as join9 } from "node:path";
+var MAX_BUNDLES = 20;
+function skillsBriefing(skills) {
+  if (!skills.length) return "";
+  const list = skills.map((s) => `- ${s.id}: ${s.description}`).join("\n");
+  const bodies = skills.map((s) => {
+    const files = s.resources.length ? `
+
+(This skill also ships ${s.resources.join(", ")}. Those files are not readable from this workspace \u2014 work from what is written above, and do not claim to have opened them.)` : "";
+    return `## Skill: ${s.id}
+
+${s.body}${files}`;
+  }).join("\n\n---\n\n");
+  return `
+
+# Skills
+
+You have been given these skills, and you are expected to work the way they say:
+${list}
+
+They are instructions, not references: where a skill describes a process, follow it.
+
+${bodies}`;
+}
+function skillsDirective(skills) {
+  const list = skills.map((s) => `- ${s.id}: ${s.description}`).join("\n");
+  return `You have been given these skills, and this node is expected to be done the way they say:
+${list}
+
+Read each one before you start \u2014 they are available as skills in this session \u2014 and follow it. A skill that describes a process is the process for this node, not background reading.`;
+}
+function bundlesDir() {
+  return join9(gateHome(), "skill-bundles");
+}
+function fingerprint(skills) {
+  const h = createHash("sha256");
+  for (const skill of [...skills].sort((a, b) => a.id.localeCompare(b.id))) {
+    h.update(`skill:${skill.id}
+`);
+    for (const file of ["SKILL.md", ...skill.resources]) {
+      const full = join9(skill.dir, file);
+      try {
+        const stat = statSync5(full);
+        h.update(`${file}:${stat.size}:${stat.mtimeMs}
+`);
+      } catch {
+        h.update(`${file}:missing
+`);
+      }
+    }
+  }
+  return h.digest("hex").slice(0, 16);
+}
+function buildSkillPlugin(skills) {
+  if (!skills.length) return null;
+  const root = join9(bundlesDir(), fingerprint(skills));
+  const marker = join9(root, ".claude-plugin", "plugin.json");
+  if (existsSync7(marker)) return root;
+  const staging = `${root}.${process.pid}.${Date.now()}`;
+  mkdirSync8(join9(staging, ".claude-plugin"), { recursive: true, mode: 448 });
+  writeFileSync7(
+    join9(staging, ".claude-plugin", "plugin.json"),
+    `${JSON.stringify(
+      {
+        name: "gate-skills",
+        description: "Skills this node's agent declared, assembled by gate.",
+        version: "0.0.0"
+      },
+      null,
+      2
+    )}
+`,
+    { mode: 384 }
+  );
+  for (const skill of skills) {
+    const target = join9(staging, "skills", skill.id);
+    cpSync(skill.dir, target, {
+      recursive: true,
+      // Provenance is gate's bookkeeping and would read to the model as part
+      // of the skill.
+      filter: (src) => basename(src) !== ".gate-source.json"
+    });
+    writeFileSync7(join9(target, "SKILL.md"), withSkillName(readFileSync7(join9(skill.dir, "SKILL.md"), "utf8"), skill.id), {
+      mode: 384
+    });
+  }
+  try {
+    mkdirSync8(bundlesDir(), { recursive: true, mode: 448 });
+    if (!existsSync7(root)) {
+      renameSync2(staging, root);
+    } else {
+      rmSync5(staging, { recursive: true, force: true });
+    }
+  } catch {
+    rmSync5(staging, { recursive: true, force: true });
+  }
+  prune2();
+  return existsSync7(marker) ? root : null;
+}
+function prune2() {
+  try {
+    const dir = bundlesDir();
+    const entries = readdirSync6(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => ({ path: join9(dir, e.name), mtimeMs: statSync5(join9(dir, e.name)).mtimeMs })).sort((a, b) => b.mtimeMs - a.mtimeMs);
+    for (const stale of entries.slice(MAX_BUNDLES)) rmSync5(stale.path, { recursive: true, force: true });
+  } catch {
+  }
+}
+
 // src/runtime/executors/claude-code.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync8 } from "node:fs";
 function gatewayUrl(override) {
   if (override) return `${override.replace(/\/$/, "")}`;
   if (process.env.GATE_SELF_URL)
@@ -8040,13 +8928,15 @@ async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
     );
   }
   const workspace = deps.workspace;
-  if (!existsSync6(workspace.root)) {
+  if (!existsSync8(workspace.root)) {
     throw new WorkflowError(
       "WORKSPACE_ERROR",
       `node "${nodeId2}": this run's worktree is gone (${workspace.root}); it was removed while the run was going`,
       { nodeId: nodeId2, agentId: agent.id }
     );
   }
+  const skills = deps.skills ?? [];
+  const skillPlugin = buildSkillPlugin(skills);
   const toolCalls = [];
   const usage = {
     model: agent.model,
@@ -8083,10 +8973,12 @@ async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
     ];
     if (agent.effort) args.push("--effort", agent.effort);
     if (resume) args.push("--resume", resume);
+    if (skillPlugin) args.push("--plugin-dir", skillPlugin);
+    const appended = [];
+    if (skills.length) appended.push(skillsDirective(skills));
     if (agent.output.type === "json") {
       const fields = Object.entries(agent.output.schema).map(([field, type]) => `  "${field}": ${type}`).join("\n");
-      args.push(
-        "--append-system-prompt",
+      appended.push(
         `When you have finished the work, your final message must be a single JSON object and nothing else \u2014 no prose, no code fence. Fields:
 {
 ${fields}
@@ -8094,6 +8986,7 @@ ${fields}
 A type ending in "?" is optional.`
       );
     }
+    if (appended.length) args.push("--append-system-prompt", appended.join("\n\n"));
     const spawnCli = deps.spawnCli ?? spawn;
     const child = spawnCli("claude", args, {
       cwd: workspace.root,
@@ -8283,6 +9176,7 @@ async function executeAgentNode(node, state, deps) {
     const message = e instanceof TemplateError ? e.message : String(e);
     throw new WorkflowError("AGENT_DEFINITION_INVALID", `node "${node.id}": ${message}`, { nodeId: node.id, agentId: agent.id });
   }
+  const skills = resolveSkills(agent, node.id, deps.loadSkill);
   const workspace = deps.workspace ?? null;
   const nodeTimeoutMs = agent.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
   const nodeDeadline = nodeTimeoutMs > 0 ? Date.now() + nodeTimeoutMs : null;
@@ -8292,6 +9186,7 @@ async function executeAgentNode(node, state, deps) {
       prompt,
       node.id,
       {
+        skills,
         workspace,
         onToolCall: deps.onToolCall,
         signal: deps.signal,
@@ -8321,7 +9216,7 @@ async function executeAgentNode(node, state, deps) {
       }
       const call = deps.provider.execute({
         model: agent.model,
-        system: systemPrompt(agent, tools.length > 0, canWrite),
+        system: systemPrompt(agent, tools.length > 0, canWrite, skills),
         messages,
         effort: agent.effort,
         maxTokens: agent.maxTokens,
@@ -8398,7 +9293,7 @@ function reconNudge(rounds, toolCallCount) {
   if ((rounds - RECON_ROUNDS_BEFORE_NUDGE) % NUDGE_EVERY_ROUNDS !== 0) return null;
   return `You have made ${toolCallCount} tool calls in this node and have not written anything to the worktree yet. The worktree is the deliverable: nothing downstream reads this answer for the change itself, and a node that ends with an unchanged worktree fails. Apply the part of the change you already understand, now, with write_file or edit_file \u2014 then keep reading between edits instead of before them.`;
 }
-function systemPrompt(agent, hasTools, canWrite) {
+function systemPrompt(agent, hasTools, canWrite, skills = []) {
   const parts = [`You are the "${agent.name}" agent in an automated workflow.`];
   if (agent.description) parts.push(agent.description);
   if (hasTools) {
@@ -8406,6 +9301,8 @@ function systemPrompt(agent, hasTools, canWrite) {
       canWrite ? "You are working in a git worktree of the target repository, and that worktree is your output: every change you decide on, you apply there yourself with the write and edit tools. Nothing reads your final answer for the change itself. Work change by change \u2014 read what the edit in front of you needs, make it, verify it, move on \u2014 rather than surveying the whole repository first and writing at the end. Tool paths are relative to the worktree root." : "You are working in a git worktree of the target repository. Tool paths are relative to its root. Read what you need, and base what you report on what you actually read rather than on what a name suggests."
     );
   }
+  const briefing = skillsBriefing(skills);
+  if (briefing) parts.push(briefing.trim());
   if (agent.output.type === "json") {
     const fields = Object.entries(agent.output.schema).map(([field, type]) => `  "${field}": ${type}`).join("\n");
     parts.push(
@@ -8417,6 +9314,21 @@ A type ending in "?" is optional.`
     );
   }
   return parts.join("\n\n");
+}
+function resolveSkills(agent, nodeId2, loadSkill) {
+  if (!agent.skills.length) return [];
+  const load2 = loadSkill ?? getSkill;
+  return agent.skills.map((id) => {
+    try {
+      return load2(id);
+    } catch {
+      throw new WorkflowError(
+        "AGENT_DEFINITION_INVALID",
+        `node "${nodeId2}": agent "${agent.id}" declares skill "${id}", which is not in this team's skill library`,
+        { nodeId: nodeId2, agentId: agent.id }
+      );
+    }
+  });
 }
 function extractJson(text) {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -8571,6 +9483,7 @@ async function runWorkflow(workflow, opts) {
   const state = createState(executionId, workflow.id, opts.input ?? {}, opts.resume);
   const startNodeId = opts.resume?.startNodeId ?? workflow.entry;
   const loadAgent = opts.loadAgent ?? getAgent;
+  const loadSkill = opts.loadSkill;
   const execCommand = opts.runCommand ?? runCommand;
   const maxSteps = workflow.maxWorkflowSteps;
   const maxVisits = workflow.maxVisits;
@@ -8595,12 +9508,12 @@ async function runWorkflow(workflow, opts) {
         emit({ type: "workflow.completed", executionId, at: now(), status: node.status, terminalNodeId: node.id });
         return;
       }
-      const visit = state.visitCounts[node.id] = (state.visitCounts[node.id] ?? 0) + 1;
+      const visit2 = state.visitCounts[node.id] = (state.visitCounts[node.id] ?? 0) + 1;
       state.stepCount += 1;
-      if (maxVisits > 0 && visit > maxVisits) {
+      if (maxVisits > 0 && visit2 > maxVisits) {
         return halt(
           "LOOP_LIMIT_EXCEEDED",
-          `node "${node.id}" ran ${visit} times (max ${maxVisits})${sentBack(state, node.id)}`,
+          `node "${node.id}" ran ${visit2} times (max ${maxVisits})${sentBack(state, node.id)}`,
           node.id
         );
       }
@@ -8609,8 +9522,8 @@ async function runWorkflow(workflow, opts) {
       }
       const stepIndex = state.stepCount - 1;
       const startedAt = now();
-      emit({ type: "node.started", executionId, at: startedAt, nodeId: node.id, stepIndex, visit });
-      if (opts.workspace && !existsSync7(opts.workspace.root)) {
+      emit({ type: "node.started", executionId, at: startedAt, nodeId: node.id, stepIndex, visit: visit2 });
+      if (opts.workspace && !existsSync9(opts.workspace.root)) {
         return halt(
           "WORKSPACE_ERROR",
           `this run's worktree is gone (${opts.workspace.root}); it was removed while the run was going`,
@@ -8626,6 +9539,7 @@ async function runWorkflow(workflow, opts) {
           const res = await executeAgentNode(node, state, {
             provider: opts.provider,
             loadAgent,
+            loadSkill,
             workspace: opts.workspace ?? null,
             maxToolIterations: opts.maxToolIterations,
             claudeCode: opts.claudeCode,
@@ -8668,7 +9582,7 @@ async function runWorkflow(workflow, opts) {
         const step2 = {
           nodeId: node.id,
           stepIndex,
-          visit,
+          visit: visit2,
           startedAt,
           finishedAt: finishedAt2,
           status: "failed",
@@ -8689,7 +9603,7 @@ async function runWorkflow(workflow, opts) {
       const step = {
         nodeId: node.id,
         stepIndex,
-        visit,
+        visit: visit2,
         startedAt,
         finishedAt,
         status: "completed",
@@ -8741,12 +9655,12 @@ async function runWorkflow(workflow, opts) {
 
 // src/runtime/workspace.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync8, mkdirSync as mkdirSync7, rmSync as rmSync4 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync9, rmSync as rmSync6 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join8, resolve as resolve4 } from "node:path";
+import { join as join10, resolve as resolve4 } from "node:path";
 var MAX_LISTED_FILES = 200;
 function workspacesDir() {
-  return join8(process.env.GATE_HOME || join8(homedir4(), ".gate"), "workspaces");
+  return join10(process.env.GATE_HOME || join10(homedir4(), ".gate"), "workspaces");
 }
 function git(cwd, args) {
   try {
@@ -8758,7 +9672,7 @@ function git(cwd, args) {
 }
 function createRunWorkspace(spec, executionId) {
   const repo = resolve4(spec.repo.replace(/^~(?=\/|$)/, homedir4()));
-  if (!existsSync8(repo)) {
+  if (!existsSync10(repo)) {
     throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" does not exist`);
   }
   try {
@@ -8768,9 +9682,9 @@ function createRunWorkspace(spec, executionId) {
   }
   const baseRef = spec.baseRef ?? "HEAD";
   const branch = `${spec.branchPrefix ?? "gate/run"}-${executionId.slice(0, 8)}`;
-  const root = join8(workspacesDir(), executionId);
-  mkdirSync7(workspacesDir(), { recursive: true, mode: 448 });
-  if (existsSync8(root)) rmSync4(root, { recursive: true, force: true });
+  const root = join10(workspacesDir(), executionId);
+  mkdirSync9(workspacesDir(), { recursive: true, mode: 448 });
+  if (existsSync10(root)) rmSync6(root, { recursive: true, force: true });
   git(repo, ["worktree", "add", "-b", branch, root, baseRef]);
   return { root, repo, branch, baseRef };
 }
@@ -8786,7 +9700,7 @@ function summarizeWorkspace(ws) {
 }
 var MAX_DIFF_BYTES = 4e6;
 function readRunDiff(root) {
-  if (!existsSync8(root)) throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
+  if (!existsSync10(root)) throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
   git(root, ["add", "-N", "."]);
   const diff = git(root, ["diff"]);
   return diff.length > MAX_DIFF_BYTES ? { diff: diff.slice(0, MAX_DIFF_BYTES), truncated: true } : { diff, truncated: false };
@@ -9048,6 +9962,7 @@ async function runLocal(client, opts) {
       executionId,
       workspace,
       loadAgent: (id) => getAgent(id, scope),
+      loadSkill: (id) => getSkill(id, scope),
       // A node that runs as a spawned Claude Code talks to the same gateway
       // with the same key, so its calls are metered like every other call.
       claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
@@ -9088,6 +10003,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate login <token>                            connect this machine (one token from your dashboard)
        --url <gate-url> --key <api-key>         \u2026or the two halves separately
   gate whoami                                   who this key belongs to
+  gate version                                  what this build is
   gate pull                                     refresh your team's definitions
   gate list                                     what you can run, and what it needs
   gate agents                                   the agents your team's pipelines use
@@ -9200,12 +10116,12 @@ async function cmdLogin(args) {
   return 0;
 }
 function cmdInstall(args) {
-  const target = typeof args.flags.dir === "string" ? args.flags.dir : join9(homedir6(), ".local", "bin");
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join11(homedir6(), ".local", "bin");
   const script = process.argv[1];
-  const shim = join9(target, "gate");
+  const shim = join11(target, "gate");
   try {
-    mkdirSync8(target, { recursive: true });
-    writeFileSync6(shim, `#!/bin/sh
+    mkdirSync10(target, { recursive: true });
+    writeFileSync8(shim, `#!/bin/sh
 exec node "${script}" "$@"
 `, { mode: 493 });
   } catch (e) {
@@ -9217,6 +10133,10 @@ exec node "${script}" "$@"
     console.log(`${target} is not on your PATH \u2014 add it, or run gate as ${shim}`);
     console.log(`  echo 'export PATH="${target}:$PATH"' >> ~/.zshrc`);
   }
+  return 0;
+}
+function cmdVersion() {
+  console.log(CLI_VERSION);
   return 0;
 }
 async function cmdWhoami() {
@@ -9288,7 +10208,7 @@ async function cmdPush(args) {
   const config = readConfig();
   await teamOf(client, config);
   const items = files.map((file) => {
-    const name = basename(file);
+    const name = basename2(file);
     const kind = name.endsWith(".md") ? "agent" : "workflow";
     if (!/\.(md|ya?ml)$/.test(name)) die(`${file}: expected a .md agent or a .yaml workflow`);
     return { kind, id: name.replace(/\.(md|ya?ml)$/, ""), file };
@@ -9298,7 +10218,7 @@ async function cmdPush(args) {
   for (const item of items) {
     let source;
     try {
-      source = readFileSync6(item.file, "utf8");
+      source = readFileSync8(item.file, "utf8");
     } catch (e) {
       console.error(`${item.file}: ${e.message}`);
       failed++;
@@ -9487,6 +10407,10 @@ async function main(argv) {
         return cmdInstall(args);
       case "login":
         return await cmdLogin(args);
+      case "version":
+      case "--version":
+      case "-v":
+        return cmdVersion();
       case "whoami":
         return await cmdWhoami();
       case "pull":

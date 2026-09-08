@@ -46,6 +46,26 @@ interface KeyRow {
   lastHost: string | null;
 }
 
+/**
+ * Every management route answers in JSON, so anything else — the dashboard's
+ * 404 page, the dev server's error page, the login page after a session has
+ * expired — arrives here as markup. Handing that to res.json() raises
+ * "Unexpected token '<'", which names neither the call that failed nor the
+ * reason; the path and the status do.
+ */
+async function request(path: string, init?: RequestInit): Promise<any> {
+  const res = await fetch(path, init);
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`${path} answered with a web page, not JSON (HTTP ${res.status})`);
+  }
+  if (!res.ok) throw new Error(data?.error ?? `${path} failed (HTTP ${res.status})`);
+  return data;
+}
+
 export default function TeamPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -60,14 +80,16 @@ export default function TeamPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [t, u, k] = await Promise.all([
-      fetch("/api/teams").then((r) => r.json()),
-      fetch("/api/users").then((r) => r.json()),
-      fetch("/api/keys").then((r) => r.json()),
-    ]);
-    setTeams(t.teams ?? []);
-    setUsers(u.users ?? []);
-    setKeys(k.keys ?? []);
+    try {
+      const [t, u, k] = await Promise.all([request("/api/teams"), request("/api/users"), request("/api/keys")]);
+      setTeams(t.teams ?? []);
+      setUsers(u.users ?? []);
+      setKeys(k.keys ?? []);
+    } catch (e) {
+      // A reload that fails silently leaves the page showing nobody, which
+      // reads as an empty team rather than as a gate that did not answer.
+      setError((e as Error).message);
+    }
   }, []);
 
   useEffect(() => {
@@ -75,14 +97,11 @@ export default function TeamPage() {
   }, [load]);
 
   async function post(url: string, body: unknown): Promise<any> {
-    const res = await fetch(url, {
+    return request(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? "request failed");
-    return data;
   }
 
   async function addTeam() {
@@ -124,7 +143,12 @@ export default function TeamPage() {
   }
 
   async function revoke(id: string) {
-    await fetch(`/api/keys/${id}`, { method: "PATCH" });
+    setError(null);
+    try {
+      await request(`/api/keys/${id}`, { method: "PATCH" });
+    } catch (e) {
+      setError((e as Error).message);
+    }
     await load();
   }
 
@@ -136,12 +160,11 @@ export default function TeamPage() {
   async function moveUser(id: string, nextTeam: string) {
     setError(null);
     try {
-      const res = await fetch(`/api/users/${id}`, {
+      await request(`/api/users/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teamId: nextTeam }),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? "could not move");
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -149,7 +172,12 @@ export default function TeamPage() {
   }
 
   async function removeUser(id: string) {
-    await fetch(`/api/users/${id}`, { method: "DELETE" });
+    setError(null);
+    try {
+      await request(`/api/users/${id}`, { method: "DELETE" });
+    } catch (e) {
+      setError((e as Error).message);
+    }
     await load();
   }
 

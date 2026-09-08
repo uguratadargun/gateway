@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getDb } from "@/lib/db";
@@ -326,10 +326,7 @@ export function importSkills(sourceId: string, sourceSkills: string[], scope: De
     // self-consistent wherever it is later handed to a harness.
     const file = join(target, "SKILL.md");
     const normalized = withSkillName(readFileSync(file, "utf8"), skill.id);
-    if (normalized !== readFileSync(file, "utf8")) {
-      const { writeFileSync } = require("node:fs") as typeof import("node:fs");
-      writeFileSync(file, normalized, { mode: 0o600 });
-    }
+    if (normalized !== readFileSync(file, "utf8")) writeFileSync(file, normalized, { mode: 0o600 });
     const origin: SkillOrigin = {
       sourceId,
       sourceSkill: wanted,

@@ -5,6 +5,8 @@ import type { AgentDefinition } from "@/agents/types";
 import { WorkflowError } from "@/runtime/errors";
 import type { NodeUsageRecord, ToolCallRecord } from "@/runtime/state";
 import type { RunWorkspace } from "@/runtime/workspace";
+import { buildSkillPlugin, skillsDirective } from "@/skills/inject";
+import type { SkillDefinition } from "@/skills/types";
 
 import { outputCorrection, parseOutput } from "./agent";
 
@@ -42,6 +44,13 @@ function gatewayUrl(override?: string): string {
 }
 
 export interface ClaudeCodeDeps {
+  /**
+   * The skills the agent declared, already resolved. They are handed to the
+   * child as a plugin rather than pasted into its prompt: this harness knows
+   * what a skill is, loads it with its own files beside it, and opens it when
+   * it is due instead of carrying the whole text every round.
+   */
+  skills?: SkillDefinition[];
   workspace: RunWorkspace | null;
   onToolCall?: (call: ToolCallRecord) => void;
   signal?: AbortSignal;
@@ -139,6 +148,14 @@ export async function runClaudeCodeNode(
     );
   }
 
+  const skills = deps.skills ?? [];
+  /**
+   * Assembled before the first turn and reused by a correction round: building
+   * it per turn would copy the same files again for a session that already has
+   * the plugin loaded.
+   */
+  const skillPlugin = buildSkillPlugin(skills);
+
   const toolCalls: ToolCallRecord[] = [];
   const usage: NodeUsageRecord = {
     model: agent.model,
@@ -183,17 +200,24 @@ export async function runClaudeCodeNode(
     ];
     if (agent.effort) args.push("--effort", agent.effort);
     if (resume) args.push("--resume", resume);
-    // The node contract — "answer with exactly this JSON" — is gate's, not the
-    // harness's, so it rides as an appended system prompt rather than the user turn.
+    // Built once per set of skills and reused; null when the agent named none.
+    if (skillPlugin) args.push("--plugin-dir", skillPlugin);
+    // What gate requires of the node, as opposed to what the harness already
+    // knows: which skills this agent works by, and the shape of its answer.
+    // Both ride as an appended system prompt rather than as the user turn, and
+    // both are re-sent on a correction round, which resumes a session whose
+    // system prompt is fixed at the turn it was given.
+    const appended: string[] = [];
+    if (skills.length) appended.push(skillsDirective(skills));
     if (agent.output.type === "json") {
       const fields = Object.entries(agent.output.schema)
         .map(([field, type]) => `  "${field}": ${type}`)
         .join("\n");
-      args.push(
-        "--append-system-prompt",
+      appended.push(
         `When you have finished the work, your final message must be a single JSON object and nothing else — no prose, no code fence. Fields:\n{\n${fields}\n}\nA type ending in "?" is optional.`,
       );
     }
+    if (appended.length) args.push("--append-system-prompt", appended.join("\n\n"));
 
     const spawnCli = deps.spawnCli ?? spawn;
     const child = spawnCli("claude", args, {

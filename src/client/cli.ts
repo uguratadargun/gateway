@@ -29,6 +29,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate login <token>                            connect this machine (one token from your dashboard)
        --url <gate-url> --key <api-key>         …or the two halves separately
   gate whoami                                   who this key belongs to
+  gate version                                  what this build is
   gate pull                                     refresh your team's definitions
   gate list                                     what you can run, and what it needs
   gate agents                                   the agents your team's pipelines use
@@ -219,6 +220,12 @@ function cmdInstall(args: Args): number {
     console.log(`${target} is not on your PATH — add it, or run gate as ${shim}`);
     console.log(`  echo 'export PATH="${target}:$PATH"' >> ~/.zshrc`);
   }
+  return 0;
+}
+
+/** This build, without needing a connection — what `/gate:update` reports. */
+function cmdVersion(): number {
+  console.log(CLI_VERSION);
   return 0;
 }
 
@@ -570,6 +577,10 @@ export async function main(argv: string[]): Promise<number> {
         return cmdInstall(args);
       case "login":
         return await cmdLogin(args);
+      case "version":
+      case "--version":
+      case "-v":
+        return cmdVersion();
       case "whoami":
         return await cmdWhoami();
       case "pull":

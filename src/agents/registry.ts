@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { join } from "node:path";
 
 import { ownScope, teamScope, type DefinitionScope } from "@/lib/def-root";
+import { inheritedSkills, listSkills, skillExists } from "@/skills/registry";
 
 import { AgentDefinitionError, parseAgent } from "./loader";
 import type { AgentDefinition } from "./types";
@@ -101,10 +102,34 @@ export function inheritedAgents(scope: DefinitionScope = teamScope()): AgentDefi
   return listAgents(scope.fallback).agents.filter((a) => !own.has(a.id));
 }
 
+/**
+ * The skills an agent names must be ones this scope can actually resolve —
+ * its own or the ones it inherits.
+ *
+ * Checked here and not in the loader because it is the one piece of an agent
+ * file whose validity depends on what else is on disk, and the loader is
+ * deliberately filesystem-free. Checked on save rather than at run time
+ * because a typo found by the editor costs a second, and the same typo found
+ * by the engine costs whatever the run had already spent getting to that node.
+ */
+function assertSkillsResolve(def: AgentDefinition, scope: DefinitionScope): void {
+  const missing = def.skills.filter((s) => !skillExists(s, scope));
+  if (!missing.length) return;
+  const known = listSkills(scope).skills.map((s) => s.id);
+  const inherited = inheritedSkills(scope).map((s) => s.id);
+  const available = [...new Set([...known, ...inherited])].sort();
+  throw new AgentDefinitionError(
+    `unknown skill${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}` +
+      (available.length ? ` (available: ${available.join(", ")})` : " (this team has no skills yet — import some first)"),
+    def.id,
+  );
+}
+
 /** Validate then write. An invalid definition never reaches disk. */
 export function saveAgent(id: string, raw: string, scope: DefinitionScope = teamScope()): AgentDefinition {
   const file = pathFor(id, scope);
-  parseAgent(id, raw, { sourcePath: file, updatedAt: Date.now() });
+  const parsed = parseAgent(id, raw, { sourcePath: file, updatedAt: Date.now() });
+  assertSkillsResolve(parsed, scope);
   const dir = agentsDir(scope);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(file, raw.endsWith("\n") ? raw : `${raw}\n`, { mode: 0o600 });

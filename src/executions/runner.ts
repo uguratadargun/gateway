@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 import { getAgent } from "@/agents/registry";
+import { getSkill } from "@/skills/registry";
 import { publishWorkflowEvent } from "@/events/bus";
 import { GateModelProvider } from "@/providers/gate-provider";
 import { runWorkflow, type RunWorkflowOptions } from "@/runtime/engine";
@@ -224,6 +225,7 @@ async function launch(
       executionId,
       workspace,
       loadAgent: (id) => getAgent(id, scope),
+      loadSkill: (id) => getSkill(id, scope),
       emit: publishWorkflowEvent,
       onStep: (step) => recordStep(executionId, step),
       signal: controller.signal,

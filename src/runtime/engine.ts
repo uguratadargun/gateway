@@ -7,6 +7,7 @@ import type { AgentDefinition } from "@/agents/types";
 import type { EventSink, WorkflowEvent } from "@/events/types";
 import type { ModelProvider } from "@/providers/types";
 import { costForUsage, tierOf } from "@/lib/pricing";
+import type { SkillDefinition } from "@/skills/types";
 import { findNode, type WorkflowDefinition, type WorkflowNode } from "@/workflows/types";
 
 import { WorkflowError, type WorkflowErrorCode } from "./errors";
@@ -43,6 +44,8 @@ export interface RunWorkflowOptions {
   emit?: EventSink;
   /** Injectable for tests; defaults to the file-backed agent registry. */
   loadAgent?: (id: string) => AgentDefinition;
+  /** The skill library an agent's declared skills resolve in. Same reason. */
+  loadSkill?: (id: string) => SkillDefinition;
   runCommand?: CommandRunner;
   /** The run's git worktree. Without one, agents get no tools. */
   workspace?: RunWorkspace | null;
@@ -132,6 +135,7 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
   const state = createState(executionId, workflow.id, opts.input ?? {}, opts.resume);
   const startNodeId = opts.resume?.startNodeId ?? workflow.entry;
   const loadAgent = opts.loadAgent ?? getAgent;
+  const loadSkill = opts.loadSkill;
   const execCommand = opts.runCommand ?? runCommand;
   const maxSteps = workflow.maxWorkflowSteps;
   const maxVisits = workflow.maxVisits;
@@ -212,6 +216,7 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
           const res = await executeAgentNode(node, state, {
             provider: opts.provider,
             loadAgent,
+            loadSkill,
             workspace: opts.workspace ?? null,
             maxToolIterations: opts.maxToolIterations,
             claudeCode: opts.claudeCode,

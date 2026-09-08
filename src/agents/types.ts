@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { EFFORTS, type Effort } from "@/lib/reasoning";
+import { SKILL_ID_RE } from "@/skills/types";
 
 /**
  * Agent definitions are Markdown files: YAML frontmatter describes how the
@@ -54,6 +55,18 @@ export const agentFrontmatterSchema = z
      * (`Read`, `Edit`, `Grep`, `Bash`, …).
      */
     tools: z.array(z.string().min(1).max(64)).max(50).default([]),
+    /**
+     * Skills this agent works by, named as ids from the team's skill library.
+     *
+     * Not a hint: an agent that declares one is told to follow it, every run.
+     * A spawned Claude Code gets them as a plugin, so a skill loads with its
+     * own files beside it and the harness opens it when it is due; gate's own
+     * loop has nowhere to put a file and folds the prose into the system
+     * prompt instead. Either way the skill's instructions reach the model,
+     * which is what makes "the planner brainstorms" a property of the
+     * definition rather than of how the prompt happened to be worded.
+     */
+    skills: z.array(z.string().regex(SKILL_ID_RE, "use lowercase letters, digits and dashes")).max(20).default([]),
     /**
      * Wall-clock cap on one visit to this agent's node — every tool round it
      * takes counts against it, not each model call separately. Left out, it is

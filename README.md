@@ -699,6 +699,7 @@ gate cancel <execution-id>      # ask one to stop, wherever it is running
 gate pull                       # refresh the mirror by hand (every command does it anyway)
 gate push <file…>               # save designed definitions to your team (needs an author key)
 gate reset                      # disconnect this machine and clear what it pulled
+gate version                    # what this build is
 ```
 
 What travels where:
@@ -745,7 +746,10 @@ them needs anybody to do anything.
 - *The server* is your deploy. Schema migrations are idempotent on open, and
   the one-time move of `~/.gate/agents` under `teams/default/` happens on the
   first read.
-- *The CLI* is `/plugin update gate@gateway`, per machine. **Anything shipped
+- *The CLI* is `/gate:update`, per machine — it refreshes the marketplace and
+  re-installs the plugin, then asks for a restart, because an update is fetched
+  at once but loaded at startup. (`/plugin update gate@gateway` is the same
+  thing by hand.) **Anything shipped
   under `plugins/` or `src/client/` needs a version bump** — installs are cached
   by version (`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>`), so a
   plugin whose contents changed while its number did not is one `plugin update`

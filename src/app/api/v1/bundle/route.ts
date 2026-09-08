@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import { NextResponse } from "next/server";
 
@@ -7,12 +9,49 @@ import { inheritedAgents, listAgents, readAgentSource } from "@/agents/registry"
 import { getAgent } from "@/agents/registry";
 import { requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { requiredRunInputs } from "@/workflows/inputs";
+import { inheritedSkills, listSkills } from "@/skills/registry";
+import type { SkillDefinition } from "@/skills/types";
 import { inheritedWorkflows, listWorkflows, readWorkflowSource } from "@/workflows/registry";
 
 export const runtime = "nodejs";
 
 function sha(source: string): string {
   return createHash("sha256").update(source).digest("hex").slice(0, 16);
+}
+
+/**
+ * A skill is a directory, so it travels as its files rather than as one
+ * source string.
+ *
+ * Base64 and not text: a skill may legitimately ship an image or a compiled
+ * helper beside its prose, and a mirror that quietly corrupted those would
+ * produce a skill that reads correctly and does not work. Anything past the
+ * cap is left out and named, because a skill missing a file it points at
+ * should say so here rather than confuse an agent later.
+ */
+const MAX_SKILL_FILE_BYTES = 512 * 1024;
+
+function bundleSkill(skill: SkillDefinition): {
+  packed: { id: string; name: string; files: Array<{ path: string; base64: string }>; sha: string };
+  skipped: string[];
+} {
+  const files: Array<{ path: string; base64: string }> = [];
+  const skipped: string[] = [];
+  for (const rel of ["SKILL.md", ...skill.resources]) {
+    const full = join(skill.dir, rel);
+    try {
+      if (statSync(full).size > MAX_SKILL_FILE_BYTES) {
+        skipped.push(rel);
+        continue;
+      }
+      files.push({ path: rel, base64: readFileSync(full).toString("base64") });
+    } catch {
+      skipped.push(rel);
+    }
+  }
+  const digest = createHash("sha256");
+  for (const f of files) digest.update(`${f.path}:${f.base64}`);
+  return { packed: { id: skill.id, name: skill.name, files, sha: digest.digest("hex").slice(0, 16) }, skipped };
 }
 
 /**
@@ -44,6 +83,17 @@ export async function GET(req: Request) {
     return { id: a.id, name: a.name, source, sha: sha(source) };
   });
 
+  // Skills ride along for the same reason agents do: a node that names one is
+  // a node that cannot run correctly without it, wherever it runs.
+  const skillErrors = [...listSkills(scope).errors];
+  const skills = [...listSkills(scope).skills, ...inheritedSkills(scope)].map((skill) => {
+    const { packed, skipped } = bundleSkill(skill);
+    if (skipped.length) {
+      skillErrors.push({ id: skill.id, message: `not mirrored (too large or unreadable): ${skipped.join(", ")}` });
+    }
+    return packed;
+  });
+
   const { workflows: own, errors } = listWorkflows(scope);
   const workflows = [...own, ...inheritedWorkflows(scope)];
   const bundled = workflows.map((wf) => {
@@ -61,7 +111,13 @@ export async function GET(req: Request) {
   });
 
   const hash = createHash("sha256")
-    .update([...agents.map((a) => `a:${a.id}:${a.sha}`), ...bundled.map((w) => `w:${w.id}:${w.sha}`).sort()].join("\n"))
+    .update(
+      [
+        ...agents.map((a) => `a:${a.id}:${a.sha}`),
+        ...skills.map((s) => `s:${s.id}:${s.sha}`),
+        ...bundled.map((w) => `w:${w.id}:${w.sha}`).sort(),
+      ].join("\n"),
+    )
     .digest("hex")
     .slice(0, 16);
 
@@ -71,7 +127,7 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json(
-    { team: auth.teamId, hash, agents, workflows: bundled, errors },
+    { team: auth.teamId, hash, agents, skills, workflows: bundled, errors: [...errors, ...skillErrors] },
     { headers: { ETag: etag } },
   );
 }

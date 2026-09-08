@@ -4,6 +4,9 @@ import type { ModelProvider, ModelProviderMessage, ProviderContentBlock, ToolUse
 import { WorkflowError } from "@/runtime/errors";
 import { resolveInputs, type NodeUsageRecord, type ToolCallRecord, type WorkflowState } from "@/runtime/state";
 import { getTool, toolsFor } from "@/runtime/tools/registry";
+import { skillsBriefing } from "@/skills/inject";
+import { getSkill } from "@/skills/registry";
+import type { SkillDefinition } from "@/skills/types";
 import { ToolError, type ToolContext } from "@/runtime/tools/types";
 import type { RunWorkspace } from "@/runtime/workspace";
 import type { WorkflowNode } from "@/workflows/types";
@@ -83,6 +86,12 @@ export function outputCorrection(message: string): string {
 export interface AgentExecutorDeps {
   provider: ModelProvider;
   loadAgent(id: string): AgentDefinition;
+  /**
+   * Resolves a skill an agent declared. Injectable and scope-bound for the same
+   * reason `loadAgent` is: which library a name resolves in depends on whose
+   * run this is.
+   */
+  loadSkill?: (id: string) => SkillDefinition;
   /** Present only when the workflow declares one; without it there are no tools. */
   workspace?: RunWorkspace | null;
   onToolCall?: (call: ToolCallRecord) => void;
@@ -124,6 +133,8 @@ export async function executeAgentNode(
     throw new WorkflowError("AGENT_DEFINITION_INVALID", `node "${node.id}": ${message}`, { nodeId: node.id, agentId: agent.id });
   }
 
+  const skills = resolveSkills(agent, node.id, deps.loadSkill);
+
   const workspace = deps.workspace ?? null;
   // `?? default` and not `|| default`: an explicit 0 means no deadline at all.
   const nodeTimeoutMs = agent.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
@@ -137,6 +148,7 @@ export async function executeAgentNode(
       prompt,
       node.id,
       {
+        skills,
         workspace,
         onToolCall: deps.onToolCall,
         signal: deps.signal,
@@ -171,7 +183,7 @@ export async function executeAgentNode(
       }
       const call = deps.provider.execute({
         model: agent.model,
-        system: systemPrompt(agent, tools.length > 0, canWrite),
+        system: systemPrompt(agent, tools.length > 0, canWrite, skills),
         messages,
         effort: agent.effort,
         maxTokens: agent.maxTokens,
@@ -269,7 +281,12 @@ function reconNudge(rounds: number, toolCallCount: number): string | null {
   );
 }
 
-export function systemPrompt(agent: AgentDefinition, hasTools: boolean, canWrite: boolean): string {
+export function systemPrompt(
+  agent: AgentDefinition,
+  hasTools: boolean,
+  canWrite: boolean,
+  skills: SkillDefinition[] = [],
+): string {
   const parts = [`You are the "${agent.name}" agent in an automated workflow.`];
   if (agent.description) parts.push(agent.description);
   if (hasTools) {
@@ -284,6 +301,10 @@ export function systemPrompt(agent: AgentDefinition, hasTools: boolean, canWrite
             "what you need, and base what you report on what you actually read rather than on what a name suggests.",
     );
   }
+  // Before the output contract, never after it: the shape of the final message
+  // is the last thing a model should have been told.
+  const briefing = skillsBriefing(skills);
+  if (briefing) parts.push(briefing.trim());
   if (agent.output.type === "json") {
     const fields = Object.entries(agent.output.schema)
       .map(([field, type]) => `  "${field}": ${type}`)
@@ -293,6 +314,36 @@ export function systemPrompt(agent: AgentDefinition, hasTools: boolean, canWrite
     );
   }
   return parts.join("\n\n");
+}
+
+/**
+ * The skill definitions an agent named, or a failure that says which one is
+ * gone.
+ *
+ * A skill can disappear between the save that validated it and the run that
+ * needs it — deleted from the library, or a team's own copy removed so the
+ * name no longer resolves. Failing here with the name is the difference
+ * between a node that says what is missing and one that quietly runs without
+ * the process it was defined to follow.
+ */
+function resolveSkills(
+  agent: AgentDefinition,
+  nodeId: string,
+  loadSkill: ((id: string) => SkillDefinition) | undefined,
+): SkillDefinition[] {
+  if (!agent.skills.length) return [];
+  const load = loadSkill ?? getSkill;
+  return agent.skills.map((id) => {
+    try {
+      return load(id);
+    } catch {
+      throw new WorkflowError(
+        "AGENT_DEFINITION_INVALID",
+        `node "${nodeId}": agent "${agent.id}" declares skill "${id}", which is not in this team's skill library`,
+        { nodeId, agentId: agent.id },
+      );
+    }
+  });
 }
 
 /** Models add fences and commentary even when told not to; recover the object. */

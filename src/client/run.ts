@@ -3,6 +3,7 @@ import { homedir, hostname } from "node:os";
 import { resolve } from "node:path";
 
 import { getAgent } from "@/agents/registry";
+import { getSkill } from "@/skills/registry";
 import type { WorkflowEvent } from "@/events/types";
 import { runWorkflow } from "@/runtime/engine";
 import { WorkflowError } from "@/runtime/errors";
@@ -152,6 +153,7 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
       executionId,
       workspace,
       loadAgent: (id) => getAgent(id, scope),
+      loadSkill: (id) => getSkill(id, scope),
       // A node that runs as a spawned Claude Code talks to the same gateway
       // with the same key, so its calls are metered like every other call.
       claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
