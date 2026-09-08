@@ -515,6 +515,23 @@ still there for hand-editing, and it refuses to open over unsaved graph edits.
 Node positions are stored separately from the definition, so arranging the
 canvas never touches the workflow file.
 
+### Which team a definition belongs to
+
+Every agent and workflow belongs to exactly one team — that is what makes "this
+team's workflows" a set anyone can reason about, and what a key resolves to
+when a client pulls. `/agents` and `/workflows` carry a team switcher when
+there is more than one team, and the choice rides in the URL, so a link to
+another team's pipeline is a link rather than a screenshot.
+
+Assigning one elsewhere is therefore a **move**, offered on the same selection
+bar that deletes: tick the rows, pick a team. A workflow is written into the
+destination through the same validation a hand-edited file gets, so one whose
+agents are still behind is refused there — with that reason — and stays where
+it works, rather than landing broken and disappearing from where it ran. Move
+the agents first; the confirmation says so. An agent that leaves workflows
+behind naming it is not refused, because it is your file and deleting one has
+never been refused either, but the workflows that will stop loading are named.
+
 ### Clearing things out
 
 `/agents`, `/workflows` and `/executions` select. A row shows its checkbox on

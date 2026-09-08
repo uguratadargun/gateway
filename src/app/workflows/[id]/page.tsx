@@ -12,6 +12,7 @@ import {
   type ApiWorkflowNode,
   type NodeKind,
 } from "@/components/workflow-graph";
+import { useTeamScope, withTeam } from "@/components/team-picker";
 import { WorkflowNodeEditor } from "@/components/workflow-node-editor";
 import { RoutingSummary } from "@/components/workflow-routing";
 import { Button } from "@/components/ui/button";
@@ -117,9 +118,11 @@ export default function WorkflowDetailPage() {
   const [error, setError] = useState<string | null>(null);
   /** While the canvas is full screen the page chrome is covered, so it moves onto the canvas. */
   const [canvasFull, setCanvasFull] = useState(false);
+  // Which team's copy of this id, carried in from the list page.
+  const { team, ready } = useTeamScope();
 
   const load = useCallback(async () => {
-    const r = await fetch(`/api/workflows/${id}`);
+    const r = await fetch(withTeam(`/api/workflows/${id}`, team));
     const data = await r.json();
     if (!r.ok) {
       setError(data.error);
@@ -137,18 +140,19 @@ export default function WorkflowDetailPage() {
         current.trim() === "{}" ? JSON.stringify(Object.fromEntries(required.map((k) => [k, ""])), null, 2) : current,
       );
     }
-  }, [id]);
+  }, [id, team]);
 
   useEffect(() => {
+    if (!ready) return;
     load();
-    fetch("/api/agents")
+    fetch(withTeam("/api/agents", team))
       .then((r) => r.json())
       .then((d) => setAgents((d.agents ?? []).map((a: { id: string }) => a.id)))
       .catch(() => {});
-  }, [load]);
+  }, [load, ready, team]);
 
   async function save() {
-    const r = await fetch(`/api/workflows/${id}`, {
+    const r = await fetch(withTeam(`/api/workflows/${id}`, team), {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ source }),
@@ -167,7 +171,7 @@ export default function WorkflowDetailPage() {
   /** The graph editor writes the file too: the server serializes and validates it. */
   async function saveGraph() {
     if (!draft) return;
-    const r = await fetch(`/api/workflows/${id}`, {
+    const r = await fetch(withTeam(`/api/workflows/${id}`, team), {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ graph: draft }),
@@ -183,8 +187,8 @@ export default function WorkflowDetailPage() {
 
   async function remove() {
     if (!confirm(`Delete workflow "${id}"? The file is removed from ~/.gate/workflows.`)) return;
-    await fetch(`/api/workflows/${id}`, { method: "DELETE" });
-    router.push("/workflows");
+    await fetch(withTeam(`/api/workflows/${id}`, team), { method: "DELETE" });
+    router.push(withTeam("/workflows", team));
   }
 
   async function run() {
@@ -195,7 +199,7 @@ export default function WorkflowDetailPage() {
       setError("run input must be valid JSON");
       return;
     }
-    const r = await fetch("/api/executions", {
+    const r = await fetch(withTeam("/api/executions", team), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ workflowId: id, input: parsed }),
@@ -211,7 +215,7 @@ export default function WorkflowDetailPage() {
   const persistLayout = useCallback(
     (next: WorkflowLayout) => {
       setLayout(next);
-      fetch(`/api/workflows/${id}/layout`, {
+      fetch(withTeam(`/api/workflows/${id}/layout`, team), {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(next),
@@ -412,7 +416,7 @@ export default function WorkflowDetailPage() {
     <main className="mx-auto max-w-[1500px] space-y-4 px-6 py-8">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link href="/workflows">
+          <Link href={withTeam("/workflows", team)}>
             <Button variant="ghost" size="icon" aria-label="Back">
               <ArrowLeft />
             </Button>

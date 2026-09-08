@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, RefreshCw } from "lucide-react";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SelectHandle, SelectionBar, deleteMany, rowClass, useSelection } from "@/components/bulk-select";
+import { TeamPicker, moveMany, useTeamScope, withTeam } from "@/components/team-picker";
 
 interface WorkflowSummary {
   id: string;
@@ -47,21 +48,22 @@ export default function WorkflowsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const selection = useSelection(workflows.map((w) => w.id));
+  const { team, setTeam, teams, ready } = useTeamScope();
 
-  async function load() {
-    const r = await fetch("/api/workflows");
+  const load = useCallback(async () => {
+    const r = await fetch(withTeam("/api/workflows", team));
     const data = await r.json();
     setWorkflows(data.workflows);
     setErrors(data.errors);
-  }
+  }, [team]);
   useEffect(() => {
-    load();
-  }, []);
+    if (ready) void load();
+  }, [ready, load]);
 
   async function create() {
     const id = newId.trim();
     if (!id) return;
-    const r = await fetch("/api/workflows", {
+    const r = await fetch(withTeam("/api/workflows", team), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id, source: TEMPLATE(id) }),
@@ -70,7 +72,33 @@ export default function WorkflowsPage() {
       setError((await r.json()).error ?? "could not create workflow");
       return;
     }
-    router.push(`/workflows/${id}`);
+    router.push(withTeam(`/workflows/${id}`, team));
+  }
+
+  /**
+   * Hands the selected workflows to another team. A workflow is written into
+   * the destination through the same validation a hand-edited file gets, so
+   * one whose agents are still behind is refused there and stays here — named,
+   * rather than moved and quietly broken.
+   */
+  async function moveSelected(to: string) {
+    const ids = [...selection.selected];
+    if (!ids.length) return;
+    const target = teams.find((t) => t.id === to)?.name ?? to;
+    if (
+      !confirm(
+        `Move ${ids.length} workflow${ids.length > 1 ? "s" : ""} to ${target}? ` +
+          `Each one needs the agents it names to be in ${target} too — move those first if they are not.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    const failed = await moveMany((id) => withTeam(`/api/workflows/${id}/move`, team), ids, to);
+    setBusy(false);
+    setError(failed.length ? failed.map((f) => `${f.id}: ${f.error}`).join("; ") : null);
+    selection.clear();
+    await load();
   }
 
   async function removeSelected() {
@@ -86,7 +114,7 @@ export default function WorkflowsPage() {
       return;
     }
     setBusy(true);
-    const failed = await deleteMany((id) => `/api/workflows/${id}`, ids);
+    const failed = await deleteMany((id) => withTeam(`/api/workflows/${id}`, team), ids);
     setBusy(false);
     setError(failed.length ? `could not delete ${failed.join(", ")}` : null);
     selection.clear();
@@ -99,12 +127,16 @@ export default function WorkflowsPage() {
         <div>
           <h1 className="text-lg font-semibold">Workflows</h1>
           <p className="text-sm text-muted-foreground">
-            Declarative agent pipelines in ~/.gate/workflows. The engine picks the next node, never the model.
+            Declarative agent pipelines in ~/.gate/teams/{team}/workflows. The engine picks the next node, never the
+            model.
           </p>
         </div>
-        <Button variant="ghost" size="icon" onClick={load} aria-label="Refresh">
-          <RefreshCw />
-        </Button>
+        <div className="flex items-center gap-2">
+          <TeamPicker team={team} teams={teams} onChange={setTeam} />
+          <Button variant="ghost" size="icon" onClick={load} aria-label="Refresh">
+            <RefreshCw />
+          </Button>
+        </div>
       </header>
 
       <div className="flex items-center gap-2">
@@ -146,7 +178,7 @@ export default function WorkflowsPage() {
                 onChange={() => selection.toggle(w.id)}
                 label={`Select ${w.id}`}
               />
-              <Link href={`/workflows/${w.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+              <Link href={withTeam(`/workflows/${w.id}`, team)} className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{w.name}</div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -168,6 +200,7 @@ export default function WorkflowsPage() {
             noun="workflows"
             onDelete={removeSelected}
             busy={busy}
+            moveTo={{ teams, current: team, onMove: moveSelected }}
           />
         </div>
       )}

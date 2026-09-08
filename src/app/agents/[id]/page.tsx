@@ -7,6 +7,7 @@ import { ArrowLeft, Save, Trash2 } from "lucide-react";
 
 import { formFromAgent, frontmatterFrom, type AgentEditorOptions, type AgentForm } from "@/agents/form";
 import { AgentEditor, PromptEditor } from "@/components/agent-editor";
+import { useTeamScope, withTeam } from "@/components/team-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -50,6 +51,9 @@ export default function AgentDetailPage() {
   const [mode, setMode] = useState<"form" | "markdown">("form");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Which team's copy of this id. It rides in the URL from the list page, so a
+  // link to another team's agent opens that team's agent.
+  const { team, ready } = useTeamScope();
 
   const settle = useCallback((a: AgentDetail, src: string) => {
     const next = formFromAgent(a);
@@ -62,8 +66,9 @@ export default function AgentDetailPage() {
   }, []);
 
   useEffect(() => {
+    if (!ready) return;
     (async () => {
-      const r = await fetch(`/api/agents/${id}`);
+      const r = await fetch(withTeam(`/api/agents/${id}`, team));
       const data = await r.json();
       if (!r.ok) {
         setError(data.error);
@@ -72,7 +77,7 @@ export default function AgentDetailPage() {
       setOptions(data.options);
       settle(data.agent, data.source);
     })();
-  }, [id, settle]);
+  }, [id, settle, team, ready]);
 
   const dirty = useMemo(() => {
     if (mode === "markdown") return source !== savedSource;
@@ -84,7 +89,7 @@ export default function AgentDetailPage() {
     if (!form) return;
     setBusy(true);
     const body = mode === "markdown" ? { source } : { frontmatter: frontmatterFrom(form), prompt };
-    const r = await fetch(`/api/agents/${id}`, {
+    const r = await fetch(withTeam(`/api/agents/${id}`, team), {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -115,15 +120,15 @@ export default function AgentDetailPage() {
 
   async function remove() {
     if (!confirm(`Delete agent "${id}"? The file is removed from ~/.gate/agents.`)) return;
-    await fetch(`/api/agents/${id}`, { method: "DELETE" });
-    router.push("/agents");
+    await fetch(withTeam(`/api/agents/${id}`, team), { method: "DELETE" });
+    router.push(withTeam("/agents", team));
   }
 
   return (
     <main className="mx-auto max-w-6xl space-y-4 px-6 py-8">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link href="/agents">
+          <Link href={withTeam("/agents", team)}>
             <Button variant="ghost" size="icon" aria-label="Back">
               <ArrowLeft />
             </Button>

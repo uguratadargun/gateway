@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, RefreshCw } from "lucide-react";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SelectHandle, SelectionBar, deleteMany, rowClass, useSelection } from "@/components/bulk-select";
+import { TeamPicker, moveMany, useTeamScope, withTeam } from "@/components/team-picker";
 
 import { newAgentTemplate } from "@/agents/new-agent-template";
 import { agentUsage } from "@/workflows/usage";
@@ -36,26 +37,27 @@ export default function AgentsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const selection = useSelection(agents.map((a) => a.id));
+  const { team, setTeam, teams, ready } = useTeamScope();
 
-  async function load() {
-    const r = await fetch("/api/agents");
+  const load = useCallback(async () => {
+    const r = await fetch(withTeam("/api/agents", team));
     const data = await r.json();
     setAgents(data.agents);
     setErrors(data.errors);
     // Which workflows depend on these agents, so deleting one is a warned
     // decision rather than a pipeline that stops parsing later.
-    const wr = await fetch("/api/workflows");
+    const wr = await fetch(withTeam("/api/workflows", team));
     const wd = await wr.json();
     setUsage(agentUsage((wd.workflows ?? []) as Array<Pick<WorkflowDefinition, "id" | "nodes">>));
-  }
+  }, [team]);
   useEffect(() => {
-    load();
-  }, []);
+    if (ready) void load();
+  }, [ready, load]);
 
   async function create() {
     const id = newId.trim();
     if (!id) return;
-    const r = await fetch("/api/agents", {
+    const r = await fetch(withTeam("/api/agents", team), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id, source: newAgentTemplate(id) }),
@@ -64,7 +66,32 @@ export default function AgentsPage() {
       setError((await r.json()).error ?? "could not create agent");
       return;
     }
-    router.push(`/agents/${id}`);
+    router.push(withTeam(`/agents/${id}`, team));
+  }
+
+  /**
+   * Hands the selected agents to another team. An agent that leaves behind
+   * workflows naming it is not refused — it is your file — but the workflows
+   * that will stop loading are named, which is the same bargain deleting one
+   * already offers.
+   */
+  async function moveSelected(to: string) {
+    const ids = [...selection.selected];
+    if (!ids.length) return;
+    const target = teams.find((t) => t.id === to)?.name ?? to;
+    const inUse = ids.filter((id) => (usage.get(id) ?? []).length > 0);
+    const warning = inUse.length
+      ? `\n\n${inUse.map((id) => `${id} is used by ${usage.get(id)!.join(", ")}`).join("\n")}` +
+        `\n\nThose workflows stay here and stop loading until they are edited or moved too.`
+      : "";
+    if (!confirm(`Move ${ids.length} agent${ids.length > 1 ? "s" : ""} to ${target}?${warning}`)) return;
+
+    setBusy(true);
+    const failed = await moveMany((id) => withTeam(`/api/agents/${id}/move`, team), ids, to);
+    setBusy(false);
+    setError(failed.length ? failed.map((f) => `${f.id}: ${f.error}`).join("; ") : null);
+    selection.clear();
+    await load();
   }
 
   async function removeSelected() {
@@ -80,7 +107,7 @@ export default function AgentsPage() {
       return;
     }
     setBusy(true);
-    const failed = await deleteMany((id) => `/api/agents/${id}`, ids);
+    const failed = await deleteMany((id) => withTeam(`/api/agents/${id}`, team), ids);
     setBusy(false);
     setError(failed.length ? `could not delete ${failed.join(", ")}` : null);
     selection.clear();
@@ -93,12 +120,15 @@ export default function AgentsPage() {
         <div>
           <h1 className="text-lg font-semibold">Agents</h1>
           <p className="text-sm text-muted-foreground">
-            Markdown-defined reasoning workers in ~/.gate/agents. {agents.length} defined.
+            Markdown-defined reasoning workers in ~/.gate/teams/{team}/agents. {agents.length} defined.
           </p>
         </div>
-        <Button variant="ghost" size="icon" onClick={load} aria-label="Refresh">
-          <RefreshCw />
-        </Button>
+        <div className="flex items-center gap-2">
+          <TeamPicker team={team} teams={teams} onChange={setTeam} />
+          <Button variant="ghost" size="icon" onClick={load} aria-label="Refresh">
+            <RefreshCw />
+          </Button>
+        </div>
       </header>
 
       <div className="flex items-center gap-2">
@@ -142,7 +172,7 @@ export default function AgentsPage() {
                   onChange={() => selection.toggle(a.id)}
                   label={`Select ${a.id}`}
                 />
-                <Link href={`/agents/${a.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                <Link href={withTeam(`/agents/${a.id}`, team)} className="flex min-w-0 flex-1 items-center gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{a.name}</div>
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -181,7 +211,14 @@ export default function AgentsPage() {
               </Card>
             );
           })}
-          <SelectionBar selection={selection} total={agents.length} noun="agents" onDelete={removeSelected} busy={busy} />
+          <SelectionBar
+            selection={selection}
+            total={agents.length}
+            noun="agents"
+            onDelete={removeSelected}
+            busy={busy}
+            moveTo={{ teams, current: team, onMove: moveSelected }}
+          />
         </div>
       )}
     </main>

@@ -115,12 +115,19 @@ export function SelectionBar({
   noun,
   onDelete,
   busy,
+  moveTo,
 }: {
   selection: Selection;
   total: number;
   noun: string;
   onDelete: () => void;
   busy?: boolean;
+  /**
+   * Where else these rows could belong. Present only on lists whose items have
+   * an owner — agents and workflows belong to a team — and only worth showing
+   * when there is somewhere else to put them.
+   */
+  moveTo?: { teams: Array<{ id: string; name: string }>; current: string; onMove: (teamId: string) => void };
 }) {
   const count = selection.selected.size;
   if (count === 0) return null;
@@ -138,6 +145,27 @@ export function SelectionBar({
         <Button variant="ghost" size="sm" className="h-7 rounded-full px-3 text-xs" onClick={selection.clear} disabled={busy}>
           Cancel
         </Button>
+        {moveTo && moveTo.teams.filter((t) => t.id !== moveTo.current).length > 0 && (
+          <select
+            className="h-7 rounded-full border border-input bg-background px-2 text-xs"
+            value=""
+            disabled={busy}
+            aria-label={`Move ${noun} to another team`}
+            onChange={(e) => {
+              if (e.target.value) moveTo.onMove(e.target.value);
+              e.target.value = "";
+            }}
+          >
+            <option value="">Move to…</option>
+            {moveTo.teams
+              .filter((t) => t.id !== moveTo.current)
+              .map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+          </select>
+        )}
         <Button
           variant="destructive"
           size="sm"
