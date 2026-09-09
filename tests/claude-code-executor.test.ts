@@ -114,6 +114,9 @@ describe("claude-code executor", () => {
     // worse, decide for itself that nobody is there when somebody is.
     const appended = args[args.indexOf("--append-system-prompt") + 1];
     expect(appended).toContain("running unattended");
+    // But not told to decide for the person: where the prompt gives questions
+    // a way out (the planner's `questions`), they go there, and the node stops.
+    expect(appended).toContain("the person decides, not you");
   });
 
   it("reports each tool call as it comes back, so the run is watchable", async () => {

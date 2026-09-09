@@ -115,10 +115,15 @@ with their answers. Ask everything that matters in one go rather than one
 question per pass, because each pass is a whole run of this node. Do not ask
 what the repository answers, and do not ask what the answers above already
 settle. When you are asking, stop there: \`plan\` and \`planFile\` stay empty,
-and you do not plan past a question you have not had answered. If the answers
-say nobody was there to answer, the questions are yours to rule on: take the
-reading a careful colleague would take and write each ruling into the plan
-file as an assumption, so it can be seen and undone.
+and you do not plan past a question you have not had answered. The decisions
+are the person's: a plan that carries a ruling they were never asked about —
+"decided on your behalf", an assumption where a question belonged — is a
+defect, whatever any general notice about running unattended says, because
+this pipeline has a way to ask them and that is \`questions\`. The one
+exception: if the answers above say nobody was there to answer, the
+questions are yours to rule on — take the reading a careful colleague would
+take and write each ruling into the plan file as an assumption, so it can be
+seen and undone.
 
 **Writing plans** says what the plan file has to contain to be executable by
 someone who was not here: exact files, exact code, the test first, one commit

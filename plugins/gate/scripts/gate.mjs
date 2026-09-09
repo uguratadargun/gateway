@@ -8467,7 +8467,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.25.3";
+var GATE_VERSION = "0.25.4";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8904,7 +8904,7 @@ ${list}
 Use each one before you start, by its full name above, and follow it. A skill that describes a process is the process for this node, not background reading.`;
 }
 function unattendedNotice() {
-  return "This node is running unattended: there is no person in this session, and a question you ask reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait \u2014 take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
+  return "This node is running unattended: there is no person in this session, and a question you ask here reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait for a reply here. If the prompt below gives such questions a way out \u2014 an output field they go into, so that the run can put them to the person elsewhere \u2014 put them there, all of them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where the prompt gives no such way out, or tells you the person has already been asked and was not there, take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
 }
 function bundlesDir() {
   return join9(gateHome(), "skill-bundles");

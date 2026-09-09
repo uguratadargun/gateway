@@ -79,11 +79,14 @@ export function skillsDirective(skills: SkillDefinition[]): string {
  */
 export function unattendedNotice(): string {
   return (
-    "This node is running unattended: there is no person in this session, and a question you ask reaches " +
+    "This node is running unattended: there is no person in this session, and a question you ask here reaches " +
     "nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern " +
-    "before starting, do not wait — take the reading a careful colleague would take, act on it, and record the " +
-    "ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), " +
-    "so that a wrong one can be seen and undone."
+    "before starting, do not wait for a reply here. If the prompt below gives such questions a way out — an " +
+    "output field they go into, so that the run can put them to the person elsewhere — put them there, all of " +
+    "them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where " +
+    "the prompt gives no such way out, or tells you the person has already been asked and was not there, take the " +
+    "reading a careful colleague would take, act on it, and record the ruling where the skill's process would " +
+    "have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone."
   );
 }
 
