@@ -63,6 +63,8 @@ export const stepSchema = z.object({
   output: z.unknown().optional(),
   error: z.object({ code: z.string().max(64), message: z.string().max(4000) }).optional(),
   usage: usageSchema.optional(),
+  /** The session did this node itself: cost it from the session's own gateway calls. */
+  costing: z.literal("session").optional(),
   toolCalls: z.array(toolCallSchema).optional(),
 });
 

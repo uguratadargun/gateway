@@ -626,7 +626,7 @@ export const SKILL_ANCHORS: Array<{ skill: string; anchors: string[] }> = [
   { skill: "superpowers-requesting-code-review", anchors: ["code-reviewer.md", "Critical", "Important", "Minor"] },
   { skill: "superpowers-verification-before-completion", anchors: ["Evidence before claims", "checklist"] },
   { skill: "superpowers-receiving-code-review", anchors: ["Push back"] },
-  { skill: "superpowers-systematic-debugging", anchors: ["root cause", "3"] },
+  { skill: "superpowers-systematic-debugging", anchors: ["root cause", "question the architecture"] },
 ];
 
 export const DEFAULT_AGENTS: Record<string, string> = {

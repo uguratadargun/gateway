@@ -10884,7 +10884,10 @@ async function step(ctx, executionId, nodeId2, answer) {
       startedAt: pending.startedAt,
       finishedAt,
       input: null,
-      output
+      output,
+      // Done by the session, or by its subagent: the server costs it from
+      // the session's own gateway calls, since nothing here can report them.
+      costing: "session"
     },
     false,
     // The person has answered: the run is working again, from this moment.

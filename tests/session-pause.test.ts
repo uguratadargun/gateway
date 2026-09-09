@@ -115,6 +115,9 @@ describe("a node the person answers", () => {
     // counted as over, so the order on the bus reads the way it happened.
     expect(server.events.map((e) => e.type)).toEqual(["node.started", "run.paused", "run.resumed", "node.completed"]);
     expect(server.steps[0]).toMatchObject({ nodeId: "ask", status: "completed", output: { answer: "blue" } });
+    // Marked for the server to cost from the session's own gateway calls: a
+    // node the session did itself has no usage of its own to report.
+    expect(server.steps[0]).toMatchObject({ costing: "session" });
   });
 });
 

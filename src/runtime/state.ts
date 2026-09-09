@@ -31,6 +31,13 @@ export interface StepRecord {
   error?: { code: string; message: string };
   usage?: NodeUsageRecord;
   toolCalls?: ToolCallRecord[];
+  /**
+   * "session" on a step the driving session did itself, or as its subagent:
+   * its model calls went through that session, so the server costs it from
+   * the session's gateway record instead of from a usage it cannot report.
+   * Absent on everything else — a command node's step is never costed.
+   */
+  costing?: "session";
 }
 
 export interface WorkflowState {

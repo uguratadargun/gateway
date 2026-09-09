@@ -52,7 +52,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // A step the session did itself arrives without usage: its model calls
     // went through the person's own Claude Code. What that session spent in
     // the step's minutes is the nearest true figure, and it is marked as one.
-    if (execution.driver === "session" && !step.usage && step.status === "completed") attributeSessionUsage(id, step.stepIndex);
+    if (execution.driver === "session" && step.costing === "session" && !step.usage && step.status === "completed") {
+      attributeSessionUsage(id, step.stepIndex);
+    }
   }
   for (const event of parsed.data.events) {
     // The person's turn is state, not just a line in the stream: the list

@@ -794,6 +794,9 @@ export async function step(
       finishedAt,
       input: null,
       output,
+      // Done by the session, or by its subagent: the server costs it from
+      // the session's own gateway calls, since nothing here can report them.
+      costing: "session",
     },
     false,
     // The person has answered: the run is working again, from this moment.
