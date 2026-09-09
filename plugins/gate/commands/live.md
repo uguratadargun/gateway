@@ -16,7 +16,9 @@ gateway resolves.
 
 This command makes that the default for Claude Code started in this repository, by writing
 the gateway into `.claude/settings.local.json` here (Claude Code applies its `env` block to
-every session, and the file stays out of git). Run:
+every session, and the file stays out of git). It also sets `disableClaudeAiConnectors`
+there: on the gateway the claude.ai connectors do not load anyway, and that setting is what
+stops Claude Code saying so in the prompt bar of every session. Run:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" live $ARGUMENTS

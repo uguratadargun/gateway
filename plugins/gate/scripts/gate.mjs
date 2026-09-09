@@ -8468,7 +8468,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.26.1";
+var GATE_VERSION = "0.26.2";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -10916,19 +10916,22 @@ function readSettings(path) {
   }
   return parsed;
 }
+var CONNECTORS_SETTING = "disableClaudeAiConnectors";
 function applyGatewaySettings(path, env, on) {
   const settings = readSettings(path);
   const current = settings.env && typeof settings.env === "object" ? settings.env : {};
   const next2 = { ...current };
+  const before = JSON.stringify(settings);
   if (on) {
     for (const [k, v] of Object.entries(env)) next2[k] = v;
+    settings[CONNECTORS_SETTING] = true;
   } else {
     for (const k of Object.keys(env)) delete next2[k];
+    delete settings[CONNECTORS_SETTING];
   }
-  const changed = JSON.stringify(next2) !== JSON.stringify(current);
-  if (!changed) return false;
   if (Object.keys(next2).length) settings.env = next2;
   else delete settings.env;
+  if (JSON.stringify(settings) === before) return false;
   mkdirSync12(dirname3(path), { recursive: true });
   writeFileSync10(path, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384 });

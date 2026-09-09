@@ -44,6 +44,15 @@ function readSettings(path: string): Record<string, unknown> {
 }
 
 /**
+ * On the gateway, Claude Code's claude.ai connectors (the MCP servers of the
+ * claude.ai account) do not load anyway, because a key outranks the login;
+ * without this setting it says so in the prompt bar of every session, and
+ * the env variable the docs also name does not silence it. Set with the
+ * gateway and removed with it.
+ */
+const CONNECTORS_SETTING = "disableClaudeAiConnectors";
+
+/**
  * Merges the gateway variables into the settings file's `env`, leaving every
  * other key as it was; or, with `on` false, removes exactly those variables.
  * Returns whether the file changed.
@@ -52,15 +61,17 @@ export function applyGatewaySettings(path: string, env: Record<string, string>, 
   const settings = readSettings(path);
   const current = (settings.env && typeof settings.env === "object" ? settings.env : {}) as Record<string, unknown>;
   const next: Record<string, unknown> = { ...current };
+  const before = JSON.stringify(settings);
   if (on) {
     for (const [k, v] of Object.entries(env)) next[k] = v;
+    settings[CONNECTORS_SETTING] = true;
   } else {
     for (const k of Object.keys(env)) delete next[k];
+    delete settings[CONNECTORS_SETTING];
   }
-  const changed = JSON.stringify(next) !== JSON.stringify(current);
-  if (!changed) return false;
   if (Object.keys(next).length) settings.env = next;
   else delete settings.env;
+  if (JSON.stringify(settings) === before) return false;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
   return true;

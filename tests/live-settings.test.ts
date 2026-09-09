@@ -21,6 +21,8 @@ describe("putting Claude Code on the gateway through its settings", () => {
     let settings = JSON.parse(readFileSync(path, "utf8"));
     expect(settings.env.ANTHROPIC_BASE_URL).toBe("http://gate.test/api/gateway");
     expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe("k1");
+    // And the prompt-bar notice about connectors is silenced with it.
+    expect(settings.disableClaudeAiConnectors).toBe(true);
     expect(isOnGateway(path, "http://gate.test/api/gateway")).toBe(true);
     expect(isOnGateway(path, "http://other/api/gateway")).toBe(false);
     // Already there: nothing to write.
@@ -38,10 +40,11 @@ describe("putting Claude Code on the gateway through its settings", () => {
     settings = JSON.parse(readFileSync(path, "utf8"));
     expect(settings.env).toEqual({ MY_VAR: "x" });
     expect(settings.permissions.allow).toEqual(["Bash(ls:*)"]);
+    expect("disableClaudeAiConnectors" in settings).toBe(false);
     expect(isOnGateway(path, "http://gate.test/api/gateway")).toBe(false);
 
     // With nothing else in env, the key goes away entirely.
-    writeFileSync(path, JSON.stringify({ env: env }));
+    writeFileSync(path, JSON.stringify({ env: env, disableClaudeAiConnectors: true }));
     applyGatewaySettings(path, env, false);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({});
   });
