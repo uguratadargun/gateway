@@ -372,7 +372,7 @@ gate ships this as `dev`, using the team's `planner`, `implementer` and
 `acceptance`:
 
 ```
-base ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ planner          (3 rounds ─▶ brief-unsettled)
+base ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ planner
           ▲                    └─▶ plan-review ─▶ plan-decision ─┬─ revise ─▶ planner
           │                                                      ├─ hold ───▶ awaiting-plan-approval
           │                                                      └─ approve ─▶ implementer ─┬─ changed: false ─▶ nothing-changed

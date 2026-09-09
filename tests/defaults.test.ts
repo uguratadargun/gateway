@@ -495,26 +495,6 @@ Try {{inputs.implementer.summary}}
     expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeUndefined();
   });
 
-  it("gives up on a planner that keeps asking", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
-
-    const provider = fakeTeam(
-      () => JSON.stringify({ verdict: "approved" }),
-      SHIP,
-      () => JSON.stringify({ questions: "Q: again?", plan: "", planFile: "" }),
-    );
-    const { runCommand } = fakeGit({ staged: true });
-    const events: WorkflowEvent[] = [];
-
-    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
-
-    expect(state.status).toBe("failed");
-    expect(terminalOf(events)).toBe("brief-unsettled");
-    expect(state.visitCounts.clarify).toBe(3);
-  });
-
   it("fails as nothing-changed when the implementer deliberately made no change", async () => {
     ensureDefaultWorkflows();
     for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);

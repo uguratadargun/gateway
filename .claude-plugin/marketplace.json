@@ -10,7 +10,7 @@
       "name": "gate",
       "source": "./plugins/gate",
       "description": "Run your team's gate agent workflows on your own machine: /gate:run pulls what your team has defined and runs one here, in a worktree of the repository you are in, with every model call metered through your gate. /gate:design analyses that repository and designs a pipeline for it.",
-      "version": "0.25.1",
+      "version": "0.25.2",
       "category": "development",
       "tags": [
         "agents",

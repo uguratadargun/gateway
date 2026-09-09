@@ -80,12 +80,8 @@ nodes:
     type: condition
     label: Questions for the person?
     edges:
-      # Three rounds of questions is a brief that is not going to settle by
-      # asking; unattended, clarify answers once that nobody is there and the
-      # planner is told to rule, so this only trips on a planner that will not.
-      - when: outputs.planner.questions != "" && visits.clarify >= 3
-        to: brief-unsettled
-        label: still asking after 3 rounds
+      # As many rounds as the person and the planner need: a question is not
+      # a failure, and the person is there to answer it or to stop the run.
       - when: outputs.planner.questions != ""
         to: clarify
         label: has questions
@@ -277,11 +273,6 @@ nodes:
     type: terminal
     label: Plan written, awaiting your approval before anything is built
     status: completed
-
-  - id: brief-unsettled
-    type: terminal
-    label: The planner could not settle the brief
-    status: failed
 
   - id: nothing-changed
     type: terminal
