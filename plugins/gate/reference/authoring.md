@@ -367,18 +367,22 @@ with a person in it and a pipeline node often has none. Three things the
 
 ## Shape that works
 
-gate ships this as `dev`, using the team's `planner`, `implementer`,
-`reviewer` and `acceptance`:
+gate ships this as `dev`, using the team's `planner`, `implementer` and
+`reviewer`, and its three gates to the person — `clarify`, `plan-review` and
+`acceptance`:
 
 ```
-base ─▶ planner ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
-          ▲                     └─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
-          │                                        └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─┐
-          │                                                                 ├─ 4th plan rejected ─▶ review-stuck  └─▶ commit ─────┤
-          │                                                                 └─ changes requested ──▶ planner                     ▼
-          │                                                                                                              acceptance ─▶ decision ─┬─ ship ─▶ merge-request ─▶ done
-          │                                                                                                                                     ├─ hold ─▶ awaiting-approval
-          └───────────────────────────────────── revise: the person asked for changes ──────────────────────────────────────────────────────────┘
+base ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ planner          (3 rounds ─▶ brief-unsettled)
+          ▲                    └─▶ plan-review ─▶ plan-decision ─┬─ revise ─▶ planner
+          │                                                      ├─ hold ───▶ awaiting-plan-approval
+          │                                                      └─ approve ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
+          │                                                                                 └─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
+          │                                                                                                    └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─┐
+          │                                                                                                                             ├─ 4th review ─▶ review-stuck     └─▶ commit ─────┤
+          │                                                                                                                             └─ changes requested ──▶ planner                  ▼
+          │                                                                                                                                                                       acceptance ─▶ decision ─┬─ ship ─▶ merge-request ─▶ done
+          │                                                                                                                                                                                              ├─ hold ─▶ awaiting-approval
+          └───────────────────────────────────────────────────────── revise: the person asked for changes ───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 `base` records the commit the run started from, `diff` is the working tree
@@ -387,14 +391,20 @@ commit as they go and a diff against the index would be empty. The planner
 writes a plan *file* (`planFile`) and the implementer executes that file: the
 implementer's skills take a plan file, not a list of steps in a prompt.
 
-`acceptance` is the human gate. A reviewer's approval says the change is
-correct; it does not say anyone wants it shipped. So after the commit, and
-before anything leaves the machine, the person who asked for the change is
-told the branch is ready and how to try it (`git merge <branch>` from their
-own checkout), and asked. "Ship" opens the merge request; "revise" carries
-their requests back to the **planner**, as a change of brief, not to the
-implementer; and a run with nobody to ask — the dashboard's — holds, ending
-with the branch committed and unpushed. The node decides nothing itself.
+The person is in the graph three times, and every one of those nodes runs
+on the loop driving the run — the session — and decides nothing itself.
+`clarify` carries the planner's questions to them and their answers back:
+the planner runs in its own model and its own process and cannot ask from
+there, so brainstorming's questions travel out as an output (`questions`,
+one per line, all of them at once) and the answers travel back as an input.
+`plan-review` shows them the plan, and nothing is built until they say so —
+feedback revises the plan, and the revised plan is shown again. `acceptance`
+puts the finished branch in front of them after the commit and before
+anything leaves the machine: "ship" opens the merge request, "revise" carries
+their requests back to the **planner** as a change of brief, not to the
+implementer. A run with nobody to ask — the dashboard's — holds at whichever
+gate it reaches, ending with the plan written or the branch committed and
+unpushed.
 
 It contains no `npm ci` and no `npm test` on purpose: those are facts about one
 project, and a default that assumes them fails on the first machine it meets.
@@ -671,10 +681,12 @@ accept it. The server validates shape, not sense.
       stage, commit with `{{outputs.<implementer>.summary}}` when anything is
       left to commit, push — and a failed push lands on its own `status: failed`
       terminal.
-- [ ] **A person approves before anything leaves the machine** — the
-      `acceptance` node stands between the commit and the merge request, its
-      "revise" edge goes to the planner, and its "hold" edge ends the run
-      rather than shipping on nobody's say-so. Ending at `done` on
+- [ ] **A person approves the plan before anything is built, and the branch
+      before anything leaves the machine** — `plan-review` stands between the
+      planner and the implementer, `acceptance` between the commit and the
+      merge request; each "revise" edge goes to the planner, each "hold" edge
+      ends the run rather than proceeding on nobody's say-so. The planner's
+      questions reach the person through `clarify`, never through a guess. Ending at `done` on
       approval leaves the change in a worktree nobody opens; that is a choice to
       make deliberately, not by omission.
 - [ ] **No absolute interpreter paths** in any `command` — `PATH` resolves them.

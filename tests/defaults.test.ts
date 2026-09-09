@@ -87,14 +87,21 @@ describe("restoring the shipped definitions", () => {
 });
 
 describe("what the shipped agents declare", () => {
-  it("is a planner, an implementer and a reviewer, each following its skills, and an acceptance gate", () => {
+  it("is a planner, an implementer and a reviewer, each following its skills, and three gates to the person", () => {
     ensureDefaultAgents();
     const byId = new Map(listAgents().agents.map((a) => [a.id, a]));
-    expect([...byId.keys()].sort()).toEqual(["acceptance", "implementer", "planner", "reviewer"]);
-    // The gate follows no skill and decides nothing; it asks, and reads.
-    expect(byId.get("acceptance")!.skills).toEqual([]);
-    expect(byId.get("acceptance")!.tools).not.toContain("write_file");
-    // The person's requests reach the planner, like a reviewer's feedback.
+    expect([...byId.keys()].sort()).toEqual(["acceptance", "clarify", "implementer", "plan-review", "planner", "reviewer"]);
+    // The gates follow no skill and decide nothing; they ask, and read. They
+    // run on the loop driving the run — the session — never as a spawned
+    // Claude Code, which could not ask anyone.
+    for (const id of ["clarify", "plan-review", "acceptance"]) {
+      expect(byId.get(id)!.skills).toEqual([]);
+      expect(byId.get(id)!.tools).not.toContain("write_file");
+      expect(byId.get(id)!.executor).toBe("gate");
+    }
+    // The person's answers, plan feedback and requests all reach the planner.
+    expect(byId.get("planner")!.inputs).toContain("clarify.answers?");
+    expect(byId.get("planner")!.inputs).toContain("plan-review.feedback?");
     expect(byId.get("planner")!.inputs).toContain("acceptance.requests?");
 
     // The skills are the point of the defaults: without them these are three
@@ -143,14 +150,36 @@ describe("the shipped pipeline", () => {
   const STANDINS: Record<string, string> = {
     planner: `---
 name: Planner
-inputs: [reviewer.feedback?, acceptance.requests?, implementer.summary?]
+inputs: [clarify.answers?, plan-review.feedback?, reviewer.feedback?, acceptance.requests?, implementer.summary?]
 output:
   type: json
   schema:
+    questions: string
     plan: string
     planFile: string
 ---
-Plan {{input.task}} {{inputs.reviewer.feedback}} {{inputs.acceptance.requests}} {{inputs.implementer.summary}}
+Plan {{input.task}} {{inputs.clarify.answers}} {{inputs.plan-review.feedback}} {{inputs.reviewer.feedback}} {{inputs.acceptance.requests}} {{inputs.implementer.summary}}
+`,
+    clarify: `---
+name: Clarify
+inputs: [planner.questions]
+output:
+  type: json
+  schema:
+    answers: string
+---
+Ask {{inputs.planner.questions}}
+`,
+    "plan-review": `---
+name: Plan review
+inputs: [planner.plan, planner.planFile]
+output:
+  type: json
+  schema:
+    decision: string
+    feedback: "string?"
+---
+Show {{inputs.planner.plan}} at {{inputs.planner.planFile}}
 `,
     implementer: `---
 name: Implementer
@@ -219,15 +248,27 @@ Try {{inputs.implementer.summary}}
   }
 
   const SHIP = () => JSON.stringify({ decision: "ship" });
+  const APPROVE = () => JSON.stringify({ decision: "approve" });
+  const PLAN = (visit: number) => JSON.stringify({ questions: "", plan: `plan ${visit}`, planFile: "docs/superpowers/plans/2026-09-08-thing.md" });
 
-  function fakeTeam(reviews: (visit: number) => string, accepts: (visit: number) => string = SHIP) {
+  function fakeTeam(
+    reviews: (visit: number) => string,
+    accepts: (visit: number) => string = SHIP,
+    plans: (visit: number) => string = PLAN,
+    planReviews: (visit: number) => string = APPROVE,
+    clarifies: (visit: number) => string = () => JSON.stringify({ answers: "A: the blue one." }),
+  ) {
     const visits: Record<string, number> = {};
     return new FakeModelProvider((req) => {
       const node = req.context?.nodeId ?? "";
       const visit = (visits[node] = (visits[node] ?? 0) + 1);
       switch (node) {
         case "planner":
-          return JSON.stringify({ plan: `plan ${visit}`, planFile: "docs/superpowers/plans/2026-09-08-thing.md" });
+          return plans(visit);
+        case "clarify":
+          return clarifies(visit);
+        case "plan-review":
+          return planReviews(visit);
         case "implementer":
           return JSON.stringify({ summary: `pass ${visit}`, changed: true });
         case "reviewer":
@@ -378,8 +419,100 @@ Try {{inputs.implementer.summary}}
 
     expect(state.status).toBe("failed");
     expect(terminalOf(events)).toBe("review-stuck");
-    expect(state.visitCounts.planner).toBe(4);
+    expect(state.visitCounts.reviewer).toBe(4);
     expect(ran.find((c) => c[0] === "sh")).toBeUndefined();
+  });
+
+  it("carries the planner's questions to the person and their answers back, then shows the plan before building", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const provider = fakeTeam(
+      () => JSON.stringify({ verdict: "approved" }),
+      SHIP,
+      (visit) => (visit === 1 ? JSON.stringify({ questions: "Q: which button?", plan: "", planFile: "" }) : PLAN(visit)),
+    );
+    const { ran, runCommand } = fakeGit({ staged: true });
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
+
+    expect(state.error).toBeNull();
+    expect(state.status).toBe("completed");
+    // Asked once, answered once, planned again with the answer in hand.
+    expect(state.visitCounts.clarify).toBe(1);
+    expect(state.visitCounts.planner).toBe(2);
+    const asks = provider.callsFor("clarify").map((c) => c.messages[0].content);
+    expect(asks[0]).toContain("which button?");
+    const plans = provider.callsFor("planner").map((c) => c.messages[0].content);
+    expect(plans[0]).not.toContain("blue one");
+    expect(plans[1]).toContain("A: the blue one.");
+    // The plan was shown before anything was built, and once approved, built.
+    expect(state.visitCounts["plan-review"]).toBe(1);
+    expect(state.visitCounts.implementer).toBe(1);
+    expect(ran.find((c) => c[0] === "sh")).toBeDefined();
+  });
+
+  it("revises the plan on the person's feedback, and builds nothing until they approve", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const provider = fakeTeam(
+      () => JSON.stringify({ verdict: "approved" }),
+      SHIP,
+      PLAN,
+      (visit) => (visit === 1 ? JSON.stringify({ decision: "revise", feedback: "Split task 2 in two." }) : APPROVE()),
+    );
+    const { runCommand } = fakeGit({ staged: true });
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
+
+    expect(state.status).toBe("completed");
+    expect(state.visitCounts["plan-review"]).toBe(2);
+    expect(state.visitCounts.planner).toBe(2);
+    const plans = provider.callsFor("planner").map((c) => c.messages[0].content);
+    expect(plans[1]).toContain("Split task 2 in two.");
+    // The implementer ran once, after the second, approved plan — not after the first.
+    expect(state.visitCounts.implementer).toBe(1);
+    expect(provider.callsFor("plan-review")[1].messages[0].content).toContain("plan 2");
+  });
+
+  it("ends with the plan written and nothing built when nobody is there to approve it", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const provider = fakeTeam(() => JSON.stringify({ verdict: "approved" }), SHIP, PLAN, () => JSON.stringify({ decision: "hold" }));
+    const { ran, runCommand } = fakeGit({ staged: true });
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.status).toBe("completed");
+    expect(terminalOf(events)).toBe("awaiting-plan-approval");
+    expect(state.visitCounts.implementer ?? 0).toBe(0);
+    expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeUndefined();
+  });
+
+  it("gives up on a planner that keeps asking", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const provider = fakeTeam(
+      () => JSON.stringify({ verdict: "approved" }),
+      SHIP,
+      () => JSON.stringify({ questions: "Q: again?", plan: "", planFile: "" }),
+    );
+    const { runCommand } = fakeGit({ staged: true });
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.status).toBe("failed");
+    expect(terminalOf(events)).toBe("brief-unsettled");
+    expect(state.visitCounts.clarify).toBe(3);
   });
 
   it("fails as nothing-changed when the implementer deliberately made no change", async () => {
@@ -390,7 +523,9 @@ Try {{inputs.implementer.summary}}
     const provider = new FakeModelProvider((req) => {
       switch (req.context?.nodeId) {
         case "planner":
-          return JSON.stringify({ plan: "plan", planFile: "docs/superpowers/plans/thing.md" });
+          return JSON.stringify({ questions: "", plan: "plan", planFile: "docs/superpowers/plans/thing.md" });
+        case "plan-review":
+          return JSON.stringify({ decision: "approve" });
         case "implementer":
           return JSON.stringify({ summary: "The task is already done on this branch.", changed: false });
         default:

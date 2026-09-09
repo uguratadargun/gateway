@@ -559,12 +559,15 @@ gate ships one team that works in a repository nobody has looked at:
 **planner**, **implementer** and **reviewer**, each following skills from
 `superpowers` (brainstorming, using git worktrees and writing plans; executing
 plans, test-driven development and subagent-driven development; requesting
-code review), plus **acceptance**, which follows no skill and decides nothing:
-once the change is reviewed and committed it tells the person the branch is
-ready and how to try it (`git merge <branch>`), and only their answer opens
+code review), plus three agents that follow no skill and decide nothing —
+they are where the pipeline turns to the person. **clarify** carries the
+planner's questions to them and their answers back, since the planner runs in
+its own model and cannot ask from there. **plan-review** shows them the plan,
+and nothing is built until they say so. **acceptance** tells them the branch
+is ready and how to try it (`git merge <branch>`), and only their answer opens
 the merge request or sends their requests back to the planner. Together they
-make a `dev` pipeline that plans, implements in a worktree, reviews, commits,
-asks, and opens a merge request. The prompts are written against
+make a `dev` pipeline that plans with the person, builds once they approve,
+reviews, commits, asks, and opens a merge request. The prompts are written against
 what those skills do without a person in the session — where one would wait
 for approval, the planner rules and records the ruling; because they commit
 task by task, the pipeline diffs against the commit the run started from and

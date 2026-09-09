@@ -24,11 +24,13 @@ own steps. Read the repository, work out what those are, and put a concrete
 proposal in front of them rather than asking what they want first.
 
 Build it for **this repository** — but not from nothing. gate ships a team with
-`planner`, `implementer` and `reviewer`, each following its skills, plus
-`acceptance`, which puts the finished branch in front of the person before
-anything leaves the machine, and a `dev` pipeline that plans, implements in a
-worktree, reviews, commits, asks, and opens a merge request. **That is the
-base. You write the ends.**
+`planner`, `implementer` and `reviewer`, each following its skills, plus three
+gates to the person — `clarify` carries the planner's questions to them,
+`plan-review` shows them the plan before anything is built, `acceptance` puts
+the finished branch in front of them before anything leaves the machine — and
+a `dev` pipeline that plans with the person, builds once they approve, reviews,
+commits, asks, and opens a merge request. **That is the base. You write the
+ends.** The gates stay where they are; nothing you add goes around them.
 
 ## 1. Use the default team, do not rewrite it
 

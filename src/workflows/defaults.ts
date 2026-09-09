@@ -33,7 +33,11 @@ import { workflowExists, workflowsDir } from "./registry";
  * reviewer is handed both. For the same reason the commit at the end is
  * allowed to find nothing left to commit.
  *
- * Between the commit and the merge request stands the person: `acceptance`
+ * The person is in the graph three times. `clarify` carries the planner's
+ * questions to them and their answers back — the planner runs in its own
+ * model and its own process, and cannot ask from there. `plan-review` shows
+ * them the plan, and nothing is built until they approve it. And between the
+ * commit and the merge request stands `acceptance`
  * tells them the branch is ready and how to try it, and only their answer
  * opens the merge request or sends the work back to the planner with what
  * they asked for. Unattended, that node cannot ask, so it holds, and the run
@@ -46,7 +50,7 @@ import { workflowExists, workflowsDir } from "./registry";
  * parallel node joining at `verdict`, and widen the verdict's condition.
  */
 const DEV = `name: Dev
-description: Plan a change, carry it out in a worktree, review it, let the person who asked try it, and open a merge request.
+description: Plan a change with the person, build it in a worktree once they approve the plan, review it, let them try it, and open a merge request.
 entry: base
 workspace: {}
 # No engine ceilings: rounds and revisits cannot be counted in advance, and
@@ -70,7 +74,49 @@ nodes:
     type: agent
     agent: planner
     label: Plan
-    next: implementer
+    next: plan-check
+
+  - id: plan-check
+    type: condition
+    label: Questions for the person?
+    edges:
+      # Three rounds of questions is a brief that is not going to settle by
+      # asking; unattended, clarify answers once that nobody is there and the
+      # planner is told to rule, so this only trips on a planner that will not.
+      - when: outputs.planner.questions != "" && visits.clarify >= 3
+        to: brief-unsettled
+        label: still asking after 3 rounds
+      - when: outputs.planner.questions != ""
+        to: clarify
+        label: has questions
+      - to: plan-review
+        label: has a plan
+
+  - id: clarify
+    type: agent
+    agent: clarify
+    label: Ask the person
+    next: planner
+
+  - id: plan-review
+    type: agent
+    agent: plan-review
+    label: Show the plan
+    next: plan-decision
+
+  - id: plan-decision
+    type: condition
+    label: Build it?
+    edges:
+      - when: outputs.plan-review.decision == "approve"
+        to: implementer
+        label: approved by the person
+      - when: outputs.plan-review.decision == "revise"
+        to: planner
+        label: changes to the plan
+      # "hold", and anything else: nobody was there to ask.
+      - to: awaiting-plan-approval
+        label: nobody to ask
 
   - id: implementer
     type: agent
@@ -118,15 +164,13 @@ nodes:
         to: stage-all
         label: approved
       # Declared after the success edge and before the loop-back: edges are
-      # tried in order. Four plans is three rejections; a change that has not
-      # converged by then is not going to on the fifth, and the branch is still
-      # there to be looked at. (A person's own revisions count as plans too —
-      # the language has no arithmetic to tell them apart — so a run that has
-      # been revised on request and then rejected can end here early; a person
-      # who is there to ask for revisions is there to start it again.)
-      - when: visits.planner >= 4
+      # tried in order. Counted in reviews, not plans — the planner also runs
+      # for the person's questions and plan revisions, which are not failures.
+      # Four reviews without shipping is a change that is not converging, and
+      # the branch is still there to be looked at.
+      - when: visits.reviewer >= 4
         to: review-stuck
-        label: still rejected after 4 plans
+        label: still rejected after 4 reviews
       - to: planner
         label: changes requested
 
@@ -228,6 +272,16 @@ nodes:
     type: terminal
     label: Committed on the branch, awaiting your approval before a merge request
     status: completed
+
+  - id: awaiting-plan-approval
+    type: terminal
+    label: Plan written, awaiting your approval before anything is built
+    status: completed
+
+  - id: brief-unsettled
+    type: terminal
+    label: The planner could not settle the brief
+    status: failed
 
   - id: nothing-changed
     type: terminal
