@@ -55,7 +55,7 @@ function migrateLegacyDefinitions() {
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join as join2, relative } from "node:path";
 
-// ../gateway/node_modules/js-yaml/dist/js-yaml.mjs
+// node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
 function defineScalarTag(tagName, options) {
   return {
@@ -3151,7 +3151,7 @@ var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
-// ../gateway/node_modules/zod/v3/external.js
+// node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -3263,7 +3263,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// ../gateway/node_modules/zod/v3/helpers/util.js
+// node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -3397,7 +3397,7 @@ var getParsedType = (data) => {
   }
 };
 
-// ../gateway/node_modules/zod/v3/ZodError.js
+// node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -3515,7 +3515,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// ../gateway/node_modules/zod/v3/locales/en.js
+// node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -3618,7 +3618,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// ../gateway/node_modules/zod/v3/errors.js
+// node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -3627,7 +3627,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// ../gateway/node_modules/zod/v3/helpers/parseUtil.js
+// node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -3737,14 +3737,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// ../gateway/node_modules/zod/v3/helpers/errorUtil.js
+// node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// ../gateway/node_modules/zod/v3/types.js
+// node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -7655,14 +7655,85 @@ import { join as join4 } from "node:path";
 var BACKOFF = { baseMs: 5e3, maxMs: 2 * 60 * 1e3, maxLevel: 15 };
 var QUOTA_FALLBACK_COOLDOWN_MS = 15 * 60 * 1e3;
 var MAX_HINT_COOLDOWN_MS = 8 * 60 * 60 * 1e3;
-function windowLabel(name) {
-  if (name === "five_hour") return "5h";
-  const sevenDay = /^seven_day(?:_(.+))?$/.exec(name);
-  if (sevenDay) return sevenDay[1] ? `7d ${sevenDay[1].replace(/_/g, " ")}` : "7d";
-  return name.replace(/_/g, " ");
+var WINDOW_NAMES = {
+  "5h": "five_hour",
+  "7d": "seven_day",
+  "7d_oi": "seven_day_overage_included"
+};
+function canonicalWindowName(name) {
+  return WINDOW_NAMES[name] ?? name;
+}
+var WINDOW_LABELS = {
+  five_hour: "session limit",
+  seven_day: "weekly limit",
+  seven_day_opus: "Opus limit",
+  seven_day_sonnet: "Sonnet limit",
+  seven_day_fable: "Fable limit",
+  // `oi` is overage included — the weekly window with extra usage counted —
+  // and not a model. The model-scoped weekly limit arrives from the usage
+  // endpoint's `limits` list with its scope named, and is labelled from that.
+  seven_day_overage_included: "weekly limit incl. extra usage",
+  overage: "usage credit limit"
+};
+function windowLabel(name, scope) {
+  if (scope) return `${scope} limit`;
+  const canonical = canonicalWindowName(name);
+  return WINDOW_LABELS[canonical] ?? canonical.replace(/_/g, " ");
+}
+
+// src/lib/protocol.ts
+var GATE_VERSION = "0.29.0";
+var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
+var VERSION_HEADERS = {
+  /** Client → server: the CLI's own version. */
+  client: "x-gate-cli",
+  /** Server → client: what is running there. */
+  server: "x-gate-server",
+  /** Server → client: the oldest client it will serve. */
+  minClient: "x-gate-min-cli"
+};
+function compareVersions(a, b) {
+  const parts = (v) => v.trim().split(".").map((n) => Number.parseInt(n, 10)).map((n) => Number.isFinite(n) ? n : 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) {
+    const diff = (x[i] ?? 0) - (y[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+function isOlderThan(version, than) {
+  return compareVersions(version, than) < 0;
 }
 
 // src/lib/settings.ts
+var DEFAULT_SETTINGS = {
+  compression: { enabled: false, maxBlockChars: 2e4, dedupe: true },
+  // Off by default: a cached reply is a stale reply for chat. When enabled, only
+  // deterministic requests (temperature unset or 0) are cached — see gateway-core.
+  cache: { enabled: false, ttlSeconds: 3600 },
+  budget: { enabled: false, mode: "warn", dailyUsd: 10, monthlyUsd: 200 },
+  fallback: {
+    enabled: true,
+    chains: {
+      fable: ["opus", "sonnet", "haiku"],
+      opus: ["sonnet", "haiku"],
+      sonnet: ["haiku"],
+      haiku: []
+    }
+  },
+  reasoning: { defaultEffort: "default" },
+  // 5m per Anthropic's guidance: active sessions refresh it for free, while a
+  // 1h TTL doubles the cost of every cache write (2× vs 1.25×).
+  promptCache: { enabled: true, ttl: "5m" },
+  plugin: { source: process.env.GATE_PLUGIN_SOURCE?.trim() || PLUGIN_MARKETPLACE },
+  concurrency: { maxInFlight: 4, queueTimeoutMs: 6e4 },
+  throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
+  retry: { maxRetries: 2, maxRateLimitWaitMs: 5e3 },
+  routingPrecision: { countTokens: false },
+  // fill-first keeps one account warm — its prompt cache stays hot and the
+  // others stay untouched until it runs out of window.
+  accountPool: { strategy: "fill-first", stickyRoundRobinLimit: 3, quotaMinRemainingPercent: 0, quotaRefreshMinutes: 30 }
+};
 var GATE_DIR = process.env.GATE_HOME || join4(homedir2(), ".gate");
 var FILE = join4(GATE_DIR, "settings.json");
 
@@ -8481,31 +8552,6 @@ function decodeConnectionToken(value) {
 
 // src/client/api.ts
 import { hostname } from "node:os";
-
-// src/lib/protocol.ts
-var GATE_VERSION = "0.28.0";
-var VERSION_HEADERS = {
-  /** Client → server: the CLI's own version. */
-  client: "x-gate-cli",
-  /** Server → client: what is running there. */
-  server: "x-gate-server",
-  /** Server → client: the oldest client it will serve. */
-  minClient: "x-gate-min-cli"
-};
-function compareVersions(a, b) {
-  const parts = (v) => v.trim().split(".").map((n) => Number.parseInt(n, 10)).map((n) => Number.isFinite(n) ? n : 0);
-  const [x, y] = [parts(a), parts(b)];
-  for (let i = 0; i < 3; i++) {
-    const diff = (x[i] ?? 0) - (y[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-function isOlderThan(version, than) {
-  return compareVersions(version, than) < 0;
-}
-
-// src/client/api.ts
 var CLI_VERSION = GATE_VERSION;
 var GateApiError = class extends Error {
   constructor(message, status, code) {
@@ -8839,7 +8885,7 @@ function workspacesDir() {
 }
 function git(cwd, args) {
   try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1e7 }).trim();
+    return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1e7, stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch (e) {
     const err = e;
     throw new WorkflowError("WORKSPACE_ERROR", `git ${args[0]} failed: ${(err.stderr || err.message).trim().slice(0, 400)}`);
@@ -9031,6 +9077,9 @@ Use each one before you start, by its full name above, and follow it. A skill th
 }
 function unattendedNotice() {
   return "This node is running unattended: there is no person in this session, and a question you ask here reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait for a reply here. If the prompt below gives such questions a way out \u2014 an output field they go into, so that the run can put them to the person elsewhere \u2014 put them there, all of them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where the prompt gives no such way out, or tells you the person has already been asked and was not there, take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
+}
+function backgroundSubagentNotice() {
+  return "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent is launched, and its result reaches you as a notification once you end your turn. So after dispatching, end your turn \u2014 say what you are waiting on, and stop. Do not poll for its commits or its report file, and do not sleep in a shell loop: a turn spent waiting is a turn in which no result can arrive, and the result was on its way. When the notification comes, carry on from it.";
 }
 function bundlesDir() {
   return join11(gateHome(), "skill-bundles");
@@ -9246,6 +9295,7 @@ async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
     if (skillPlugin) args.push("--plugin-dir", skillPlugin);
     const appended = [];
     appended.push(unattendedNotice());
+    appended.push(backgroundSubagentNotice());
     if (skills.length) appended.push(skillsDirective(skills));
     if (agent.output.type === "json") {
       const fields = Object.entries(agent.output.schema).map(([field2, type]) => `  "${field2}": ${type}`).join("\n");
@@ -9795,6 +9845,8 @@ to read and follow first, the shape of the answer to end with, and \u2014 at its
 under which you run unattended. Work only in the worktree the task names, with absolute paths
 under it, and nowhere else. End your final message with the answer in exactly the shape the
 task asks for, and nothing after it.
+
+${backgroundSubagentNotice()}
 `;
 }
 function removeSubagents() {
@@ -11453,11 +11505,16 @@ async function cmdUsage(args) {
     console.log(usage.reason ?? "no window reading yet");
     return 0;
   }
-  const width = Math.max(...usage.windows.map((w) => windowLabel(w.name).length));
-  for (const w of usage.windows) {
-    const left = `${Math.round(w.remaining * 10) / 10}% left`;
-    const reset = untilText(w.resetsAt);
-    console.log(`${windowLabel(w.name).padEnd(width)}  ${bar(w.remaining)}  ${left.padEnd(11)}${reset ? `\xB7 resets ${reset}` : ""}`);
+  const rows = usage.windows.map((w) => ({
+    label: w.label ?? windowLabel(w.name),
+    bar: bar(w.remaining),
+    left: `${Math.round(w.remaining * 10) / 10}% left`,
+    reset: untilText(w.resetsAt)
+  }));
+  const labelWidth = Math.max(...rows.map((r) => r.label.length));
+  const leftWidth = Math.max(...rows.map((r) => r.left.length));
+  for (const r of rows) {
+    console.log(`${r.label.padEnd(labelWidth)}  ${r.bar}  ${r.left.padEnd(leftWidth)}${r.reset ? `  \xB7 resets ${r.reset}` : ""}`);
   }
   const a = usage.accounts;
   const parts = [`${a.available} of ${a.enabled} account${a.enabled === 1 ? "" : "s"} serving now`];

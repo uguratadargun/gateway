@@ -425,6 +425,24 @@ base ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ 
           └───────────────────────────────────────────────────────── revise: the person asked for changes ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+And `dev-quick`, the short road: the same base, diff, commit, acceptance and
+merge request, with `quick-implementer` and `quick-reviewer` in place of the
+planner, the gates before the build, the implementer, the verifier and the
+reviewer. Neither follows a skill; the brief is settled before the run
+starts, and a task that turns out not to be small ends the run rather than
+being half-built.
+
+```
+base ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
+          ▲          └─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
+          │                             └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─┐
+          │                                                      ├─ 3rd review ─▶ review-stuck        └─▶ commit ─────┤
+          ├──────────────────────────── fix requested ───────────┘                                                    ▼
+          │                                                                                        acceptance ─▶ decision ─┬─ ship ─▶ merge-request ─▶ done
+          │                                                                                                                ├─ hold ─▶ awaiting-approval
+          └──────────────────────────────────── revise: the person asked for changes ──────────────────────────────────────┘
+```
+
 `base` records the commit the run started from, `diff` is the working tree
 against it — because the agents' skills commit as they go and a diff against
 the index would be empty — and the reviewer is handed the base and the plan

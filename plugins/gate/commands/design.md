@@ -33,6 +33,14 @@ they approve, verifies, reviews, commits, asks, and opens a merge request.
 **That is the base. You write the ends.** The gates stay where they are;
 nothing you add goes around them.
 
+gate also ships `dev-quick`, with `quick-implementer` and `quick-reviewer`:
+the short road for a colour, a label, a default, a small fix in something
+that exists, with no planner and no skills. It is not the base for what you
+design — a pipeline shaped around a project is one worth planning in — and
+it is not yours to extend: the quick implementer finds this project's own
+check for the files it touched by reading the repository, which is the whole
+of what a quick change needs. Leave it as it is.
+
 ## 1. Use the default team, do not rewrite it
 
 `planner`, `implementer`, `verifier` and `reviewer` are not starting points

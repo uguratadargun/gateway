@@ -117,6 +117,11 @@ describe("claude-code executor", () => {
     // But not told to decide for the person: where the prompt gives questions
     // a way out (the planner's `questions`), they go there, and the node stops.
     expect(appended).toContain("the person decides, not you");
+    // And told how its subagents behave here: dispatch returns at once and
+    // the result comes as a notification, so it ends its turn instead of
+    // sleeping in a shell loop until a report file appears.
+    expect(appended).toContain("run in the background");
+    expect(appended).toContain("do not sleep");
   });
 
   it("reports each tool call as it comes back, so the run is watchable", async () => {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { listAgents } from "@/agents/registry";
 import type { AgentDefinition } from "@/agents/types";
 import type { DefinitionScope } from "@/lib/def-root";
+import { backgroundSubagentNotice } from "@/skills/inject";
 
 /**
  * The team's claude-code agents, as subagents of the person's own Claude Code.
@@ -44,6 +45,8 @@ to read and follow first, the shape of the answer to end with, and — at its en
 under which you run unattended. Work only in the worktree the task names, with absolute paths
 under it, and nowhere else. End your final message with the answer in exactly the shape the
 task asks for, and nothing after it.
+
+${backgroundSubagentNotice()}
 `;
 }
 

@@ -98,6 +98,24 @@ export function unattendedNotice(): string {
   );
 }
 
+/**
+ * How subagents behave in a Claude Code that gate drives, which the skills
+ * do not know: subagent-driven development was written for a harness whose
+ * dispatch blocks until the subagent answers, and in this one it does not.
+ * Measured here: an implementer that dispatched a review and then slept in
+ * a shell loop for eight minutes waiting for a report file, with the result
+ * already delivered as a notification it could not read while it slept.
+ */
+export function backgroundSubagentNotice(): string {
+  return (
+    "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent " +
+    "is launched, and its result reaches you as a notification once you end your turn. So after dispatching, end " +
+    "your turn — say what you are waiting on, and stop. Do not poll for its commits or its report file, and do not " +
+    "sleep in a shell loop: a turn spent waiting is a turn in which no result can arrive, and the result was on " +
+    "its way. When the notification comes, carry on from it."
+  );
+}
+
 export function bundlesDir(): string {
   return join(gateHome(), "skill-bundles");
 }

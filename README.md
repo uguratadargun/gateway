@@ -588,6 +588,19 @@ task by task, the pipeline diffs against the commit the run started from and
 lets the commit node find nothing left to commit; where one hands off to a
 finishing skill, the implementer stops and the pipeline ships.
 
+Next to it ships **`dev-quick`**, the short road for a change that does not
+need a plan: a colour, a label, a default, a small fix in something that
+already exists. Two agents of its own, **quick-implementer** and
+**quick-reviewer**, follow no skill at all — the implementer reads the
+repository, makes the change in its idiom, runs the project's own check for
+the files it touched and says what it did; the reviewer reads the diff itself
+and rules. There is no planner and no plan file (the brief is settled where
+the run is started), no verifier, and the person is in the graph once, at the
+same `acceptance` node as `dev`, whose requests go back to the implementer.
+Both agents are told what "small" means and to hand anything bigger back
+rather than build it, so a task that turns out to need a design ends the run
+with the reason in the summary and goes through `dev` instead.
+
 It contains no `npm ci` and no `npm test` on purpose — those are facts about
 one project, and a default that assumes them fails on the first machine it
 meets. What a particular repository needs goes around it, and `/gate:design`
@@ -602,8 +615,8 @@ team has not imported them, `/skills` says which are missing and imports them in
 one button, and a run that needs one stops at that node with the reason rather
 than quietly proceeding without it.
 
-The **default team's** directories are seeded with the three agents below and
-the `dev` pipeline the first time you open `/agents` or `/workflows`; after that they are yours to edit (from
+The **default team's** directories are seeded with the agents above and the
+`dev` and `dev-quick` pipelines the first time you open `/agents` or `/workflows`; after that they are yours to edit (from
 the dashboard or in `$EDITOR`), and deletions stick. A team you create starts
 **empty**: it is a place someone made for their own work, and two pipelines
 nobody wrote — one of which runs `npm ci` on whichever machine picks it up — is
@@ -645,8 +658,9 @@ worst case is a branch you delete. The worktree is left behind while it *is*
 the deliverable: review it with `git -C <worktree> diff`, merge the branch, or
 throw it away. Once every commit on it has reached the remote and the tree is
 clean — a run that ended by opening its merge request — the worktree is
-removed as the run completes and the branch kept; `gate clean` does the same
-for the worktrees older runs left, and `--all` takes the unpushed ones too.
+removed as the run completes and the branch kept; `gate clean` (or `/gate:clean`
+in Claude Code) does the same for the worktrees older runs left, and `--all`
+takes the unpushed ones too.
 
 The tools an agent may use are declared per agent, so roles stay honest — the
 implementer writes, the reviewers only read:
@@ -1076,7 +1090,8 @@ definition's hash, so an edited workflow asks again; `--yes` skips it for
 unattended use.
 
 `/gate:run` alone offers the list; `/gate:run dev fix the flaky test`
-starts that one and follows it to the end. A workflow that takes a `repo` input
+starts that one and follows it to the end, and `/gate:run dev-quick make the
+save button blue` takes the short road for a change that needs no plan. A workflow that takes a `repo` input
 defaults to the repository you are standing in (`--input repo=…` to aim it
 elsewhere).
 

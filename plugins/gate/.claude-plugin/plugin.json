@@ -1,7 +1,7 @@
 {
   "name": "gate",
   "description": "Run your team's gate agent workflows locally, in your own terminal",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "author": {
     "name": "Ugur Ata Dargun",
     "url": "https://github.com/uguratadargun"

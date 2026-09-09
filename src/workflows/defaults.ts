@@ -8,9 +8,9 @@ import { DEFAULT_TEAM, ownScope, type DefinitionScope } from "@/lib/def-root";
 import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
 
 /**
- * The sample pipeline gate ships with, seeded next to the default agents on
- * first access. Same rule as the agents: written only when the directory does
- * not exist yet, so deleting it sticks.
+ * The pipelines gate ships with, seeded next to the default agents on first
+ * access. Same rule as the agents: written only when the directory does not
+ * exist yet, so deleting one sticks.
  */
 
 /**
@@ -290,14 +290,21 @@ nodes:
     # The task rides as \$1 rather than being pasted into the script. Nothing in
     # gate ever builds a shell string out of a run's own values, and a task is
     # the most user-written value there is.
+    #
+    # The title is the task's first line, not the task: a brief is often
+    # several paragraphs, and git refuses a push option with a newline in it
+    # ("push options must not have new line characters") — measured here, a
+    # run whose every node had passed, failing at the push. The whole task is
+    # already in the commit.
     command:
       - sh
       - -c
       - >-
+        t=$(printf '%s\\n' "\$1" | sed -n 1p);
         if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
-        git push --set-upstream origin HEAD && glab mr create --fill --yes --title "\$1";
+        git push --set-upstream origin HEAD && glab mr create --fill --yes --title "$t";
         else
-        git push -o merge_request.create -o "merge_request.title=\$1" --set-upstream origin HEAD;
+        git push -o merge_request.create -o "merge_request.title=$t" --set-upstream origin HEAD;
         fi
       - gate-open-mr
       - "{{input.task}}"
@@ -344,8 +351,213 @@ nodes:
     status: failed
 `;
 
+/**
+ * The short road, for a change that does not need a plan.
+ *
+ * `dev` earns its length on a change worth planning: a design settled with
+ * the person, a plan they approve, a ledger, a verifier, a reviewer that
+ * dispatches its own subagent. Put "make the save button blue" through it
+ * and the same machinery runs on a two-line diff — measured here, most of an
+ * hour and three answers from the person for a change they could have
+ * described in one. `dev-quick` is the pipeline for that change: something
+ * that already exists, adjusted; a colour, a label, a default, a small fix.
+ *
+ * It has no planner. The brief is settled where the run is started — the
+ * run command already asks what is unsettled before it begins — and the
+ * quick implementer reads the repository and makes the change, following no
+ * skill, recording in its summary any reading it had to take on the
+ * person's behalf. It has no verifier: the implementer runs the project's
+ * own check for the files it touched, and the reviewer, which reads the
+ * diff itself rather than dispatching for it, holds the summary's claim
+ * about that check against what it can see and run. Both are told what
+ * "small" means, and a task that turns out not to be ends the run as
+ * `nothing-changed` with the reason in the summary, so it can be sent
+ * through `dev` instead of being half-built here.
+ *
+ * The person is in the graph once, at `acceptance`, in the same place and
+ * with the same agent as in `dev`: nothing leaves the machine until they
+ * have tried it, and their requests come back as the brief for another pass
+ * of the implementer — there is no planner for them to go to. Unattended,
+ * that node holds, and the run ends with the branch committed and unpushed.
+ *
+ * The git nodes are `dev`'s, for the same reasons: the base is recorded
+ * first, the diff is taken against it, the commit is allowed to find nothing
+ * to commit, the merge request is opened the same way. The review loop gives
+ * up sooner — three reviews, not four — because a small change that has
+ * been sent back twice is not converging on anything a third pass will fix.
+ */
+const DEV_QUICK = `name: Dev quick
+description: Make a small change to something that already exists — no plan, no skills — review it, let the person try it, and open a merge request. For a colour, a label, a default, a small fix; anything that needs a plan goes through Dev.
+entry: base
+workspace: {}
+# No engine ceilings, as in dev: the loops end themselves, on the verdict
+# and on the give-up edge below.
+maxWorkflowSteps: 0
+maxVisits: 0
+maxCostUsd: 0
+nodes:
+  - id: base
+    type: command
+    label: Record the starting commit
+    command: [git, log, "-1", --format=format:%H]
+    next: implementer
+
+  # Named implementer, not quick-implementer: outputs are keyed by node id,
+  # and the shipped acceptance agent reads implementer.summary — the same
+  # agent closes both pipelines.
+  - id: implementer
+    type: agent
+    agent: quick-implementer
+    label: Change it
+    edges:
+      # Deliberately nothing: the task was already done, or it turned out
+      # not to be small. The summary says which.
+      - when: outputs.implementer.changed == false
+        to: nothing-changed
+        label: deliberately changed nothing
+      - to: stage
+        label: changed
+
+  - id: stage
+    type: command
+    label: Stage new files
+    command: [git, add, -N, .]
+    next: diff
+
+  - id: diff
+    type: command
+    label: Diff against the starting commit
+    command: [git, diff, "{{outputs.base.stdout}}"]
+    edges:
+      - when: outputs.diff.stdout == ""
+        to: nothing-changed
+        label: nothing changed
+      - to: reviewer
+        label: has a diff
+
+  - id: reviewer
+    type: agent
+    agent: quick-reviewer
+    label: Review
+    next: verdict
+
+  - id: verdict
+    type: condition
+    label: Ships?
+    edges:
+      - when: outputs.reviewer.verdict == "approved"
+        to: stage-all
+        label: approved
+      # Three reviews without shipping is a small change that is not
+      # converging, and the branch is still there to be looked at.
+      - when: visits.reviewer >= 3
+        to: review-stuck
+        label: still rejected after 3 reviews
+      # Every rejection is a bounded fix here: there is no plan to fault.
+      - to: implementer
+        label: fix requested
+
+  - id: stage-all
+    type: command
+    label: Stage everything
+    command: [git, add, -A]
+    next: staged
+
+  - id: staged
+    type: command
+    label: Anything left to commit?
+    command: [git, diff, --cached, --quiet]
+    edges:
+      - when: outputs.staged.ok == true
+        to: acceptance
+        label: already committed
+      - to: commit
+        label: has staged changes
+
+  - id: commit
+    type: command
+    label: Commit
+    command: [git, commit, -m, "{{input.task}}", -m, "{{outputs.implementer.summary}}"]
+    edges:
+      - when: outputs.commit.ok == true
+        to: acceptance
+        label: committed
+      - to: not-shipped
+        label: commit failed
+
+  - id: acceptance
+    type: agent
+    agent: acceptance
+    label: Try it
+    next: decision
+
+  - id: decision
+    type: condition
+    label: Open the merge request?
+    edges:
+      - when: outputs.acceptance.decision == "ship"
+        to: merge-request
+        label: approved by the person
+      # Their requests are the brief for another pass of the implementer —
+      # there is no planner in this pipeline for them to go to.
+      - when: outputs.acceptance.decision == "revise"
+        to: implementer
+        label: changes requested by the person
+      - to: awaiting-approval
+        label: nobody to ask
+
+  - id: merge-request
+    type: command
+    label: Push and open the merge request
+    # The same node as dev's; see the comment there.
+    command:
+      - sh
+      - -c
+      - >-
+        t=$(printf '%s\\n' "\$1" | sed -n 1p);
+        if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
+        git push --set-upstream origin HEAD && glab mr create --fill --yes --title "$t";
+        else
+        git push -o merge_request.create -o "merge_request.title=$t" --set-upstream origin HEAD;
+        fi
+      - gate-open-mr
+      - "{{input.task}}"
+    edges:
+      - when: outputs.merge-request.ok == true
+        to: done
+        label: merge request opened
+      - to: not-shipped
+        label: push failed
+
+  - id: done
+    type: terminal
+    label: Merge request opened
+    status: completed
+
+  - id: awaiting-approval
+    type: terminal
+    label: Committed on the branch, awaiting your approval before a merge request
+    status: completed
+
+  - id: nothing-changed
+    type: terminal
+    label: Nothing was changed; the implementer's summary says why
+    status: failed
+
+  - id: review-stuck
+    type: terminal
+    label: Review never approved
+    status: failed
+
+  - id: not-shipped
+    type: terminal
+    label: Reviewed, but not shipped
+    status: failed
+`;
+
 export const DEFAULT_WORKFLOWS: Record<string, string> = {
   dev: DEV,
+  "dev-quick": DEV_QUICK,
 };
 
 /**

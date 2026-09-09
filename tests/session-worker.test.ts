@@ -223,6 +223,8 @@ describe("the same node when the session itself runs through the gateway", () =>
       const file = readFileSync(join(process.env.CLAUDE_CONFIG_DIR, "agents", "gate-t-builder.md"), "utf8");
       expect(file).toContain("name: gate-t-builder");
       expect(file).toContain("model: provider:zai/glm-5.3");
+      // The subagent is told its own subagents run in the background here.
+      expect(file).toContain("run in the background");
       // Unchanged content is not rewritten: Claude Code watches the directory.
       expect(syncSubagents("t", { root: join(home, "cache", "t"), teamId: "t" }).written).toEqual([]);
 

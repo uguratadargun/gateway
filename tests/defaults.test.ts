@@ -90,7 +90,33 @@ describe("what the shipped agents declare", () => {
   it("is a planner, an implementer and a reviewer, each following its skills, and three gates to the person", () => {
     ensureDefaultAgents();
     const byId = new Map(listAgents().agents.map((a) => [a.id, a]));
-    expect([...byId.keys()].sort()).toEqual(["acceptance", "clarify", "implementer", "plan-review", "planner", "reviewer", "verifier"]);
+    expect([...byId.keys()].sort()).toEqual([
+      "acceptance",
+      "clarify",
+      "implementer",
+      "plan-review",
+      "planner",
+      "quick-implementer",
+      "quick-reviewer",
+      "reviewer",
+      "verifier",
+    ]);
+    // The quick pair follows no skill: it is the point of them. They run as
+    // a spawned Claude Code like the rest of the working agents; the
+    // implementer edits, the reviewer reads, and both read the base commit
+    // or the summary by the node id dev-quick gives those nodes.
+    expect(byId.get("quick-implementer")!.skills).toEqual([]);
+    expect(byId.get("quick-reviewer")!.skills).toEqual([]);
+    expect(byId.get("quick-implementer")!.executor).toBe("claude-code");
+    expect(byId.get("quick-reviewer")!.executor).toBe("claude-code");
+    expect(byId.get("quick-implementer")!.tools).toContain("edit_file");
+    expect(byId.get("quick-reviewer")!.tools).not.toContain("edit_file");
+    expect(byId.get("quick-reviewer")!.tools).not.toContain("write_file");
+    expect(byId.get("quick-implementer")!.inputs).toContain("reviewer.feedback?");
+    expect(byId.get("quick-implementer")!.inputs).toContain("acceptance.requests?");
+    expect(byId.get("quick-reviewer")!.inputs).toContain("base.stdout");
+    expect(byId.get("quick-reviewer")!.inputs).toContain("implementer.summary");
+    expect(byId.get("quick-implementer")!.timeoutMs).toBeLessThan(byId.get("implementer")!.timeoutMs!);
     // The gates follow no skill and decide nothing; they ask, and read. They
     // run on the loop driving the run — the session — never as a spawned
     // Claude Code, which could not ask anyone.
@@ -103,6 +129,12 @@ describe("what the shipped agents declare", () => {
     expect(byId.get("planner")!.inputs).toContain("clarify.answers?");
     expect(byId.get("planner")!.inputs).toContain("plan-review.feedback?");
     expect(byId.get("planner")!.inputs).toContain("acceptance.requests?");
+    // The planner reads its own notes from the last pass: each pass starts
+    // with none of the previous one's context, and only what is an output
+    // survives the node boundary.
+    expect(byId.get("planner")!.inputs).toContain("planner.notes?");
+    const plannerOutput = byId.get("planner")!.output;
+    expect(plannerOutput.type === "json" ? Object.keys(plannerOutput.schema) : []).toContain("notes");
 
     // The skills are the point of the defaults: without them these are three
     // ordinary prompts, and the processes somebody chose deliberately are gone.
@@ -363,6 +395,10 @@ Try {{inputs.implementer.summary}}
     // push has happened leaves the push-option route nothing to push.
     expect(mr[2]).toContain("glab auth status");
     expect(mr[2]).toContain("merge_request.create");
+    // The title is the task's first line: git refuses a push option with a
+    // newline in it, and a brief is often several paragraphs.
+    expect(mr[2]).not.toContain('merge_request.title=$1');
+    expect(mr[2]).toContain("sed -n 1p");
 
     const commit = ran.find((c) => c[0] === "git" && c[1] === "commit")!;
     expect(commit).toContain("Add a thing");
@@ -633,6 +669,220 @@ Try {{inputs.implementer.summary}}
     const events: WorkflowEvent[] = [];
 
     const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.status).toBe("failed");
+    expect(terminalOf(events)).toBe("nothing-changed");
+    expect(state.visitCounts.reviewer ?? 0).toBe(0);
+    expect(ran.find((c) => c[0] === "git" && c[1] === "diff")).toBeUndefined();
+  });
+});
+
+describe("the shipped quick pipeline", () => {
+  /**
+   * The short road, with stand-ins of the same names and output shapes as
+   * the quick agents. Under test is the graph: that no planner and no gate
+   * to the person stand before the change, where a rejection and the
+   * person's requests go, and that the ending is dev's.
+   */
+  const STANDINS: Record<string, string> = {
+    "quick-implementer": `---
+name: Quick implementer
+inputs: [reviewer.feedback?, acceptance.requests?]
+output:
+  type: json
+  schema:
+    summary: string
+    changed: boolean
+---
+Change {{input.task}} {{inputs.reviewer.feedback}} {{inputs.acceptance.requests}}
+`,
+    "quick-reviewer": `---
+name: Quick reviewer
+inputs: [base.stdout, implementer.summary]
+output:
+  type: json
+  schema:
+    verdict: string
+    feedback: "string?"
+---
+Review from {{inputs.base.stdout}} given {{inputs.implementer.summary}}
+`,
+    acceptance: `---
+name: Acceptance
+inputs: [implementer.summary]
+output:
+  type: json
+  schema:
+    decision: string
+    requests: "string?"
+---
+Try {{inputs.implementer.summary}}
+`,
+  };
+
+  const BASE = "fedcba9876543210fedcba9876543210fedcba98";
+
+  function terminalOf(events: WorkflowEvent[]): string | undefined {
+    const done = events.find((e) => e.type === "workflow.completed");
+    return done && "terminalNodeId" in done ? done.terminalNodeId : undefined;
+  }
+
+  function fakeGit(opts: { changed?: boolean } = {}) {
+    const ran: string[][] = [];
+    const runCommand = async (node: { id: string; command: string[] }) => {
+      ran.push(node.command);
+      switch (node.id) {
+        case "base":
+          return { ok: true, exitCode: 0, stdout: BASE, stderr: "" };
+        case "diff":
+          return { ok: true, exitCode: 0, stdout: opts.changed === false ? "" : "--- a.tsx\n+++ a.tsx\n", stderr: "" };
+        case "staged":
+          // The quick implementer leaves its change uncommitted, so there is
+          // always something to commit.
+          return { ok: false, exitCode: 1, stdout: "", stderr: "" };
+        default:
+          return { ok: true, exitCode: 0, stdout: "", stderr: "" };
+      }
+    };
+    return { ran, runCommand: runCommand as never };
+  }
+
+  const APPROVED = () => JSON.stringify({ verdict: "approved" });
+  const SHIP = () => JSON.stringify({ decision: "ship" });
+
+  function fakeTeam(
+    reviews: (visit: number) => string = APPROVED,
+    accepts: (visit: number) => string = SHIP,
+    changes: (visit: number) => string = (visit) => JSON.stringify({ summary: `pass ${visit}`, changed: true }),
+  ) {
+    const visits: Record<string, number> = {};
+    return new FakeModelProvider((req) => {
+      const node = req.context?.nodeId ?? "";
+      const visit = (visits[node] = (visits[node] ?? 0) + 1);
+      switch (node) {
+        case "implementer":
+          return changes(visit);
+        case "reviewer":
+          return reviews(visit);
+        case "acceptance":
+          return accepts(visit);
+        default:
+          return "{}";
+      }
+    });
+  }
+
+  function quick() {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    return getWorkflow("dev-quick");
+  }
+
+  it("changes, reviews, commits, asks and opens the merge request, with no planner in the way", async () => {
+    const workflow = quick();
+    const provider = fakeTeam();
+    const { ran, runCommand } = fakeGit();
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Make the save button blue" } });
+
+    expect(state.error).toBeNull();
+    expect(state.status).toBe("completed");
+    // Straight from the base to the change: nothing planned, nothing shown,
+    // nothing asked before the implementer runs.
+    expect(state.visitCounts.planner ?? 0).toBe(0);
+    expect(state.visitCounts["plan-review"] ?? 0).toBe(0);
+    expect(state.visitCounts.clarify ?? 0).toBe(0);
+    expect(state.visitCounts.verifier ?? 0).toBe(0);
+    expect(state.visitCounts.implementer).toBe(1);
+    expect(state.visitCounts.reviewer).toBe(1);
+    expect(state.visitCounts.acceptance).toBe(1);
+    // The quick agents stand in the nodes the shipped acceptance reads from.
+    expect(workflow.nodes.find((n) => n.id === "implementer")).toMatchObject({ agent: "quick-implementer" });
+    expect(workflow.nodes.find((n) => n.id === "reviewer")).toMatchObject({ agent: "quick-reviewer" });
+    expect(workflow.nodes.find((n) => n.id === "acceptance")).toMatchObject({ agent: "acceptance" });
+
+    // The reviewer reads the diff itself, from the base it was handed.
+    expect(provider.callsFor("reviewer")[0].messages[0].content).toContain(BASE);
+    expect(ran.find((c) => c[0] === "git" && c[1] === "diff" && c.length === 3)).toEqual(["git", "diff", BASE]);
+    // The ending is dev's: the task and the summary on the commit, the task
+    // as an argument to the merge request, the commit before the push.
+    const commit = ran.find((c) => c[0] === "git" && c[1] === "commit")!;
+    expect(commit).toContain("Make the save button blue");
+    expect(commit).toContain("pass 1");
+    const mr = ran.find((c) => c[0] === "sh")!;
+    expect(mr.at(-1)).toBe("Make the save button blue");
+    expect(mr[2]).toContain("glab auth status");
+    expect(ran.indexOf(commit)).toBeLessThan(ran.indexOf(mr));
+  });
+
+  it("sends a rejected review straight back to the implementer, and gives up after three", async () => {
+    const workflow = quick();
+    const once = fakeTeam((visit) =>
+      visit === 1 ? JSON.stringify({ verdict: "changes-requested", feedback: "Use the theme's `primary` token, not a hex." }) : APPROVED(),
+    );
+    const { runCommand } = fakeGit();
+
+    const state = await runWorkflow(workflow, { provider: once, runCommand, input: { task: "Make the save button blue" } });
+    expect(state.status).toBe("completed");
+    expect(state.visitCounts.implementer).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(2);
+    const builds = once.callsFor("implementer").map((c) => c.messages[0].content);
+    expect(builds[0]).not.toContain("primary");
+    expect(builds[1]).toContain("Use the theme's `primary` token, not a hex.");
+
+    const never = fakeTeam(() => JSON.stringify({ verdict: "changes-requested", feedback: "No." }));
+    const events: WorkflowEvent[] = [];
+    const { ran, runCommand: git } = fakeGit();
+    const stuck = await runWorkflow(workflow, { provider: never, runCommand: git, input: { task: "Make the save button blue" }, emit: (e) => events.push(e) });
+    expect(stuck.status).toBe("failed");
+    expect(terminalOf(events)).toBe("review-stuck");
+    // Three, not dev's four: a small change sent back twice is not converging.
+    expect(stuck.visitCounts.reviewer).toBe(3);
+    expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeUndefined();
+  });
+
+  it("sends the person's requests back to the implementer, and ships once they say so", async () => {
+    const workflow = quick();
+    const provider = fakeTeam(APPROVED, (visit) =>
+      visit === 1 ? JSON.stringify({ decision: "revise", requests: "Lighter blue, and the hover state too." }) : SHIP(),
+    );
+    const { ran, runCommand } = fakeGit();
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Make the save button blue" } });
+
+    expect(state.status).toBe("completed");
+    expect(state.visitCounts.acceptance).toBe(2);
+    expect(state.visitCounts.implementer).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(2);
+    const builds = provider.callsFor("implementer").map((c) => c.messages[0].content);
+    expect(builds[0]).not.toContain("hover");
+    expect(builds[1]).toContain("Lighter blue, and the hover state too.");
+    expect(ran.filter((c) => c[0] === "sh")).toHaveLength(1);
+  });
+
+  it("holds when nobody is there to approve, leaving the branch committed and unpushed", async () => {
+    const workflow = quick();
+    const provider = fakeTeam(APPROVED, () => JSON.stringify({ decision: "hold" }));
+    const { ran, runCommand } = fakeGit();
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Make the save button blue" }, emit: (e) => events.push(e) });
+
+    expect(state.status).toBe("completed");
+    expect(terminalOf(events)).toBe("awaiting-approval");
+    expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeDefined();
+    expect(ran.find((c) => c[0] === "sh")).toBeUndefined();
+  });
+
+  it("ends as nothing-changed when the implementer says the task is not small", async () => {
+    const workflow = quick();
+    const provider = fakeTeam(APPROVED, SHIP, () =>
+      JSON.stringify({ summary: "This needs a new settings page and a migration; not a quick change.", changed: false }),
+    );
+    const { ran, runCommand } = fakeGit();
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add per-user themes" }, emit: (e) => events.push(e) });
 
     expect(state.status).toBe("failed");
     expect(terminalOf(events)).toBe("nothing-changed");

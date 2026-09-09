@@ -50,7 +50,11 @@ function workspacesDir(): string {
 
 function git(cwd: string, args: string[]): string {
   try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 10_000_000 }).trim();
+    // stderr piped, not inherited: a probe that is expected to fail — "no
+    // upstream configured", asked of every worktree `gate clean` judges —
+    // would otherwise print git's fatal line over the command's own output.
+    // Piped, it still reaches the error's message for the failures that matter.
+    return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 10_000_000, stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch (e) {
     const err = e as Error & { stderr?: string };
     throw new WorkflowError("WORKSPACE_ERROR", `git ${args[0]} failed: ${(err.stderr || err.message).trim().slice(0, 400)}`);
