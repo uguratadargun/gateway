@@ -69,7 +69,8 @@ export function LiveActivity() {
                 {e.kind === "request" ? (
                   <>
                     <span className="text-muted-foreground">{e.endpoint}</span>
-                    <span>{e.requested} → {e.tier}</span>
+                    <span>{e.requested} → {e.model ?? e.tier}</span>
+                    {e.model && e.tier && e.model !== e.tier && <span className="text-muted-foreground">as {e.tier}</span>}
                     {e.fromCache && <Badge variant="success">cache</Badge>}
                     {e.inputTokens != null && (
                       <span className="text-muted-foreground">

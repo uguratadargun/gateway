@@ -7,7 +7,8 @@ import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { GateClient } from "@/client/api";
-import { next, work, wait, type SessionRunContext } from "@/client/step";
+import { next, step, work, wait, type SessionRunContext } from "@/client/step";
+import { syncSubagents } from "@/client/subagents";
 import type { ExecutionStepRecord } from "@/executions/types";
 
 /**
@@ -203,5 +204,47 @@ describe("a claude-code node in a session-driven run", () => {
     const again = await wait(ctx, "e3", 50);
     expect(again.do).toBe("wait");
     expect(ctx.said.length).toBe(before);
+  });
+});
+
+describe("the same node when the session itself runs through the gateway", () => {
+  it("is handed to the session as a subagent, in the agent's model, and answered with gate step", async () => {
+    const previousConfig = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "gate-claude-"));
+    try {
+      const server = fakeServer("e4");
+      const spawned: string[] = [];
+      const ctx = context(server.client, { throughGateway: true, spawnWorker: (_e, n) => (spawned.push(n), process.pid) });
+
+      // What `gate next` does before every instruction on such a session.
+      const synced = syncSubagents("t", { root: join(home, "cache", "t"), teamId: "t" });
+      expect(synced.created).toBe(true);
+      expect(synced.written).toEqual(["gate-t-builder"]);
+      const file = readFileSync(join(process.env.CLAUDE_CONFIG_DIR, "agents", "gate-t-builder.md"), "utf8");
+      expect(file).toContain("name: gate-t-builder");
+      expect(file).toContain("model: provider:zai/glm-5.3");
+      // Unchanged content is not rewritten: Claude Code watches the directory.
+      expect(syncSubagents("t", { root: join(home, "cache", "t"), teamId: "t" }).written).toEqual([]);
+
+      const first = await next(ctx, "e4");
+      expect(first.do).toBe("delegate");
+      if (first.do !== "delegate") return;
+      expect(first.subagent).toBe("gate-t-builder");
+      expect(first.model).toBe("provider:zai/glm-5.3");
+      expect(first.prompt).toContain("Build a thing.");
+      expect(first.prompt).toContain("running unattended");
+      expect(first.workspace).toBe(worktree);
+      expect(first.remember.some((r) => r.includes("gate step e4 build"))).toBe(true);
+      // No worker: the session runs it.
+      expect(spawned).toEqual([]);
+      expect(existsSync(join(home, "runs", "e4.json"))).toBe(true);
+
+      const after = await step(ctx, "e4", "build", '{"summary": "built live"}');
+      expect(after.do).toBe("done");
+      expect(server.steps[0]).toMatchObject({ nodeId: "build", status: "completed", output: { summary: "built live" } });
+    } finally {
+      if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousConfig;
+    }
   });
 });

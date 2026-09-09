@@ -13,6 +13,7 @@ import type { StepRecord, WorkflowState } from "@/runtime/state";
 import { renderTemplate } from "@/agents/template";
 import { conditionContext } from "@/runtime/state";
 import { createRunWorkspace, readRunDiff, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
+import { unattendedNotice } from "@/skills/inject";
 import { getSkill, resolveSkillDir } from "@/skills/registry";
 import type { SkillDefinition } from "@/skills/types";
 import { getWorkflow } from "@/workflows/registry";
@@ -21,6 +22,7 @@ import type { WorkflowDefinition } from "@/workflows/types";
 import type { GateClient } from "./api";
 import { CLI_VERSION } from "./api";
 import { RunReporter } from "./reporter";
+import { subagentName } from "./subagents";
 import { describeCall, describeText } from "./worker-log";
 import { cacheScope } from "./cache";
 import { gateHome } from "./config";
@@ -106,6 +108,28 @@ export type Instruction =
       startedAt: number;
       remember: string[];
     }
+  | {
+      /**
+       * A node in its own model, run as a subagent of the session so that it
+       * is drawn live in the terminal. Only when the session itself goes
+       * through the gateway: the subagent inherits the session's endpoint,
+       * and its model is a name only the gateway resolves.
+       */
+      do: "delegate";
+      executionId: string;
+      nodeId: string;
+      agent: string;
+      model: string;
+      /** The subagent to start, by name: a file gate keeps under ~/.claude/agents. */
+      subagent: string;
+      /** The whole task for the subagent, inputs resolved; passed as it is. */
+      prompt: string;
+      output: { type: "json" | "text"; schema?: Record<string, string> };
+      workspace: string | null;
+      skills: Array<{ id: string; description: string; path: string | null }>;
+      timeoutMs: number | null;
+      remember: string[];
+    }
   | { do: "done"; executionId: string; status: "completed" | "failed"; branch: string | null; workspace: string | null }
   | { do: "failed"; executionId: string; nodeId: string; error: { code: string; message: string } };
 
@@ -156,6 +180,12 @@ export interface SessionRunContext {
   say: (message: string) => void;
   /** Starts the detached worker for a node; the CLI's own process by default. Injectable for tests. */
   spawnWorker?: (executionId: string, nodeId: string, log: string) => number;
+  /**
+   * The session's own model calls go through the gateway. Then a claude-code
+   * node can run as its subagent — live in the terminal — in the agent's
+   * model, instead of as a worker the session only follows.
+   */
+  throughGateway?: boolean;
   /** Handed to the claude-code executor inside the worker, so tests do not spawn a real CLI. */
   spawnCli?: typeof spawn;
 }
@@ -379,6 +409,55 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
         }
         return { id, description, path: resolveSkillDir(id, scope) };
       });
+
+      if (prepared.agent.executor === "claude-code" && ctx.throughGateway) {
+        // The session's endpoint is the gateway, so a subagent of the session
+        // reaches the agent's model too — and is drawn live where the
+        // person is looking, which a worker's log never is.
+        const shape =
+          prepared.agent.output.type === "json"
+            ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema)
+                .map(([k, t]) => `${k} (${t})`)
+                .join(", ")}`
+            : "the answer as plain text";
+        const subagent = subagentName(ctx.team, prepared.agent.id);
+        ctx.say(`  as subagent ${subagent} in ${prepared.agent.model} · live in this session`);
+        return {
+          do: "delegate",
+          executionId,
+          nodeId: node.id,
+          agent: prepared.agent.id,
+          model: prepared.agent.model,
+          subagent,
+          prompt: `${prepared.prompt}\n\n${unattendedNotice()}`,
+          output:
+            prepared.agent.output.type === "json"
+              ? { type: "json", schema: prepared.agent.output.schema }
+              : { type: "text" },
+          workspace: workspace?.root ?? null,
+          skills,
+          timeoutMs: prepared.agent.timeoutMs ?? null,
+          remember: [
+            `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` ` +
+              "as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not " +
+              "pick a model for it: its file sets the agent's own model.",
+            workspace
+              ? `Tell it: work in ${workspace.root} — the run's worktree, not the user's checkout — with absolute paths under it, and nowhere else.`
+              : "Tell it: this node has no workspace; reason over the task, touch no files.",
+            ...(skills.length
+              ? [
+                  `Tell it: read and follow, before starting, ${skills.length === 1 ? "this skill" : "these skills"}: ` +
+                    skills.map((s) => `${s.id} (${s.path ?? "not pulled"})`).join(", ") +
+                    ". They are part of the node.",
+                ]
+              : []),
+            `Tell it: end the final message with ${shape}, and nothing after it.`,
+            "It cannot ask the user anything. Do not answer for it either; what it needs settled goes into its answer the way the prompt says.",
+            "When it returns, take that answer from its final message, write it to a file, and hand it back:",
+            `  gate step ${executionId} ${node.id} --output-file <file>`,
+          ],
+        };
+      }
 
       if (prepared.agent.executor === "claude-code") {
         // Not the session's to do: this node runs in the agent's own model,

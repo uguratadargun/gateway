@@ -14,6 +14,7 @@ import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest }
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
 import { runLocal } from "./run";
 import { begin, next, step, wait, work, type Instruction, type SessionRunContext } from "./step";
+import { syncSubagents } from "./subagents";
 
 /**
  * `gate` — the command a developer runs, and what /gate:run calls.
@@ -46,6 +47,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
+  gate env                                      exports that point a Claude Code session at the gateway
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
@@ -577,7 +579,51 @@ async function sessionContext(): Promise<{ ctx: SessionRunContext; team: string 
   const config = readConfig()!;
   const team = await teamOf(client, config);
   await sync(client, team, true);
-  return { ctx: { client, team, say: (m) => console.error(m) }, team };
+  const throughGateway = sessionThroughGateway(client);
+  if (throughGateway) {
+    // The session can run the team's claude-code agents as its own subagents,
+    // so Claude Code has to know them; kept in step with the mirror here,
+    // before every instruction, so an agent edited in the dashboard is the
+    // one the next node starts.
+    const synced = syncSubagents(team, cacheScope(team));
+    if (synced.created) {
+      console.error("# subagents written to ~/.claude/agents for the first time — restart Claude Code once so it sees them");
+    } else if (synced.written.length) {
+      console.error(`# subagents updated: ${synced.written.join(", ")}`);
+    }
+  }
+  return { ctx: { client, team, say: (m) => console.error(m), throughGateway }, team };
+}
+
+/**
+ * Whether this process — and so the Claude Code session that ran it — sends
+ * its model calls to the gateway. That is what lets a subagent of the session
+ * run in a provider model: the name means nothing to Anthropic's endpoint and
+ * everything to the gateway's router.
+ */
+function sessionThroughGateway(client: GateClient): boolean {
+  const base = process.env.ANTHROPIC_BASE_URL;
+  if (!base) return false;
+  const norm = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase();
+  return norm(base) === norm(client.gatewayUrl);
+}
+
+/**
+ * What a shell needs so that Claude Code — and every subagent it starts —
+ * talks to the gateway: `eval "$(gate env)"`, then `claude`. Only then can a
+ * run's claude-code nodes be its subagents, live in the terminal, in their
+ * own models; otherwise they run as workers the session follows.
+ */
+function cmdEnv(): number {
+  const config = readConfig();
+  if (!config) die("not logged in — run `gate login <token>` first");
+  const client = connect();
+  const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+  console.log(`export ANTHROPIC_BASE_URL=${q(client.gatewayUrl)}`);
+  console.log(`export ANTHROPIC_AUTH_TOKEN=${q(config.key)}`);
+  console.log(`export ANTHROPIC_API_KEY=${q(config.key)}`);
+  console.log(`export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`);
+  return 0;
 }
 
 function printInstruction(instruction: Instruction): number {
@@ -705,6 +751,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdStep(args);
       case "wait":
         return await cmdWait(args);
+      case "env":
+        return cmdEnv();
       case "work":
         return await cmdWork(args);
       case "repo":

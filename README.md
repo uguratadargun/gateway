@@ -947,11 +947,15 @@ and your permissions — you can watch it, interrupt it, and answer it when it
 asks, which is what the shipped `acceptance` node does. An
 `executor: claude-code` node runs as a spawned Claude Code on your machine
 **in the agent's own model** — a planner on GLM, an implementer on a local
-model, which your session's model cannot stand in for — started as a detached
-worker that writes every tool call to a log; your session follows the log with
-`gate wait`, relays it to you, and carries on when the node is over. Those
-nodes run unattended and do not ask; the brief is settled before the run, and
-the acceptance node asks at the end.
+model, which your session's model cannot stand in for. Start Claude Code
+through the gateway — `eval "$(gate env)" && claude` — and those nodes run as
+**subagents of your session**, drawn live in your terminal the way your own
+work is, in the agent's model: gate keeps the team's agents under
+`~/.claude/agents/` for that. In a session that is not on the gateway they
+run instead as a detached worker that writes what it does to a log; your
+session follows it with `gate wait`, relays it, and carries on when the node
+is over. Either way those nodes do not ask; the planner's questions travel to
+you through the `clarify` node, and the acceptance node asks at the end.
 
 The protocol is four commands, and the session loops them:
 
@@ -960,6 +964,7 @@ gate begin <workflow> "<task>"          # → the first instruction, as JSON
 gate next <execution-id>                # → what to do now (no side effects)
 gate step <execution-id> <node> --output-file <file>   # → hand back an answer
 gate wait <execution-id>                # → follow a node running in its own model
+gate env                                # → exports that put a session on the gateway
 ```
 
 `begin`/`step`/`wait` print the next instruction, so the loop is one call per

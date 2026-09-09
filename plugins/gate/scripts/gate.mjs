@@ -6,9 +6,9 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { mkdirSync as mkdirSync11, readFileSync as readFileSync9, writeFileSync as writeFileSync9 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { basename as basename2, join as join13, resolve as resolve6 } from "node:path";
+import { mkdirSync as mkdirSync12, readFileSync as readFileSync10, writeFileSync as writeFileSync10 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { basename as basename2, join as join14, resolve as resolve6 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
@@ -8467,7 +8467,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.25.6";
+var GATE_VERSION = "0.26.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -10161,9 +10161,65 @@ async function runLocal(client, opts) {
 
 // src/client/step.ts
 import { spawn as spawn2 } from "node:child_process";
-import { appendFileSync, closeSync, existsSync as existsSync11, mkdirSync as mkdirSync10, openSync, readFileSync as readFileSync8, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { appendFileSync, closeSync, existsSync as existsSync12, mkdirSync as mkdirSync11, openSync, readFileSync as readFileSync9, rmSync as rmSync8, writeFileSync as writeFileSync9 } from "node:fs";
 import { hostname as hostname3 } from "node:os";
+import { join as join13 } from "node:path";
+
+// src/client/subagents.ts
+import { existsSync as existsSync11, mkdirSync as mkdirSync10, readdirSync as readdirSync7, readFileSync as readFileSync8, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
 import { join as join12 } from "node:path";
+function claudeConfigDir() {
+  return process.env.CLAUDE_CONFIG_DIR || join12(homedir7(), ".claude");
+}
+function subagentName(team, agentId) {
+  return `gate-${team}-${agentId}`;
+}
+function subagentFile(team, agent) {
+  const name = subagentName(team, agent.id);
+  return `---
+name: ${name}
+description: gate's "${agent.id}" agent for team "${team}". Only /gate:run starts it; it is not for other work.
+model: ${agent.model}
+---
+
+You are the \`${agent.id}\` agent of a gate run, started by the session driving the run. The
+task you are given is the whole brief: what to do, the worktree to do it in, the skill files
+to read and follow first, and the shape of the answer to end with. Work only in the worktree
+the task names, with absolute paths under it, and nowhere else. Nobody can answer a question
+you ask here; where the brief gives questions a way out, use it. End your final message with
+the answer in exactly the shape the task asks for, and nothing after it.
+`;
+}
+function syncSubagents(team, scope) {
+  const dir = join12(claudeConfigDir(), "agents");
+  const created = !existsSync11(dir);
+  if (created) mkdirSync10(dir, { recursive: true, mode: 448 });
+  const prefix = `gate-${team}-`;
+  const wanted = /* @__PURE__ */ new Map();
+  for (const agent of listAgents(scope).agents) {
+    if (agent.executor === "claude-code") wanted.set(`${subagentName(team, agent.id)}.md`, subagentFile(team, agent));
+  }
+  const written = [];
+  const removed = [];
+  for (const entry of readdirSync7(dir)) {
+    if (!entry.startsWith(prefix) || !entry.endsWith(".md") || wanted.has(entry)) continue;
+    rmSync7(join12(dir, entry));
+    removed.push(entry.slice(0, -3));
+  }
+  for (const [file, content] of wanted) {
+    const path = join12(dir, file);
+    let current = "";
+    try {
+      current = readFileSync8(path, "utf8");
+    } catch {
+    }
+    if (current === content) continue;
+    writeFileSync8(path, content, { mode: 384 });
+    written.push(file.slice(0, -3));
+  }
+  return { written, removed, created };
+}
 
 // src/client/worker-log.ts
 import { relative as relative5 } from "node:path";
@@ -10295,29 +10351,29 @@ function walk2(workflow, steps, input, replay, from, stopAt) {
 
 // src/client/step.ts
 function pendingPath(executionId) {
-  return join12(gateHome2(), "runs", `${executionId}.json`);
+  return join13(gateHome2(), "runs", `${executionId}.json`);
 }
 function readPending(executionId) {
   try {
-    return JSON.parse(readFileSync8(pendingPath(executionId), "utf8"));
+    return JSON.parse(readFileSync9(pendingPath(executionId), "utf8"));
   } catch {
     return null;
   }
 }
 function writePending(pending) {
   const file = pendingPath(pending.executionId);
-  mkdirSync10(join12(gateHome2(), "runs"), { recursive: true, mode: 448 });
-  writeFileSync8(file, `${JSON.stringify(pending)}
+  mkdirSync11(join13(gateHome2(), "runs"), { recursive: true, mode: 448 });
+  writeFileSync9(file, `${JSON.stringify(pending)}
 `, { mode: 384 });
 }
 function clearPending(executionId) {
-  rmSync7(pendingPath(executionId), { force: true });
+  rmSync8(pendingPath(executionId), { force: true });
 }
 function workspaceOf(execution) {
   return execution.workspace ?? null;
 }
 function logPath(pending) {
-  return join12(gateHome2(), "runs", `${pending.executionId}-${pending.nodeId}-${pending.visit}.log`);
+  return join13(gateHome2(), "runs", `${pending.executionId}-${pending.nodeId}-${pending.visit}.log`);
 }
 function spawnDetachedWorker(executionId, nodeId2, log) {
   const fd = openSync(log, "a");
@@ -10480,9 +10536,40 @@ async function next(ctx, executionId) {
         }
         return { id, description, path: resolveSkillDir(id, scope) };
       });
+      if (prepared.agent.executor === "claude-code" && ctx.throughGateway) {
+        const shape2 = prepared.agent.output.type === "json" ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema).map(([k, t]) => `${k} (${t})`).join(", ")}` : "the answer as plain text";
+        const subagent = subagentName(ctx.team, prepared.agent.id);
+        ctx.say(`  as subagent ${subagent} in ${prepared.agent.model} \xB7 live in this session`);
+        return {
+          do: "delegate",
+          executionId,
+          nodeId: node.id,
+          agent: prepared.agent.id,
+          model: prepared.agent.model,
+          subagent,
+          prompt: `${prepared.prompt}
+
+${unattendedNotice()}`,
+          output: prepared.agent.output.type === "json" ? { type: "json", schema: prepared.agent.output.schema } : { type: "text" },
+          workspace: workspace?.root ?? null,
+          skills,
+          timeoutMs: prepared.agent.timeoutMs ?? null,
+          remember: [
+            `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not pick a model for it: its file sets the agent's own model.`,
+            workspace ? `Tell it: work in ${workspace.root} \u2014 the run's worktree, not the user's checkout \u2014 with absolute paths under it, and nowhere else.` : "Tell it: this node has no workspace; reason over the task, touch no files.",
+            ...skills.length ? [
+              `Tell it: read and follow, before starting, ${skills.length === 1 ? "this skill" : "these skills"}: ` + skills.map((s) => `${s.id} (${s.path ?? "not pulled"})`).join(", ") + ". They are part of the node."
+            ] : [],
+            `Tell it: end the final message with ${shape2}, and nothing after it.`,
+            "It cannot ask the user anything. Do not answer for it either; what it needs settled goes into its answer the way the prompt says.",
+            "When it returns, take that answer from its final message, write it to a file, and hand it back:",
+            `  gate step ${executionId} ${node.id} --output-file <file>`
+          ]
+        };
+      }
       if (prepared.agent.executor === "claude-code") {
         const log = logPath({ executionId, nodeId: node.id, visit: position.visit });
-        mkdirSync10(join12(gateHome2(), "runs"), { recursive: true, mode: 448 });
+        mkdirSync11(join13(gateHome2(), "runs"), { recursive: true, mode: 448 });
         appendFileSync(log, `\u2500\u2500 ${node.id} \xB7 agent ${prepared.agent.id} \xB7 ${prepared.agent.model} \xB7 started ${new Date(startedAt).toISOString()}
 `, { mode: 384 });
         const pid = (ctx.spawnWorker ?? spawnDetachedWorker)(executionId, node.id, log);
@@ -10732,7 +10819,7 @@ async function wait(ctx, executionId, forMs = WAIT_SLICE_MS) {
     const shown = pending.shown ?? 0;
     let text = "";
     try {
-      text = readFileSync8(pending.worker.log, "utf8");
+      text = readFileSync9(pending.worker.log, "utf8");
     } catch {
     }
     if (text.length > shown) {
@@ -10790,7 +10877,7 @@ async function settle(ctx, executionId, execution, stepCount, status, error) {
   const workspace = workspaceOf(execution);
   let diff = null;
   let summary2 = null;
-  if (workspace && existsSync11(workspace.root)) {
+  if (workspace && existsSync12(workspace.root)) {
     summary2 = summarizeWorkspace(workspace);
     try {
       diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
@@ -10823,6 +10910,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
+  gate env                                      exports that point a Claude Code session at the gateway
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
@@ -10926,12 +11014,12 @@ async function cmdLogin(args) {
   return 0;
 }
 function cmdInstall(args) {
-  const target = typeof args.flags.dir === "string" ? args.flags.dir : join13(homedir7(), ".local", "bin");
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join14(homedir8(), ".local", "bin");
   const script = process.argv[1];
-  const shim = join13(target, "gate");
+  const shim = join14(target, "gate");
   try {
-    mkdirSync11(target, { recursive: true });
-    writeFileSync9(shim, `#!/bin/sh
+    mkdirSync12(target, { recursive: true });
+    writeFileSync10(shim, `#!/bin/sh
 exec node "${script}" "$@"
 `, { mode: 493 });
   } catch (e) {
@@ -11028,7 +11116,7 @@ async function cmdPush(args) {
   for (const item of items) {
     let source;
     try {
-      source = readFileSync9(item.file, "utf8");
+      source = readFileSync10(item.file, "utf8");
     } catch (e) {
       console.error(`${item.file}: ${e.message}`);
       failed++;
@@ -11197,7 +11285,33 @@ async function sessionContext() {
   const config = readConfig();
   const team = await teamOf(client, config);
   await sync(client, team, true);
-  return { ctx: { client, team, say: (m) => console.error(m) }, team };
+  const throughGateway = sessionThroughGateway(client);
+  if (throughGateway) {
+    const synced = syncSubagents(team, cacheScope(team));
+    if (synced.created) {
+      console.error("# subagents written to ~/.claude/agents for the first time \u2014 restart Claude Code once so it sees them");
+    } else if (synced.written.length) {
+      console.error(`# subagents updated: ${synced.written.join(", ")}`);
+    }
+  }
+  return { ctx: { client, team, say: (m) => console.error(m), throughGateway }, team };
+}
+function sessionThroughGateway(client) {
+  const base = process.env.ANTHROPIC_BASE_URL;
+  if (!base) return false;
+  const norm = (u) => u.trim().replace(/\/+$/, "").toLowerCase();
+  return norm(base) === norm(client.gatewayUrl);
+}
+function cmdEnv() {
+  const config = readConfig();
+  if (!config) die("not logged in \u2014 run `gate login <token>` first");
+  const client = connect();
+  const q = (s) => `'${s.replace(/'/g, "'\\''")}'`;
+  console.log(`export ANTHROPIC_BASE_URL=${q(client.gatewayUrl)}`);
+  console.log(`export ANTHROPIC_AUTH_TOKEN=${q(config.key)}`);
+  console.log(`export ANTHROPIC_API_KEY=${q(config.key)}`);
+  console.log(`export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`);
+  return 0;
 }
 function printInstruction(instruction) {
   console.log(JSON.stringify(instruction, null, 2));
@@ -11228,7 +11342,7 @@ async function cmdStep(args) {
   if (!file) die("gate step needs --output-file <file>: the node's answer, as the agent declared it");
   let answer;
   try {
-    answer = readFileSync9(file, "utf8");
+    answer = readFileSync10(file, "utf8");
   } catch (e) {
     die(`cannot read ${file}: ${e.message}`);
   }
@@ -11306,6 +11420,8 @@ async function main(argv) {
         return await cmdStep(args);
       case "wait":
         return await cmdWait(args);
+      case "env":
+        return cmdEnv();
       case "work":
         return await cmdWork(args);
       case "repo":

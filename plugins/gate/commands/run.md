@@ -109,6 +109,16 @@ Each call prints one JSON instruction:
     If gate refuses it, the message says what did not match: fix the file and hand it back
     again. Do not redo the work.
   - `step` prints the next instruction, so carry straight on.
+- **`{"do": "delegate", …}`** — a node in its own model, to run as **your subagent** so the
+  user watches it live: every read, every edit as a diff, every command, in this terminal.
+  Start the subagent `subagent` names with the Agent tool, in the foreground, and give it
+  `prompt` as its task — whole and unchanged — followed by what `remember` says to tell it:
+  the worktree, the skill files to read first, the shape of its answer. Do not do the node
+  yourself, and do not choose a model for it: the subagent's file carries the agent's own
+  model, which is the point. It cannot ask the user, and you do not answer for it. When it
+  returns, take the answer from its final message, write it to a file, and hand it back with
+  the `gate step` line in `remember`. You only get this instruction when your session runs
+  through the gateway (see the end of this file); otherwise the same node arrives as `wait`.
 - **`{"do": "wait", …}`** — a node is running on its own, in its own model. `log` is where it
   writes what it is doing, one short line per thing done, the way you show your own tool
   calls: `⏺ Read src/a.ts`, `⏺ Edit src/a.ts (+2 −1)`, `⏺ Bash: Run tests`, and what it says
@@ -147,3 +157,18 @@ The first time a workflow runs on this machine — or after the team edits it �
 commands it will run and asks for approval. That prompt needs a terminal, so if it stops with
 "Refusing to run unattended without approval", tell the user what it wanted to run and let them
 approve; pass `--yes` only if they say so.
+
+## Watching a node live
+
+A node in its own model runs as your subagent — drawn live in this terminal — only when your
+own session sends its model calls through the gateway, because a subagent inherits your
+endpoint and its model is a name only the gateway resolves. That is a way of starting Claude
+Code, not something you can change from inside a run:
+
+```
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" env)" && claude
+```
+
+If a run's nodes arrive as `wait` and the user asks to see them live, tell them that line
+once. The first time, gate writes the team's agents to `~/.claude/agents/`; if that directory
+did not exist before, Claude Code needs one restart to see them.
