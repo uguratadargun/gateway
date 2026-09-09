@@ -240,7 +240,10 @@ function waitInstruction(executionId: string, pending: Pending, agent: { id: str
       `Follow it with \`gate wait ${executionId}\`. That prints what the node is doing as it happens and returns ` +
         "when the node is done — with the next instruction — or after about ninety seconds, with this one again; " +
         "run it again until it moves on.",
-      "Between waits, tell the user what the log shows, in a line or two. They are watching this happen.",
+      "Between waits, relay what the log printed, as it is. They are watching this happen.",
+      "If the user would rather watch such a node live, every read, edit and command drawn here as your own " +
+        "are, tell them once: `/gate:live` puts this repository's Claude Code sessions on the gateway, and " +
+        "from then on a node in its own model runs as a subagent of the session instead of a worker.",
     ],
   };
 }

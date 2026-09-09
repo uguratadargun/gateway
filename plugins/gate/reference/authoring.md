@@ -278,7 +278,7 @@ Code running in the worktree instead.
 | tools | the six above, with hard caps: 200KB reads, search stops at 100 matches, 30KB of command output | the whole Claude Code toolset — real ripgrep, ranged reads, uniqueness-checked edits, `Bash`, `TodoWrite` |
 | context | every tool result appended, never trimmed | compacted by the harness |
 | `tools:` | the allowlist, and it is enforced | **ignored** — see below |
-| in `/gate:run` | the session itself does the node, with its tools and its model, and can ask the user | in the agent's model, on that machine: as a subagent of the session, live in the terminal, when the session runs through the gateway (`eval "$(gate env)" && claude`); otherwise as a detached worker the session follows (`gate wait`) |
+| in `/gate:run` | the session itself does the node, with its tools and its model, and can ask the user | in the agent's model, on that machine: as a subagent of the session, live in the terminal, when the session runs through the gateway (`/gate:live`, once per repository); otherwise as a detached worker the session follows (`gate wait`) |
 
 The last row is what decides which executor an agent gets when its model is
 not a Claude tier. A `provider:` model only takes effect where the node runs

@@ -6,9 +6,10 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { mkdirSync as mkdirSync12, readFileSync as readFileSync10, writeFileSync as writeFileSync10 } from "node:fs";
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { appendFileSync as appendFileSync2, existsSync as existsSync14, mkdirSync as mkdirSync13, readFileSync as readFileSync11, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { basename as basename2, join as join14, resolve as resolve6 } from "node:path";
+import { basename as basename2, join as join15, resolve as resolve6 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
@@ -8467,7 +8468,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.26.0";
+var GATE_VERSION = "0.26.1";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -10410,7 +10411,8 @@ function waitInstruction(executionId, pending, agent) {
     remember: [
       `Node "${pending.nodeId}" is running on its own as a spawned Claude Code, in ${agent.model} \u2014 the agent's model, not yours. You do nothing for it: do not touch the worktree, do not do its work, do not answer for it.`,
       `Follow it with \`gate wait ${executionId}\`. That prints what the node is doing as it happens and returns when the node is done \u2014 with the next instruction \u2014 or after about ninety seconds, with this one again; run it again until it moves on.`,
-      "Between waits, tell the user what the log shows, in a line or two. They are watching this happen."
+      "Between waits, relay what the log printed, as it is. They are watching this happen.",
+      "If the user would rather watch such a node live, every read, edit and command drawn here as your own are, tell them once: `/gate:live` puts this repository's Claude Code sessions on the gateway, and from then on a node in its own model runs as a subagent of the session instead of a worker."
     ]
   };
 }
@@ -10887,6 +10889,52 @@ async function settle(ctx, executionId, execution, stepCount, status, error) {
   await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary2, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
 }
 
+// src/client/live.ts
+import { existsSync as existsSync13, mkdirSync as mkdirSync12, readFileSync as readFileSync10, writeFileSync as writeFileSync10 } from "node:fs";
+import { dirname as dirname3, join as join14 } from "node:path";
+function gatewayEnv(gatewayUrl2, key) {
+  return {
+    ANTHROPIC_BASE_URL: gatewayUrl2,
+    ANTHROPIC_AUTH_TOKEN: key,
+    // The headless executor sets both; Claude Code takes either, and a
+    // session where the two disagree is a session that authenticates as
+    // somebody else.
+    ANTHROPIC_API_KEY: key,
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+  };
+}
+function settingsPath(global, cwd = process.cwd()) {
+  return global ? join14(claudeConfigDir(), "settings.json") : join14(cwd, ".claude", "settings.local.json");
+}
+function readSettings(path) {
+  if (!existsSync13(path)) return {};
+  const text = readFileSync10(path, "utf8");
+  if (!text.trim()) return {};
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${path} is not a JSON object`);
+  }
+  return parsed;
+}
+function applyGatewaySettings(path, env, on) {
+  const settings = readSettings(path);
+  const current = settings.env && typeof settings.env === "object" ? settings.env : {};
+  const next2 = { ...current };
+  if (on) {
+    for (const [k, v] of Object.entries(env)) next2[k] = v;
+  } else {
+    for (const k of Object.keys(env)) delete next2[k];
+  }
+  const changed = JSON.stringify(next2) !== JSON.stringify(current);
+  if (!changed) return false;
+  if (Object.keys(next2).length) settings.env = next2;
+  else delete settings.env;
+  mkdirSync12(dirname3(path), { recursive: true });
+  writeFileSync10(path, `${JSON.stringify(settings, null, 2)}
+`, { mode: 384 });
+  return true;
+}
+
 // src/client/cli.ts
 var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this machine
 
@@ -10910,7 +10958,8 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
-  gate env                                      exports that point a Claude Code session at the gateway
+  gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
+  gate env                                      the same, as shell exports for one session
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
@@ -11014,12 +11063,12 @@ async function cmdLogin(args) {
   return 0;
 }
 function cmdInstall(args) {
-  const target = typeof args.flags.dir === "string" ? args.flags.dir : join14(homedir8(), ".local", "bin");
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join15(homedir8(), ".local", "bin");
   const script = process.argv[1];
-  const shim = join14(target, "gate");
+  const shim = join15(target, "gate");
   try {
-    mkdirSync12(target, { recursive: true });
-    writeFileSync10(shim, `#!/bin/sh
+    mkdirSync13(target, { recursive: true });
+    writeFileSync11(shim, `#!/bin/sh
 exec node "${script}" "$@"
 `, { mode: 493 });
   } catch (e) {
@@ -11116,7 +11165,7 @@ async function cmdPush(args) {
   for (const item of items) {
     let source;
     try {
-      source = readFileSync10(item.file, "utf8");
+      source = readFileSync11(item.file, "utf8");
     } catch (e) {
       console.error(`${item.file}: ${e.message}`);
       failed++;
@@ -11302,6 +11351,51 @@ function sessionThroughGateway(client) {
   const norm = (u) => u.trim().replace(/\/+$/, "").toLowerCase();
   return norm(base) === norm(client.gatewayUrl);
 }
+function cmdLive(args) {
+  const config = readConfig();
+  if (!config) die("not logged in - run `gate login <token>` first");
+  const client = connect();
+  const global = args.flags.global === true;
+  const on = args.flags.off !== true;
+  const path = settingsPath(global);
+  const where = global ? "every Claude Code session of yours" : `Claude Code sessions started in ${process.cwd()}`;
+  let changed;
+  try {
+    changed = applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), on);
+  } catch (e) {
+    die(`could not update ${path}: ${e.message}`);
+  }
+  if (on && !global) keepOutOfGit(process.cwd());
+  if (on) {
+    console.log(changed ? `${where} now go through ${client.gatewayUrl}` : `${where} already go through ${client.gatewayUrl}`);
+    console.log(`  written to ${path}`);
+    console.log(
+      "A session already open here picks that up on its own; if the next node in its own model still arrives as `wait` rather than as a subagent, restart Claude Code once."
+    );
+  } else {
+    console.log(changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`);
+  }
+  return 0;
+}
+function keepOutOfGit(cwd) {
+  let gitDir;
+  try {
+    gitDir = execFileSync3("git", ["rev-parse", "--git-dir"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return;
+  }
+  const info = join15(resolve6(cwd, gitDir), "info");
+  const exclude = join15(info, "exclude");
+  const pattern = ".claude/settings.local.json";
+  try {
+    const current = existsSync14(exclude) ? readFileSync11(exclude, "utf8") : "";
+    if (current.split("\n").some((l) => l.trim() === pattern)) return;
+    mkdirSync13(info, { recursive: true });
+    appendFileSync2(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}${pattern}
+`);
+  } catch {
+  }
+}
 function cmdEnv() {
   const config = readConfig();
   if (!config) die("not logged in \u2014 run `gate login <token>` first");
@@ -11342,7 +11436,7 @@ async function cmdStep(args) {
   if (!file) die("gate step needs --output-file <file>: the node's answer, as the agent declared it");
   let answer;
   try {
-    answer = readFileSync10(file, "utf8");
+    answer = readFileSync11(file, "utf8");
   } catch (e) {
     die(`cannot read ${file}: ${e.message}`);
   }
@@ -11422,6 +11516,8 @@ async function main(argv) {
         return await cmdWait(args);
       case "env":
         return cmdEnv();
+      case "live":
+        return cmdLive(args);
       case "work":
         return await cmdWork(args);
       case "repo":

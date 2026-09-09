@@ -18,7 +18,8 @@ immediately pulls their team's agents and workflows, so its output already says 
 workflows they have.
 
 Then say what they can do next: `/gate:run` alone lists their team's workflows and asks which to
-run; `/gate:run <id> <task>` starts one here, in a worktree of the repository they are in.
+run; `/gate:run <id> <task>` starts one here, in a worktree of the repository they are in; and
+`/gate:live` makes the nodes that run in their own model show up live in this terminal.
 
 If it refuses, report what it said rather than retrying. An invalid or revoked key, a key that
 may not pull workflows, and a token pasted in half each say so in their own words — and a

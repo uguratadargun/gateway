@@ -162,13 +162,8 @@ approve; pass `--yes` only if they say so.
 
 A node in its own model runs as your subagent — drawn live in this terminal — only when your
 own session sends its model calls through the gateway, because a subagent inherits your
-endpoint and its model is a name only the gateway resolves. That is a way of starting Claude
-Code, not something you can change from inside a run:
-
-```
-eval "$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" env)" && claude
-```
-
-If a run's nodes arrive as `wait` and the user asks to see them live, tell them that line
-once. The first time, gate writes the team's agents to `~/.claude/agents/`; if that directory
-did not exist before, Claude Code needs one restart to see them.
+endpoint and its model is a name only the gateway resolves. `/gate:live` makes that so for
+Claude Code started in this repository, through its own settings; nothing has to be typed
+after that. If a run's nodes arrive as `wait` and the user asks to see them live, tell them
+about `/gate:live` once. The first time, gate writes the team's agents to `~/.claude/agents/`;
+if that directory did not exist before, Claude Code needs one restart to see them.

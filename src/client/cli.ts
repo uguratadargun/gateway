@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -14,6 +15,7 @@ import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest }
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
 import { runLocal } from "./run";
 import { begin, next, step, wait, work, type Instruction, type SessionRunContext } from "./step";
+import { applyGatewaySettings, gatewayEnv, settingsPath } from "./live";
 import { syncSubagents } from "./subagents";
 
 /**
@@ -47,7 +49,8 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
-  gate env                                      exports that point a Claude Code session at the gateway
+  gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
+  gate env                                      the same, as shell exports for one session
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
@@ -614,6 +617,66 @@ function sessionThroughGateway(client: GateClient): boolean {
  * run's claude-code nodes be its subagents, live in the terminal, in their
  * own models; otherwise they run as workers the session follows.
  */
+/**
+ * `gate live`: the same, written into Claude Code's own settings so that
+ * nothing has to be typed: `.claude/settings.local.json` in this repository
+ * (Claude Code applies its `env` block to every session started here, and
+ * reloads it live), or the user's settings with --global. `--off` takes
+ * exactly those variables out again.
+ */
+function cmdLive(args: Args): number {
+  const config = readConfig();
+  if (!config) die("not logged in - run `gate login <token>` first");
+  const client = connect();
+  const global = args.flags.global === true;
+  const on = args.flags.off !== true;
+  const path = settingsPath(global);
+  const where = global ? "every Claude Code session of yours" : `Claude Code sessions started in ${process.cwd()}`;
+  let changed: boolean;
+  try {
+    changed = applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), on);
+  } catch (e) {
+    die(`could not update ${path}: ${(e as Error).message}`);
+  }
+  if (on && !global) keepOutOfGit(process.cwd());
+  if (on) {
+    console.log(changed ? `${where} now go through ${client.gatewayUrl}` : `${where} already go through ${client.gatewayUrl}`);
+    console.log(`  written to ${path}`);
+    console.log(
+      "A session already open here picks that up on its own; if the next node in its own model still arrives as " +
+        "`wait` rather than as a subagent, restart Claude Code once.",
+    );
+  } else {
+    console.log(changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`);
+  }
+  return 0;
+}
+
+/**
+ * Claude Code excludes settings.local.json from git only when it wrote the
+ * file itself; the one gate wrote carries the key, so it is excluded here,
+ * in the repository's own exclude file, which is not shared and not committed.
+ */
+function keepOutOfGit(cwd: string): void {
+  let gitDir: string;
+  try {
+    gitDir = execFileSync("git", ["rev-parse", "--git-dir"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return;
+  }
+  const info = join(resolve(cwd, gitDir), "info");
+  const exclude = join(info, "exclude");
+  const pattern = ".claude/settings.local.json";
+  try {
+    const current = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+    if (current.split("\n").some((l) => l.trim() === pattern)) return;
+    mkdirSync(info, { recursive: true });
+    appendFileSync(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}${pattern}\n`);
+  } catch {
+    // Not fatal: the settings are in place either way.
+  }
+}
+
 function cmdEnv(): number {
   const config = readConfig();
   if (!config) die("not logged in — run `gate login <token>` first");
@@ -753,6 +816,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdWait(args);
       case "env":
         return cmdEnv();
+      case "live":
+        return cmdLive(args);
       case "work":
         return await cmdWork(args);
       case "repo":
