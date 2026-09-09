@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { POOL_STRATEGIES, type PoolStrategy } from "./account-pool";
+import { PLUGIN_MARKETPLACE } from "./protocol";
 
 /**
  * Central gate settings. Persisted at ~/.gate/settings.json and editable from
@@ -43,6 +44,16 @@ export interface GateSettings {
   promptCache: {
     enabled: boolean;
     ttl: "5m" | "1h";
+  };
+  /**
+   * Where a machine that has never had the plugin fetches it from: what the
+   * Team page tells people to `/plugin marketplace add`. The public repository
+   * by default; a team that mirrors this repository on its own git host puts
+   * that host's URL here, and the install lines the dashboard hands out name
+   * it. `GATE_PLUGIN_SOURCE` in the environment sets the default.
+   */
+  plugin: {
+    source: string;
   };
   /** Bound simultaneous upstream requests; excess waits in a queue. */
   concurrency: {
@@ -102,6 +113,7 @@ export const DEFAULT_SETTINGS: GateSettings = {
   // 5m per Anthropic's guidance: active sessions refresh it for free, while a
   // 1h TTL doubles the cost of every cache write (2× vs 1.25×).
   promptCache: { enabled: true, ttl: "5m" },
+  plugin: { source: process.env.GATE_PLUGIN_SOURCE?.trim() || PLUGIN_MARKETPLACE },
   concurrency: { maxInFlight: 4, queueTimeoutMs: 60_000 },
   throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
@@ -140,6 +152,7 @@ export interface SettingsPatch {
   /** "none" is the pre-v2 spelling of "default" and is normalized on merge. */
   reasoning?: { defaultEffort?: GateSettings["reasoning"]["defaultEffort"] | "none" };
   promptCache?: Partial<GateSettings["promptCache"]>;
+  plugin?: Partial<GateSettings["plugin"]>;
   concurrency?: Partial<GateSettings["concurrency"]>;
   throttle?: Partial<GateSettings["throttle"]>;
   retry?: Partial<GateSettings["retry"]>;
@@ -170,6 +183,9 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
     },
     reasoning: { defaultEffort },
     promptCache: { ...base.promptCache, ...patch.promptCache },
+    // An emptied field falls back to the default rather than handing out
+    // "/plugin marketplace add " with nothing after it.
+    plugin: { source: patch.plugin?.source?.trim() || base.plugin.source },
     concurrency: { ...base.concurrency, ...patch.concurrency },
     throttle: { ...base.throttle, ...patch.throttle },
     retry: { ...base.retry, ...patch.retry },

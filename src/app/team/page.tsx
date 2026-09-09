@@ -72,6 +72,14 @@ export default function TeamPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [teamName, setTeamName] = useState("");
+  // Where this gate's people fetch the plugin from — the dashboard's setting,
+  // the public repository until it has loaded or when nothing is set.
+  const [pluginSource, setPluginSource] = useState(PLUGIN_MARKETPLACE);
+  useEffect(() => {
+    request("/api/settings")
+      .then((s) => setPluginSource(s?.plugin?.source || PLUGIN_MARKETPLACE))
+      .catch(() => {});
+  }, []);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [teamId, setTeamId] = useState("default");
@@ -206,16 +214,16 @@ export default function TeamPage() {
         <p className="text-xs text-muted-foreground">
           A machine that has never had <code>gate</code> installs it from this repository&apos;s marketplace, inside
           Claude Code, and restarts Claude Code once. Then the <code>/gate:login</code> line a key issues below connects
-          it. Later updates are <code>/gate:update</code>.
+          it. Later updates are <code>/gate:update</code>. The source is set on the Settings page.
         </p>
         <div className="flex items-start gap-2">
           <pre className="flex-1 overflow-x-auto rounded bg-background px-2 py-1 text-xs">
-            {installLines("/gate:login <token from a key below>").join("\n")}
+            {installLines("/gate:login <token from a key below>", pluginSource).join("\n")}
           </pre>
           <Button
             variant="outline"
             size="icon"
-            onClick={() => navigator.clipboard.writeText(`/plugin marketplace add ${PLUGIN_MARKETPLACE}\n/plugin install ${PLUGIN_ID}`)}
+            onClick={() => navigator.clipboard.writeText(`/plugin marketplace add ${pluginSource}\n/plugin install ${PLUGIN_ID}`)}
             aria-label="Copy the install commands"
             title="Copy the two install lines"
           >
@@ -344,14 +352,14 @@ export default function TeamPage() {
                     </p>
                     <div className="flex items-start gap-2">
                       <pre className="flex-1 overflow-x-auto rounded bg-background px-2 py-1 text-xs">
-                        {installLines(`/gate:login ${encodeConnectionToken({ url: origin, key: issued.key })}`).join("\n")}
+                        {installLines(`/gate:login ${encodeConnectionToken({ url: origin, key: issued.key })}`, pluginSource).join("\n")}
                       </pre>
                       <Button
                         variant="outline"
                         size="icon"
                         onClick={() =>
                           navigator.clipboard.writeText(
-                            installLines(`/gate:login ${encodeConnectionToken({ url: origin, key: issued.key })}`).join("\n"),
+                            installLines(`/gate:login ${encodeConnectionToken({ url: origin, key: issued.key })}`, pluginSource).join("\n"),
                           )
                         }
                         aria-label="Copy all three lines"

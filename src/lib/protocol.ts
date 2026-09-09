@@ -35,9 +35,15 @@ export const MIN_CLIENT_VERSION = "0.13.0";
 export const PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 export const PLUGIN_ID = "gate@gateway";
 
-/** The lines a person pastes into Claude Code, in order, to get the plugin and connect. */
-export function installLines(loginLine: string): string[] {
-  return [`/plugin marketplace add ${PLUGIN_MARKETPLACE}`, `/plugin install ${PLUGIN_ID}`, loginLine];
+/**
+ * The lines a person pastes into Claude Code, in order, to get the plugin and
+ * connect. `source` is where this gate's team fetches the marketplace from —
+ * the public repository by default, a company mirror's git URL when the
+ * dashboard's settings say so; the marketplace keeps its name (`gateway`)
+ * either way, so the plugin id and `/gate:update` do not change.
+ */
+export function installLines(loginLine: string, source: string = PLUGIN_MARKETPLACE): string[] {
+  return [`/plugin marketplace add ${source}`, `/plugin install ${PLUGIN_ID}`, loginLine];
 }
 
 /** Header names the two ends use to tell each other what they are. */

@@ -49,6 +49,7 @@ export const settingsPatchSchema = z
       .partial(),
     reasoning: z.object({ defaultEffort: effort }).partial(),
     promptCache: z.object({ enabled: z.boolean(), ttl: z.enum(["5m", "1h"]) }).partial(),
+    plugin: z.object({ source: z.string().max(300) }).partial(),
     concurrency: z
       .object({
         maxInFlight: z.number().int().min(1).max(64),

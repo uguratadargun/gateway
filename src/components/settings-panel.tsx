@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useEffect, useState } from "react";
-import { Coins, Gauge, Layers, Route, Save } from "lucide-react";
+import { Coins, Gauge, Layers, Puzzle, Route, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +21,7 @@ interface Settings {
   throttle: { enabled: boolean; downgradeAt: number; blockAt: number };
   retry: { maxRetries: number; maxRateLimitWaitMs: number };
   routingPrecision: { countTokens: boolean };
+  plugin: { source: string };
 }
 
 function Row({ children }: { children: React.ReactNode }) {
@@ -290,6 +291,24 @@ export function SettingsPanel() {
                 <option value="xhigh">xhigh</option>
                 <option value="max">Max</option>
               </select>
+            </Row>
+          </div>
+        </Group>
+
+        <Group icon={Puzzle} title="Plugin" description="Where a new machine fetches the gate plugin from.">
+          <div className="pb-2">
+            <Row>
+              <Head
+                label="Marketplace source"
+                hint="What the Team page tells people to /plugin marketplace add: a GitHub owner/repo, or a git URL of a mirror of this repository."
+              />
+              <Input
+                value={s.plugin.source}
+                onChange={(e) => setS({ ...s, plugin: { source: e.target.value } })}
+                placeholder="uguratadargun/gateway"
+                className="h-8 w-72 font-mono text-xs"
+                spellCheck={false}
+              />
             </Row>
           </div>
         </Group>

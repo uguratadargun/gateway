@@ -194,8 +194,14 @@ less than that percentage left. Cooldowns follow the upstream: `Retry-After`
 wins, an exhausted quota waits for its window reset, and anything else backs off
 5 s · 2ⁿ up to two minutes.
 
-Each account's 5h / 7d windows come from the `anthropic-ratelimit-unified-*`
-headers on every reply, so a busy account's bars stay current for free. Those
+Each account's windows come from the `anthropic-ratelimit-unified-*`
+headers on every reply, so a busy account's bars stay current for free. The
+accounts card draws **every** window the account reports — session, weekly, and
+whatever per-model ones the plan carries — each with what is left and when it
+rolls over, under the names Claude Code's own `/usage` uses for them. (The
+header spelling and the usage endpoint's differ for one of them: `7d_oi` is
+`seven_day_overage_included`, *overage included* and not Opus. Gate folds the
+two into one window, so an account cannot list the same limit twice.) Those
 headers only exist on a reply, though — a **just-connected account has no window
 reading at all** — so gate also reads Claude's own usage endpoint
 (`/api/oauth/usage`, the one the CLI uses; no inference, no tokens spent).
@@ -215,6 +221,12 @@ it as little as it can get away with:
   either way, and the panel shows the reason instead of a blank bar.
 
 `x-gate-account` on the response names the login that served the request.
+
+The same windows are what `gate usage` / `/gate:usage` reports to a machine on
+the gateway — the plan usage Claude Code's own `/usage` cannot show once a
+session authenticates with a gate key. Reading it does not poll: only an account
+that has never been polled at all is filled in, the same rule the dashboard
+follows.
 
 ## Providers
 
@@ -848,6 +860,12 @@ calls, and keeping the history.
 /plugin install gate@gateway
 ```
 
+A team that keeps this repository on its own git host installs from there
+instead — `/plugin marketplace add git@gitlab.example.com:group/gateway.git`;
+the marketplace keeps its name, so `gate@gateway` and `/gate:update` do not
+change. The Settings page's **Marketplace source** (or `GATE_PLUGIN_SOURCE`)
+is what the `/team` page then hands out with every key.
+
 Then, once per machine, one line — the `/team` page hands it over ready to send:
 
 ```
@@ -876,6 +894,7 @@ gate agents                     # the agents behind them
 gate show <id>                  # a definition as it is on the server
 gate run dev "…"                # run it here, in this repository
 gate status                     # your team's recent runs, and where each ran
+gate usage                      # what the pool has left, and when each window resets
 gate cancel <execution-id>      # ask one to stop, wherever it is running
 gate continue <execution-id>    # reopen a session-driven run that failed, at the node it failed on
 gate clean [--all] [--dry-run]  # remove the worktrees finished runs left behind
@@ -973,6 +992,19 @@ run instead as a detached worker that writes what it does to a log; your
 session follows it with `gate wait`, relays it, and carries on when the node
 is over. Either way those nodes do not ask; the planner's questions travel to
 you through the `clarify` node, and the acceptance node asks at the end.
+
+**`/usage` goes quiet on the gateway; `/gate:usage` is what answers instead.**
+Claude Code reads plan usage from Anthropic's own endpoint with the OAuth
+scopes of a subscription login, and a session on gate authenticates with a gate
+key — so the command hides itself and the person loses the one number that says
+whether they can keep working. Gate already knows those windows from the
+accounts it rotates, and `/gate:usage` (or `gate usage`, `--json` for a script)
+prints them in the words `/usage` used: *session limit*, *weekly limit*, each
+with what is left and when it resets. They are the **pool's** windows and
+therefore shared — everyone on this gate draws from them — and the percentage is
+the best account that can currently serve rather than an average of all of them,
+because that is the one a request would go to. When no window has been read yet,
+or no account is connected, it says which rather than printing a zero.
 
 The protocol is four commands, and the session loops them:
 
@@ -1086,6 +1118,6 @@ has the new pipeline at their next `gate` command.
 - `src/runtime/` — the deterministic engine, node executors, agent tools (`tools/`) and per-run worktrees (`workspace.ts`) · `src/providers/` — the `ModelProvider` seam onto the gateway
 - `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
 - `src/lib/teams.ts` / `apikeys.ts` / `tenancy.ts` / `def-root.ts` — people, teams, keys-as-identities, and which directory a team's definitions live in
-- `src/app/api/v1/` — the client API: identity, the definition bundle, run registration, progress and stop
+- `src/app/api/v1/` — the client API: identity, the definition bundle, run registration, progress and stop, and the pool's remaining quota (`/api/v1/usage`)
 - `src/client/` — the CLI that runs a workflow on a developer's machine: the mirror, the HTTP provider onto the gateway, and the reporter · `scripts/build-cli.mjs` bundles it into the plugin
 - `plugins/gate/` — the Claude Code plugin: `/gate:run`, `/gate:design`, the authoring reference and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
