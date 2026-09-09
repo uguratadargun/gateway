@@ -9,7 +9,7 @@ import { parseOutput, prepareAgentNode } from "@/runtime/executors/agent";
 import { runClaudeCodeNode } from "@/runtime/executors/claude-code";
 import { runCommand } from "@/runtime/executors/command";
 import { WorkflowError } from "@/runtime/errors";
-import type { StepRecord, ToolCallRecord, WorkflowState } from "@/runtime/state";
+import type { StepRecord, WorkflowState } from "@/runtime/state";
 import { renderTemplate } from "@/agents/template";
 import { conditionContext } from "@/runtime/state";
 import { createRunWorkspace, readRunDiff, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
@@ -21,6 +21,7 @@ import type { WorkflowDefinition } from "@/workflows/types";
 import type { GateClient } from "./api";
 import { CLI_VERSION } from "./api";
 import { RunReporter } from "./reporter";
+import { describeCall, describeText } from "./worker-log";
 import { cacheScope } from "./cache";
 import { gateHome } from "./config";
 import { resolveRepo } from "./run";
@@ -572,14 +573,6 @@ export async function step(
   return next(ctx, executionId);
 }
 
-/** One line of the worker's log: what it called, and the first line of what came back. */
-function logLine(call: ToolCallRecord): string {
-  const at = new Date(call.startedAt).toISOString().slice(11, 19);
-  const input = JSON.stringify(call.input ?? {});
-  const result = call.result.split("\n")[0].slice(0, 160);
-  return `${at}  ${call.ok ? " " : "✗"} ${call.tool} ${input.length > 140 ? `${input.slice(0, 140)}…` : input} → ${result}\n`;
-}
-
 /**
  * Runs one claude-code node to completion, as the detached worker.
  *
@@ -632,8 +625,14 @@ export async function work(ctx: SessionRunContext, executionId: string, nodeId: 
         gatewayUrl: ctx.client.gatewayUrl,
         authToken: ctx.client.key,
         sessionId: `workflow:${executionId}`,
+        // The person follows the node through this log, so what it says
+        // and what it does both go there, as they would read in a terminal.
+        onText: (text) => {
+          const line = describeText(text);
+          if (line) appendFileSync(log, line);
+        },
         onToolCall: (call) => {
-          appendFileSync(log, logLine(call));
+          appendFileSync(log, describeCall(call, workspace?.root ?? ""));
           reporter.event({
             type: "tool.called",
             executionId,

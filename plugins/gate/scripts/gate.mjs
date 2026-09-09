@@ -2647,30 +2647,30 @@ var BLOCK_SCALAR_CONTENT = new RegExp(`^(?:${SRC_NB_CHAR}|\\n)*$`, "u");
 var C_FORBIDDEN_FIRST_LINE = /^(?:---|\.\.\.)(?=$|[ \t\n\r])/;
 var C_FORBIDDEN_CONTENT = /^(?:---|\.\.\.)(?=$|[ \t\n\r])/m;
 function canUsePlain(layout) {
-  const str2 = layout.node.value;
-  if (str2 !== "") {
-    if (!(layout.isKey ? layout.flowOnly ? NS_PLAIN_FLOW_KEY : NS_PLAIN_BLOCK_KEY : layout.flowOnly ? NS_PLAIN_FLOW_IN : NS_PLAIN_FLOW_OUT).test(str2)) return false;
-    if (layout.shiftOfFirstLine === 0 && C_FORBIDDEN_FIRST_LINE.test(str2)) return false;
+  const str3 = layout.node.value;
+  if (str3 !== "") {
+    if (!(layout.isKey ? layout.flowOnly ? NS_PLAIN_FLOW_KEY : NS_PLAIN_BLOCK_KEY : layout.flowOnly ? NS_PLAIN_FLOW_IN : NS_PLAIN_FLOW_OUT).test(str3)) return false;
+    if (layout.shiftOfFirstLine === 0 && C_FORBIDDEN_FIRST_LINE.test(str3)) return false;
     if (layout.shiftOfContent === 0) {
-      const firstLineBreak = str2.indexOf("\n");
+      const firstLineBreak = str3.indexOf("\n");
       if (firstLineBreak !== -1) {
-        const content = str2.slice(firstLineBreak + 1);
+        const content = str3.slice(firstLineBreak + 1);
         if (C_FORBIDDEN_CONTENT.test(content)) return false;
       }
     }
   }
-  const resolvedTag = layout.presenterOptions.schema.resolveImplicitScalarTag(str2).tag.tagName;
+  const resolvedTag = layout.presenterOptions.schema.resolveImplicitScalarTag(str3).tag.tagName;
   if (!layout.node.tagged && resolvedTag !== layout.node.tag) return false;
-  if (!layout.node.tagged && str2 === "=" && resolvedTag === layout.presenterOptions.schema.defaultScalarTag.tagName) return false;
+  if (!layout.node.tagged && str3 === "=" && resolvedTag === layout.presenterOptions.schema.defaultScalarTag.tagName) return false;
   return true;
 }
 function canUseSingleQuoted(layout) {
-  const str2 = layout.node.value;
-  if (!(layout.isKey ? NB_SINGLE_ONE_LINE : NB_SINGLE_MULTI_LINE).test(str2)) return false;
-  if (/[ \t]\n|\n[ \t]/.test(str2)) return false;
+  const str3 = layout.node.value;
+  if (!(layout.isKey ? NB_SINGLE_ONE_LINE : NB_SINGLE_MULTI_LINE).test(str3)) return false;
+  if (/[ \t]\n|\n[ \t]/.test(str3)) return false;
   if (!layout.isKey && layout.shiftOfContent === 0) {
-    const firstLineBreak = str2.indexOf("\n");
-    if (firstLineBreak !== -1 && C_FORBIDDEN_CONTENT.test(str2.slice(firstLineBreak + 1))) return false;
+    const firstLineBreak = str3.indexOf("\n");
+    if (firstLineBreak !== -1 && C_FORBIDDEN_CONTENT.test(str3.slice(firstLineBreak + 1))) return false;
   }
   return true;
 }
@@ -2763,8 +2763,8 @@ function needIndentIndicator(string) {
 }
 function blockHeader(string, shiftOfParent, shiftOfContent) {
   const indentIndicator = needIndentIndicator(string) ? String(shiftOfContent - shiftOfParent) : "";
-  const clip = string[string.length - 1] === "\n";
-  return `${indentIndicator}${clip && (string[string.length - 2] === "\n" || string === "\n") ? "+" : clip ? "" : "-"}
+  const clip2 = string[string.length - 1] === "\n";
+  return `${indentIndicator}${clip2 && (string[string.length - 2] === "\n" || string === "\n") ? "+" : clip2 ? "" : "-"}
 `;
 }
 function dropEndingNewline(string) {
@@ -7748,10 +7748,10 @@ var agentFrontmatterSchema = external_exports.object({
 function buildOutputSchema(spec) {
   if (spec.type === "text") return external_exports.string();
   const shape = {};
-  for (const [field, raw] of Object.entries(spec.schema)) {
+  for (const [field2, raw] of Object.entries(spec.schema)) {
     const optional = raw.endsWith("?");
     const base = fieldValidator(raw.replace(/\?$/, ""));
-    shape[field] = optional ? base.optional() : base;
+    shape[field2] = optional ? base.optional() : base;
   }
   return external_exports.object(shape).passthrough();
 }
@@ -8467,7 +8467,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.25.2";
+var GATE_VERSION = "0.25.3";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -9122,7 +9122,7 @@ async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
     appended.push(unattendedNotice());
     if (skills.length) appended.push(skillsDirective(skills));
     if (agent.output.type === "json") {
-      const fields = Object.entries(agent.output.schema).map(([field, type]) => `  "${field}": ${type}`).join("\n");
+      const fields = Object.entries(agent.output.schema).map(([field2, type]) => `  "${field2}": ${type}`).join("\n");
       appended.push(
         `When you have finished the work, your final message must be a single JSON object and nothing else \u2014 no prose, no code fence. Fields:
 {
@@ -9164,6 +9164,9 @@ A type ending in "?" is optional.`
       const blocks = e.message?.content;
       if (!Array.isArray(blocks)) return;
       for (const b of blocks) {
+        if (e.type === "assistant" && b.type === "text" && typeof b.text === "string") {
+          deps.onText?.(b.text);
+        }
         if (b.type === "tool_use" && typeof b.id === "string") {
           pending.set(b.id, {
             tool: b.name ?? "tool",
@@ -9457,7 +9460,7 @@ function systemPrompt(agent, hasTools, canWrite, skills = []) {
   const briefing = skillsBriefing(skills);
   if (briefing) parts.push(briefing.trim());
   if (agent.output.type === "json") {
-    const fields = Object.entries(agent.output.schema).map(([field, type]) => `  "${field}": ${type}`).join("\n");
+    const fields = Object.entries(agent.output.schema).map(([field2, type]) => `  "${field2}": ${type}`).join("\n");
     parts.push(
       `${hasTools ? "When you are done working, your final message must be a single JSON object" : "Respond with a single JSON object"} and nothing else \u2014 no prose, no code fence. Fields:
 {
@@ -10162,6 +10165,105 @@ import { appendFileSync, closeSync, existsSync as existsSync11, mkdirSync as mkd
 import { hostname as hostname3 } from "node:os";
 import { join as join12 } from "node:path";
 
+// src/client/worker-log.ts
+import { relative as relative5 } from "node:path";
+var DIFF_LINES = 12;
+var LINE_WIDTH = 200;
+var TEXT_LINES = 6;
+function stamp(at) {
+  return new Date(at).toISOString().slice(11, 19);
+}
+function clip(s, width = LINE_WIDTH) {
+  const line = s.replace(/\s+$/, "");
+  return line.length > width ? `${line.slice(0, width - 1)}\u2026` : line;
+}
+function firstLine(s) {
+  return clip((s.split("\n").find((l) => l.trim()) ?? "").trim());
+}
+function str2(v) {
+  return typeof v === "string" ? v : null;
+}
+function field(input, key) {
+  return input && typeof input === "object" ? str2(input[key]) : null;
+}
+function pathOf(p, root) {
+  if (!p) return "?";
+  if (root && (p === root || p.startsWith(`${root}/`))) return relative5(root, p) || ".";
+  return p;
+}
+function diffLines(oldText, newText) {
+  const side = (prefix, text) => {
+    const lines = text === "" ? [] : text.split("\n");
+    const shown = lines.slice(0, DIFF_LINES).map((l) => `${prefix} ${clip(l)}`);
+    if (lines.length > DIFF_LINES) shown.push(`${prefix} \u2026 ${lines.length - DIFF_LINES} more lines`);
+    return shown;
+  };
+  return [...side("-", oldText), ...side("+", newText)];
+}
+function describeCall(call, root = "") {
+  const at = stamp(call.startedAt);
+  const mark = call.ok ? " " : "\u2717";
+  const input = call.input;
+  const result = firstLine(call.result);
+  const head = (what, outcome = result) => `${at} ${mark} ${what}${outcome ? ` \u2192 ${outcome}` : ""}
+`;
+  const file = pathOf(field(input, "file_path") ?? field(input, "path"), root);
+  switch (call.tool) {
+    case "Read":
+      return head(`Read ${file}`);
+    case "Edit":
+    case "MultiEdit": {
+      const oldText = field(input, "old_string") ?? "";
+      const newText = field(input, "new_string") ?? "";
+      const body = call.ok ? diffLines(oldText, newText) : [];
+      const lines = [`${at} ${mark} Edit ${file}${call.ok ? "" : ` \u2192 ${result}`}`, ...body.map((l) => `           ${l}`)];
+      return `${lines.join("\n")}
+`;
+    }
+    case "Write": {
+      const content = field(input, "content") ?? "";
+      const count = content === "" ? 0 : content.split("\n").length;
+      return head(`Write ${file} (${count} ${count === 1 ? "line" : "lines"})`, call.ok ? "" : result);
+    }
+    case "Bash": {
+      const command = field(input, "command") ?? "";
+      return head(`$ ${clip(command.replace(/\n/g, " ; "))}`);
+    }
+    case "Grep": {
+      const pattern = field(input, "pattern") ?? "";
+      const where = field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : "";
+      return head(`Grep ${JSON.stringify(pattern)}${where}`);
+    }
+    case "Glob": {
+      const pattern = field(input, "pattern") ?? "";
+      const where = field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : "";
+      return head(`Glob ${pattern}${where}`);
+    }
+    case "Task":
+    case "Agent": {
+      const description = field(input, "description") ?? "";
+      const kind = field(input, "subagent_type");
+      return head(`Agent${kind ? ` (${kind})` : ""} ${JSON.stringify(description)}`);
+    }
+    case "Skill":
+      return head(`Skill ${field(input, "skill") ?? field(input, "name") ?? "?"}`);
+    case "TodoWrite":
+      return head("Todo updated", "");
+    default: {
+      const json = JSON.stringify(input ?? {});
+      return head(`${call.tool} ${clip(json, 140)}`);
+    }
+  }
+}
+function describeText(text, at = Date.now()) {
+  const lines = text.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
+  if (!lines.length) return "";
+  const shown = lines.slice(0, TEXT_LINES).map((l, i) => `${i === 0 ? `${stamp(at)} \xBB ` : "           \xBB "}${clip(l)}`);
+  if (lines.length > TEXT_LINES) shown.push(`           \xBB \u2026 ${lines.length - TEXT_LINES} more lines`);
+  return `${shown.join("\n")}
+`;
+}
+
 // src/client/walk.ts
 function nextInSession(workflow, steps, input) {
   const replay = { outputs: {}, visitCounts: {}, cursor: 0 };
@@ -10543,13 +10645,6 @@ async function step(ctx, executionId, nodeId2, answer) {
   clearPending(executionId);
   return next(ctx, executionId);
 }
-function logLine(call) {
-  const at = new Date(call.startedAt).toISOString().slice(11, 19);
-  const input = JSON.stringify(call.input ?? {});
-  const result = call.result.split("\n")[0].slice(0, 160);
-  return `${at}  ${call.ok ? " " : "\u2717"} ${call.tool} ${input.length > 140 ? `${input.slice(0, 140)}\u2026` : input} \u2192 ${result}
-`;
-}
 async function work(ctx, executionId, nodeId2) {
   const pending = readPending(executionId);
   if (!pending || pending.nodeId !== nodeId2 || !pending.worker) {
@@ -10589,8 +10684,14 @@ async function work(ctx, executionId, nodeId2) {
         gatewayUrl: ctx.client.gatewayUrl,
         authToken: ctx.client.key,
         sessionId: `workflow:${executionId}`,
+        // The person follows the node through this log, so what it says
+        // and what it does both go there, as they would read in a terminal.
+        onText: (text) => {
+          const line = describeText(text);
+          if (line) appendFileSync(log, line);
+        },
         onToolCall: (call) => {
-          appendFileSync(log, logLine(call));
+          appendFileSync(log, describeCall(call, workspace?.root ?? ""));
           reporter.event({
             type: "tool.called",
             executionId,

@@ -90,6 +90,8 @@ export interface ClaudeCodeDeps {
   skills?: SkillDefinition[];
   workspace: RunWorkspace | null;
   onToolCall?: (call: ToolCallRecord) => void;
+  /** Text the child wrote between tool calls: what it says it is doing. */
+  onText?: (text: string) => void;
   signal?: AbortSignal;
   /** Injectable so tests do not spawn a real CLI. */
   spawnCli?: typeof spawn;
@@ -109,6 +111,7 @@ interface StreamEvent {
       type: string;
       id?: string;
       name?: string;
+      text?: string;
       input?: unknown;
       tool_use_id?: string;
       content?: unknown;
@@ -297,6 +300,9 @@ export async function runClaudeCodeNode(
       const blocks = e.message?.content;
       if (!Array.isArray(blocks)) return;
       for (const b of blocks) {
+        if (e.type === "assistant" && b.type === "text" && typeof b.text === "string") {
+          deps.onText?.(b.text);
+        }
         if (b.type === "tool_use" && typeof b.id === "string") {
           pending.set(b.id, {
             tool: b.name ?? "tool",

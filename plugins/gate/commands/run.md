@@ -110,15 +110,19 @@ Each call prints one JSON instruction:
     again. Do not redo the work.
   - `step` prints the next instruction, so carry straight on.
 - **`{"do": "wait", …}`** — a node is running on its own, in its own model. `log` is where it
-  writes what it is doing, one tool call per line. You do nothing for it: do not touch the
+  writes what it is doing: the files it reads, each edit as a `-`/`+` diff, the commands it
+  runs, and what it says between them (`»` lines). You do nothing for it: do not touch the
   worktree, do not do its work, do not answer for it. Run
   ```
   node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" wait <execution-id>
   ```
   in the foreground: it prints what the node has done since you last looked and returns on its
   own — with the next instruction when the node is over, or with `wait` again after about
-  ninety seconds. Between waits, tell the user what the log shows, in a line or two, and run it
-  again. A node can take an hour; that is the worker's hour, not yours.
+  ninety seconds. **The user cannot see that command's output.** The node is working in their
+  worktree, in a model they chose, and this log is their only view of it — so after every
+  `wait`, put what it printed in front of them as it came, in one fenced code block: every line,
+  the diffs included, not a summary and not a selection. One line of your own above it is fine;
+  then run `wait` again. A node can take an hour; that is the worker's hour, not yours.
 - **`{"do": "done", …}`** — the run is over. Report `status`, the `branch` and
   `git -C <workspace> diff` for reviewing it, then offer to review that diff.
 - **`{"do": "failed", …}`** — a node failed. Report the node and the error as they came; do not

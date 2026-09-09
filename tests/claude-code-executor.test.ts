@@ -44,7 +44,7 @@ function fakeCli(stdout: string | string[], code = 0, stderr = "") {
 /** An NDJSON stream shaped like the real `--output-format stream-json`. */
 const STREAM = [
   { type: "system", subtype: "init" },
-  { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Grep", input: { pattern: "isOnline" } }] } },
+  { type: "assistant", message: { content: [{ type: "text", text: "Looking for the flag." }, { type: "tool_use", id: "t1", name: "Grep", input: { pattern: "isOnline" } }] } },
   { type: "user", message: { content: [{ tool_use_id: "t1", type: "tool_result", content: "ts/a.ts:12" }] } },
   { type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Edit", input: { file_path: "ts/a.ts" } }] } },
   { type: "user", message: { content: [{ tool_use_id: "t2", type: "tool_result", content: "denied", is_error: true }] } },
@@ -119,16 +119,19 @@ describe("claude-code executor", () => {
   it("reports each tool call as it comes back, so the run is watchable", async () => {
     const agent = parseAgent("builder", AGENT, meta);
     const seen: string[] = [];
+    const said: string[] = [];
     const res = await runClaudeCodeNode(
       agent,
       "go",
       "build",
-      { workspace, spawnCli: fakeCli(STREAM), onToolCall: (c) => seen.push(`${c.tool}:${c.ok}`) },
+      { workspace, spawnCli: fakeCli(STREAM), onToolCall: (c) => seen.push(`${c.tool}:${c.ok}`), onText: (t) => said.push(t) },
       null,
     );
 
     // Emitted live during the node, not assembled at the end.
     expect(seen).toEqual(["Grep:true", "Edit:false"]);
+    // What the child said on the way is passed on too: the person follows the node by it.
+    expect(said).toEqual(["Looking for the flag."]);
     // And recorded on the step, so the finished run keeps its evidence.
     expect(res.toolCalls).toHaveLength(2);
     expect(res.toolCalls[0]).toMatchObject({ tool: "Grep", input: { pattern: "isOnline" }, ok: true, result: "ts/a.ts:12" });
