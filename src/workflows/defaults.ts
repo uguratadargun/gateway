@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ensureDefaultAgents } from "@/agents/defaults";
+import { backupStamp, ensureDefaultAgents } from "@/agents/defaults";
 
 import { DEFAULT_TEAM, ownScope, type DefinitionScope } from "@/lib/def-root";
 
-import { workflowExists, workflowsDir } from "./registry";
+import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
 
 /**
  * The sample pipeline gate ships with, seeded next to the default agents on
@@ -305,6 +305,29 @@ export function writeMissingDefaultWorkflows(scope?: DefinitionScope): string[] 
     if (workflowExists(id, scope)) continue;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
     writeFileSync(join(dir, `${id}.yaml`), source, { mode: 0o600 });
+    written.push(id);
+  }
+  return written;
+}
+
+/** Shipped pipelines this scope holds its own, changed copy of; see staleDefaultAgents. */
+export function staleDefaultWorkflows(scope?: DefinitionScope): string[] {
+  const own = scope && ownScope(scope);
+  return Object.entries(DEFAULT_WORKFLOWS)
+    .filter(([id, shipped]) => existsSync(join(workflowsDir(own), `${id}.yaml`)) && readWorkflowSource(id, own) !== shipped)
+    .map(([id]) => id);
+}
+
+/** Rewrites the stale ones to what ships now, the old text kept under backups/<stamp>/workflows/. */
+export function refreshDefaultWorkflows(scope?: DefinitionScope, stamp = backupStamp()): string[] {
+  const own = scope && ownScope(scope);
+  const dir = workflowsDir(own);
+  const written: string[] = [];
+  for (const id of staleDefaultWorkflows(scope)) {
+    const backup = join(dir, "..", "backups", stamp, "workflows");
+    mkdirSync(backup, { recursive: true, mode: 0o700 });
+    writeFileSync(join(backup, `${id}.yaml`), readWorkflowSource(id, own), { mode: 0o600 });
+    writeFileSync(join(dir, `${id}.yaml`), DEFAULT_WORKFLOWS[id], { mode: 0o600 });
     written.push(id);
   }
   return written;

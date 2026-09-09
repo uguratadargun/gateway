@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { DEFAULT_TEAM, ownScope, type DefinitionScope } from "@/lib/def-root";
 
-import { agentExists, agentsDir } from "./registry";
+import { agentExists, agentsDir, readAgentSource } from "./registry";
 
 /**
  * The agents gate ships with. They are written to ~/.gate/agents on first
@@ -481,6 +481,60 @@ export function writeMissingDefaultAgents(scope?: DefinitionScope): string[] {
     if (agentExists(id, scope)) continue;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
     writeFileSync(join(dir, `${id}.md`), source, { mode: 0o600 });
+    written.push(id);
+  }
+  return written;
+}
+
+/** Frontmatter a person tunes on a shipped agent, and keeps across a refresh. */
+const TUNED_FRONTMATTER = ["model", "effort"];
+
+/** The shipped text, with what the person set on the installed one carried over. */
+export function withTuning(installed: string, shipped: string): string {
+  let out = shipped;
+  for (const key of TUNED_FRONTMATTER) {
+    const line = installed.match(new RegExp(`^${key}:[^\n]*$`, "m"));
+    if (line) out = out.replace(new RegExp(`^${key}:[^\n]*$`, "m"), line[0]);
+  }
+  return out;
+}
+
+/** A directory stamp for what a refresh puts aside: sortable, filesystem-safe. */
+export function backupStamp(now = new Date()): string {
+  return now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+}
+
+/**
+ * Shipped agents this scope holds a copy of that is not what ships now —
+ * left behind by an update that changed the definition, or edited by hand.
+ * Only the scope's own files: what it inherits is the default team's to refresh.
+ */
+export function staleDefaultAgents(scope?: DefinitionScope): string[] {
+  const own = scope && ownScope(scope);
+  return Object.entries(DEFAULT_AGENTS)
+    .filter(([id, shipped]) => {
+      if (!existsSync(join(agentsDir(own), `${id}.md`))) return false;
+      const installed = readAgentSource(id, own);
+      return withTuning(installed, shipped) !== installed;
+    })
+    .map(([id]) => id);
+}
+
+/**
+ * Rewrites the stale ones to what ships now, keeping the model and effort set
+ * on them, and puts the old text under <scope>/backups/<stamp>/agents/ so a
+ * hand edit that mattered can be found and brought back.
+ */
+export function refreshDefaultAgents(scope?: DefinitionScope, stamp = backupStamp()): string[] {
+  const own = scope && ownScope(scope);
+  const dir = agentsDir(own);
+  const written: string[] = [];
+  for (const id of staleDefaultAgents(scope)) {
+    const installed = readAgentSource(id, own);
+    const backup = join(dir, "..", "backups", stamp, "agents");
+    mkdirSync(backup, { recursive: true, mode: 0o700 });
+    writeFileSync(join(backup, `${id}.md`), installed, { mode: 0o600 });
+    writeFileSync(join(dir, `${id}.md`), withTuning(installed, DEFAULT_AGENTS[id]), { mode: 0o600 });
     written.push(id);
   }
   return written;

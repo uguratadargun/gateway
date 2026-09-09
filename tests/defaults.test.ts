@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -521,5 +521,48 @@ Try {{inputs.implementer.summary}}
     expect(terminalOf(events)).toBe("nothing-changed");
     expect(state.visitCounts.reviewer ?? 0).toBe(0);
     expect(ran.find((c) => c[0] === "git" && c[1] === "diff")).toBeUndefined();
+  });
+});
+
+describe("refreshing shipped definitions an update left behind", () => {
+  it("rewrites what differs, keeps the model set on it, and puts the old text aside", async () => {
+    const { refreshDefaultAgents, staleDefaultAgents, withTuning } = await import("@/agents/defaults");
+    const { refreshDefaultWorkflows, staleDefaultWorkflows } = await import("@/workflows/defaults");
+    const home = process.env.GATE_HOME;
+    process.env.GATE_HOME = mkdtempSync(join(tmpdir(), "gate-refresh-"));
+    try {
+      ensureDefaultWorkflows();
+      const scope = teamScope();
+      expect(staleDefaultAgents(scope)).toEqual([]);
+      expect(staleDefaultWorkflows(scope)).toEqual([]);
+
+      // An older gate's implementer, tuned to a provider model by the person.
+      const file = join(scope.root, "agents", "implementer.md");
+      const old = readFileSync(file, "utf8")
+        .replace(/^model: .*$/m, "model: provider:zai/glm-5.3-flash")
+        .replace("planner.planFile", "planner.steps");
+      writeFileSync(file, old);
+      const wf = join(scope.root, "workflows", "dev.yaml");
+      writeFileSync(wf, `${readFileSync(wf, "utf8")}\n# edited\n`);
+      expect(staleDefaultAgents(scope)).toEqual(["implementer"]);
+      expect(staleDefaultWorkflows(scope)).toEqual(["dev"]);
+      // A tuned model alone is not staleness.
+      expect(withTuning(old, DEFAULT_AGENTS.implementer)).toContain("model: provider:zai/glm-5.3-flash");
+
+      expect(refreshDefaultAgents(scope, "T1")).toEqual(["implementer"]);
+      expect(refreshDefaultWorkflows(scope, "T1")).toEqual(["dev"]);
+      const now = readFileSync(file, "utf8");
+      expect(now).toContain("model: provider:zai/glm-5.3-flash");
+      expect(now).toContain("planner.planFile");
+      expect(now).not.toContain("planner.steps");
+      expect(readFileSync(wf, "utf8")).toBe(DEFAULT_WORKFLOWS.dev);
+      expect(readFileSync(join(scope.root, "backups", "T1", "agents", "implementer.md"), "utf8")).toBe(old);
+      expect(existsSync(join(scope.root, "backups", "T1", "workflows", "dev.yaml"))).toBe(true);
+      // Refreshed is no longer stale; a team that only inherits has nothing of its own to refresh.
+      expect(staleDefaultAgents(scope)).toEqual([]);
+      expect(refreshDefaultAgents(teamScope("ulak"), "T2")).toEqual([]);
+    } finally {
+      process.env.GATE_HOME = home;
+    }
   });
 });
