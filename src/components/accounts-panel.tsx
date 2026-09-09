@@ -28,7 +28,18 @@ interface Account {
   quotaBlockedWindow: string | null;
   /** 5h window used, 0..1. Null while no window reading is known yet. */
   utilization: number | null;
+  /** Every window this account reports, named and ordered by the server. */
+  windows: QuotaWindow[];
   quota: { plan?: string | null; source?: string; error?: string | null } | null;
+}
+
+interface QuotaWindow {
+  name: string;
+  /** "session limit" · "weekly limit" · "Fable limit" — Claude's own words. */
+  label: string;
+  /** Percent of the window still free. */
+  remaining: number;
+  resetsAt: string | null;
 }
 
 interface PoolConfig {
@@ -52,8 +63,24 @@ function relative(ms: number | null): string {
   if (!ms) return "never";
   const delta = Math.round((ms - Date.now()) / 1000);
   const abs = Math.abs(delta);
-  const unit = abs < 60 ? [abs, "s"] : abs < 3600 ? [Math.round(abs / 60), "m"] : [Math.round(abs / 3600), "h"];
+  // Days matter here: a weekly window resets three days out, and "in 83h" is
+  // not a length of time anyone reads at a glance.
+  const unit =
+    abs < 60
+      ? [abs, "s"]
+      : abs < 3600
+        ? [Math.round(abs / 60), "m"]
+        : abs < 86_400
+          ? [Math.round(abs / 3600), "h"]
+          : [Math.round(abs / 86_400), "d"];
   return delta < 0 ? `${unit[0]}${unit[1]} ago` : `in ${unit[0]}${unit[1]}`;
+}
+
+/** Green while there is room, amber as it tightens, red at the end. */
+function barColor(remaining: number): string {
+  if (remaining <= 10) return "bg-destructive";
+  if (remaining <= 30) return "bg-amber-500";
+  return "bg-emerald-500";
 }
 
 export function AccountsPanel() {
@@ -226,7 +253,6 @@ export function AccountsPanel() {
       <CardContent className="space-y-4">
         <div className="space-y-2">
           {accounts.map((a, i) => {
-            const used = a.utilization == null ? null : Math.round(a.utilization * 100);
             return (
               <div key={a.id} className="rounded-md border p-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -238,7 +264,9 @@ export function AccountsPanel() {
                           <Timer className="size-3" /> cooling down {relative(a.cooldownUntil)}
                         </Badge>
                       ) : a.quotaBlockedWindow ? (
-                        <Badge variant="destructive">{a.quotaBlockedWindow} exhausted</Badge>
+                        <Badge variant="destructive">
+                          {a.windows?.find((w) => w.name === a.quotaBlockedWindow)?.label ?? a.quotaBlockedWindow} exhausted
+                        </Badge>
                       ) : a.enabled ? (
                         <Badge variant="success">ready</Badge>
                       ) : (
@@ -269,19 +297,36 @@ export function AccountsPanel() {
                   </div>
                 </div>
 
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                    <div
-                      className={`h-full transition-all ${used == null ? "" : used >= 90 ? "bg-destructive" : used >= 70 ? "bg-amber-500" : "bg-emerald-500"}`}
-                      style={{ width: `${used ?? 0}%` }}
-                    />
-                  </div>
-                  <span
-                    className="w-28 shrink-0 text-right text-[11px] text-muted-foreground"
-                    title={used == null ? a.quota?.error ?? "Claude reports a window once this account is polled or serves a request." : undefined}
-                  >
-                    {used == null ? (a.quota?.error ? "5h window unavailable" : "5h window pending") : `${used}% of 5h window`}
-                  </span>
+                <div className="mt-2 space-y-1">
+                  {(a.windows ?? []).length === 0 ? (
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted" />
+                      <span
+                        className="w-40 shrink-0 text-right text-[11px] text-muted-foreground"
+                        title={a.quota?.error ?? "Claude reports its windows once this account is polled or serves a request."}
+                      >
+                        {a.quota?.error ? "windows unavailable" : "windows pending"}
+                      </span>
+                    </div>
+                  ) : (
+                    a.windows.map((w) => (
+                      <div key={w.name} className="flex items-center gap-2">
+                        <span className="w-24 shrink-0 truncate text-[11px] text-muted-foreground" title={w.name}>
+                          {w.label}
+                        </span>
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className={`h-full transition-all ${barColor(w.remaining)}`}
+                            style={{ width: `${Math.max(0, Math.min(100, 100 - w.remaining))}%` }}
+                          />
+                        </div>
+                        <span className="w-32 shrink-0 text-right text-[11px] text-muted-foreground">
+                          {Math.round(w.remaining)}% left
+                          {w.resetsAt ? ` · resets ${relative(Date.parse(w.resetsAt))}` : ""}
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             );

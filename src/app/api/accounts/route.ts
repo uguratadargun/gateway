@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { listAccounts } from "@/lib/accounts";
-import { isCoolingDown, quotaBlockedWindow, utilizationOf } from "@/lib/account-pool";
+import { accountWindows, isCoolingDown, quotaBlockedWindow, utilizationOf, windowLabel } from "@/lib/account-pool";
 import { refreshUnpolledQuotas } from "@/lib/claude/usage";
 import { loadSettings } from "@/lib/settings";
 
@@ -25,6 +25,11 @@ export async function GET() {
     coolingDown: isCoolingDown(a, now),
     quotaBlockedWindow: quotaBlockedWindow(a, settings.accountPool, now),
     utilization: utilizationOf(a, now),
+    // Every window this account reports, not just the 5h one — a weekly limit
+    // is what a person hits after a good day, and it used to be invisible here.
+    // Labelled server-side: this module is Node-only, and the panel is a client
+    // component that must not pull it in to name a window.
+    windows: accountWindows(a, now).map((w) => ({ ...w, label: w.label ?? windowLabel(w.name) })),
   }));
   return NextResponse.json({ accounts, strategy: settings.accountPool });
 }

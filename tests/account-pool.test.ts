@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BACKOFF,
   accountHealth,
+  accountWindows,
   computeCooldown,
   eligibleAccounts,
   exhaustedWindowReset,
@@ -192,6 +193,16 @@ describe("unified rate-limit headers", () => {
     expect(quota?.windows.seven_day.utilization).toBe(88);
   });
 
+  it("gives the 7d_oi window the name the usage endpoint uses for it", () => {
+    const quota = parseUnifiedRateLimitHeaders(
+      new Headers({ "anthropic-ratelimit-unified-7d_oi-utilization": "19" }),
+    );
+    // `oi` is "overage included" — Claude Code's own header→name map. Left as
+    // `7d_oi` it would be a second window beside the polled one.
+    expect(Object.keys(quota?.windows ?? {})).toEqual(["seven_day_overage_included"]);
+    expect(quota?.windows.seven_day_overage_included.utilization).toBe(19);
+  });
+
   it("returns null when the response carried no unified headers", () => {
     expect(parseUnifiedRateLimitHeaders(new Headers({ "retry-after": "30" }))).toBeNull();
   });
@@ -225,7 +236,7 @@ describe("what the pool has left", () => {
   const in1h = new Date(now + 3_600_000).toISOString();
   const in3d = new Date(now + 3 * 86_400_000).toISOString();
 
-  function withWindows(id: string, windows: Record<string, { utilization: number; resetsAt: string | null }>, patch: Partial<Account> = {}) {
+  function withWindows(id: string, windows: Record<string, { utilization: number; resetsAt: string | null; scope?: string }>, patch: Partial<Account> = {}) {
     return account({ id, quota: { windows, source: "headers" }, quotaFetchedAt: now - 60_000, ...patch });
   }
 
@@ -284,9 +295,50 @@ describe("what the pool has left", () => {
     });
     const quota = poolQuota([one], CONFIG, now);
     expect(quota.windows.map((w) => w.name)).toEqual(["five_hour", "seven_day", "seven_day_opus"]);
-    expect(quota.windows.map((w) => windowLabel(w.name))).toEqual(["5h", "7d", "7d opus"]);
+    // The words Claude Code's own /usage uses, since this is what replaces it.
+    expect(quota.windows.map((w) => windowLabel(w.name))).toEqual(["session limit", "weekly limit", "Opus limit"]);
     expect(quota.plan).toBe("max_20x");
     expect(quota.updatedAt).toBe(now - 60_000);
+  });
+
+  it("prefers the canonical key to a stale alias inside one account, either way round", () => {
+    const stale = { utilization: 90, resetsAt: in3d };
+    const fresh = { utilization: 20, resetsAt: in3d };
+    // Both orders: the alias is frozen at whatever it last said, so the key
+    // both sources write now wins whether it was stored first or second.
+    for (const windows of [
+      { "7d_oi": stale, seven_day_overage_included: fresh },
+      { seven_day_overage_included: fresh, "7d_oi": stale },
+    ]) {
+      expect(accountWindows(withWindows("a", windows), now)).toEqual([
+        { name: "seven_day_overage_included", remaining: 80, resetsAt: in3d },
+      ]);
+    }
+  });
+
+  it("folds a snapshot stored under the header spelling into one window", () => {
+    const pool = [
+      withWindows("headers", { "7d_oi": { utilization: 20, resetsAt: in3d } }),
+      withWindows("polled", { seven_day_overage_included: { utilization: 40, resetsAt: in3d } }),
+    ];
+    const quota = poolQuota(pool, CONFIG, now);
+    expect(quota.windows).toEqual([{ name: "seven_day_overage_included", remaining: 80, resetsAt: in3d }]);
+    // Not a model: "oi" is the weekly window with extra usage counted in.
+    expect(windowLabel(quota.windows[0].name)).toBe("weekly limit incl. extra usage");
+  });
+
+  it("labels a model-scoped window from the scope the endpoint named, and carries it to the pool", () => {
+    const fable = withWindows("scoped", {
+      five_hour: { utilization: 63, resetsAt: in1h },
+      seven_day: { utilization: 32, resetsAt: in3d },
+      seven_day_fable: { utilization: 25, resetsAt: in3d, scope: "Fable" },
+    });
+    const windows = accountWindows(fable, now);
+    expect(windows.map((w) => w.name)).toEqual(["five_hour", "seven_day", "seven_day_fable"]);
+    expect(windows[2]).toEqual({ name: "seven_day_fable", remaining: 75, resetsAt: in3d, label: "Fable limit" });
+    // The unscoped windows get their fixed names; nothing is invented for them.
+    expect(windows[0].label).toBeUndefined();
+    expect(poolQuota([fable], CONFIG, now).windows[2].label).toBe("Fable limit");
   });
 
   it("says why there is nothing to show rather than showing zero", () => {
@@ -313,6 +365,37 @@ describe("claude usage endpoint", () => {
     expect(quota.windows.seven_day.resetsAt).toBe(new Date(1789000000 * 1000).toISOString());
     expect(quota.plan).toBe("max_20x");
     expect(quota.source).toBe("usage-endpoint");
+  });
+
+  it("reads the model-scoped weekly limit from the limits list, which is the only place it is", () => {
+    // The shape the endpoint returned on 2026-09-09: the legacy per-model keys
+    // are null, and the Fable window exists only as a scoped entry in `limits`.
+    const quota = parseClaudeUsagePayload({
+      five_hour: { utilization: 63, resets_at: "2026-09-09T11:10:00+00:00" },
+      seven_day: { utilization: 32, resets_at: "2026-09-12T22:00:00+00:00" },
+      seven_day_opus: null,
+      seven_day_sonnet: null,
+      nimbus_quill: { utilization: 0, resets_at: null },
+      limits: [
+        { kind: "session", group: "session", percent: 63, resets_at: "2026-09-09T11:10:00+00:00", scope: null },
+        { kind: "weekly_all", group: "weekly", percent: 32, resets_at: "2026-09-12T22:00:00+00:00", scope: null },
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 25,
+          resets_at: "2026-09-12T22:00:00+00:00",
+          scope: { model: { id: null, display_name: "Fable" }, surface: null },
+        },
+        // Not a window: no kind this reads, no scope.
+        { kind: "weekly_scoped", group: "weekly", percent: 5, resets_at: null, scope: null },
+      ],
+    })!;
+    expect(Object.keys(quota.windows).sort()).toEqual(["five_hour", "seven_day", "seven_day_fable"]);
+    expect(quota.windows.seven_day_fable).toEqual({ utilization: 25, resetsAt: "2026-09-12T22:00:00.000Z", scope: "Fable" });
+    // The legacy keys and the list agree on the first two; neither is doubled.
+    expect(quota.windows.five_hour).toEqual({ utilization: 63, resetsAt: "2026-09-09T11:10:00.000Z" });
+    expect(windowLabel("seven_day_fable", quota.windows.seven_day_fable.scope)).toBe("Fable limit");
+    expect(windowLabel("seven_day_fable")).toBe("Fable limit");
   });
 
   it("returns null when the payload carries no window", () => {

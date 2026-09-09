@@ -19,6 +19,12 @@ export interface QuotaWindow {
   utilization: number;
   /** ISO time when the window resets, when known. */
   resetsAt: string | null;
+  /**
+   * What the window is scoped to, in the words the usage endpoint gives a
+   * person — "Fable" for the model-scoped weekly limit. Only the newer
+   * `limits` list carries this; the legacy keys name their scope in the key.
+   */
+  scope?: string | null;
 }
 
 export interface AccountQuota {

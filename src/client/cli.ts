@@ -308,11 +308,16 @@ async function cmdUsage(args: Args): Promise<number> {
     return 0;
   }
 
-  const width = Math.max(...usage.windows.map((w) => windowLabel(w.name).length));
-  for (const w of usage.windows) {
-    const left = `${Math.round(w.remaining * 10) / 10}% left`;
-    const reset = untilText(w.resetsAt);
-    console.log(`${windowLabel(w.name).padEnd(width)}  ${bar(w.remaining)}  ${left.padEnd(11)}${reset ? `· resets ${reset}` : ""}`);
+  const rows = usage.windows.map((w) => ({
+    label: w.label ?? windowLabel(w.name),
+    bar: bar(w.remaining),
+    left: `${Math.round(w.remaining * 10) / 10}% left`,
+    reset: untilText(w.resetsAt),
+  }));
+  const labelWidth = Math.max(...rows.map((r) => r.label.length));
+  const leftWidth = Math.max(...rows.map((r) => r.left.length));
+  for (const r of rows) {
+    console.log(`${r.label.padEnd(labelWidth)}  ${r.bar}  ${r.left.padEnd(leftWidth)}${r.reset ? `  · resets ${r.reset}` : ""}`);
   }
 
   const a = usage.accounts;

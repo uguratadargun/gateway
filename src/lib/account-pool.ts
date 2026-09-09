@@ -51,7 +51,8 @@ export function quotaBlockedWindow(
   if (config.quotaMinRemainingPercent <= 0 || !account.quota) return null;
   for (const [name, window] of Object.entries(account.quota.windows)) {
     if (windowResetPassed(window, now)) continue;
-    if (100 - window.utilization <= config.quotaMinRemainingPercent) return name;
+    // Canonical, so what comes back can be named on a screen.
+    if (100 - window.utilization <= config.quotaMinRemainingPercent) return canonicalWindowName(name);
   }
   return null;
 }
@@ -251,7 +252,22 @@ export function computeCooldown(input: CooldownInput): CooldownDecision {
 
 // ── Anthropic unified rate-limit headers → quota snapshot ───────────────────
 
-const WINDOW_NAMES: Record<string, string> = { "5h": "five_hour", "7d": "seven_day" };
+/**
+ * Header spelling → the name the usage endpoint uses, so a window read from a
+ * reply and the same window read from a poll are one window and not two.
+ * The pairs are Claude Code's own (`{"5h":"five_hour","7d":"seven_day","7d_oi":"seven_day_overage_included"}`);
+ * `oi` is *overage included*, not Opus, and guessing otherwise mislabels it.
+ */
+const WINDOW_NAMES: Record<string, string> = {
+  "5h": "five_hour",
+  "7d": "seven_day",
+  "7d_oi": "seven_day_overage_included",
+};
+
+/** The canonical name of a window, whichever spelling it arrived in. */
+export function canonicalWindowName(name: string): string {
+  return WINDOW_NAMES[name] ?? name;
+}
 
 function parseUtilization(raw: string): number | null {
   const n = Number(raw.trim());
@@ -324,6 +340,11 @@ export interface PoolWindow {
   remaining: number;
   /** When that account's window rolls over, when it said so. */
   resetsAt: string | null;
+  /**
+   * The label to show, when the endpoint named the window's scope itself
+   * ("Fable" → "Fable limit"). Absent, `windowLabel(name)` names it.
+   */
+  label?: string;
 }
 
 export interface PoolQuota {
@@ -348,18 +369,72 @@ export interface PoolQuota {
   reason: string | null;
 }
 
-/** "5h" · "7d" · "7d opus" — the window as a person says it. */
-export function windowLabel(name: string): string {
-  if (name === "five_hour") return "5h";
-  const sevenDay = /^seven_day(?:_(.+))?$/.exec(name);
-  if (sevenDay) return sevenDay[1] ? `7d ${sevenDay[1].replace(/_/g, " ")}` : "7d";
-  return name.replace(/_/g, " ");
+/**
+ * The window in the words Claude Code's own `/usage` uses for it. Someone
+ * reading this is reading it *because* that command stopped working here, and
+ * "session limit" is the line they already know; an unmapped window keeps its
+ * own name rather than being given a guessed one.
+ */
+const WINDOW_LABELS: Record<string, string> = {
+  five_hour: "session limit",
+  seven_day: "weekly limit",
+  seven_day_opus: "Opus limit",
+  seven_day_sonnet: "Sonnet limit",
+  seven_day_fable: "Fable limit",
+  // `oi` is overage included — the weekly window with extra usage counted —
+  // and not a model. The model-scoped weekly limit arrives from the usage
+  // endpoint's `limits` list with its scope named, and is labelled from that.
+  seven_day_overage_included: "weekly limit incl. extra usage",
+  overage: "usage credit limit",
+};
+
+export function windowLabel(name: string, scope?: string | null): string {
+  if (scope) return `${scope} limit`;
+  const canonical = canonicalWindowName(name);
+  return WINDOW_LABELS[canonical] ?? canonical.replace(/_/g, " ");
 }
 
 function windowRank(name: string): number {
   if (name === "five_hour") return 0;
   if (name === "seven_day") return 1;
   return 2;
+}
+
+function sortWindows(windows: PoolWindow[]): PoolWindow[] {
+  return windows.sort((a, b) => windowRank(a.name) - windowRank(b.name) || a.name.localeCompare(b.name));
+}
+
+/**
+ * One account's windows: canonical names, ordered, and read as percent *left*.
+ *
+ * The same window can sit in a snapshot twice — once under the header spelling
+ * a previous build stored (`7d_oi`) and once under the name the usage endpoint
+ * uses. The canonical key wins, because that is the one both sources write now
+ * and the alias is frozen at whatever it last said.
+ */
+export function accountWindows(account: Account, now = Date.now()): PoolWindow[] {
+  const byName = new Map<string, { window: QuotaWindow; canonical: boolean }>();
+  for (const [key, window] of Object.entries(account.quota?.windows ?? {})) {
+    const name = canonicalWindowName(key);
+    const canonical = key === name;
+    const held = byName.get(name);
+    if (held && (held.canonical || !canonical)) continue;
+    byName.set(name, { window, canonical });
+  }
+
+  return sortWindows(
+    [...byName.entries()].map(([name, { window }]) => {
+      // A window whose reset has passed is full again; the snapshot just has not
+      // been overwritten yet, because that only happens on the next reply.
+      const done = windowResetPassed(window, now);
+      return {
+        name,
+        remaining: done ? 100 : Math.round(Math.max(0, 100 - window.utilization) * 10) / 10,
+        resetsAt: done ? null : window.resetsAt,
+        ...(window.scope ? { label: windowLabel(name, window.scope) } : {}),
+      };
+    }),
+  );
 }
 
 /**
@@ -382,23 +457,13 @@ export function poolQuota(pool: Account[], config: AccountPoolConfig, now = Date
 
   const best = new Map<string, PoolWindow>();
   for (const account of speaking) {
-    for (const [name, window] of Object.entries(account.quota?.windows ?? {})) {
-      // A window whose reset has passed is full again; the snapshot just has
-      // not been overwritten yet, because that only happens on the next reply.
-      const remaining = windowResetPassed(window, now) ? 100 : Math.max(0, 100 - window.utilization);
-      const current = best.get(name);
-      if (current && current.remaining >= remaining) continue;
-      best.set(name, {
-        name,
-        remaining: Math.round(remaining * 10) / 10,
-        resetsAt: windowResetPassed(window, now) ? null : window.resetsAt,
-      });
+    for (const window of accountWindows(account, now)) {
+      const current = best.get(window.name);
+      if (current && current.remaining >= window.remaining) continue;
+      best.set(window.name, window);
     }
   }
-
-  const windows = [...best.values()].sort(
-    (a, b) => windowRank(a.name) - windowRank(b.name) || a.name.localeCompare(b.name),
-  );
+  const windows = sortWindows([...best.values()]);
 
   const fetched = speaking.map((a) => a.quotaFetchedAt).filter((t): t is number => typeof t === "number");
   const accounts = {

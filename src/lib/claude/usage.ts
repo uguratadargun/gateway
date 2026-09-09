@@ -85,6 +85,41 @@ function isoOrNull(value: unknown): string | null {
   return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
 }
 
+/** "Fable" → "fable", "Claude Opus 4" → "claude_opus_4": a scope as a window-name suffix. */
+function scopeSlug(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+/**
+ * The name a `limits` entry goes under, or null for one that is not a window.
+ *
+ * The endpoint now describes every limit twice: the legacy top-level keys
+ * (`five_hour`, `seven_day`, `seven_day_opus`…) and a `limits` list whose
+ * entries carry a `kind`, a percent and a scope. The model-scoped weekly
+ * limit — the one Claude Code shows as "Fable limit" — exists **only** in the
+ * list: its legacy key is `null`, and there is no `seven_day_fable`. So the
+ * list is read too, named the way the legacy keys would have named it, and a
+ * window the legacy keys already gave is not given twice.
+ */
+function limitWindowName(entry: Record<string, unknown>): { name: string; scope: string | null } | null {
+  const kind = typeof entry.kind === "string" ? entry.kind : "";
+  const scope = toRecord(entry.scope);
+  const model = toRecord(scope.model);
+  const scopeName =
+    (typeof model.display_name === "string" && model.display_name.trim()) ||
+    (typeof model.id === "string" && model.id.trim()) ||
+    (typeof scope.surface === "string" && scope.surface.trim()) ||
+    "";
+  if (kind === "session") return { name: "five_hour", scope: null };
+  if (kind === "weekly_all") return { name: "seven_day", scope: null };
+  if (kind === "weekly_scoped" && scopeName) return { name: `seven_day_${scopeSlug(scopeName)}`, scope: scopeName };
+  return null;
+}
+
 /** Pure: the usage payload → a quota snapshot, or null when it carried no window. */
 export function parseClaudeUsagePayload(data: unknown): AccountQuota | null {
   const record = toRecord(data);
@@ -94,6 +129,22 @@ export function parseClaudeUsagePayload(data: unknown): AccountQuota | null {
     const utilization = percent(toRecord(value).utilization);
     if (utilization === null) continue;
     windows[key] = { utilization, resetsAt: isoOrNull(toRecord(value).resets_at) };
+  }
+  if (Array.isArray(record.limits)) {
+    for (const raw of record.limits) {
+      const entry = toRecord(raw);
+      const named = limitWindowName(entry);
+      if (!named) continue;
+      const utilization = percent(entry.percent);
+      if (utilization === null) continue;
+      // The legacy key said the same thing about this window; the scope is
+      // the one thing the list adds to it.
+      if (windows[named.name]) {
+        if (named.scope) windows[named.name].scope = named.scope;
+        continue;
+      }
+      windows[named.name] = { utilization, resetsAt: isoOrNull(entry.resets_at), ...(named.scope ? { scope: named.scope } : {}) };
+    }
   }
   if (Object.keys(windows).length === 0) return null;
   const plan = [record.tier, record.plan, record.subscription_type].find(

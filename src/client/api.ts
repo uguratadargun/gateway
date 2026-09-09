@@ -163,7 +163,7 @@ export class GateClient {
    * own and an older gate may answer without the newer fields.
    */
   async usage(): Promise<{
-    windows: Array<{ name: string; remaining: number; resetsAt: string | null }>;
+    windows: Array<{ name: string; remaining: number; resetsAt: string | null; label?: string }>;
     accounts: { total: number; enabled: number; available: number; coolingDown: number; quotaBlocked: number };
     plan: string | null;
     updatedAt: number | null;
