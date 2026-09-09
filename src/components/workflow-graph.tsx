@@ -26,7 +26,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import type { WorkflowLayout } from "@/executions/types";
-import { autoLayout, type GraphNodeSpec, type NodeKind } from "@/workflows/graph-view";
+import { autoLayout, skipKeys, type GraphNodeSpec, type NodeKind } from "@/workflows/graph-view";
 import { loopLinkKeys } from "@/workflows/routing";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +51,9 @@ const KIND_STYLE: Record<NodeKind, string> = {
 
 /** Amber, the same hue the legend names "loops back". */
 const LOOP_COLOR = "#f59e0b";
+
+/** Slate, for a forward edge that passes over the columns it skips. */
+const SKIP_COLOR = "#94a3b8";
 
 /** Flat colours for the minimap, which cannot read the cards' Tailwind classes. */
 const KIND_COLOR: Record<NodeKind, string> = {
@@ -79,6 +82,9 @@ type CardData = {
   /** This node sends / receives a loop-back edge, which uses its own handles. */
   loopOut: boolean;
   loopIn: boolean;
+  /** This node sends / receives an edge routed over the cards, on the top handles. */
+  skipOut: boolean;
+  skipIn: boolean;
   /** Switched off: a run walks past it without doing it. */
   disabled: boolean;
 };
@@ -124,6 +130,29 @@ function NodeCard({ data }: NodeProps) {
           position={Position.Bottom}
           isConnectable={false}
           style={{ left: "68%", background: LOOP_COLOR }}
+          className="!size-2 !border-none"
+        />
+      )}
+      {/* The lane over the cards: a shortcut leaves from the top of its card
+          and lands on the top of the card it skips to, so the columns between
+          them are passed over rather than drawn through. */}
+      {d.skipIn && (
+        <Handle
+          id="skip-in"
+          type="target"
+          position={Position.Top}
+          isConnectable={false}
+          style={{ left: "32%", background: SKIP_COLOR }}
+          className="!size-2 !border-none"
+        />
+      )}
+      {d.skipOut && (
+        <Handle
+          id="skip-out"
+          type="source"
+          position={Position.Top}
+          isConnectable={false}
+          style={{ left: "68%", background: SKIP_COLOR }}
           className="!size-2 !border-none"
         />
       )}
@@ -191,6 +220,8 @@ interface EdgeData extends Record<string, unknown> {
   from: string;
   index: number;
   loop: boolean;
+  /** Routed over the cards, from top handle to top handle. */
+  skip: boolean;
   offset: number;
   onDelete?: (ref: { from: string; index: number }) => void;
 }
@@ -211,9 +242,8 @@ function DeletableEdge({
 }: EdgeProps) {
   const d = data as EdgeData | undefined;
   const geometry = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition };
-  const [path, labelX, labelY] = d?.loop
-    ? getSmoothStepPath({ ...geometry, borderRadius: 10, offset: d.offset })
-    : getBezierPath(geometry);
+  const [path, labelX, labelY] =
+    d?.loop || d?.skip ? getSmoothStepPath({ ...geometry, borderRadius: 10, offset: d.offset }) : getBezierPath(geometry);
 
   return (
     <>
@@ -306,7 +336,7 @@ export function WorkflowGraph({
   }, [nodes, loops]);
 
   const cardData = useCallback(
-    (n: GraphNodeSpec): CardData => ({
+    (n: GraphNodeSpec, skips: Set<string>): CardData => ({
       label: n.label ?? n.id,
       detail: n.detail,
       kind: n.type,
@@ -315,9 +345,24 @@ export function WorkflowGraph({
       connectable: editable,
       loopOut: [...loops].some((k) => k.startsWith(`${n.id}->`)),
       loopIn: [...loops].some((k) => k.endsWith(`->${n.id}`)),
+      skipOut: [...skips].some((k) => k.startsWith(`${n.id}->`)),
+      skipIn: [...skips].some((k) => k.endsWith(`->${n.id}`)),
       disabled: !!n.disabled,
     }),
     [statuses, selected, editable, loops],
+  );
+
+  /**
+   * A saved layout is used whole or not at all. One that covers only some of
+   * the nodes — the definition changed under it, by a push or a refresh of
+   * the shipped pipeline — would put the new cards at their generated places
+   * among the old cards' remembered ones, two layouts on one canvas, with the
+   * new cards on top of whatever was already there. Tidy up saves a complete
+   * one again.
+   */
+  const usable = useMemo(
+    () => (layout && nodes.every((n) => layout[n.id]) ? layout : undefined),
+    [layout, nodes],
   );
 
   /**
@@ -334,20 +379,26 @@ export function WorkflowGraph({
   useEffect(() => {
     setRfNodes((prev) => {
       const byId = new Map(prev.map((n) => [n.id, n]));
-      return nodes.map((n) => {
+      const positions: Record<string, { x: number; y: number }> = {};
+      for (const n of nodes) {
         const old = byId.get(n.id);
-        const incoming = layout?.[n.id];
+        const incoming = usable?.[n.id];
         const known = knownLayout.current[n.id];
         // A position that arrived from outside wins only when it actually
         // changed; otherwise where the user dragged the card stands.
         const moved = incoming && (!known || known.x !== incoming.x || known.y !== incoming.y);
-        const position = (moved ? incoming : old?.position) ?? incoming ?? fallback[n.id] ?? { x: 0, y: 0 };
-        const data = cardData(n);
+        positions[n.id] = (moved ? incoming : old?.position) ?? incoming ?? fallback[n.id] ?? { x: 0, y: 0 };
+      }
+      const skips = skipKeys(nodes, positions, loops);
+      return nodes.map((n) => {
+        const old = byId.get(n.id);
+        const position = positions[n.id];
+        const data = cardData(n, skips);
         return old ? { ...old, position, data } : { id: n.id, type: "workflow", position, deletable: false, data };
       });
     });
-    knownLayout.current = layout ?? {};
-  }, [nodes, layout, fallback, cardData]);
+    knownLayout.current = usable ?? {};
+  }, [nodes, usable, fallback, cardData, loops]);
 
   const deleteOneEdge = useCallback(
     (ref: { from: string; index: number }) => onDeleteEdges?.([ref]),
@@ -373,6 +424,44 @@ export function WorkflowGraph({
     [rfNodes],
   );
 
+  /**
+   * Which forward edges pass over the cards, from where the cards are now —
+   * so a card dragged in front of an edge sends that edge up and over it.
+   * The handles it needs are on every card that had a skip when the layout
+   * last changed; between two layouts the lane may briefly land on a handle
+   * that is drawn faint, which is a smaller wrong than a line through a card.
+   */
+  const skips = useMemo(() => {
+    const positions: Record<string, { x: number; y: number }> = {};
+    for (const n of rfNodes) positions[n.id] = n.position;
+    return skipKeys(nodes, positions, loops);
+  }, [nodes, rfNodes, loops]);
+
+  /** One lane per skip, mirrored from the loop lanes: over the highest card instead of under the lowest. */
+  const skipLane = useMemo(() => {
+    const lanes = new Map<string, number>();
+    for (const n of nodes) {
+      for (const e of n.edges) {
+        const key = `${n.id}->${e.to}`;
+        if (skips.has(key) && !lanes.has(key)) lanes.set(key, lanes.size);
+      }
+    }
+    return lanes;
+  }, [nodes, skips]);
+
+  const skipOffset = useCallback(
+    (from: string, to: string, lane: number): number => {
+      const highest = rfNodes.reduce((y, n) => Math.min(y, n.position.y), Number.POSITIVE_INFINITY);
+      const source = rfNodes.find((n) => n.id === from);
+      const target = rfNodes.find((n) => n.id === to);
+      if (!source || !target || !Number.isFinite(highest)) return 26 + 20 * lane;
+      // The smooth-step path from one top handle to another runs its
+      // horizontal stretch `offset` above the higher of the two cards.
+      return Math.max(26, Math.min(source.position.y, target.position.y) - highest + 30 + 20 * lane);
+    },
+    [rfNodes],
+  );
+
   const rfEdges: Edge[] = useMemo(
     () =>
       nodes.flatMap((n) =>
@@ -380,14 +469,15 @@ export function WorkflowGraph({
           const key = `${n.id}->${e.to}`;
           const active = activeEdges?.has(key) ?? false;
           const loop = loops.has(key);
-          const color = active ? "hsl(var(--primary))" : loop ? LOOP_COLOR : undefined;
+          const skip = !loop && skips.has(key);
+          const color = active ? "hsl(var(--primary))" : loop ? LOOP_COLOR : skip ? SKIP_COLOR : undefined;
           return {
             id: `${n.id}-${e.to}-${i}`,
             source: n.id,
             target: e.to,
             type: "workflow",
-            sourceHandle: loop ? "loop-out" : "out",
-            targetHandle: loop ? "loop-in" : "in",
+            sourceHandle: loop ? "loop-out" : skip ? "skip-out" : "out",
+            targetHandle: loop ? "loop-in" : skip ? "skip-in" : "in",
             label: e.label ?? e.when,
             animated: active,
             // The index is the edge's identity in the workflow file: two edges
@@ -396,7 +486,12 @@ export function WorkflowGraph({
               from: n.id,
               index: i,
               loop,
-              offset: loop ? loopOffset(n.id, e.to, loopLane.get(key) ?? 0) : 0,
+              skip,
+              offset: loop
+                ? loopOffset(n.id, e.to, loopLane.get(key) ?? 0)
+                : skip
+                  ? skipOffset(n.id, e.to, skipLane.get(key) ?? 0)
+                  : 0,
               onDelete: editable ? deleteOneEdge : undefined,
             },
             deletable: editable,
@@ -409,7 +504,7 @@ export function WorkflowGraph({
           };
         }),
       ),
-    [nodes, activeEdges, editable, loops, loopLane, loopOffset, deleteOneEdge],
+    [nodes, activeEdges, editable, loops, loopLane, loopOffset, skips, skipLane, skipOffset, deleteOneEdge],
   );
 
   // Positions are persisted when a drag ends, not on every frame; the counter
@@ -426,6 +521,10 @@ export function WorkflowGraph({
     const out: WorkflowLayout = {};
     for (const n of nodesRef.current) out[n.id] = { x: n.position.x, y: n.position.y };
     knownLayout.current = out;
+    // The cards' handles follow the new positions: a card dragged in front of
+    // an edge needs the top handles that edge now leaves from and lands on.
+    const refreshed = skipKeys(nodes, out, loops);
+    setRfNodes((prev) => prev.map((n) => ({ ...n, data: cardData(nodes.find((s) => s.id === n.id)!, refreshed) })));
     onLayoutChange(out);
     // Only a finished drag should write; re-running on every node change would
     // save the canvas continuously.
@@ -569,6 +668,12 @@ export function WorkflowGraph({
               <line x1="0" y1="3" x2="18" y2="3" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
             </svg>
             loops back
+          </span>
+          <span className="flex items-center gap-1" style={{ color: SKIP_COLOR }}>
+            <svg width="18" height="6" aria-hidden>
+              <line x1="0" y1="3" x2="18" y2="3" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+            skips ahead
           </span>
         </Panel>
       </ReactFlow>
