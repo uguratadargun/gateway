@@ -302,6 +302,9 @@ Try {{inputs.implementer.summary}}
     expect(state.visitCounts.planner).toBe(2);
     expect(state.visitCounts.implementer).toBe(2);
     expect(state.visitCounts.reviewer).toBe(2);
+    // The person approved the plan once; the revision the review asked for
+    // went straight to the implementer instead of being shown to them again.
+    expect(state.visitCounts["plan-review"]).toBe(1);
     // The base is recorded once, before anything runs, and never again.
     expect(state.visitCounts.base).toBe(1);
 
@@ -338,6 +341,30 @@ Try {{inputs.implementer.summary}}
     expect(ran.findIndex((c) => c[0] === "git" && c[1] === "commit")).toBeLessThan(ran.findIndex((c) => c[0] === "sh"));
   });
 
+  it("still carries a revision's questions to the person, and then builds without showing the plan again", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const provider = fakeTeam(
+      (visit) => (visit === 1 ? JSON.stringify({ verdict: "changes-requested", feedback: "Wrong seam." }) : JSON.stringify({ verdict: "approved" })),
+      SHIP,
+      (visit) => (visit === 2 ? JSON.stringify({ questions: "Q: keep the old API?", plan: "", planFile: "" }) : PLAN(visit)),
+    );
+    const { runCommand } = fakeGit({ staged: true });
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
+
+    expect(state.error).toBeNull();
+    expect(state.status).toBe("completed");
+    // Plan, approve, build, reject; ask, answer, plan again — and build.
+    expect(state.visitCounts.planner).toBe(3);
+    expect(state.visitCounts.clarify).toBe(1);
+    expect(state.visitCounts["plan-review"]).toBe(1);
+    expect(state.visitCounts.implementer).toBe(2);
+    expect(provider.callsFor("clarify")[0].messages[0].content).toContain("keep the old API?");
+  });
+
   it("sends the person's requests back to the planner, and ships once they say so", async () => {
     ensureDefaultWorkflows();
     for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
@@ -361,6 +388,9 @@ Try {{inputs.implementer.summary}}
     expect(state.visitCounts.acceptance).toBe(2);
     expect(state.visitCounts.planner).toBe(2);
     expect(state.visitCounts.reviewer).toBe(2);
+    // Their requests are the brief now; the plan they already approved is
+    // revised and built, not put in front of them a second time.
+    expect(state.visitCounts["plan-review"]).toBe(1);
     const plans = provider.callsFor("planner").map((c) => c.messages[0].content);
     expect(plans[0]).not.toContain("blue");
     expect(plans[1]).toContain("Make the button blue, not green.");

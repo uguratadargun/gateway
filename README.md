@@ -563,7 +563,9 @@ code review), plus three agents that follow no skill and decide nothing —
 they are where the pipeline turns to the person. **clarify** carries the
 planner's questions to them and their answers back, since the planner runs in
 its own model and cannot ask from there. **plan-review** shows them the plan,
-and nothing is built until they say so. **acceptance** tells them the branch
+and nothing is built until they say so — once; a plan revised after a review,
+or after their own requests on the branch, goes straight back to the
+implementer rather than being shown again. **acceptance** tells them the branch
 is ready and how to try it (`git merge <branch>`), and only their answer opens
 the merge request or sends their requests back to the planner. Together they
 make a `dev` pipeline that plans with the person, builds once they approve,

@@ -8468,7 +8468,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.26.3";
+var GATE_VERSION = "0.26.4";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",

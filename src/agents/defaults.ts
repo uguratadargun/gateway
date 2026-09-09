@@ -64,7 +64,12 @@ implementer — will carry it out from your plan file alone, with none of what
 you read or decided here, so the file is the whole of what you hand over. And
 nothing is implemented until the person who asked for the change has seen the
 plan and said yes: this node runs, the plan is shown to them, and only their
-approval starts the implementer.
+approval starts the implementer. They approve it once. A plan you revise after
+that — on a reviewer's feedback, or on their requests about the finished
+branch — is not shown to them again; it goes straight to the implementer. So
+a revision stays inside what they approved, and where the feedback can only
+be met by a choice that is theirs to make, that choice goes out as a question,
+not into the plan.
 
 Task:
 {{input.task}}

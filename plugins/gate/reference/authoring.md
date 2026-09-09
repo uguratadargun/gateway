@@ -373,7 +373,8 @@ gate ships this as `dev`, using the team's `planner`, `implementer` and
 
 ```
 base ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ planner
-          ▲                    └─▶ plan-review ─▶ plan-decision ─┬─ revise ─▶ planner
+          ▲                    ├─ plan already approved ─────────────────────▶ implementer
+          │                    └─▶ plan-review ─▶ plan-decision ─┬─ revise ─▶ planner
           │                                                      ├─ hold ───▶ awaiting-plan-approval
           │                                                      └─ approve ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
           │                                                                                 └─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
@@ -398,7 +399,13 @@ the planner runs in its own model and its own process and cannot ask from
 there, so brainstorming's questions travel out as an output (`questions`,
 one per line, all of them at once) and the answers travel back as an input.
 `plan-review` shows them the plan, and nothing is built until they say so —
-feedback revises the plan, and the revised plan is shown again. `acceptance`
+feedback revises the plan, and the revised plan is shown again until they
+approve one. They approve once: `plan-check` reads the approval still in the
+outputs (`outputs.plan-review.decision == "approve"`) and sends every later
+revision — after a reviewer's feedback, or after their own requests on the
+finished branch — straight to the implementer, so a run is not asked to
+approve the same plan at every loop. The planner's questions still reach
+them through `clarify` on those passes. `acceptance`
 puts the finished branch in front of them after the commit and before
 anything leaves the machine: "ship" opens the merge request, "revise" carries
 their requests back to the **planner** as a change of brief, not to the
@@ -685,7 +692,10 @@ accept it. The server validates shape, not sense.
       before anything leaves the machine** — `plan-review` stands between the
       planner and the implementer, `acceptance` between the commit and the
       merge request; each "revise" edge goes to the planner, each "hold" edge
-      ends the run rather than proceeding on nobody's say-so. The planner's
+      ends the run rather than proceeding on nobody's say-so. The plan is
+      approved once — a revision after a review or after the person's own
+      requests skips `plan-review` on the approval still in the outputs — but
+      it is never skipped before there is one. The planner's
       questions reach the person through `clarify`, never through a guess. Ending at `done` on
       approval leaves the change in a worktree nobody opens; that is a choice to
       make deliberately, not by omission.

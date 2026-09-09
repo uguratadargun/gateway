@@ -36,7 +36,12 @@ import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
  * The person is in the graph three times. `clarify` carries the planner's
  * questions to them and their answers back — the planner runs in its own
  * model and its own process, and cannot ask from there. `plan-review` shows
- * them the plan, and nothing is built until they approve it. And between the
+ * them the plan, and nothing is built until they approve it — once. After
+ * that a revision of the plan, whether a reviewer sent it back or the person
+ * asked for changes on the finished branch, goes straight to the implementer:
+ * `plan-check` reads the approval that is still in the outputs and skips the
+ * gate, and the planner's questions are still the way to the person if a
+ * revision needs one. And between the
  * commit and the merge request stands `acceptance`
  * tells them the branch is ready and how to try it, and only their answer
  * opens the merge request or sends the work back to the planner with what
@@ -85,6 +90,15 @@ nodes:
       - when: outputs.planner.questions != ""
         to: clarify
         label: has questions
+      # The plan is shown once. A plan-review output of "approve" outlives the
+      # node that produced it, so every later visit to the planner — sent back
+      # by a reviewer, or by the person's requests on the finished branch — is
+      # a revision of a plan the person already said yes to, and goes straight
+      # to the implementer. "revise" leaves the output at "revise", and the
+      # revised plan is shown again until they approve one.
+      - when: outputs.plan-review.decision == "approve"
+        to: implementer
+        label: revised an approved plan
       - to: plan-review
         label: has a plan
 
