@@ -277,6 +277,10 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // heartbeating every few seconds; "session" is a Claude Code session doing
   // one node at a time, which reports only at node boundaries.
   ["workflow_executions", "driver", "driver TEXT NOT NULL DEFAULT 'engine'"],
+  // A session-driven run waiting on the person: since when, and how long it
+  // has waited so far over the whole run. The run's clock leaves both out.
+  ["workflow_executions", "paused_at", "paused_at INTEGER"],
+  ["workflow_executions", "paused_ms", "paused_ms INTEGER NOT NULL DEFAULT 0"],
 ];
 
 let db: SqlDatabase | null = null;

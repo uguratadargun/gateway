@@ -4,7 +4,15 @@ import { publishWorkflowEvent } from "@/events/bus";
 import type { WorkflowEvent } from "@/events/types";
 import { reportSchema } from "@/lib/client-api-schemas";
 import { ownsExecution, requireClient } from "@/lib/tenancy";
-import { getExecution, isCancelRequested, recordStep, setExecutionWorkspace, touchExecution } from "@/executions/store";
+import {
+  getExecution,
+  isCancelRequested,
+  pauseExecution,
+  recordStep,
+  resumeExecution,
+  setExecutionWorkspace,
+  touchExecution,
+} from "@/executions/store";
 import type { StepRecord } from "@/runtime/state";
 
 export const runtime = "nodejs";
@@ -40,6 +48,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   for (const step of parsed.data.steps) recordStep(id, step as StepRecord);
   for (const event of parsed.data.events) {
+    // The person's turn is state, not just a line in the stream: the list
+    // page and the clock read it from the row, long after the bus forgot.
+    if (event.type === "run.paused") pauseExecution(id, event.at);
+    if (event.type === "run.resumed") resumeExecution(id, event.at);
     // The URL owns the id: an event may only ever be about the run it was sent to.
     publishWorkflowEvent({ ...(event as object), executionId: id } as WorkflowEvent);
   }

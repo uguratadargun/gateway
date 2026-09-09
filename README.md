@@ -766,7 +766,9 @@ node *and* inside an agent's tool loop, so a stop does not wait out a step that
 is making a dozen tool calls; the upstream model request is really aborted, and
 a running command node's child process is killed rather than abandoned. The run
 settles as `failed` with `RUN_CANCELLED`, and its worktree is kept — half-done
-work is still work, and `git diff` will show it.
+work is still work, and `git diff` will show it. A run a session drives has no
+process to ask, so Stop settles it on the spot; the session finds out on its
+next `gate` call.
 
 A stopped run offers two ways back on the execution page — for a run that
 happened here; one that happened on someone's machine is continued there.
@@ -988,11 +990,21 @@ exists and still runs the engine headlessly — for CI, and for anything with no
 session to drive it.
 
 **Stop works in both directions.** The server cannot reach into a process on
-your laptop, so Stop on the execution page records the request and the answer
-rides back on the run's next report — within a few seconds — where it aborts
-the run exactly as a local Ctrl-C would. The reverse is also true: a server
-restart no longer kills your run, and a run whose machine goes quiet for fifteen
-minutes is settled as `RUN_ABANDONED` rather than claiming to be alive for ever.
+your laptop, so for a run `gate run` drives, Stop on the execution page records
+the request and the answer rides back on the run's next report — within a few
+seconds — where it aborts the run exactly as a local Ctrl-C would. A run a
+session drives is settled on the spot instead: between two `gate` calls there
+is no process to reach, and the session may have been closed hours ago. The
+reverse is also true: a server restart no longer kills your run, and a run
+whose machine goes quiet — fifteen minutes for `gate run`, six hours for a
+session — is settled as `RUN_ABANDONED` rather than claiming to be alive for
+ever.
+
+**The person's time is not the run's.** The shipped `clarify`, `plan-review`
+and `acceptance` nodes carry `asks: person`: while one of them is in the
+session's hands the run shows as **paused** on the dashboard, its clock stands
+still, and it is never written off for silence — the answer can take a day.
+`gate step` sets it running again.
 **Restart** and **Continue** stay where the worktree is: the execution page
 shows the command instead of the buttons.
 

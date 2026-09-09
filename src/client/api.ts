@@ -157,6 +157,22 @@ export class GateClient {
     return (await this.request<any>("/api/v1/me")).body;
   }
 
+  /**
+   * What the gate's account pool has left. The shape is `PoolQuota` from
+   * src/lib/account-pool.ts, restated here because the CLI is bundled on its
+   * own and an older gate may answer without the newer fields.
+   */
+  async usage(): Promise<{
+    windows: Array<{ name: string; remaining: number; resetsAt: string | null }>;
+    accounts: { total: number; enabled: number; available: number; coolingDown: number; quotaBlocked: number };
+    plan: string | null;
+    updatedAt: number | null;
+    floorPercent: number;
+    reason: string | null;
+  }> {
+    return (await this.request<any>("/api/v1/usage")).body;
+  }
+
   /** null when the bundle has not changed since `etag`. */
   async bundle(etag?: string | null): Promise<Bundle | null> {
     const res = await this.request<Bundle>("/api/v1/bundle", {

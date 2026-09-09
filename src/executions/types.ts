@@ -47,6 +47,14 @@ export interface ExecutionRecord {
    * a node begins and ends, and a node can legitimately take an hour.
    */
   driver: "engine" | "session";
+  /**
+   * Set while a session-driven run is waiting on the person — a node marked
+   * `asks: person` has been handed out and not answered. The run is still
+   * `running`; the dashboard shows it as paused, and its clock stands still.
+   */
+  pausedAt: number | null;
+  /** How long the run has waited on the person so far, pauses now closed. */
+  pausedMs: number;
 }
 
 /** The machine a local run happened on, as the client reported it. */

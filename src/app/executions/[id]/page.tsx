@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { DiffView } from "@/components/diff-view";
 import { StepDetailDialog } from "@/components/step-detail";
 import { formatDuration, formatElapsed } from "@/lib/duration";
+import { type RunDisplayStatus, runElapsed, runStatus } from "@/lib/run-clock";
 import { stripAnsi } from "@/lib/utils";
 import { takenLinks, type RoutingLink } from "@/workflows/routing";
 import type { WorkflowEvent } from "@/events/types";
@@ -26,8 +27,9 @@ interface Detail {
   resumedAs: string[];
 }
 
-const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | "destructive"> = {
+const STATUS_VARIANT: Record<RunDisplayStatus, "default" | "secondary" | "success" | "destructive"> = {
   running: "default",
+  paused: "secondary",
   completed: "success",
   failed: "destructive",
 };
@@ -173,6 +175,9 @@ export default function ExecutionDetailPage() {
         setLiveTools((p) => [...p, { nodeId: e.nodeId, tool: e.tool, ok: e.ok, summary: e.summary }].slice(-12));
       }
       if (e.type === "edge.selected") setLiveEdges((p) => [...p, `${e.from}->${e.to}`].slice(-20));
+      // The pause is on the row (the clock and the badge read it from there),
+      // so a fresh read is the whole update.
+      if (e.type === "run.paused" || e.type === "run.resumed") load();
       if (e.type === "workflow.completed" || e.type === "workflow.failed") {
         es.close();
         setConnected(false);
@@ -209,9 +214,13 @@ export default function ExecutionDetailPage() {
     return () => clearInterval(t);
   }, [running, activeSteps.length]);
 
-  /** How long this run has taken: still counting while it goes, fixed once it ends. */
+  /**
+   * How long this run has taken: still counting while it goes, fixed once it
+   * ends, and standing still while it waits on the person.
+   */
   const run = detail?.execution;
-  const elapsed = run ? (run.finishedAt ?? now) - run.startedAt : null;
+  const elapsed = run ? runElapsed(run, now) : null;
+  const paused = run ? runStatus(run) === "paused" : false;
 
   const statuses = useMemo(() => {
     const out: Record<string, NodeStatus> = {};
@@ -342,8 +351,8 @@ export default function ExecutionDetailPage() {
             </span>
           )}
           {ex && (
-            <Badge variant={STATUS_VARIANT[ex.status]} className="text-[10px]">
-              {ex.status}
+            <Badge variant={STATUS_VARIANT[runStatus(ex)]} className="text-[10px]">
+              {runStatus(ex)}
             </Badge>
           )}
         </div>
@@ -432,17 +441,20 @@ export default function ExecutionDetailPage() {
           {activeSteps.length > 0 && (
             <div className="sticky top-0 z-10 -mx-1 mb-1 space-y-1 border-b bg-background/95 px-1 pb-1.5 backdrop-blur">
               <div className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-500">
-                running now
+                {paused ? "waiting on the person" : "running now"}
               </div>
               {activeSteps.map((s) => (
                 <div key={`pin-${s.stepIndex}`} className="flex items-center gap-2 text-xs">
                   <span className="w-5 shrink-0 text-muted-foreground tabular-nums">{s.stepIndex + 1}</span>
                   <span className="min-w-0 flex-1 truncate font-mono">{s.nodeId}</span>
                   {s.visit > 1 && <span className="shrink-0 text-[10px] text-muted-foreground">×{s.visit}</span>}
+                  {/* A node in the person's hands has no stopwatch: the time
+                      is theirs, and a number that keeps climbing while they
+                      read the plan says the wrong thing. */}
                   <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
-                    {formatElapsed(now - s.startedAt)}
+                    {paused ? "paused" : formatElapsed(now - s.startedAt)}
                   </span>
-                  <span className="animate-pulse text-amber-500">●</span>
+                  <span className={paused ? "text-muted-foreground" : "animate-pulse text-amber-500"}>●</span>
                 </div>
               ))}
             </div>

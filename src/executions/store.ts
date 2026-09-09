@@ -178,11 +178,14 @@ export function finishExecution(state: WorkflowState, workspace: ExecutionWorksp
   // windows where they are, so this is the moment both halves are true.
   const quota = summarizeExecutionQuota(state.executionId, finishedAt);
 
+  // A run that ends while it is waiting on the person — stopped, or its
+  // session gone — closes that wait first, so the clock is right afterwards.
   getDb()
     .prepare(
       `UPDATE workflow_executions
           SET status = ?, finished_at = ?, error_code = ?, error_message = ?, step_count = ?,
-              workspace_json = COALESCE(?, workspace_json), quota_json = ?
+              workspace_json = COALESCE(?, workspace_json), quota_json = ?,
+              paused_ms = paused_ms + COALESCE(? - paused_at, 0), paused_at = NULL
         WHERE id = ?`,
     )
     .run(
@@ -193,8 +196,65 @@ export function finishExecution(state: WorkflowState, workspace: ExecutionWorksp
       state.stepCount,
       workspace ? json(workspace) : null,
       json(quota),
+      finishedAt,
       state.executionId,
     );
+}
+
+/**
+ * The person's turn has begun: a session handed out a node marked
+ * `asks: person`, and until it is answered the run is waiting, not working.
+ * Idempotent — a second `gate next` on the same node changes nothing.
+ */
+export function pauseExecution(id: string, at = Date.now()): boolean {
+  return (
+    Number(
+      getDb()
+        .prepare("UPDATE workflow_executions SET paused_at = ? WHERE id = ? AND status = 'running' AND paused_at IS NULL")
+        .run(at, id).changes,
+    ) > 0
+  );
+}
+
+/** The person answered: the wait is added up and the clock runs again. */
+export function resumeExecution(id: string, at = Date.now()): boolean {
+  return (
+    Number(
+      getDb()
+        .prepare(
+          `UPDATE workflow_executions
+              SET paused_ms = paused_ms + MAX(0, ? - paused_at), paused_at = NULL
+            WHERE id = ? AND paused_at IS NOT NULL`,
+        )
+        .run(at, id).changes,
+    ) > 0
+  );
+}
+
+/**
+ * Stop, for a run a session drives.
+ *
+ * Such a run has no process to reach and nothing to unwind: between two CLI
+ * calls it exists only as rows here, and the session may have been closed
+ * hours ago. So it is settled on the spot — the same `RUN_CANCELLED` an engine
+ * lands on — rather than flagged for a report that may never come. The flag
+ * is set too, so a worker still mid-node aborts on its next report, and the
+ * session finds the run stopped on its next `gate next`.
+ */
+export function stopSessionExecution(id: string, at = Date.now()): boolean {
+  return (
+    Number(
+      getDb()
+        .prepare(
+          `UPDATE workflow_executions
+              SET status = 'failed', finished_at = ?, error_code = 'RUN_CANCELLED',
+                  error_message = 'stopped from the dashboard', cancel_requested = 1,
+                  paused_ms = paused_ms + COALESCE(? - paused_at, 0), paused_at = NULL
+            WHERE id = ? AND status = 'running' AND driver = 'session'`,
+        )
+        .run(at, at, id).changes,
+    ) > 0
+  );
 }
 
 /** Recorded as soon as the worktree exists, so a running job shows its branch. */
@@ -224,6 +284,8 @@ interface ExecutionRow {
   last_seen_at: number | null;
   cancel_requested: number | null;
   driver: string | null;
+  paused_at: number | null;
+  paused_ms: number | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -249,6 +311,8 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
     lastSeenAt: r.last_seen_at,
     cancelRequested: !!r.cancel_requested,
     driver: r.driver === "session" ? "session" : "engine",
+    pausedAt: r.paused_at ?? null,
+    pausedMs: r.paused_ms ?? 0,
   };
 }
 
@@ -413,7 +477,9 @@ const LOCAL_RUN_SILENCE_MS = 15 * 60_000;
  * person and a model working — an implementer given a real change routinely
  * takes half an hour, and nobody should come back to find the run declared
  * dead underneath them. What this catches is the session that was closed and
- * never came back, which is worth catching eventually and not quickly.
+ * never came back, which is worth catching eventually and not quickly. A run
+ * waiting on the person is not swept at all: the wait is theirs, it can be
+ * days, and Stop is there for a run they have given up on.
  */
 const SESSION_RUN_SILENCE_MS = 6 * 60 * 60_000;
 
@@ -447,7 +513,7 @@ export function failAbandonedLocalExecutions(
       `UPDATE workflow_executions
           SET status = 'failed', finished_at = ?, error_code = 'RUN_ABANDONED',
               error_message = 'the machine running this stopped reporting'
-        WHERE status = 'running' AND origin = 'local'
+        WHERE status = 'running' AND origin = 'local' AND paused_at IS NULL
           AND COALESCE(last_seen_at, started_at) < (CASE WHEN driver = 'session' THEN ? ELSE ? END)`,
     )
     .run(at, at - sessionSilenceMs, at - silenceMs);

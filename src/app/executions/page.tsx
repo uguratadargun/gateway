@@ -9,10 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SelectHandle, SelectionBar, deleteMany, rowClass, useSelection } from "@/components/bulk-select";
 import { formatDuration, formatElapsed } from "@/lib/duration";
+import { type RunDisplayStatus, runElapsed, runStatus } from "@/lib/run-clock";
 import type { ExecutionRecord } from "@/executions/types";
 
-const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | "destructive"> = {
+const STATUS_VARIANT: Record<RunDisplayStatus, "default" | "secondary" | "success" | "destructive"> = {
   running: "default",
+  paused: "secondary",
   completed: "success",
   failed: "destructive",
 };
@@ -21,9 +23,11 @@ const STATUS_VARIANT: Record<ExecutionRecord["status"], "default" | "success" | 
  * How long a run took — and, while it is still going, how long it has taken so
  * far. The word "running" said nothing the status badge beside it did not
  * already say, and hid the one number that tells you whether to go and look.
+ * Time spent waiting on the person is left out, and while it is waiting the
+ * number stands still.
  */
-function duration(e: { startedAt: number; finishedAt: number | null }, now: number): string {
-  return e.finishedAt ? formatDuration(e.finishedAt - e.startedAt) : formatElapsed(now - e.startedAt);
+function duration(e: ExecutionRecord, now: number): string {
+  return e.finishedAt ? formatDuration(runElapsed(e, now)) : formatElapsed(runElapsed(e, now));
 }
 
 /**
@@ -157,8 +161,8 @@ export default function ExecutionsPage() {
                     </span>
                   )}
                   <span className="font-mono text-[10px] text-muted-foreground">{e.id.slice(0, 8)}</span>
-                  <Badge variant={STATUS_VARIANT[e.status]} className="text-[10px]">
-                    {e.status}
+                  <Badge variant={STATUS_VARIANT[runStatus(e)]} className="text-[10px]">
+                    {runStatus(e)}
                   </Badge>
                 </div>
               </Link>

@@ -7655,6 +7655,12 @@ import { join as join4 } from "node:path";
 var BACKOFF = { baseMs: 5e3, maxMs: 2 * 60 * 1e3, maxLevel: 15 };
 var QUOTA_FALLBACK_COOLDOWN_MS = 15 * 60 * 1e3;
 var MAX_HINT_COOLDOWN_MS = 8 * 60 * 60 * 1e3;
+function windowLabel(name) {
+  if (name === "five_hour") return "5h";
+  const sevenDay = /^seven_day(?:_(.+))?$/.exec(name);
+  if (sevenDay) return sevenDay[1] ? `7d ${sevenDay[1].replace(/_/g, " ")}` : "7d";
+  return name.replace(/_/g, " ");
+}
 
 // src/lib/settings.ts
 var GATE_DIR = process.env.GATE_HOME || join4(homedir2(), ".gate");
@@ -7706,6 +7712,15 @@ var agentFrontmatterSchema = external_exports.object({
    * vendor.
    */
   executor: external_exports.enum(["gate", "claude-code"]).default("gate"),
+  /**
+   * Whose turn the node is. `asks: person` marks an agent that exists to put
+   * something in front of the person and carry back their answer — the
+   * shipped clarify, plan-review and acceptance gates. A run driven from a
+   * session is *paused* while such a node is out: the dashboard says so,
+   * and its clock stops, because the time is the person's and not the
+   * run's. No effect on how the node is executed.
+   */
+  asks: external_exports.enum(["person"]).optional(),
   /**
    * Tool names this agent may invoke. Which names are valid depends on the
    * executor: gate's own (`read_file`, `edit_file`, …) or Claude Code's
@@ -8468,7 +8483,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.26.4";
+var GATE_VERSION = "0.27.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8579,6 +8594,14 @@ var GateClient = class {
   }
   async me() {
     return (await this.request("/api/v1/me")).body;
+  }
+  /**
+   * What the gate's account pool has left. The shape is `PoolQuota` from
+   * src/lib/account-pool.ts, restated here because the CLI is bundled on its
+   * own and an older gate may answer without the newer fields.
+   */
+  async usage() {
+    return (await this.request("/api/v1/usage")).body;
   }
   /** null when the bundle has not changed since `etag`. */
   async bundle(etag) {
@@ -10461,6 +10484,19 @@ async function begin(ctx, workflowId, input, cwd, repos) {
 async function next(ctx, executionId) {
   for (; ; ) {
     const { execution, steps } = await ctx.client.execution(executionId);
+    const stopped = stoppedOutside(execution);
+    if (stopped) {
+      const pending = readPending(executionId);
+      if (pending?.worker && alive(pending.worker.pid)) {
+        try {
+          process.kill(pending.worker.pid);
+        } catch {
+        }
+      }
+      clearPending(executionId);
+      ctx.say(`\u25A0 run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
+      return { do: "stopped", executionId, error: stopped };
+    }
     const scope = cacheScope(ctx.team);
     const workflow = getWorkflow(execution.workflowId, scope);
     const position = nextInSession(workflow, steps, execution.input);
@@ -10521,6 +10557,7 @@ async function next(ctx, executionId) {
         startedAt
       });
       const workspace = workspaceOf(execution);
+      const personsTurn = asksPerson(prepared.agent);
       await ctx.client.report(executionId, {
         events: [
           {
@@ -10529,7 +10566,8 @@ async function next(ctx, executionId) {
             nodeId: node.id,
             stepIndex: position.stepIndex,
             visit: position.visit
-          }
+          },
+          ...personsTurn ? [{ type: "run.paused", at: startedAt, nodeId: node.id }] : []
         ],
         steps: []
       }).catch(() => {
@@ -10538,6 +10576,7 @@ async function next(ctx, executionId) {
         `\u25B8 ${node.id} \xB7 agent ${prepared.agent.id} (${prepared.agent.model}${prepared.agent.effort ? `/${prepared.agent.effort}` : ""})${position.visit > 1 ? ` \xB7 pass ${position.visit}` : ""}`
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
+      if (personsTurn) ctx.say("  the user's turn \xB7 the run is paused until they answer");
       const skills = prepared.agent.skills.map((id) => {
         let description = "";
         try {
@@ -10628,6 +10667,13 @@ ${unattendedNotice()}`,
     await runControlNode(ctx, executionId, node, state, position, workspaceOf(execution));
   }
 }
+function asksPerson(agent) {
+  return agent.asks === "person" && agent.executor === "gate";
+}
+function stoppedOutside(execution) {
+  if (execution.status === "running" || !execution.error) return null;
+  return execution.error.code === "RUN_CANCELLED" || execution.error.code === "RUN_ABANDONED" ? execution.error : null;
+}
 function stateFor(execution, outputs) {
   return {
     executionId: "",
@@ -10692,6 +10738,12 @@ async function step(ctx, executionId, nodeId2, answer) {
     );
   }
   const { execution } = await ctx.client.execution(executionId);
+  const stopped = stoppedOutside(execution);
+  if (stopped) {
+    clearPending(executionId);
+    ctx.say(`\u25A0 run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
+    return { do: "stopped", executionId, error: stopped };
+  }
   const scope = cacheScope(ctx.team);
   const workflow = getWorkflow(execution.workflowId, scope);
   const node = workflow.nodes.find((n) => n.id === nodeId2);
@@ -10714,7 +10766,9 @@ async function step(ctx, executionId, nodeId2, answer) {
       input: null,
       output
     },
-    false
+    false,
+    // The person has answered: the run is working again, from this moment.
+    asksPerson(agent) ? [{ type: "run.resumed", at: finishedAt, nodeId: nodeId2 }] : []
   );
   ctx.say(`\u2713 ${nodeId2} (${Math.max(1, Math.round((finishedAt - pending.startedAt) / 1e3))}s)`);
   clearPending(executionId);
@@ -10853,9 +10907,10 @@ async function wait(ctx, executionId, forMs = WAIT_SLICE_MS) {
     await new Promise((r) => setTimeout(r, Math.min(WAIT_POLL_MS, Math.max(0, until - Date.now()))));
   }
 }
-async function record(ctx, executionId, step2, announceStart = true) {
+async function record(ctx, executionId, step2, announceStart = true, also = []) {
   const res = await ctx.client.report(executionId, {
     events: [
+      ...also,
       ...announceStart ? [
         {
           type: "node.started",
@@ -10958,6 +11013,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate login <token>                            connect this machine (one token from your dashboard)
        --url <gate-url> --key <api-key>         \u2026or the two halves separately
   gate whoami                                   who this key belongs to
+  gate usage [--json]                           what the gate's pool has left, and when it resets
   gate version                                  what this build is
   gate pull                                     refresh your team's definitions
   gate list                                     what you can run, and what it needs
@@ -11113,6 +11169,47 @@ async function cmdWhoami() {
   console.log(
     `gate ${CLI_VERSION} here \xB7 ${me.server?.version ?? "unknown"} there` + (me.server?.minClientVersion ? ` (needs ${me.server.minClientVersion}+)` : "")
   );
+  return 0;
+}
+function untilText(iso) {
+  if (!iso) return null;
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return "any moment";
+  const minutes = Math.round(ms / 6e4);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+  return `in ${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+var BAR_WIDTH = 16;
+function bar(remaining) {
+  const full = Math.max(0, Math.min(BAR_WIDTH, Math.round(remaining / 100 * BAR_WIDTH)));
+  return `${"\u2588".repeat(full)}${"\u2591".repeat(BAR_WIDTH - full)}`;
+}
+async function cmdUsage(args) {
+  const client = connect();
+  const usage = await client.usage();
+  if (args.flags.json) {
+    console.log(JSON.stringify(usage, null, 2));
+    return 0;
+  }
+  if (!usage.windows.length) {
+    console.log(usage.reason ?? "no window reading yet");
+    return 0;
+  }
+  const width = Math.max(...usage.windows.map((w) => windowLabel(w.name).length));
+  for (const w of usage.windows) {
+    const left = `${Math.round(w.remaining * 10) / 10}% left`;
+    const reset = untilText(w.resetsAt);
+    console.log(`${windowLabel(w.name).padEnd(width)}  ${bar(w.remaining)}  ${left.padEnd(11)}${reset ? `\xB7 resets ${reset}` : ""}`);
+  }
+  const a = usage.accounts;
+  const parts = [`${a.available} of ${a.enabled} account${a.enabled === 1 ? "" : "s"} serving now`];
+  if (a.coolingDown) parts.push(`${a.coolingDown} cooling down`);
+  if (a.quotaBlocked) parts.push(`${a.quotaBlocked} held back by the ${usage.floorPercent}% floor`);
+  if (usage.plan) parts.push(usage.plan);
+  console.log(parts.join(" \xB7 "));
   return 0;
 }
 async function cmdList() {
@@ -11443,7 +11540,7 @@ function cmdEnv() {
 }
 function printInstruction(instruction) {
   console.log(JSON.stringify(instruction, null, 2));
-  return instruction.do === "failed" ? 1 : 0;
+  return instruction.do === "failed" || instruction.do === "stopped" ? 1 : 0;
 }
 async function cmdBegin(args) {
   const [workflowId, ...trailing] = args.positional;
@@ -11500,8 +11597,9 @@ async function cmdStatus(args) {
   }
   for (const run of runs) {
     const where = run.origin === "local" ? run.client?.host ?? "a machine" : "the server";
+    const status = run.status === "running" && run.pausedAt != null ? "paused" : String(run.status);
     console.log(
-      `${run.id.slice(0, 8)}  ${String(run.status).padEnd(9)} ${run.workflowId}  ${new Date(run.startedAt).toLocaleString()}  on ${where}`
+      `${run.id.slice(0, 8)}  ${status.padEnd(9)} ${run.workflowId}  ${new Date(run.startedAt).toLocaleString()}  on ${where}`
     );
   }
   return 0;
@@ -11528,6 +11626,8 @@ async function main(argv) {
         return cmdVersion();
       case "whoami":
         return await cmdWhoami();
+      case "usage":
+        return await cmdUsage(args);
       case "pull":
         return await cmdPull();
       case "list":

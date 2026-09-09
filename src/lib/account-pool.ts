@@ -315,6 +315,118 @@ export function exhaustedWindowReset(quota: AccountQuota | null | undefined, now
   return best === null ? null : new Date(best).toISOString();
 }
 
+// ── what the pool has left ──────────────────────────────────────────────────
+
+export interface PoolWindow {
+  /** As Anthropic names it: "five_hour", "seven_day", "seven_day_opus"… */
+  name: string;
+  /** Percent of the window still free, in the account best placed to serve. */
+  remaining: number;
+  /** When that account's window rolls over, when it said so. */
+  resetsAt: string | null;
+}
+
+export interface PoolQuota {
+  /** 5h first, then 7d, then any per-model window, in that order. */
+  windows: PoolWindow[];
+  accounts: {
+    total: number;
+    enabled: number;
+    /** Enabled, off cooldown, above the floor — the ones that can serve now. */
+    available: number;
+    coolingDown: number;
+    /** Enabled, but held back by `quotaMinRemainingPercent`. */
+    quotaBlocked: number;
+  };
+  /** The plan behind these windows, when an account reported one. */
+  plan: string | null;
+  /** The freshest reading behind these numbers, or null when there is none. */
+  updatedAt: number | null;
+  /** The floor the pool stops serving at: 3% left can already mean none. */
+  floorPercent: number;
+  /** Why there are no windows, when there are none. */
+  reason: string | null;
+}
+
+/** "5h" · "7d" · "7d opus" — the window as a person says it. */
+export function windowLabel(name: string): string {
+  if (name === "five_hour") return "5h";
+  const sevenDay = /^seven_day(?:_(.+))?$/.exec(name);
+  if (sevenDay) return sevenDay[1] ? `7d ${sevenDay[1].replace(/_/g, " ")}` : "7d";
+  return name.replace(/_/g, " ");
+}
+
+function windowRank(name: string): number {
+  if (name === "five_hour") return 0;
+  if (name === "seven_day") return 1;
+  return 2;
+}
+
+/**
+ * How much of its quota the pool still has — the answer to "can I keep working".
+ *
+ * A request goes to whichever account can serve it, so the pool's remaining
+ * percent is the *best* of those accounts, not their average: two accounts at
+ * 90% used and one fresh one means a fresh window, and averaging them would say
+ * otherwise. When none can serve, the enabled ones are still what the person is
+ * waiting on — reporting their exhausted windows and reset times is the useful
+ * answer, and reporting nothing is not.
+ *
+ * Pure, like the rest of this module: the caller lists the accounts and decides
+ * whether to refresh them first.
+ */
+export function poolQuota(pool: Account[], config: AccountPoolConfig, now = Date.now()): PoolQuota {
+  const enabled = pool.filter((a) => a.enabled);
+  const available = eligibleAccounts(enabled, config, new Set(), now);
+  const speaking = available.length ? available : enabled;
+
+  const best = new Map<string, PoolWindow>();
+  for (const account of speaking) {
+    for (const [name, window] of Object.entries(account.quota?.windows ?? {})) {
+      // A window whose reset has passed is full again; the snapshot just has
+      // not been overwritten yet, because that only happens on the next reply.
+      const remaining = windowResetPassed(window, now) ? 100 : Math.max(0, 100 - window.utilization);
+      const current = best.get(name);
+      if (current && current.remaining >= remaining) continue;
+      best.set(name, {
+        name,
+        remaining: Math.round(remaining * 10) / 10,
+        resetsAt: windowResetPassed(window, now) ? null : window.resetsAt,
+      });
+    }
+  }
+
+  const windows = [...best.values()].sort(
+    (a, b) => windowRank(a.name) - windowRank(b.name) || a.name.localeCompare(b.name),
+  );
+
+  const fetched = speaking.map((a) => a.quotaFetchedAt).filter((t): t is number => typeof t === "number");
+  const accounts = {
+    total: pool.length,
+    enabled: enabled.length,
+    available: available.length,
+    coolingDown: enabled.filter((a) => isCoolingDown(a, now)).length,
+    quotaBlocked: enabled.filter((a) => !isCoolingDown(a, now) && quotaBlockedWindow(a, config, now) !== null).length,
+  };
+
+  return {
+    windows,
+    accounts,
+    plan: speaking.map((a) => a.quota?.plan ?? a.planTier).find((p) => !!p) ?? null,
+    updatedAt: fetched.length ? Math.max(...fetched) : null,
+    floorPercent: config.quotaMinRemainingPercent,
+    reason: windows.length ? null : noWindowsReason(pool, enabled, speaking),
+  };
+}
+
+function noWindowsReason(pool: Account[], enabled: Account[], speaking: Account[]): string {
+  if (pool.length === 0) return "no Claude account is connected to this gate";
+  if (enabled.length === 0) return "every connected account is paused";
+  const error = speaking.map((a) => a.quota?.error).find((e) => !!e);
+  if (error) return `Claude's usage endpoint refused the last poll: ${error}`;
+  return "no window reading yet — an account reports one once it serves a request or is polled";
+}
+
 /** Merge a fresh header snapshot over the stored one; null when nothing moved. */
 export function mergeQuota(previous: AccountQuota | null, incoming: AccountQuota | null): AccountQuota | null {
   if (!incoming) return null;

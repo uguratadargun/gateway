@@ -4,8 +4,12 @@ import { publishWorkflowEvent, subscribeWorkflow, workflowEvents } from "@/event
 import {
   createExecution,
   deleteExecution,
+  failAbandonedLocalExecutions,
   finishExecution,
   getExecution,
+  pauseExecution,
+  resumeExecution,
+  stopSessionExecution,
   getExecutionLineage,
   getExecutionSteps,
   getLayout,
@@ -50,6 +54,61 @@ describe("execution store", () => {
     expect(listExecutions({ workflowId: "dev" }).map((e) => e.id)).toContain("exec-store-1");
     expect(deleteExecution("exec-store-1")).toBe(true);
     expect(getExecutionSteps("exec-store-1")).toHaveLength(0);
+  });
+
+  it("keeps the person's time out of the run's clock", () => {
+    const local = { origin: "local" as const, driver: "session" as const };
+    createExecution("exec-pause-1", "dev", {}, 1000, null, local);
+
+    // Handed to the person at 2000, answered at 5000: three seconds theirs.
+    expect(pauseExecution("exec-pause-1", 2000)).toBe(true);
+    // A second `gate next` on the same node changes nothing.
+    expect(pauseExecution("exec-pause-1", 2500)).toBe(false);
+    expect(getExecution("exec-pause-1")).toMatchObject({ status: "running", pausedAt: 2000, pausedMs: 0 });
+    expect(resumeExecution("exec-pause-1", 5000)).toBe(true);
+    expect(resumeExecution("exec-pause-1", 5001)).toBe(false);
+    expect(getExecution("exec-pause-1")).toMatchObject({ pausedAt: null, pausedMs: 3000 });
+
+    // A run that ends while it is waiting closes that wait too.
+    pauseExecution("exec-pause-1", 7000);
+    const state = createState("exec-pause-1", "dev", {});
+    state.status = "completed";
+    finishExecution(state, null, 9000);
+    expect(getExecution("exec-pause-1")).toMatchObject({ status: "completed", finishedAt: 9000, pausedAt: null, pausedMs: 5000 });
+    deleteExecution("exec-pause-1");
+  });
+
+  it("settles a session-driven run on the spot when it is stopped, and never sweeps one that is waiting", () => {
+    const local = { origin: "local" as const, driver: "session" as const };
+    createExecution("exec-stop-1", "dev", {}, 1000, null, local);
+    createExecution("exec-stop-2", "dev", {}, 1000, null, local);
+    createExecution("exec-stop-3", "dev", {}, 1000, null, { origin: "local", driver: "engine" });
+
+    // Waiting on the person for a day: still theirs, not abandoned.
+    pauseExecution("exec-stop-1", 1000);
+    // Quiet for a day with nobody's turn: written off, as before.
+    const day = 24 * 60 * 60_000;
+    expect(failAbandonedLocalExecutions(1000 + day)).toBe(2);
+    expect(getExecution("exec-stop-1")!.status).toBe("running");
+    expect(getExecution("exec-stop-2")).toMatchObject({ status: "failed", error: { code: "RUN_ABANDONED" } });
+
+    // Stop lands on the row directly, wait closed, flag set for any worker.
+    expect(stopSessionExecution("exec-stop-1", 4000)).toBe(true);
+    expect(getExecution("exec-stop-1")).toMatchObject({
+      status: "failed",
+      finishedAt: 4000,
+      error: { code: "RUN_CANCELLED" },
+      cancelRequested: true,
+      pausedAt: null,
+      pausedMs: 3000,
+    });
+    // Only once, and only for a session-driven run.
+    expect(stopSessionExecution("exec-stop-1", 5000)).toBe(false);
+    createExecution("exec-stop-4", "dev", {}, 1000, null, { origin: "local", driver: "engine" });
+    expect(stopSessionExecution("exec-stop-4", 5000)).toBe(false);
+    expect(getExecution("exec-stop-4")!.status).toBe("running");
+
+    for (const id of ["exec-stop-1", "exec-stop-2", "exec-stop-3", "exec-stop-4"]) deleteExecution(id);
   });
 
   it("walks a chain of resumes into one ordered lineage", () => {

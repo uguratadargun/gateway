@@ -286,6 +286,7 @@ description: Puts the finished branch in front of the person who asked for it, a
 model: sonnet
 effort: medium
 executor: gate
+asks: person
 inputs: [implementer.summary]
 tools: [read_file, list_files, run_command]
 timeoutMs: 3600000
@@ -347,6 +348,7 @@ description: Puts the planner's questions to the person, one at a time, and carr
 model: sonnet
 effort: medium
 executor: gate
+asks: person
 inputs: [planner.questions]
 timeoutMs: 3600000
 output:
@@ -388,6 +390,7 @@ description: Shows the plan to the person before anything is built, and carries 
 model: sonnet
 effort: medium
 executor: gate
+asks: person
 inputs: [planner.plan, planner.planFile]
 tools: [read_file, list_files]
 timeoutMs: 3600000

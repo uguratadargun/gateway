@@ -8,6 +8,7 @@ import { getAgent, listAgents, readAgentSource } from "@/agents/registry";
 import type { WorkflowEvent } from "@/events/types";
 import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 
+import { windowLabel } from "@/lib/account-pool";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
@@ -33,6 +34,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate login <token>                            connect this machine (one token from your dashboard)
        --url <gate-url> --key <api-key>         …or the two halves separately
   gate whoami                                   who this key belongs to
+  gate usage [--json]                           what the gate's pool has left, and when it resets
   gate version                                  what this build is
   gate pull                                     refresh your team's definitions
   gate list                                     what you can run, and what it needs
@@ -259,6 +261,64 @@ async function cmdWhoami(): Promise<number> {
     `gate ${CLI_VERSION} here · ${me.server?.version ?? "unknown"} there` +
       (me.server?.minClientVersion ? ` (needs ${me.server.minClientVersion}+)` : ""),
   );
+  return 0;
+}
+
+/** A reset time as the wait it is: "in 12m" · "in 1h 12m" · "in 4d 3h". */
+function untilText(iso: string | null): string | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return "any moment";
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
+  return `in ${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+const BAR_WIDTH = 16;
+
+function bar(remaining: number): string {
+  const full = Math.max(0, Math.min(BAR_WIDTH, Math.round((remaining / 100) * BAR_WIDTH)));
+  return `${"█".repeat(full)}${"░".repeat(BAR_WIDTH - full)}`;
+}
+
+/**
+ * What the pool has left — the plan usage Claude Code's own `/usage` stops
+ * showing the moment a session is on the gateway. That command reads Anthropic's
+ * usage endpoint with the OAuth scopes of a subscription login, and a session
+ * here authenticates with a gate key instead, so it hides itself. These are the
+ * windows of the accounts gate rotates: the quota that actually stops the work,
+ * shared by everyone on this gate rather than owned by this key.
+ */
+async function cmdUsage(args: Args): Promise<number> {
+  const client = connect();
+  const usage = await client.usage();
+  if (args.flags.json) {
+    console.log(JSON.stringify(usage, null, 2));
+    return 0;
+  }
+
+  if (!usage.windows.length) {
+    console.log(usage.reason ?? "no window reading yet");
+    return 0;
+  }
+
+  const width = Math.max(...usage.windows.map((w) => windowLabel(w.name).length));
+  for (const w of usage.windows) {
+    const left = `${Math.round(w.remaining * 10) / 10}% left`;
+    const reset = untilText(w.resetsAt);
+    console.log(`${windowLabel(w.name).padEnd(width)}  ${bar(w.remaining)}  ${left.padEnd(11)}${reset ? `· resets ${reset}` : ""}`);
+  }
+
+  const a = usage.accounts;
+  const parts = [`${a.available} of ${a.enabled} account${a.enabled === 1 ? "" : "s"} serving now`];
+  if (a.coolingDown) parts.push(`${a.coolingDown} cooling down`);
+  // A floor is why a window can read 8% left and still serve nobody.
+  if (a.quotaBlocked) parts.push(`${a.quotaBlocked} held back by the ${usage.floorPercent}% floor`);
+  if (usage.plan) parts.push(usage.plan);
+  console.log(parts.join(" · "));
   return 0;
 }
 
@@ -718,7 +778,7 @@ function cmdEnv(): number {
 
 function printInstruction(instruction: Instruction): number {
   console.log(JSON.stringify(instruction, null, 2));
-  return instruction.do === "failed" ? 1 : 0;
+  return instruction.do === "failed" || instruction.do === "stopped" ? 1 : 0;
 }
 
 async function cmdBegin(args: Args): Promise<number> {
@@ -789,8 +849,10 @@ async function cmdStatus(args: Args): Promise<number> {
   }
   for (const run of runs) {
     const where = run.origin === "local" ? (run.client?.host ?? "a machine") : "the server";
+    // A running run waiting on the person reads as paused, as it does on the dashboard.
+    const status = run.status === "running" && run.pausedAt != null ? "paused" : String(run.status);
     console.log(
-      `${run.id.slice(0, 8)}  ${String(run.status).padEnd(9)} ${run.workflowId}  ${new Date(run.startedAt).toLocaleString()}  on ${where}`,
+      `${run.id.slice(0, 8)}  ${status.padEnd(9)} ${run.workflowId}  ${new Date(run.startedAt).toLocaleString()}  on ${where}`,
     );
   }
   return 0;
@@ -821,6 +883,8 @@ export async function main(argv: string[]): Promise<number> {
         return cmdVersion();
       case "whoami":
         return await cmdWhoami();
+      case "usage":
+        return await cmdUsage(args);
       case "pull":
         return await cmdPull();
       case "list":

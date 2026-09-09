@@ -131,7 +131,13 @@ export type Instruction =
       remember: string[];
     }
   | { do: "done"; executionId: string; status: "completed" | "failed"; branch: string | null; workspace: string | null }
-  | { do: "failed"; executionId: string; nodeId: string; error: { code: string; message: string } };
+  | { do: "failed"; executionId: string; nodeId: string; error: { code: string; message: string } }
+  /**
+   * The run was ended from outside — Stop on the dashboard, or written off
+   * after its machine went quiet — while this session was between two calls.
+   * Nothing is left to do for it.
+   */
+  | { do: "stopped"; executionId: string; error: { code: string; message: string } };
 
 /** Which node was handed out, so `gate step` can refuse an answer to another one. */
 interface Pending {
@@ -300,6 +306,25 @@ export async function begin(
 export async function next(ctx: SessionRunContext, executionId: string): Promise<Instruction> {
   for (;;) {
     const { execution, steps } = await ctx.client.execution(executionId);
+    // Settled from outside since this session last looked: Stop on the
+    // dashboard lands on the row directly for a run a session drives, and a
+    // session that was gone for hours is written off there too. Either way
+    // the walk is over, whatever the marker on disk still says — and a worker
+    // still running for it is stopped rather than left to finish for nobody.
+    const stopped = stoppedOutside(execution);
+    if (stopped) {
+      const pending = readPending(executionId);
+      if (pending?.worker && alive(pending.worker.pid)) {
+        try {
+          process.kill(pending.worker.pid);
+        } catch {
+          // Already gone.
+        }
+      }
+      clearPending(executionId);
+      ctx.say(`■ run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
+      return { do: "stopped", executionId, error: stopped };
+    }
     const scope = cacheScope(ctx.team);
     const workflow: WorkflowDefinition = getWorkflow(execution.workflowId, scope);
     const position = nextInSession(workflow, steps as ExecutionStepRecord[], execution.input);
@@ -376,6 +401,10 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
       // takes as long as the work takes, and until this the run looked idle:
       // the dashboard lit the node up only once it was already over, and the
       // terminal said nothing at all about whose turn it was.
+      // A node the person answers pauses the run in the same breath: the
+      // dashboard says so and the run's clock stops, because from here until
+      // `gate step` the time is theirs.
+      const personsTurn = asksPerson(prepared.agent);
       await ctx.client
         .report(executionId, {
           events: [
@@ -386,6 +415,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
               stepIndex: position.stepIndex,
               visit: position.visit,
             },
+            ...(personsTurn ? [{ type: "run.paused", at: startedAt, nodeId: node.id }] : []),
           ],
           steps: [],
         })
@@ -396,6 +426,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           `${position.visit > 1 ? ` · pass ${position.visit}` : ""}`,
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
+      if (personsTurn) ctx.say("  the user's turn · the run is paused until they answer");
       // Named by the agent, resolved on this machine. A skill that has gone
       // missing fails the node here rather than halfway through it.
       const skills = prepared.agent.skills.map((id) => {
@@ -529,6 +560,27 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
   }
 }
 
+/**
+ * Whether a node is the person's to answer, here in the session. Only an
+ * agent the session itself runs can be: a headless one cannot ask anybody,
+ * whatever its file says.
+ */
+function asksPerson(agent: { asks?: "person"; executor: string }): boolean {
+  return agent.asks === "person" && agent.executor === "gate";
+}
+
+/**
+ * The reason a run stopped being `running` without this session's doing —
+ * null for a run still going, or one the walk itself settled.
+ */
+function stoppedOutside(execution: { status: string; error: { code: string; message: string } | null }): {
+  code: string;
+  message: string;
+} | null {
+  if (execution.status === "running" || !execution.error) return null;
+  return execution.error.code === "RUN_CANCELLED" || execution.error.code === "RUN_ABANDONED" ? execution.error : null;
+}
+
 /** A state the condition language and the input resolver can read. */
 function stateFor(execution: { workflowId: string; input: Record<string, unknown> }, outputs: Record<string, unknown>): WorkflowState {
   return {
@@ -621,6 +673,14 @@ export async function step(
   }
 
   const { execution } = await ctx.client.execution(executionId);
+  // Stopped while the answer was being worked out: the answer has nowhere to
+  // go, and saying so beats recording a step on a run that has ended.
+  const stopped = stoppedOutside(execution);
+  if (stopped) {
+    clearPending(executionId);
+    ctx.say(`■ run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
+    return { do: "stopped", executionId, error: stopped };
+  }
   const scope = cacheScope(ctx.team);
   const workflow = getWorkflow(execution.workflowId, scope);
   const node = workflow.nodes.find((n) => n.id === nodeId);
@@ -649,6 +709,8 @@ export async function step(
       output,
     },
     false,
+    // The person has answered: the run is working again, from this moment.
+    asksPerson(agent) ? [{ type: "run.resumed", at: finishedAt, nodeId }] : [],
   );
   ctx.say(`✓ ${nodeId} (${Math.max(1, Math.round((finishedAt - pending.startedAt) / 1000))}s)`);
   clearPending(executionId);
@@ -827,9 +889,12 @@ async function record(
   step: StepRecord,
   /** False for a node whose start was announced when it was handed out. */
   announceStart = true,
+  /** Anything else this report should say first — a run resuming, say. */
+  also: Array<Record<string, unknown>> = [],
 ): Promise<void> {
   const res = await ctx.client.report(executionId, {
     events: [
+      ...also,
       ...(announceStart
         ? [
             {

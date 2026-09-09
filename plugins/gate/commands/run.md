@@ -100,6 +100,10 @@ Each call prints one JSON instruction:
     This is their session: they are there, they can answer, and a question costs a minute
     where a wrong guess costs the rest of the run. The node's answer goes in a file, not in
     what you say, so asking never gets in the way of finishing it.
+  - **A node that exists to ask them pauses the run.** The shipped `clarify`, `plan-review`
+    and `acceptance` nodes are the person's turn: while one is in your hands the dashboard
+    shows the run as *paused* and its clock stands still, and `gate step` sets it running
+    again. Nothing for you to do about it; take as long as they need.
   - When the work is done, write the answer to a file and hand it back:
     ```
     node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" step <execution-id> <node-id> --output-file <file>
@@ -138,6 +142,9 @@ Each call prints one JSON instruction:
   `git -C <workspace> diff` for reviewing it, then offer to review that diff.
 - **`{"do": "failed", …}`** — a node failed. Report the node and the error as they came; do not
   retry the run or work around it.
+- **`{"do": "stopped", …}`** — the run was ended from outside while you were between calls:
+  Stop on the dashboard, or written off after this machine went quiet for hours. Say so, with
+  the error as it came, and do nothing further for it; a new run needs `begin`.
 
 If you need to see where a run is (after an interruption, or if you lose the thread):
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" next <execution-id>` returns the current

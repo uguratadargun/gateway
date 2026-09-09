@@ -8,9 +8,11 @@ import {
   exhaustedWindowReset,
   mergeQuota,
   parseUnifiedRateLimitHeaders,
+  poolQuota,
   quotaBlockedWindow,
   selectAccount,
   utilizationOf,
+  windowLabel,
   type AccountPoolConfig,
 } from "@/lib/account-pool";
 import type { Account } from "@/lib/accounts";
@@ -215,6 +217,84 @@ describe("unified rate-limit headers", () => {
       source: "headers" as const,
     };
     expect(exhaustedWindowReset(quota, now)).toBe(soon);
+  });
+});
+
+describe("what the pool has left", () => {
+  const now = Date.parse("2026-09-08T12:00:00Z");
+  const in1h = new Date(now + 3_600_000).toISOString();
+  const in3d = new Date(now + 3 * 86_400_000).toISOString();
+
+  function withWindows(id: string, windows: Record<string, { utilization: number; resetsAt: string | null }>, patch: Partial<Account> = {}) {
+    return account({ id, quota: { windows, source: "headers" }, quotaFetchedAt: now - 60_000, ...patch });
+  }
+
+  it("reports the best account that can serve, not an average", () => {
+    const pool = [
+      withWindows("spent", { five_hour: { utilization: 95, resetsAt: in1h } }),
+      withWindows("fresh", { five_hour: { utilization: 20, resetsAt: in1h } }),
+    ];
+    const quota = poolQuota(pool, CONFIG, now);
+    // Averaging these two would say 42% left, and a request would still be
+    // served by the fresh account's window.
+    expect(quota.windows).toEqual([{ name: "five_hour", remaining: 80, resetsAt: in1h }]);
+    expect(quota.accounts).toEqual({ total: 2, enabled: 2, available: 2, coolingDown: 0, quotaBlocked: 0 });
+  });
+
+  it("reads a window whose reset has passed as full again", () => {
+    const stale = withWindows("stale", { five_hour: { utilization: 98, resetsAt: new Date(now - 1).toISOString() } });
+    expect(poolQuota([stale], CONFIG, now).windows).toEqual([{ name: "five_hour", remaining: 100, resetsAt: null }]);
+  });
+
+  it("falls back to the enabled accounts when none can serve, so the reset is still reported", () => {
+    const pool = [
+      withWindows("cooling", { five_hour: { utilization: 100, resetsAt: in1h } }, { cooldownUntil: now + 60_000 }),
+      account({ id: "paused", enabled: false }),
+    ];
+    const quota = poolQuota(pool, CONFIG, now);
+    expect(quota.windows).toEqual([{ name: "five_hour", remaining: 0, resetsAt: in1h }]);
+    expect(quota.accounts).toEqual({ total: 2, enabled: 1, available: 0, coolingDown: 1, quotaBlocked: 0 });
+  });
+
+  it("counts an account the floor holds back, and reports the floor", () => {
+    const config = { ...CONFIG, quotaMinRemainingPercent: 10 };
+    const pool = [withWindows("low", { five_hour: { utilization: 95, resetsAt: in1h } })];
+    const quota = poolQuota(pool, config, now);
+    expect(quota.accounts.available).toBe(0);
+    expect(quota.accounts.quotaBlocked).toBe(1);
+    expect(quota.floorPercent).toBe(10);
+    // 5% left is a true reading; the floor is why it serves nobody.
+    expect(quota.windows).toEqual([{ name: "five_hour", remaining: 5, resetsAt: in1h }]);
+  });
+
+  it("orders 5h, then 7d, then the per-model windows, and names the plan", () => {
+    const one = account({
+      id: "one",
+      quotaFetchedAt: now - 60_000,
+      quota: {
+        // Out of order on purpose: the payload's key order is not the reading order.
+        windows: {
+          seven_day_opus: { utilization: 50, resetsAt: in3d },
+          seven_day: { utilization: 10, resetsAt: in3d },
+          five_hour: { utilization: 25, resetsAt: in1h },
+        },
+        source: "headers",
+        plan: "max_20x",
+      },
+    });
+    const quota = poolQuota([one], CONFIG, now);
+    expect(quota.windows.map((w) => w.name)).toEqual(["five_hour", "seven_day", "seven_day_opus"]);
+    expect(quota.windows.map((w) => windowLabel(w.name))).toEqual(["5h", "7d", "7d opus"]);
+    expect(quota.plan).toBe("max_20x");
+    expect(quota.updatedAt).toBe(now - 60_000);
+  });
+
+  it("says why there is nothing to show rather than showing zero", () => {
+    expect(poolQuota([], CONFIG, now).reason).toMatch(/no Claude account/);
+    expect(poolQuota([account({ id: "off", enabled: false })], CONFIG, now).reason).toMatch(/paused/);
+    expect(poolQuota([account({ id: "new" })], CONFIG, now).reason).toMatch(/no window reading yet/);
+    const failed = account({ id: "failed", quota: { windows: {}, source: "usage-endpoint", error: "HTTP 429" } });
+    expect(poolQuota([failed], CONFIG, now).reason).toMatch(/HTTP 429/);
   });
 });
 

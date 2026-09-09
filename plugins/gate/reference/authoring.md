@@ -30,6 +30,7 @@ timeoutMs: 3600000                  # DEFAULT when omitted, and what a new agent
 maxTokens: 32000                    # optional; thinking counts against it (default 8192)
 maxToolIterations: 0                # optional; 0 (the default) = as many tool rounds as it needs
 executor: gate                      # or: claude-code — see Executors below
+asks: person                        # optional; this node is the person's turn — see below
 ---
 
 Prompt text. Two placeholder forms, and nothing else — no expressions, no code:
@@ -409,7 +410,12 @@ them through `clarify` on those passes. `acceptance`
 puts the finished branch in front of them after the commit and before
 anything leaves the machine: "ship" opens the merge request, "revise" carries
 their requests back to the **planner** as a change of brief, not to the
-implementer. A run with nobody to ask — the dashboard's — holds at whichever
+implementer. All three carry `asks: person`: in a run a session drives, the
+run is *paused* while such a node is out — the dashboard says so and the run's
+clock stops, since the time is the person's — and running again when `gate
+step` brings the answer back. A paused run is never written off for silence;
+Stop is there for one nobody is coming back to. A run with nobody to ask — the
+dashboard's — holds at whichever
 gate it reaches, ending with the plan written or the branch committed and
 unpushed.
 
