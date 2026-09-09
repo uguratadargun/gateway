@@ -118,10 +118,12 @@ describe("claude-code executor", () => {
     // a way out (the planner's `questions`), they go there, and the node stops.
     expect(appended).toContain("the person decides, not you");
     // And told how its subagents behave here: dispatch returns at once and
-    // the result comes as a notification, so it ends its turn instead of
-    // sleeping in a shell loop until a report file appears.
+    // the result comes as a notification at the next tool call — so neither
+    // minutes of sleeping for a report file, nor ending its turn, which for a
+    // headless process is finishing with the work half-built.
     expect(appended).toContain("run in the background");
-    expect(appended).toContain("do not sleep");
+    expect(appended).toContain("does not finish this node");
+    expect(appended).toContain("never sleep in a shell loop");
   });
 
   it("reports each tool call as it comes back, so the run is watchable", async () => {

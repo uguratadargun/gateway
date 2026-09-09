@@ -7682,7 +7682,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.29.0";
+var GATE_VERSION = "0.29.1";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -9079,7 +9079,7 @@ function unattendedNotice() {
   return "This node is running unattended: there is no person in this session, and a question you ask here reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait for a reply here. If the prompt below gives such questions a way out \u2014 an output field they go into, so that the run can put them to the person elsewhere \u2014 put them there, all of them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where the prompt gives no such way out, or tells you the person has already been asked and was not there, take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
 }
 function backgroundSubagentNotice() {
-  return "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent is launched, and its result reaches you as a notification once you end your turn. So after dispatching, end your turn \u2014 say what you are waiting on, and stop. Do not poll for its commits or its report file, and do not sleep in a shell loop: a turn spent waiting is a turn in which no result can arrive, and the result was on its way. When the notification comes, carry on from it.";
+  return "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent is launched, and its result reaches you as a notification. Ending your turn while one of yours is still running does not finish this node \u2014 you are resumed with the result when it completes. So after dispatching, do whatever work does not depend on the result, then say what you are waiting on and stop; never poll for its commits or a report file, and never sleep in a shell loop, because the result was on its way and a turn spent sleeping is one in which it cannot arrive. Your final answer comes only when nothing you dispatched is still running.";
 }
 function bundlesDir() {
   return join11(gateHome(), "skill-bundles");

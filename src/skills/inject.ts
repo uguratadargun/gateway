@@ -102,17 +102,24 @@ export function unattendedNotice(): string {
  * How subagents behave in a Claude Code that gate drives, which the skills
  * do not know: subagent-driven development was written for a harness whose
  * dispatch blocks until the subagent answers, and in this one it does not.
- * Measured here: an implementer that dispatched a review and then slept in
- * a shell loop for eight minutes waiting for a report file, with the result
- * already delivered as a notification it could not read while it slept.
+ * Measured here: an implementer that dispatched a review and then slept in a
+ * shell loop for eight minutes waiting for a report file — eighty sleeps in
+ * one reviewer — with the result already delivered as a notification. And,
+ * in the run after, an implementer that dispatched five tasks, wrote "ending
+ * my turn to let it run", and was resumed nine minutes later by the
+ * notification with the tasks committed: ending the turn is the mechanism,
+ * not the end of the node, and the note says so in as many words, because a
+ * model reading "end your turn" as "finish" would hand in half a change.
  */
 export function backgroundSubagentNotice(): string {
   return (
     "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent " +
-    "is launched, and its result reaches you as a notification once you end your turn. So after dispatching, end " +
-    "your turn — say what you are waiting on, and stop. Do not poll for its commits or its report file, and do not " +
-    "sleep in a shell loop: a turn spent waiting is a turn in which no result can arrive, and the result was on " +
-    "its way. When the notification comes, carry on from it."
+    "is launched, and its result reaches you as a notification. Ending your turn while one of yours is still " +
+    "running does not finish this node — you are resumed with the result when it completes. So after " +
+    "dispatching, do whatever work does not depend on the result, then say what you are waiting on and stop; " +
+    "never poll for its commits or a report file, and never sleep in a shell loop, because the result was on " +
+    "its way and a turn spent sleeping is one in which it cannot arrive. Your final answer comes only when " +
+    "nothing you dispatched is still running."
   );
 }
 
