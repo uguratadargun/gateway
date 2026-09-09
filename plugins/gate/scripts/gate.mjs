@@ -2647,30 +2647,30 @@ var BLOCK_SCALAR_CONTENT = new RegExp(`^(?:${SRC_NB_CHAR}|\\n)*$`, "u");
 var C_FORBIDDEN_FIRST_LINE = /^(?:---|\.\.\.)(?=$|[ \t\n\r])/;
 var C_FORBIDDEN_CONTENT = /^(?:---|\.\.\.)(?=$|[ \t\n\r])/m;
 function canUsePlain(layout) {
-  const str3 = layout.node.value;
-  if (str3 !== "") {
-    if (!(layout.isKey ? layout.flowOnly ? NS_PLAIN_FLOW_KEY : NS_PLAIN_BLOCK_KEY : layout.flowOnly ? NS_PLAIN_FLOW_IN : NS_PLAIN_FLOW_OUT).test(str3)) return false;
-    if (layout.shiftOfFirstLine === 0 && C_FORBIDDEN_FIRST_LINE.test(str3)) return false;
+  const str2 = layout.node.value;
+  if (str2 !== "") {
+    if (!(layout.isKey ? layout.flowOnly ? NS_PLAIN_FLOW_KEY : NS_PLAIN_BLOCK_KEY : layout.flowOnly ? NS_PLAIN_FLOW_IN : NS_PLAIN_FLOW_OUT).test(str2)) return false;
+    if (layout.shiftOfFirstLine === 0 && C_FORBIDDEN_FIRST_LINE.test(str2)) return false;
     if (layout.shiftOfContent === 0) {
-      const firstLineBreak = str3.indexOf("\n");
+      const firstLineBreak = str2.indexOf("\n");
       if (firstLineBreak !== -1) {
-        const content = str3.slice(firstLineBreak + 1);
+        const content = str2.slice(firstLineBreak + 1);
         if (C_FORBIDDEN_CONTENT.test(content)) return false;
       }
     }
   }
-  const resolvedTag = layout.presenterOptions.schema.resolveImplicitScalarTag(str3).tag.tagName;
+  const resolvedTag = layout.presenterOptions.schema.resolveImplicitScalarTag(str2).tag.tagName;
   if (!layout.node.tagged && resolvedTag !== layout.node.tag) return false;
-  if (!layout.node.tagged && str3 === "=" && resolvedTag === layout.presenterOptions.schema.defaultScalarTag.tagName) return false;
+  if (!layout.node.tagged && str2 === "=" && resolvedTag === layout.presenterOptions.schema.defaultScalarTag.tagName) return false;
   return true;
 }
 function canUseSingleQuoted(layout) {
-  const str3 = layout.node.value;
-  if (!(layout.isKey ? NB_SINGLE_ONE_LINE : NB_SINGLE_MULTI_LINE).test(str3)) return false;
-  if (/[ \t]\n|\n[ \t]/.test(str3)) return false;
+  const str2 = layout.node.value;
+  if (!(layout.isKey ? NB_SINGLE_ONE_LINE : NB_SINGLE_MULTI_LINE).test(str2)) return false;
+  if (/[ \t]\n|\n[ \t]/.test(str2)) return false;
   if (!layout.isKey && layout.shiftOfContent === 0) {
-    const firstLineBreak = str3.indexOf("\n");
-    if (firstLineBreak !== -1 && C_FORBIDDEN_CONTENT.test(str3.slice(firstLineBreak + 1))) return false;
+    const firstLineBreak = str2.indexOf("\n");
+    if (firstLineBreak !== -1 && C_FORBIDDEN_CONTENT.test(str2.slice(firstLineBreak + 1))) return false;
   }
   return true;
 }
@@ -8467,7 +8467,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.25.5";
+var GATE_VERSION = "0.25.6";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -10141,7 +10141,7 @@ async function runLocal(client, opts) {
     process.off("SIGTERM", onInterrupt);
   }
   await reporter.stop();
-  const summary = workspace ? summarizeWorkspace(workspace) : null;
+  const summary2 = workspace ? summarizeWorkspace(workspace) : null;
   let diff = null;
   if (workspace) {
     try {
@@ -10153,7 +10153,7 @@ async function runLocal(client, opts) {
     status: state.status === "completed" ? "completed" : "failed",
     error: state.error ?? null,
     stepCount: state.stepCount,
-    workspace: summary,
+    workspace: summary2,
     diff
   }).catch((e) => opts.onNotice?.(`could not report the run's outcome: ${e.message}`));
   return { executionId, state, workspace };
@@ -10167,99 +10167,72 @@ import { join as join12 } from "node:path";
 
 // src/client/worker-log.ts
 import { relative as relative5 } from "node:path";
-var DIFF_LINES = 12;
-var LINE_WIDTH = 200;
-var TEXT_LINES = 6;
-function stamp(at) {
-  return new Date(at).toISOString().slice(11, 19);
-}
+var LINE_WIDTH = 120;
+var TEXT_LINES = 3;
 function clip(s, width = LINE_WIDTH) {
-  const line = s.replace(/\s+$/, "");
+  const line = s.trim().replace(/\s+/g, " ");
   return line.length > width ? `${line.slice(0, width - 1)}\u2026` : line;
 }
 function firstLine(s) {
-  return clip((s.split("\n").find((l) => l.trim()) ?? "").trim());
-}
-function str2(v) {
-  return typeof v === "string" ? v : null;
+  return clip(s.split("\n").find((l) => l.trim()) ?? "", 80);
 }
 function field(input, key) {
-  return input && typeof input === "object" ? str2(input[key]) : null;
+  const v = input && typeof input === "object" ? input[key] : void 0;
+  return typeof v === "string" ? v : null;
 }
 function pathOf(p, root) {
   if (!p) return "?";
   if (root && (p === root || p.startsWith(`${root}/`))) return relative5(root, p) || ".";
   return p;
 }
-function diffLines(oldText, newText) {
-  const side = (prefix, text) => {
-    const lines = text === "" ? [] : text.split("\n");
-    const shown = lines.slice(0, DIFF_LINES).map((l) => `${prefix} ${clip(l)}`);
-    if (lines.length > DIFF_LINES) shown.push(`${prefix} \u2026 ${lines.length - DIFF_LINES} more lines`);
-    return shown;
-  };
-  return [...side("-", oldText), ...side("+", newText)];
+function lineCount(s) {
+  return s === "" ? 0 : s.split("\n").length;
 }
-function describeCall(call, root = "") {
-  const at = stamp(call.startedAt);
-  const mark = call.ok ? " " : "\u2717";
+function summary(call, root) {
   const input = call.input;
-  const result = firstLine(call.result);
-  const head = (what, outcome = result) => `${at} ${mark} ${what}${outcome ? ` \u2192 ${outcome}` : ""}
-`;
   const file = pathOf(field(input, "file_path") ?? field(input, "path"), root);
   switch (call.tool) {
     case "Read":
-      return head(`Read ${file}`);
+      return `Read ${file}`;
     case "Edit":
     case "MultiEdit": {
-      const oldText = field(input, "old_string") ?? "";
-      const newText = field(input, "new_string") ?? "";
-      const body = call.ok ? diffLines(oldText, newText) : [];
-      const lines = [`${at} ${mark} Edit ${file}${call.ok ? "" : ` \u2192 ${result}`}`, ...body.map((l) => `           ${l}`)];
-      return `${lines.join("\n")}
-`;
+      const removed = lineCount(field(input, "old_string") ?? "");
+      const added = lineCount(field(input, "new_string") ?? "");
+      return `Edit ${file} (+${added} \u2212${removed})`;
     }
-    case "Write": {
-      const content = field(input, "content") ?? "";
-      const count = content === "" ? 0 : content.split("\n").length;
-      return head(`Write ${file} (${count} ${count === 1 ? "line" : "lines"})`, call.ok ? "" : result);
-    }
-    case "Bash": {
-      const command = field(input, "command") ?? "";
-      return head(`$ ${clip(command.replace(/\n/g, " ; "))}`);
-    }
-    case "Grep": {
-      const pattern = field(input, "pattern") ?? "";
-      const where = field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : "";
-      return head(`Grep ${JSON.stringify(pattern)}${where}`);
-    }
-    case "Glob": {
-      const pattern = field(input, "pattern") ?? "";
-      const where = field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : "";
-      return head(`Glob ${pattern}${where}`);
-    }
+    case "Write":
+      return `Write ${file} (${lineCount(field(input, "content") ?? "")} lines)`;
+    case "Bash":
+      return `Bash: ${clip(field(input, "description") ?? field(input, "command") ?? "", 100)}`;
+    case "Grep":
+      return `Grep ${JSON.stringify(field(input, "pattern") ?? "")}${field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : ""}`;
+    case "Glob":
+      return `Glob ${field(input, "pattern") ?? ""}${field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : ""}`;
     case "Task":
-    case "Agent": {
-      const description = field(input, "description") ?? "";
-      const kind = field(input, "subagent_type");
-      return head(`Agent${kind ? ` (${kind})` : ""} ${JSON.stringify(description)}`);
-    }
+    case "Agent":
+      return `Agent: ${clip(field(input, "description") ?? "", 100)}`;
     case "Skill":
-      return head(`Skill ${field(input, "skill") ?? field(input, "name") ?? "?"}`);
+      return `Skill ${field(input, "skill") ?? field(input, "name") ?? "?"}`;
     case "TodoWrite":
-      return head("Todo updated", "");
-    default: {
-      const json = JSON.stringify(input ?? {});
-      return head(`${call.tool} ${clip(json, 140)}`);
-    }
+      return "Update todos";
+    case "WebFetch":
+    case "WebSearch":
+      return `${call.tool} ${clip(field(input, "url") ?? field(input, "query") ?? "", 100)}`;
+    default:
+      return call.tool;
   }
 }
-function describeText(text, at = Date.now()) {
-  const lines = text.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
+function describeCall(call, root = "") {
+  const line = summary(call, root);
+  return call.ok ? `\u23FA ${line}
+` : `\u23FA ${line} \u2014 ${firstLine(call.result) || "failed"}
+`;
+}
+function describeText(text) {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return "";
-  const shown = lines.slice(0, TEXT_LINES).map((l, i) => `${i === 0 ? `${stamp(at)} \xBB ` : "           \xBB "}${clip(l)}`);
-  if (lines.length > TEXT_LINES) shown.push(`           \xBB \u2026 ${lines.length - TEXT_LINES} more lines`);
+  const shown = lines.slice(0, TEXT_LINES).map((l, i) => `${i === 0 ? "\u23FA " : "  "}${clip(l)}`);
+  if (lines.length > TEXT_LINES) shown.push("  \u2026");
   return `${shown.join("\n")}
 `;
 }
@@ -10816,15 +10789,15 @@ async function settle(ctx, executionId, execution, stepCount, status, error) {
   if (execution.status !== "running") return;
   const workspace = workspaceOf(execution);
   let diff = null;
-  let summary = null;
+  let summary2 = null;
   if (workspace && existsSync11(workspace.root)) {
-    summary = summarizeWorkspace(workspace);
+    summary2 = summarizeWorkspace(workspace);
     try {
       diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
     } catch {
     }
   }
-  await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
+  await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary2, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
 }
 
 // src/client/cli.ts
