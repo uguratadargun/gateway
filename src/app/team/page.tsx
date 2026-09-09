@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Copy, KeyRound, Plus, Trash2, UserPlus, Users } from "lucide-react";
+import { Copy, Download, KeyRound, Plus, Trash2, UserPlus, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { encodeConnectionToken } from "@/lib/connect-token";
+import { installLines, PLUGIN_ID, PLUGIN_MARKETPLACE } from "@/lib/protocol";
 
 /**
  * Who may connect, and what they connect with.
@@ -195,6 +196,34 @@ export default function TeamPage() {
 
       {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm">{error}</p>}
 
+      {/* Where the plugin comes from, before anyone has a key: the two lines
+          that put it on a machine, and the one line a key adds. A person sent
+          a login line with no plugin to paste it into has nowhere to start. */}
+      <Card className="space-y-2 p-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Download className="size-4" /> Getting the plugin
+        </div>
+        <p className="text-xs text-muted-foreground">
+          A machine that has never had <code>gate</code> installs it from this repository&apos;s marketplace, inside
+          Claude Code, and restarts Claude Code once. Then the <code>/gate:login</code> line a key issues below connects
+          it. Later updates are <code>/gate:update</code>.
+        </p>
+        <div className="flex items-start gap-2">
+          <pre className="flex-1 overflow-x-auto rounded bg-background px-2 py-1 text-xs">
+            {installLines("/gate:login <token from a key below>").join("\n")}
+          </pre>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => navigator.clipboard.writeText(`/plugin marketplace add ${PLUGIN_MARKETPLACE}\n/plugin install ${PLUGIN_ID}`)}
+            aria-label="Copy the install commands"
+            title="Copy the two install lines"
+          >
+            <Copy />
+          </Button>
+        </div>
+      </Card>
+
       <Card className="space-y-4 p-4">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Users className="size-4" /> Teams
@@ -308,9 +337,31 @@ export default function TeamPage() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      They install the <code>gate</code> plugin in Claude Code and paste that line. It connects this
-                      machine and pulls your team&apos;s workflows; after it, <code>/gate:run</code> runs them on their
-                      own machine. The raw key is <code>{issued.key}</code> if they need it for a tool that wants one.
+                      Pasted into Claude Code, that line connects their machine and pulls your team&apos;s workflows;
+                      after it, <code>/gate:run</code> runs them there. A machine that has never had the plugin
+                      pastes these three lines instead, in this order, and restarts Claude Code once after the
+                      second:
+                    </p>
+                    <div className="flex items-start gap-2">
+                      <pre className="flex-1 overflow-x-auto rounded bg-background px-2 py-1 text-xs">
+                        {installLines(`/gate:login ${encodeConnectionToken({ url: origin, key: issued.key })}`).join("\n")}
+                      </pre>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() =>
+                          navigator.clipboard.writeText(
+                            installLines(`/gate:login ${encodeConnectionToken({ url: origin, key: issued.key })}`).join("\n"),
+                          )
+                        }
+                        aria-label="Copy all three lines"
+                        title="Copy all three lines"
+                      >
+                        <Copy />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      The raw key is <code>{issued.key}</code> if they need it for a tool that wants one.
                     </p>
                   </div>
                 )}

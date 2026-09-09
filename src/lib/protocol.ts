@@ -26,6 +26,20 @@ export const GATE_VERSION = "0.28.0";
 /** The oldest CLI this server will serve. Older ones are refused, with the fix. */
 export const MIN_CLIENT_VERSION = "0.13.0";
 
+/**
+ * Where the plugin comes from, for anyone who has never installed it: the
+ * repository that is also a Claude Code marketplace, and the plugin's name
+ * inside it. Written here so the dashboard, the docs and the update command
+ * all name the same place.
+ */
+export const PLUGIN_MARKETPLACE = "uguratadargun/gateway";
+export const PLUGIN_ID = "gate@gateway";
+
+/** The lines a person pastes into Claude Code, in order, to get the plugin and connect. */
+export function installLines(loginLine: string): string[] {
+  return [`/plugin marketplace add ${PLUGIN_MARKETPLACE}`, `/plugin install ${PLUGIN_ID}`, loginLine];
+}
+
 /** Header names the two ends use to tell each other what they are. */
 export const VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
