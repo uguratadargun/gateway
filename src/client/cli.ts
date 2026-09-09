@@ -16,7 +16,7 @@ import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConf
 import { runLocal } from "./run";
 import { begin, next, step, wait, work, type Instruction, type SessionRunContext } from "./step";
 import { applyGatewaySettings, gatewayEnv, settingsPath } from "./live";
-import { syncSubagents } from "./subagents";
+import { removeSubagents, syncSubagents } from "./subagents";
 
 /**
  * `gate` — the command a developer runs, and what /gate:run calls.
@@ -204,6 +204,13 @@ async function cmdLogin(args: Args): Promise<number> {
 
   const manifest = await sync(client, me.team.id, true);
   console.log(`${manifest.workflows.length} workflow(s) available — \`gate list\` to see them`);
+
+  // Logging in is joining: from here every Claude Code session of theirs
+  // goes through the gateway, so a run's nodes are its subagents and its
+  // traffic is the team's. `gate live --off --global` is the way out.
+  for (const line of setLive(true, true, client.gatewayUrl, key)) console.log(line);
+  const synced = syncSubagents(me.team.id, cacheScope(me.team.id));
+  if (synced.created) console.log("restart Claude Code once: its agents directory did not exist before, and it reads a new one at startup");
   return 0;
 }
 
@@ -565,6 +572,24 @@ function cmdRepo(args: Args): number {
  * here ever made" is a surprise nobody wants twice.
  */
 function cmdReset(): number {
+  // Before the login is gone: the settings carry the same key, and a session
+  // left pointing at the gateway with a key that is forgotten here would
+  // fail in a way that names neither.
+  const config = readConfig();
+  if (config) {
+    const client = connect();
+    for (const global of [true, false]) {
+      const path = settingsPath(global);
+      if (!existsSync(path)) continue;
+      try {
+        if (applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), false)) console.log(`took the gateway out of ${path}`);
+      } catch (e) {
+        console.log(`could not update ${path}: ${(e as Error).message}`);
+      }
+    }
+  }
+  const agents = removeSubagents();
+  if (agents.length) console.log(`removed subagents ${agents.join(", ")} from ~/.claude/agents`);
   for (const line of clearLocalState()) console.log(line);
   console.log("this machine is disconnected — `/gate:login <token>` connects it again");
   return 0;
@@ -628,28 +653,30 @@ function cmdLive(args: Args): number {
   const config = readConfig();
   if (!config) die("not logged in - run `gate login <token>` first");
   const client = connect();
-  const global = args.flags.global === true;
-  const on = args.flags.off !== true;
+  for (const line of setLive(args.flags.off !== true, args.flags.global === true, client.gatewayUrl, config.key)) console.log(line);
+  return 0;
+}
+
+/** The body of `gate live`, shared with login and reset. Returns what to tell the person. */
+function setLive(on: boolean, global: boolean, gatewayUrl: string, key: string): string[] {
   const path = settingsPath(global);
   const where = global ? "every Claude Code session of yours" : `Claude Code sessions started in ${process.cwd()}`;
   let changed: boolean;
   try {
-    changed = applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), on);
+    changed = applyGatewaySettings(path, gatewayEnv(gatewayUrl, key), on);
   } catch (e) {
     die(`could not update ${path}: ${(e as Error).message}`);
   }
   if (on && !global) keepOutOfGit(process.cwd());
   if (on) {
-    console.log(changed ? `${where} now go through ${client.gatewayUrl}` : `${where} already go through ${client.gatewayUrl}`);
-    console.log(`  written to ${path}`);
-    console.log(
-      "A session already open here picks that up on its own; if the next node in its own model still arrives as " +
+    return [
+      changed ? `${where} now go through ${gatewayUrl}` : `${where} already go through ${gatewayUrl}`,
+      `  written to ${path}`,
+      "A session already open picks that up on its own; if the next node in its own model still arrives as " +
         "`wait` rather than as a subagent, restart Claude Code once.",
-    );
-  } else {
-    console.log(changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`);
+    ];
   }
-  return 0;
+  return [changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`];
 }
 
 /**

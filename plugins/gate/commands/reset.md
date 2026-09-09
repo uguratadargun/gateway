@@ -5,8 +5,9 @@ allowed-tools: Bash(node:*)
 
 Run: `node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" reset`
 
-It clears **this machine only**: the login, the mirror of the team's agents and workflows, and the
-approvals given for running workflows here. Report what it printed.
+It clears **this machine only**: the login, the mirror of the team's agents and workflows, the
+approvals given for running workflows here, the gateway from Claude Code's settings (user's and
+this repository's) and the subagents gate wrote to `~/.claude/agents/`. Report what it printed.
 
 Nothing anyone else can see changes. The team's definitions live on the server and stay there —
 if the user wants those deleted, that is the dashboard's Agents and Workflows pages, where they can

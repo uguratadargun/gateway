@@ -47,6 +47,23 @@ the answer in exactly the shape the task asks for, and nothing after it.
 `;
 }
 
+/** Removes every subagent file gate wrote, whichever team: what `gate reset` does. */
+export function removeSubagents(): string[] {
+  const dir = join(claudeConfigDir(), "agents");
+  if (!existsSync(dir)) return [];
+  const removed: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    if (!/^gate-[a-z0-9-]+\.md$/.test(entry)) continue;
+    const text = readFileSync(join(dir, entry), "utf8");
+    // Only what gate wrote: a person's own agent that happens to start with
+    // "gate-" does not carry this line.
+    if (!text.includes("Only /gate:run starts it")) continue;
+    rmSync(join(dir, entry));
+    removed.push(entry.slice(0, -3));
+  }
+  return removed;
+}
+
 /**
  * Writes the team's claude-code agents as subagent files, and removes the
  * team's files for agents that are gone. Returns what changed, and whether

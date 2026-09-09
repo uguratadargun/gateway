@@ -8468,7 +8468,7 @@ function decodeConnectionToken(value) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.26.2";
+var GATE_VERSION = "0.26.3";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -10192,6 +10192,19 @@ you ask here; where the brief gives questions a way out, use it. End your final 
 the answer in exactly the shape the task asks for, and nothing after it.
 `;
 }
+function removeSubagents() {
+  const dir = join12(claudeConfigDir(), "agents");
+  if (!existsSync11(dir)) return [];
+  const removed = [];
+  for (const entry of readdirSync7(dir)) {
+    if (!/^gate-[a-z0-9-]+\.md$/.test(entry)) continue;
+    const text = readFileSync8(join12(dir, entry), "utf8");
+    if (!text.includes("Only /gate:run starts it")) continue;
+    rmSync7(join12(dir, entry));
+    removed.push(entry.slice(0, -3));
+  }
+  return removed;
+}
 function syncSubagents(team, scope) {
   const dir = join12(claudeConfigDir(), "agents");
   const created = !existsSync11(dir);
@@ -11063,6 +11076,9 @@ async function cmdLogin(args) {
   console.log(`connected to ${url} as ${me.user?.email ?? "this key"} \xB7 team ${me.team.name}`);
   const manifest = await sync(client, me.team.id, true);
   console.log(`${manifest.workflows.length} workflow(s) available \u2014 \`gate list\` to see them`);
+  for (const line of setLive(true, true, client.gatewayUrl, key)) console.log(line);
+  const synced = syncSubagents(me.team.id, cacheScope(me.team.id));
+  if (synced.created) console.log("restart Claude Code once: its agents directory did not exist before, and it reads a new one at startup");
   return 0;
 }
 function cmdInstall(args) {
@@ -11328,6 +11344,21 @@ function cmdRepo(args) {
   return 0;
 }
 function cmdReset() {
+  const config = readConfig();
+  if (config) {
+    const client = connect();
+    for (const global of [true, false]) {
+      const path = settingsPath(global);
+      if (!existsSync14(path)) continue;
+      try {
+        if (applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), false)) console.log(`took the gateway out of ${path}`);
+      } catch (e) {
+        console.log(`could not update ${path}: ${e.message}`);
+      }
+    }
+  }
+  const agents = removeSubagents();
+  if (agents.length) console.log(`removed subagents ${agents.join(", ")} from ~/.claude/agents`);
   for (const line of clearLocalState()) console.log(line);
   console.log("this machine is disconnected \u2014 `/gate:login <token>` connects it again");
   return 0;
@@ -11358,27 +11389,27 @@ function cmdLive(args) {
   const config = readConfig();
   if (!config) die("not logged in - run `gate login <token>` first");
   const client = connect();
-  const global = args.flags.global === true;
-  const on = args.flags.off !== true;
+  for (const line of setLive(args.flags.off !== true, args.flags.global === true, client.gatewayUrl, config.key)) console.log(line);
+  return 0;
+}
+function setLive(on, global, gatewayUrl2, key) {
   const path = settingsPath(global);
   const where = global ? "every Claude Code session of yours" : `Claude Code sessions started in ${process.cwd()}`;
   let changed;
   try {
-    changed = applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), on);
+    changed = applyGatewaySettings(path, gatewayEnv(gatewayUrl2, key), on);
   } catch (e) {
     die(`could not update ${path}: ${e.message}`);
   }
   if (on && !global) keepOutOfGit(process.cwd());
   if (on) {
-    console.log(changed ? `${where} now go through ${client.gatewayUrl}` : `${where} already go through ${client.gatewayUrl}`);
-    console.log(`  written to ${path}`);
-    console.log(
-      "A session already open here picks that up on its own; if the next node in its own model still arrives as `wait` rather than as a subagent, restart Claude Code once."
-    );
-  } else {
-    console.log(changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`);
+    return [
+      changed ? `${where} now go through ${gatewayUrl2}` : `${where} already go through ${gatewayUrl2}`,
+      `  written to ${path}`,
+      "A session already open picks that up on its own; if the next node in its own model still arrives as `wait` rather than as a subagent, restart Claude Code once."
+    ];
   }
-  return 0;
+  return [changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`];
 }
 function keepOutOfGit(cwd) {
   let gitDir;

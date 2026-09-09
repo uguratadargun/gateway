@@ -17,9 +17,16 @@ nothing else should be asked for. It is written to `~/.gate/client.json` (0600) 
 immediately pulls their team's agents and workflows, so its output already says how many
 workflows they have.
 
+It also puts their Claude Code on the gateway, by writing it into `~/.claude/settings.json`
+(the `env` block, which Claude Code applies to every session), and writes the team's agents to
+`~/.claude/agents/`. Tell them what that means, in a sentence: from now on their own sessions'
+model traffic goes through the team's gateway — metered there, on the team's provider keys,
+not their personal Claude subscription — and a pipeline's nodes run as subagents they can
+watch live. `/gate:live --off --global` reverses it; `/gate:reset` does too.
+
 Then say what they can do next: `/gate:run` alone lists their team's workflows and asks which to
 run; `/gate:run <id> <task>` starts one here, in a worktree of the repository they are in; and
-`/gate:live` makes the nodes that run in their own model show up live in this terminal.
+the nodes that run in their own model show up live in this terminal, already.
 
 If it refuses, report what it said rather than retrying. An invalid or revoked key, a key that
 may not pull workflows, and a token pasted in half each say so in their own words — and a

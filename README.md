@@ -947,9 +947,10 @@ and your permissions — you can watch it, interrupt it, and answer it when it
 asks, which is what the shipped `acceptance` node does. An
 `executor: claude-code` node runs as a spawned Claude Code on your machine
 **in the agent's own model** — a planner on GLM, an implementer on a local
-model, which your session's model cannot stand in for. Run `/gate:live` once
-in a repository (it writes the gateway into that project's Claude Code
-settings; `gate env` prints the same as shell exports) and those nodes run as
+model, which your session's model cannot stand in for. `/gate:login` puts
+your Claude Code on the gateway as it connects (through the `env` block of
+`~/.claude/settings.json`; `gate live` does the same per repository or takes
+it out, `gate env` prints it as shell exports) and those nodes run as
 **subagents of your session**, drawn live in your terminal the way your own
 work is, in the agent's model: gate keeps the team's agents under
 `~/.claude/agents/` for that. In a session that is not on the gateway they
