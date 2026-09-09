@@ -354,6 +354,25 @@ export function WorkflowGraph({
     [onDeleteEdges],
   );
 
+  /**
+   * Where a return path may run: under every card. The lane is measured from
+   * the lowest card on the canvas, not from the two cards it joins, so a loop
+   * from the far right back to the start passes beneath the columns between
+   * them instead of through whatever they have in their lower rows.
+   */
+  const loopOffset = useCallback(
+    (from: string, to: string, lane: number): number => {
+      const bottomOf = (n: Node) => n.position.y + (n.measured?.height ?? 56);
+      const lowest = rfNodes.reduce((y, n) => Math.max(y, bottomOf(n)), Number.NEGATIVE_INFINITY);
+      const target = rfNodes.find((n) => n.id === to);
+      if (!target || !Number.isFinite(lowest)) return 26 + 20 * lane;
+      // The smooth-step path from one bottom handle to another runs its
+      // horizontal stretch `offset` below the target's bottom edge.
+      return Math.max(26, lowest - bottomOf(target) + 30 + 20 * lane);
+    },
+    [rfNodes],
+  );
+
   const rfEdges: Edge[] = useMemo(
     () =>
       nodes.flatMap((n) =>
@@ -377,7 +396,7 @@ export function WorkflowGraph({
               from: n.id,
               index: i,
               loop,
-              offset: 26 + 20 * (loopLane.get(key) ?? 0),
+              offset: loop ? loopOffset(n.id, e.to, loopLane.get(key) ?? 0) : 0,
               onDelete: editable ? deleteOneEdge : undefined,
             },
             deletable: editable,
@@ -390,7 +409,7 @@ export function WorkflowGraph({
           };
         }),
       ),
-    [nodes, activeEdges, editable, loops, loopLane, deleteOneEdge],
+    [nodes, activeEdges, editable, loops, loopLane, loopOffset, deleteOneEdge],
   );
 
   // Positions are persisted when a drag ends, not on every frame; the counter
