@@ -39,7 +39,8 @@ export function assertResumable(
   if (execution.origin === "local") {
     throw new WorkflowError(
       "EXECUTION_NOT_RESUMABLE",
-      `this run worked on ${execution.client?.host ?? "another machine"}; continue it there with \`gate continue <id>\``,
+      `this run worked on ${execution.client?.host ?? "another machine"}; continue it there with \`gate continue <id>\` ` +
+        "(a run /gate:run drove — one `gate run` drove starts over with `gate run`)",
     );
   }
   if (execution.status === "running") {

@@ -184,7 +184,7 @@ export class GateClient {
   async startRun(input: {
     workflowId: string;
     input: Record<string, unknown>;
-    client: { host?: string; repo?: string; branch?: string; version?: string };
+    client: { host?: string; repo?: string; branch?: string; version?: string; session?: string };
     /** Who walks the graph — see the execution's `driver`. */
     driver?: "engine" | "session";
   }): Promise<string> {
@@ -193,6 +193,19 @@ export class GateClient {
       body: JSON.stringify(input),
     });
     return res.body.executionId;
+  }
+
+  /**
+   * Reopens a session-driven run that failed, so the node it failed on can be
+   * tried again in the same worktree. The server drops the failed attempt from
+   * the run's history; the walk then lands on that node as if it had never run.
+   */
+  async continueRun(executionId: string): Promise<{ continued: boolean; reason?: string; retried?: string[] }> {
+    const res = await this.request<{ continued: boolean; reason?: string; retried?: string[] }>(
+      `/api/v1/executions/${executionId}/continue`,
+      { method: "POST", body: "{}" },
+    );
+    return res.body;
   }
 
   /** Reports progress; the reply says whether someone asked the run to stop. */

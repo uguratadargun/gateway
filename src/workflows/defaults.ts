@@ -48,6 +48,17 @@ import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
  * they asked for. Unattended, that node cannot ask, so it holds, and the run
  * ends with the branch committed and unpushed.
  *
+ * Between the implementer and the diff stands `verifier`: it runs the
+ * project's own checks on the tree as it is and holds the plan's tasks
+ * against it, so the reviewer reads a change that passed and the merge
+ * request carries a suite that was actually run. Its gaps go back to the
+ * implementer as tasks, with a give-up edge of its own. And a rejection from
+ * the reviewer goes one of two ways, on the reviewer's own say: a bounded
+ * fix straight to the implementer, a fault in the plan back to the planner.
+ * Measured here: one review finding that named one missing call cost a
+ * ten-minute planner pass and a second plan approval when every rejection
+ * went to the planner.
+ *
  * Review is one agent node, not a parallel node with one branch: a parallel
  * node means two regions that genuinely run at once, and the loader is right to
  * refuse one branch. Adding a project's own reviewers alongside this one is
@@ -55,7 +66,7 @@ import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
  * parallel node joining at `verdict`, and widen the verdict's condition.
  */
 const DEV = `name: Dev
-description: Plan a change with the person, build it in a worktree once they approve the plan, review it, let them try it, and open a merge request.
+description: Plan a change with the person, build it in a worktree once they approve the plan, verify and review it, let them try it, and open a merge request.
 entry: base
 workspace: {}
 # No engine ceilings: rounds and revisits cannot be counted in advance, and
@@ -136,8 +147,25 @@ nodes:
       - when: outputs.implementer.changed == false
         to: nothing-changed
         label: deliberately changed nothing
-      - to: stage
+      - to: verifier
         label: implemented
+
+  - id: verifier
+    type: agent
+    agent: verifier
+    label: Verify
+    edges:
+      - when: outputs.verifier.verified == true
+        to: stage
+        label: checks green, plan met
+      # Counted in verifications: three rounds of the implementer answering
+      # the same gaps is a change that is not converging, and the branch is
+      # still there to be looked at.
+      - when: visits.verifier >= 3
+        to: not-verified
+        label: still failing after 3 checks
+      - to: implementer
+        label: gaps to fix
 
   - id: stage
     type: command
@@ -181,8 +209,15 @@ nodes:
       - when: visits.reviewer >= 4
         to: review-stuck
         label: still rejected after 4 reviews
+      # The reviewer says where its feedback goes. A bounded fix — a bug, a
+      # missing test, a file the plan named and the diff did not touch — is
+      # the implementer's, against the plan as it stands; a fault in the
+      # plan itself goes back to the planner, which rewrites it.
+      - when: outputs.reviewer.replan == false
+        to: implementer
+        label: fix requested
       - to: planner
-        label: changes requested
+        label: plan changes requested
 
   - id: stage-all
     type: command
@@ -296,6 +331,11 @@ nodes:
   - id: review-stuck
     type: terminal
     label: Review never approved
+    status: failed
+
+  - id: not-verified
+    type: terminal
+    label: Verification never passed
     status: failed
 
   - id: not-shipped

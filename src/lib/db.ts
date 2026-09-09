@@ -281,6 +281,19 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // has waited so far over the whole run. The run's clock leaves both out.
   ["workflow_executions", "paused_at", "paused_at INTEGER"],
   ["workflow_executions", "paused_ms", "paused_ms INTEGER NOT NULL DEFAULT 0"],
+  // The Claude Code session driving a session-driven run. Its own model
+  // calls reach the gateway under this id, which is how the nodes the
+  // session does itself get a cost against the run.
+  ["workflow_executions", "client_session", "client_session TEXT"],
+  // A step's cost when it was worked out exactly (a session's calls across
+  // several models), and where its usage came from: NULL/"reported" for the
+  // node's own executor, "session" for an attribution from gateway traffic.
+  ["workflow_execution_steps", "cost_usd", "cost_usd REAL"],
+  ["workflow_execution_steps", "usage_source", "usage_source TEXT"],
+  // A library held at one commit: sync fetches, but checks this out rather
+  // than the remote's head, so the prompts written against a skill's text
+  // keep meeting that text until somebody moves the pin.
+  ["skill_sources", "pinned_sha", "pinned_sha TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

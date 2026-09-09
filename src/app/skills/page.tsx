@@ -49,6 +49,7 @@ interface Source {
   subdir: string;
   prefix: string;
   headSha: string | null;
+  pinnedSha: string | null;
   status: "new" | "syncing" | "ready" | "failed";
   lastSyncAt: number | null;
   lastSyncLog: string | null;
@@ -106,6 +107,30 @@ export default function SkillsPage() {
     }
     if (data.source.status === "failed") setError(data.source.lastSyncLog ?? "sync failed");
     setOpen(id);
+    await load();
+  }
+
+  /**
+   * Holds a library at the commit it is on, or lets it follow the remote
+   * again. The agents' prompts are written against the text these skills
+   * have today; a pin is what keeps a Sync from changing that underneath
+   * them.
+   */
+  async function pin(source: Source, sha: string | null) {
+    setBusy(`pin:${source.id}`);
+    setError(null);
+    const r = await fetch(withTeam(`/api/skill-sources/${source.id}`, team), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinnedSha: sha }),
+    });
+    const data = await r.json();
+    setBusy(null);
+    if (!r.ok) {
+      setError(data.error ?? "could not change the pin");
+      return;
+    }
+    setNote(sha ? `${source.name} pinned to ${sha.slice(0, 12)} — Sync keeps it there until you unpin` : `${source.name} follows the remote again from the next Sync`);
     await load();
   }
 
@@ -280,6 +305,17 @@ export default function SkillsPage() {
                   <Button variant="ghost" size="sm" onClick={() => sync(source.id)} disabled={busy === `sync:${source.id}`}>
                     <RefreshCw className={cn(busy === `sync:${source.id}` && "animate-spin")} /> Sync
                   </Button>
+                  {source.headSha && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title={source.pinnedSha ? "Let Sync follow the remote again" : "Hold this library at the commit it is on"}
+                      onClick={() => pin(source, source.pinnedSha ? null : source.headSha)}
+                      disabled={busy === `pin:${source.id}`}
+                    >
+                      {source.pinnedSha ? "Unpin" : "Pin"}
+                    </Button>
+                  )}
                   {source.skills.length > 0 && (
                     <Button variant="ghost" size="sm" onClick={() => setOpen(open === source.id ? null : source.id)}>
                       {open === source.id ? "hide" : "browse"}
@@ -295,6 +331,7 @@ export default function SkillsPage() {
                 {source.url}
                 {source.ref ? ` @ ${source.ref}` : ""}
                 {source.headSha ? ` · ${source.headSha.slice(0, 12)}` : ""}
+                {source.pinnedSha ? ` · pinned at ${source.pinnedSha.slice(0, 12)}` : ""}
               </p>
 
               {source.status === "new" && (

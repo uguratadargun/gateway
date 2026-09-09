@@ -480,8 +480,8 @@ imported are the team's copies and stay.
 ```yaml
 name: Sample dev pipeline
 entry: planner
-maxWorkflowSteps: 40     # hard stop for the run
-maxVisits: 4             # hard stop per node — loop protection
+maxWorkflowSteps: 0      # no ceilings: loops end on their own give-up edges
+maxVisits: 0             # (visits.<node> >= n → a terminal naming what is stuck)
 nodes:
   - id: planner
     type: agent
@@ -625,12 +625,16 @@ workspace:
 An explicit `repo` run input still wins over a pin.
 
 Every run gets **its own `git worktree` on its own branch** under
-`~/.gate/workspaces/<executionId>`. Agents write there, commands run there, and
-your checkout and current branch are never touched — whatever the agents do,
-the worst case is a branch you delete. The worktree is deliberately left behind
-when the run ends: it *is* the deliverable. Review it with
-`git -C <worktree> diff`, merge the branch, or throw it away with
-`git worktree remove <worktree> && git branch -D <branch>`.
+`~/.gate/workspaces/<executionId>`, with the checkout's installed dependencies
+(`node_modules`, `.venv`, `vendor`) linked in, so the first agent to run in
+it is not installing them. Agents write there, commands run there, and your
+checkout and current branch are never touched — whatever the agents do, the
+worst case is a branch you delete. The worktree is left behind while it *is*
+the deliverable: review it with `git -C <worktree> diff`, merge the branch, or
+throw it away. Once every commit on it has reached the remote and the tree is
+clean — a run that ended by opening its merge request — the worktree is
+removed as the run completes and the branch kept; `gate clean` does the same
+for the worktrees older runs left, and `--all` takes the unpushed ones too.
 
 The tools an agent may use are declared per agent, so roles stay honest — the
 implementer writes, the reviewers only read:
@@ -771,7 +775,8 @@ process to ask, so Stop settles it on the spot; the session finds out on its
 next `gate` call.
 
 A stopped run offers two ways back on the execution page — for a run that
-happened here; one that happened on someone's machine is continued there.
+happened here; one that happened on someone's machine is continued there,
+with `gate continue <execution-id>` for a run a session drove.
 **Restart** begins the workflow fresh — a new worktree from HEAD, the same
 input — and **Continue** picks up in the *same* worktree, at the node
 it stopped on, without redoing what already ran. Where it resumes falls out of
@@ -872,6 +877,8 @@ gate show <id>                  # a definition as it is on the server
 gate run dev "…"                # run it here, in this repository
 gate status                     # your team's recent runs, and where each ran
 gate cancel <execution-id>      # ask one to stop, wherever it is running
+gate continue <execution-id>    # reopen a session-driven run that failed, at the node it failed on
+gate clean [--all] [--dry-run]  # remove the worktrees finished runs left behind
 gate pull                       # refresh the mirror by hand (every command does it anyway)
 gate push <file…>               # save designed definitions to your team (needs an author key)
 gate reset                      # disconnect this machine and clear what it pulled
@@ -903,10 +910,11 @@ A workflow that pins a **connected repository** (`workspace: {repo: ulak-desktop
 names an id the server resolves to a checkout it manages — which is not on your
 machine. `gate repo ulak-desktop ~/Projects/ulak-desktop` says once which of
 your clones it means; without it the run refuses and says so rather than
-guessing at a directory. The connected repo's *prepare* commands (`npm ci` and
-the like, run in each worktree) are still the server's — a local run does not
-get them yet, so a pipeline that relies on them wants a `command` node of its
-own.
+guessing at a directory. A worktree made here borrows the clone's installed
+dependencies the way the server's does (`node_modules`, `.venv`, `vendor`
+are linked in); the connected repo's *prepare* commands (codegen and the like,
+run in each worktree) are still the server's — a local run does not get them
+yet, so a pipeline that relies on them wants a `command` node of its own.
 
 **Keeping up to date.** Three things move at different speeds, and only one of
 them needs anybody to do anything.
@@ -916,9 +924,12 @@ them needs anybody to do anything.
   `If-None-Match` before doing anything else. Unchanged is a `304` with no
   body; changed is the whole bundle written over the mirror, with anything the
   server no longer has pruned. So a workflow edited in the dashboard is live on
-  every machine at that machine's next command, a deleted one disappears, and a
-  run can never use a definition older than the moment it started. Being
-  offline falls back to the mirror with a note saying when it was pulled.
+  every machine at that machine's next command, and a deleted one disappears.
+  A run that is already going is the exception: `begin` pins the definitions
+  as they were at that moment, and every later step of that run reads the
+  pin, so an edit changes the next run and never the graph under one that is
+  walking it. Being offline falls back to the mirror with a note saying when
+  it was pulled.
 - *The server* is your deploy. Schema migrations are idempotent on open, and
   the one-time move of `~/.gate/agents` under `teams/default/` happens on the
   first read.
@@ -1005,8 +1016,25 @@ and `acceptance` nodes carry `asks: person`: while one of them is in the
 session's hands the run shows as **paused** on the dashboard, its clock stands
 still, and it is never written off for silence — the answer can take a day.
 `gate step` sets it running again.
-**Restart** and **Continue** stay where the worktree is: the execution page
-shows the command instead of the buttons.
+
+**A run is never cut off.** No spend, step or visit ceiling applies to a run a
+session drives; loops end on the workflow's own give-up edges, which land on a
+terminal that names what is stuck. An agent's `timeoutMs` is a notice, not a
+kill: a node in its own model that runs past it says so in its log, the
+session tells you, and stopping is yours (`gate cancel`, or Stop). What a run
+cost is read, not enforced: a node in its own model reports its usage; a node
+the session did itself, or as its subagent, is costed afterwards from the
+session's own gateway calls between the step's start and end — shown as an
+attribution (a "≈" figure), since the session may have done other things in
+those minutes. That needs the plugin's session hook to have told the CLI
+which session this is (a Claude Code that offers `CLAUDE_ENV_FILE`); without
+it those nodes stay uncosted, and say nothing rather than claim zero.
+
+**A failed node is not a lost run.** The worktree and every step before the
+failure are kept, and `gate continue <execution-id>` reopens the run at the
+node that failed, in the same worktree, so nothing that already ran is redone.
+**Restart** and **Continue** on the execution page stay where the worktree is:
+for a run on your machine the page shows that command instead of the buttons.
 
 **The first run of a workflow asks.** A team's `command` nodes and `run_command`
 tools now execute on a developer's machine rather than in gate's own sandbox, so

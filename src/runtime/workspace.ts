@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+
+import { linkedDirectories } from "@/repos/detect";
 
 import { WorkflowError } from "./errors";
 import type { WorkspaceSpec } from "@/workflows/types";
@@ -78,6 +80,67 @@ export function createRunWorkspace(spec: ResolvedWorkspaceSpec, executionId: str
   return { root, repo, branch, baseRef, baseCommit };
 }
 
+/**
+ * Lends the checkout's installed dependencies to a fresh worktree.
+ *
+ * A worktree carries what git tracks and nothing else, so `node_modules`,
+ * `.venv` and `vendor` are not in it — and the first thing a planner following
+ * its worktree skill then does is a full install, on the developer's own
+ * machine, per run (measured here: 1.6 GB and a quarter of an hour, for a
+ * result identical to the directory next door). A symlink is what the server's
+ * own worktree preparation does too; a directory already present is left as
+ * it is, so calling this twice is harmless. Returns what was linked.
+ */
+export function borrowDependencies(ws: Pick<RunWorkspace, "repo" | "root">): string[] {
+  const linked: string[] = [];
+  for (const dir of linkedDirectories(ws.repo)) {
+    const target = join(ws.root, dir);
+    if (existsSync(target)) continue;
+    try {
+      symlinkSync(join(ws.repo, dir), target, "dir");
+      linked.push(dir);
+    } catch (e) {
+      throw new WorkflowError("WORKSPACE_ERROR", `could not link ${dir} into the worktree: ${(e as Error).message}`);
+    }
+  }
+  return linked;
+}
+
+/** Whether a worktree's every commit is on its upstream and its tree is clean. */
+export function isFullyPushed(root: string): boolean {
+  try {
+    if (git(root, ["status", "--porcelain"]).length) return false;
+    // No upstream at all throws: nothing was pushed.
+    git(root, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    return git(root, ["rev-list", "--count", "@{upstream}..HEAD"]) === "0";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What a finished run leaves behind on disk, tidied.
+ *
+ * A worktree is the deliverable while the work is only here; once every
+ * commit is on the remote and the tree is clean, it is a copy of something
+ * git already holds — and worktrees that are never removed were measured at
+ * a dozen per repository and gigabytes. So a completed run whose branch is
+ * fully pushed loses its worktree and keeps its branch: `git checkout
+ * <branch>` brings the work back, and the merge request points at the same
+ * commits. Anything unpushed or uncommitted stays exactly where it is.
+ * Returns what happened, for the person to read; never throws.
+ */
+export function tidyRunWorkspace(ws: RunWorkspace): string | null {
+  if (!existsSync(ws.root)) return null;
+  if (!isFullyPushed(ws.root)) return null;
+  try {
+    removeRunWorkspace(ws, { keepBranch: true });
+    return `worktree ${ws.root} removed: every commit is on the remote, and branch ${ws.branch} keeps the work`;
+  } catch {
+    return null;
+  }
+}
+
 /** What the run left behind, recorded on the execution for the UI. */
 export function summarizeWorkspace(ws: RunWorkspace): WorkspaceSummary {
   let changedFiles: string[] = [];
@@ -120,13 +183,24 @@ export function readRunDiff(root: string, baseCommit?: string): { diff: string; 
     : { diff, truncated: false };
 }
 
-/** Removes a worktree and its branch. Only ever called explicitly. */
-export function removeRunWorkspace(ws: { repo: string; root: string; branch: string }): void {
+/**
+ * Removes a worktree, and its branch unless told to keep it. Only ever
+ * called explicitly, or by `tidyRunWorkspace` for a branch that is on the
+ * remote in full.
+ */
+export function removeRunWorkspace(ws: { repo: string; root: string; branch: string }, opts: { keepBranch?: boolean } = {}): void {
   try {
     git(ws.repo, ["worktree", "remove", "--force", ws.root]);
   } catch {
     rmSync(ws.root, { recursive: true, force: true });
+    try {
+      // The registration outlives a directory removed by hand.
+      git(ws.repo, ["worktree", "prune"]);
+    } catch {
+      // Nothing to prune, or no repository left to ask.
+    }
   }
+  if (opts.keepBranch) return;
   try {
     git(ws.repo, ["branch", "-D", ws.branch]);
   } catch {

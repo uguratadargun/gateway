@@ -94,7 +94,9 @@ Each call prints one JSON instruction:
     branch — *not* the checkout the user is sitting in. Read, write and run commands **there**,
     with absolute paths under it. Never edit files outside it.
   - `tools` is what the agent file says this role needs. Treat it as the shape of the job — a
-    role listing only reads is reviewing, not implementing — and stay inside it.
+    role listing only reads is reviewing, not implementing — and stay inside it. An empty list
+    is a node that is a conversation with the user and nothing else (the shipped `clarify`):
+    no files, no commands, just the asking.
   - **Ask the user when you need to.** A choice the brief does not settle, something that
     looks wrong, a destructive step, anything you would otherwise guess at — ask, and wait.
     This is their session: they are there, they can answer, and a question costs a minute
@@ -133,15 +135,24 @@ Each call prints one JSON instruction:
   ```
   in the foreground: it prints what the node has done since you last looked and returns on its
   own — with the next instruction when the node is over, or with `wait` again after about
-  ninety seconds. **The user cannot see that command's output.** The node is working in their
+  ninety seconds. A node that runs past its agent's `timeoutMs` is not stopped: the log says it
+  is overrunning, you tell the user, and stopping it is their call (`gate cancel`, or Stop on
+  the dashboard). **The user cannot see that command's output.** The node is working in their
   worktree, in a model they chose, and this log is their only view of it — so after every
   `wait`, relay the lines it printed, as they are, in one fenced code block: nothing added,
   nothing summarised, nothing left out. Then run `wait` again. A node can take an hour; that
   is the worker's hour, not yours.
 - **`{"do": "done", …}`** — the run is over. Report `status`, the `branch` and
-  `git -C <workspace> diff` for reviewing it, then offer to review that diff.
+  `git -C <workspace> diff` for reviewing it, then offer to review that diff. A completed run
+  whose every commit reached the remote has its worktree removed on the spot and says so —
+  the branch stays, and `git checkout <branch>` in the user's own checkout brings the work
+  back; anything unpushed or uncommitted keeps its worktree. `gate clean` lists and removes
+  the worktrees older runs left behind, by the same rule.
 - **`{"do": "failed", …}`** — a node failed. Report the node and the error as they came; do not
-  retry the run or work around it.
+  work around it. The worktree and everything the run did before that node are kept, and
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" continue <execution-id>` reopens the run at
+  that node, in the same worktree, without redoing what already ran — offer that, and run it
+  only if the user wants the node tried again.
 - **`{"do": "stopped", …}`** — the run was ended from outside while you were between calls:
   Stop on the dashboard, or written off after this machine went quiet for hours. Say so, with
   the error as it came, and do nothing further for it; a new run needs `begin`.
@@ -153,8 +164,16 @@ instruction without changing anything.
 ## Two things gate does itself
 
 **Command nodes** (`npm test`, `git commit`, …) are argv from the workflow file. gate runs them
-and prints their output to the terminal; you never run them yourself and never see them as an
-instruction.
+between two instructions and prints what they printed on the same channel as everything else
+it says — which is **not** the user's screen: it is the output of the `gate` command you ran.
+So when a `begin`, `step` or `next` came back with lines above its JSON — a `$ git diff …`,
+a test suite's tail, a `✓ commit` — relay them to the user in a fenced code block before you
+go on. You never run those commands yourself and never see them as an instruction.
+
+**The run's definitions are pinned when it starts.** `begin` copies the team's agents,
+workflows and skills as they are at that moment, and every later `next`, `step` and `wait`
+of that run reads the copy — so an edit in the dashboard, or a `gate pull`, changes the next
+run and never the graph under a run that is already walking it.
 
 **Routing** is gate's. Which node follows which, and which way a loop goes, comes from the
 workflow's edges and the outputs you hand back — not from your judgement. Answer the node you

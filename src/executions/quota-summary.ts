@@ -17,6 +17,8 @@ interface StepUsageRow {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
+  /** Exact, when the step's usage spanned models and was priced per model. */
+  cost_usd: number | null;
 }
 
 interface UsageRow {
@@ -57,7 +59,7 @@ function gatewayCostSince(since: number): number {
 export function summarizeExecutionQuota(executionId: string, at = Date.now()): ExecutionQuota {
   const steps = getDb()
     .prepare(
-      `SELECT model, input_tokens, output_tokens, cache_read_tokens
+      `SELECT model, input_tokens, output_tokens, cache_read_tokens, cost_usd
          FROM workflow_execution_steps WHERE execution_id = ?`,
     )
     .all(executionId) as unknown as StepUsageRow[];
@@ -69,11 +71,11 @@ export function summarizeExecutionQuota(executionId: string, at = Date.now()): E
     tokens.input += s.input_tokens;
     tokens.output += s.output_tokens;
     tokens.cacheRead += s.cache_read_tokens;
-    costUsd += costForUsage(
-      tierOf(s.model),
-      { input: s.input_tokens, output: s.output_tokens, cacheRead: s.cache_read_tokens },
-      { model: s.model },
-    );
+    // A step priced when it was attributed carries the exact figure; the
+    // tokens above name one model and could not restate a sum across several.
+    costUsd +=
+      s.cost_usd ??
+      costForUsage(tierOf(s.model), { input: s.input_tokens, output: s.output_tokens, cacheRead: s.cache_read_tokens }, { model: s.model });
   }
 
   const snap = readRateLimit();

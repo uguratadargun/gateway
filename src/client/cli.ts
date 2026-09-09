@@ -14,8 +14,9 @@ import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-t
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
+import { applyClean, describeVerdict, listWorkspaces, planClean } from "./clean";
 import { runLocal } from "./run";
-import { begin, next, step, wait, work, type Instruction, type SessionRunContext } from "./step";
+import { begin, continueRun, next, step, wait, work, type Instruction, type SessionRunContext } from "./step";
 import { applyGatewaySettings, gatewayEnv, settingsPath } from "./live";
 import { removeSubagents, syncSubagents } from "./subagents";
 
@@ -51,9 +52,11 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
+  gate continue <execution-id>                  pick a failed run back up at the node it failed on
   gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
   gate env                                      the same, as shell exports for one session
   gate repo [<id> <path>]                       point a pinned repository at your clone
+  gate clean [--all] [--dry-run]                remove worktrees of finished runs (branches are kept)
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
@@ -829,6 +832,47 @@ async function cmdWait(args: Args): Promise<number> {
 }
 
 /**
+ * A failed run, picked back up where it failed — the node is tried again in
+ * the same worktree, and everything before it stands. Only for a run
+ * /gate:run drove: the worktree and the pinned definitions are on this
+ * machine, and the walk is replayed from the history the server keeps.
+ */
+async function cmdContinue(args: Args): Promise<number> {
+  const [executionId] = args.positional;
+  if (!executionId) die("usage: gate continue <execution-id>");
+  const { ctx } = await sessionContext();
+  return printInstruction(await continueRun(ctx, executionId));
+}
+
+/**
+ * The worktrees runs left on this machine, and the removal of the ones that
+ * are plainly done. Branches are never deleted, so nothing committed is lost.
+ */
+async function cmdClean(args: Args): Promise<number> {
+  const client = connect();
+  const entries = await listWorkspaces(client);
+  if (!entries.length) {
+    console.log("no run worktrees on this machine");
+    return 0;
+  }
+  const plan = planClean(entries, args.flags.all === true);
+  const dry = args.flags["dry-run"] === true;
+  for (const e of entries) {
+    const goes = plan.removed.includes(e);
+    console.log(
+      `${goes ? (dry ? "would remove" : "remove") : "keep"}  ${e.executionId.slice(0, 8)}  ${e.branch ?? "?"}  ${e.status}  — ${describeVerdict(e.verdict)}`,
+    );
+  }
+  if (dry) {
+    console.log(`${plan.removed.length} of ${entries.length} would be removed; run without --dry-run to do it`);
+    return 0;
+  }
+  applyClean(plan);
+  console.log(`removed ${plan.removed.length} worktree(s), kept ${plan.kept.length}; every branch is still there`);
+  return 0;
+}
+
+/**
  * The detached worker `gate next` starts for a claude-code node. Not in the
  * usage text: nothing but this CLI runs it, and its stdout is the node's log.
  */
@@ -905,6 +949,10 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdStep(args);
       case "wait":
         return await cmdWait(args);
+      case "continue":
+        return await cmdContinue(args);
+      case "clean":
+        return await cmdClean(args);
       case "env":
         return cmdEnv();
       case "live":

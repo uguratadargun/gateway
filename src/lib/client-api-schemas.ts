@@ -16,6 +16,13 @@ const clientInfo = z
     repo: z.string().max(500).optional(),
     branch: z.string().max(200).optional(),
     version: z.string().max(40).optional(),
+    /**
+     * The Claude Code session driving the run, when the plugin's hook could
+     * learn it. The gateway files that session's own model calls under the
+     * same id, which is what lets the nodes the session does itself be
+     * costed against the run.
+     */
+    session: z.string().max(80).optional(),
   })
   .partial();
 

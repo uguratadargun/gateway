@@ -24,22 +24,24 @@ own steps. Read the repository, work out what those are, and put a concrete
 proposal in front of them rather than asking what they want first.
 
 Build it for **this repository** — but not from nothing. gate ships a team with
-`planner`, `implementer` and `reviewer`, each following its skills, plus three
-gates to the person — `clarify` carries the planner's questions to them,
-`plan-review` shows them the plan before anything is built, `acceptance` puts
-the finished branch in front of them before anything leaves the machine — and
-a `dev` pipeline that plans with the person, builds once they approve, reviews,
-commits, asks, and opens a merge request. **That is the base. You write the
-ends.** The gates stay where they are; nothing you add goes around them.
+`planner`, `implementer`, `verifier` and `reviewer`, each following its
+skills, plus three gates to the person — `clarify` carries the planner's
+questions to them, `plan-review` shows them the plan before anything is built,
+`acceptance` puts the finished branch in front of them before anything leaves
+the machine — and a `dev` pipeline that plans with the person, builds once
+they approve, verifies, reviews, commits, asks, and opens a merge request.
+**That is the base. You write the ends.** The gates stay where they are;
+nothing you add goes around them.
 
 ## 1. Use the default team, do not rewrite it
 
-`planner`, `implementer` and `reviewer` are not starting points to improve on.
-They know nothing about any particular project on purpose — which is what lets
-every pipeline share them — and they carry the skills (brainstorming, using git
-worktrees and writing plans; executing plans, test-driven development and
-subagent-driven development; requesting code review) that make them behave
-like a team rather than three prompts. Their prompts are written against what
+`planner`, `implementer`, `verifier` and `reviewer` are not starting points
+to improve on. They know nothing about any particular project on purpose —
+which is what lets every pipeline share them — and they carry the skills
+(brainstorming, using git worktrees and writing plans; executing plans,
+test-driven development, subagent-driven development, receiving code review
+and systematic debugging; verification before completion; requesting code
+review) that make them behave like a team rather than four prompts. Their prompts are written against what
 those skills do unattended — where a skill would wait for a person, that it
 commits as it goes, where its process hands off to the pipeline — so a copy
 with a paragraph added is a copy that has to get all of that right again.
@@ -67,20 +69,24 @@ Do not design against assumptions. Establish, from the files:
 What you learn becomes `command` nodes, in three places:
 
 - **Between `base` and the planner** — what a fresh worktree needs before
-  anyone can work in it: dependency install, code generation, linking, a build
-  that other steps assume. (`pnpm install`, `pnpm build-protobuf`, linking
-  `node_modules` — whatever this project really does.) A worktree is a clean
-  checkout: if something is needed and is not tracked by git, it has to be a
-  node. `base` stays the entry: it records the commit the run started from,
-  and everything the run does — the planner's spec included — is diffed
-  against it.
-- **Between the implementer and `stage`** — this project's real verification:
-  its test command, its typecheck, its linter. The implementer already tests
-  as it works; this node is the deterministic gate that decides whether the
-  change reaches a reviewer at all. Route a failure back to the implementer
-  with a labelled edge, and give that loop its own terminal so a test that
-  never goes green ends with a reason rather than a ceiling. It goes before
-  `stage` and `diff`, so the diff the reviewers see is of a change that passed.
+  anyone can work in it: code generation, a build that other steps assume.
+  (`pnpm build-protobuf`, `pnpm transpile` — whatever this project really
+  does.) Not the install: the run links the checkout's `node_modules`,
+  `.venv` and `vendor` into the worktree when it creates it. A worktree is
+  otherwise a clean checkout: if something is needed and is not tracked by
+  git, it has to be a node. `base` stays the entry: it records the commit the
+  run started from, and everything the run does — the planner's spec included
+  — is diffed against it.
+- **Between the `verifier` and `stage`** — this project's real verification:
+  its test command, its typecheck, its linter, as one deterministic node each.
+  The shipped verifier already finds and runs what the repository defines and
+  routes its gaps back to the implementer; a command node here is the gate
+  that does not depend on a model having read the right file, and it decides
+  whether the change reaches a reviewer at all. Route a failure back to the
+  implementer with a labelled edge, and give that loop its own terminal so a
+  test that never goes green ends with a reason rather than a ceiling. It goes
+  before `stage` and `diff`, so the diff the reviewers see is of a change
+  that passed.
 - **At the end, after `acceptance`** — the merge request. The person's
   approval stays where it is, between the commit and the push: nothing you
   add goes around it. The shipped node uses `glab` when it is installed and
@@ -107,16 +113,23 @@ reviewers, each with its own narrow agent and one job. Then:
   branches are the default `reviewer` **and** yours, joined at `verdict`;
 - give each new reviewer `next: verdict` and the same `verdict` /
   `feedback` output shape as the shipped one;
-- give it the same inputs the shipped reviewer takes — `base.stdout` and
-  `diff.stdout` at least — and only reading tools. The diff is the working
-  tree against the run's base commit, not `base..HEAD`: the implementer may
-  have committed some of its work and left the rest uncommitted, and the
-  prompt has to say so wherever the reviewer is told to look at git itself;
+- give it the same inputs the shipped reviewer takes — `base.stdout` at
+  least, and `planner.planFile` — and only reading tools. It reads the diff
+  itself, as `git diff <base>`: the working tree against the run's base
+  commit, not `base..HEAD`, because the implementer may have committed some
+  of its work and left the rest uncommitted, and the prompt has to say so
+  wherever the reviewer is told to look at git. A reviewer with no command
+  tool takes `diff.stdout` instead;
 - `executor: claude-code`, like the shipped one, if it has to read the
   repository around the diff; `timeoutMs: 3600000` either way;
+- give it the shipped reviewer's output shape, `replan` included — a
+  specialist reviewer's rejection is nearly always a bounded fix, so it
+  answers `replan: false` unless the plan itself is at fault;
 - widen the verdict's condition so every reviewer has to approve:
-  `outputs.reviewer.verdict == "approved" && outputs.<yours>.verdict == "approved"`.
-  The give-up edge (`visits.planner >= 4`) stays where it is.
+  `outputs.reviewer.verdict == "approved" && outputs.<yours>.verdict == "approved"`,
+  and the fix edge so either reviewer's bounded fix reaches the implementer:
+  `outputs.reviewer.replan == false && outputs.<yours>.replan == false`.
+  The give-up edge (`visits.reviewer >= 4`) stays where it is.
 
 The default reviewer stays a branch. It is not replaced, and it is not made
 optional.

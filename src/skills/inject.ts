@@ -71,11 +71,19 @@ export function skillsDirective(skills: SkillDefinition[]): string {
  * The skills an agent follows were written for a session with a person in it:
  * brainstorming stops at an approval gate, executing plans raises concerns
  * "before starting". Run headless, or on gate's own loop, a question has no
- * one to reach — so the node is told so, and told what to do instead. A run
- * driven from a session says nothing of the kind, because there the person is
- * right there, and a skill that asks should ask. Deciding this from the
- * prompt's wording was tried; the model guessed "unattended" with a user
- * watching, and approved its own plan.
+ * one to reach — so the node is told so, and told what to do instead.
+ *
+ * Who gets it follows the executor, not the driver. Every `claude-code` node
+ * does — as a worker on the server or on a laptop, and as a subagent of the
+ * person's session too, because a subagent cannot ask the person either. An
+ * `executor: gate` node run by the session itself never does: there the
+ * person is right there, and a skill that asks should ask. Deciding this from
+ * the prompt's wording was tried; the model guessed "unattended" with a user
+ * watching, and approved its own plan. So the notice is issued in exactly two
+ * places — the claude-code executor and the session's delegate instruction —
+ * and an agent prompt may rely on that: a claude-code agent is always
+ * unattended, and a prompt that hedges "when there is a person" is hedging
+ * against a case that does not happen.
  */
 export function unattendedNotice(): string {
   return (

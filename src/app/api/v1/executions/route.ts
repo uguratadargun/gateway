@@ -65,6 +65,7 @@ export async function POST(req: Request) {
         repo: parsed.data.client.repo ?? null,
         branch: parsed.data.client.branch ?? null,
         version: parsed.data.client.version ?? null,
+        session: parsed.data.client.session ?? null,
       },
     });
     return NextResponse.json({ executionId }, { status: 201 });

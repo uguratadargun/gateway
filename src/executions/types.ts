@@ -63,6 +63,28 @@ export interface ExecutionClient {
   repo: string | null;
   branch: string | null;
   version: string | null;
+  /** The Claude Code session driving a session-driven run, when known. */
+  session?: string | null;
+}
+
+/** Tokens and cost one step used, and where the figure came from. */
+export interface StepUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  /**
+   * Cost in USD when it was worked out exactly — a session's own calls are
+   * summed per model, which the tokens above (one model) cannot restate.
+   */
+  costUsd?: number | null;
+  /**
+   * "reported" when the node's own executor measured it; "session" when it
+   * was attributed afterwards from the driving session's gateway traffic
+   * inside the step's time window — an estimate, since that session may have
+   * done other things in the same minutes.
+   */
+  source?: "reported" | "session";
 }
 
 export interface ExecutionStepRecord {
@@ -76,7 +98,7 @@ export interface ExecutionStepRecord {
   input: unknown;
   output: unknown;
   error: { code: string; message: string } | null;
-  usage: { model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number } | null;
+  usage: StepUsage | null;
   toolCalls: ToolCallRecord[] | null;
 }
 

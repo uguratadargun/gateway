@@ -90,7 +90,7 @@ describe("what the shipped agents declare", () => {
   it("is a planner, an implementer and a reviewer, each following its skills, and three gates to the person", () => {
     ensureDefaultAgents();
     const byId = new Map(listAgents().agents.map((a) => [a.id, a]));
-    expect([...byId.keys()].sort()).toEqual(["acceptance", "clarify", "implementer", "plan-review", "planner", "reviewer"]);
+    expect([...byId.keys()].sort()).toEqual(["acceptance", "clarify", "implementer", "plan-review", "planner", "reviewer", "verifier"]);
     // The gates follow no skill and decide nothing; they ask, and read. They
     // run on the loop driving the run — the session — never as a spawned
     // Claude Code, which could not ask anyone.
@@ -123,11 +123,25 @@ describe("what the shipped agents declare", () => {
     expect(byId.get("reviewer")!.tools).not.toContain("write_file");
     expect(byId.get("reviewer")!.tools).not.toContain("edit_file");
 
-    // The reviewer is handed the run's base and the diff against it, because
-    // its skill reviews a git range and the implementer's skills commit as
-    // they go — a reviewer left to run `git diff` would see nothing.
+    // The reviewer is handed the run's base, because its skill reviews a git
+    // range and the implementer's skills commit as they go — a reviewer left
+    // to run a bare `git diff` would see nothing. Not the diff itself: its
+    // skill says the diff belongs in the dispatched reviewer's context, not
+    // in the coordinator's. It gets the plan file, to hold the diff against
+    // the files each task named, and the verifier's evidence.
     expect(byId.get("reviewer")!.inputs).toContain("base.stdout");
-    expect(byId.get("reviewer")!.inputs).toContain("diff.stdout");
+    expect(byId.get("reviewer")!.inputs).not.toContain("diff.stdout");
+    expect(byId.get("reviewer")!.inputs).toContain("planner.planFile");
+    expect(byId.get("reviewer")!.inputs).toContain("verifier.evidence");
+    // The reviewer says where its feedback goes; the verifier's gaps go to the implementer.
+    const reviewerOutput = byId.get("reviewer")!.output;
+    expect(reviewerOutput.type === "json" ? Object.keys(reviewerOutput.schema) : []).toContain("replan");
+    expect(byId.get("implementer")!.inputs).toContain("verifier.gaps?");
+    // The verifier runs checks and reads; it never edits.
+    expect(byId.get("verifier")!.skills).toEqual(["superpowers-verification-before-completion"]);
+    expect(byId.get("verifier")!.tools).toContain("run_command");
+    expect(byId.get("verifier")!.tools).not.toContain("edit_file");
+    expect(byId.get("verifier")!.executor).toBe("claude-code");
     // The implementer takes the plan file, which is what its skills execute.
     expect(byId.get("implementer")!.inputs).toContain("planner.planFile");
 
@@ -183,25 +197,38 @@ Show {{inputs.planner.plan}} at {{inputs.planner.planFile}}
 `,
     implementer: `---
 name: Implementer
-inputs: [planner.plan, planner.planFile, reviewer.feedback?]
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?]
 output:
   type: json
   schema:
     summary: string
     changed: boolean
 ---
-Do {{inputs.planner.planFile}}
+Do {{inputs.planner.planFile}} {{inputs.reviewer.feedback}} {{inputs.verifier.gaps}}
+`,
+    verifier: `---
+name: Verifier
+inputs: [planner.plan, planner.planFile, implementer.summary]
+output:
+  type: json
+  schema:
+    verified: boolean
+    evidence: string
+    gaps: "string?"
+---
+Verify {{inputs.planner.planFile}} against {{inputs.implementer.summary}}
 `,
     reviewer: `---
 name: Reviewer
-inputs: [base.stdout, diff.stdout, planner.plan, implementer.summary]
+inputs: [base.stdout, planner.plan, planner.planFile, implementer.summary, verifier.evidence]
 output:
   type: json
   schema:
     verdict: string
+    replan: boolean
     feedback: "string?"
 ---
-Review {{inputs.diff.stdout}} from {{inputs.base.stdout}}
+Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.verifier.evidence}}
 `,
     acceptance: `---
 name: Acceptance
@@ -248,6 +275,8 @@ Try {{inputs.implementer.summary}}
   }
 
   const SHIP = () => JSON.stringify({ decision: "ship" });
+  const VERIFIED = () => JSON.stringify({ verified: true, evidence: "npm test: 12 passed, 0 failed" });
+  const APPROVED = () => JSON.stringify({ verdict: "approved", replan: false });
   const APPROVE = () => JSON.stringify({ decision: "approve" });
   const PLAN = (visit: number) => JSON.stringify({ questions: "", plan: `plan ${visit}`, planFile: "docs/superpowers/plans/2026-09-08-thing.md" });
 
@@ -257,6 +286,7 @@ Try {{inputs.implementer.summary}}
     plans: (visit: number) => string = PLAN,
     planReviews: (visit: number) => string = APPROVE,
     clarifies: (visit: number) => string = () => JSON.stringify({ answers: "A: the blue one." }),
+    verifies: (visit: number) => string = VERIFIED,
   ) {
     const visits: Record<string, number> = {};
     return new FakeModelProvider((req) => {
@@ -271,6 +301,8 @@ Try {{inputs.implementer.summary}}
           return planReviews(visit);
         case "implementer":
           return JSON.stringify({ summary: `pass ${visit}`, changed: true });
+        case "verifier":
+          return verifies(visit);
         case "reviewer":
           return reviews(visit);
         case "acceptance":
@@ -288,8 +320,8 @@ Try {{inputs.implementer.summary}}
 
     const provider = fakeTeam((visit) =>
       visit === 1
-        ? JSON.stringify({ verdict: "changes-requested", feedback: "Rename `x` to `count`." })
-        : JSON.stringify({ verdict: "approved" }),
+        ? JSON.stringify({ verdict: "changes-requested", replan: true, feedback: "Rename `x` to `count`." })
+        : APPROVED(),
     );
     const { ran, runCommand } = fakeGit({ staged: true });
 
@@ -347,7 +379,7 @@ Try {{inputs.implementer.summary}}
     const workflow = getWorkflow("dev");
 
     const provider = fakeTeam(
-      (visit) => (visit === 1 ? JSON.stringify({ verdict: "changes-requested", feedback: "Wrong seam." }) : JSON.stringify({ verdict: "approved" })),
+      (visit) => (visit === 1 ? JSON.stringify({ verdict: "changes-requested", replan: true, feedback: "Wrong seam." }) : APPROVED()),
       SHIP,
       (visit) => (visit === 2 ? JSON.stringify({ questions: "Q: keep the old API?", plan: "", planFile: "" }) : PLAN(visit)),
     );
@@ -371,7 +403,7 @@ Try {{inputs.implementer.summary}}
     const workflow = getWorkflow("dev");
 
     const provider = fakeTeam(
-      () => JSON.stringify({ verdict: "approved" }),
+      APPROVED,
       (visit) =>
         visit === 1
           ? JSON.stringify({ decision: "revise", requests: "Make the button blue, not green." })
@@ -404,7 +436,7 @@ Try {{inputs.implementer.summary}}
     const workflow = getWorkflow("dev");
 
     const provider = fakeTeam(
-      () => JSON.stringify({ verdict: "approved" }),
+      APPROVED,
       () => JSON.stringify({ decision: "hold" }),
     );
     const { ran, runCommand } = fakeGit({ staged: true });
@@ -423,7 +455,7 @@ Try {{inputs.implementer.summary}}
     for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
     const workflow = getWorkflow("dev");
 
-    const provider = fakeTeam(() => JSON.stringify({ verdict: "approved" }));
+    const provider = fakeTeam(APPROVED);
     const { ran, runCommand } = fakeGit({ staged: false });
 
     const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
@@ -436,12 +468,67 @@ Try {{inputs.implementer.summary}}
     expect(ran.find((c) => c[0] === "sh")).toBeDefined();
   });
 
+  it("sends a bounded fix straight to the implementer, and a plan fault to the planner", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const provider = fakeTeam((visit) =>
+      visit === 1
+        ? JSON.stringify({ verdict: "changes-requested", replan: false, feedback: "Call `checkOnlineUsers()` after `setPresenceWatchList`." })
+        : APPROVED(),
+    );
+    const { runCommand } = fakeGit({ staged: true });
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
+
+    expect(state.status).toBe("completed");
+    // The planner ran once: a bounded fix does not cost a plan revision, and
+    // the plan is not shown to the person again.
+    expect(state.visitCounts.planner).toBe(1);
+    expect(state.visitCounts["plan-review"]).toBe(1);
+    expect(state.visitCounts.implementer).toBe(2);
+    // The fix is verified and reviewed again before it ships.
+    expect(state.visitCounts.verifier).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(2);
+    const builds = provider.callsFor("implementer").map((c) => c.messages[0].content);
+    expect(builds[0]).not.toContain("checkOnlineUsers");
+    expect(builds[1]).toContain("checkOnlineUsers");
+  });
+
+  it("sends the verifier's gaps back to the implementer, and gives up after three", async () => {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    const workflow = getWorkflow("dev");
+
+    const gaps = () => JSON.stringify({ verified: false, evidence: "npm test: 1 failed", gaps: "tests/a.test.ts fails: expected 2, got 3" });
+    const once = fakeTeam(APPROVED, SHIP, PLAN, APPROVE, undefined, (visit) => (visit === 1 ? gaps() : VERIFIED()));
+    const { runCommand } = fakeGit({ staged: true });
+
+    const state = await runWorkflow(workflow, { provider: once, runCommand, input: { task: "Add a thing" } });
+    expect(state.status).toBe("completed");
+    expect(state.visitCounts.verifier).toBe(2);
+    expect(state.visitCounts.implementer).toBe(2);
+    // The reviewer sees only a tree that passed, and reads the evidence.
+    expect(state.visitCounts.reviewer).toBe(1);
+    expect(once.callsFor("reviewer")[0].messages[0].content).toContain("12 passed");
+    expect(once.callsFor("implementer")[1].messages[0].content).toContain("expected 2, got 3");
+
+    const never = fakeTeam(APPROVED, SHIP, PLAN, APPROVE, undefined, gaps);
+    const events: WorkflowEvent[] = [];
+    const stuck = await runWorkflow(workflow, { provider: never, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+    expect(stuck.status).toBe("failed");
+    expect(terminalOf(events)).toBe("not-verified");
+    expect(stuck.visitCounts.verifier).toBe(3);
+    expect(stuck.visitCounts.reviewer ?? 0).toBe(0);
+  });
+
   it("gives up on a review that never approves, keeping the branch", async () => {
     ensureDefaultWorkflows();
     for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
     const workflow = getWorkflow("dev");
 
-    const provider = fakeTeam(() => JSON.stringify({ verdict: "changes-requested", feedback: "No." }));
+    const provider = fakeTeam(() => JSON.stringify({ verdict: "changes-requested", replan: true, feedback: "No." }));
     const { ran, runCommand } = fakeGit({ staged: true });
     const events: WorkflowEvent[] = [];
 
@@ -459,7 +546,7 @@ Try {{inputs.implementer.summary}}
     const workflow = getWorkflow("dev");
 
     const provider = fakeTeam(
-      () => JSON.stringify({ verdict: "approved" }),
+      APPROVED,
       SHIP,
       (visit) => (visit === 1 ? JSON.stringify({ questions: "Q: which button?", plan: "", planFile: "" }) : PLAN(visit)),
     );
@@ -489,7 +576,7 @@ Try {{inputs.implementer.summary}}
     const workflow = getWorkflow("dev");
 
     const provider = fakeTeam(
-      () => JSON.stringify({ verdict: "approved" }),
+      APPROVED,
       SHIP,
       PLAN,
       (visit) => (visit === 1 ? JSON.stringify({ decision: "revise", feedback: "Split task 2 in two." }) : APPROVE()),
@@ -513,7 +600,7 @@ Try {{inputs.implementer.summary}}
     for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
     const workflow = getWorkflow("dev");
 
-    const provider = fakeTeam(() => JSON.stringify({ verdict: "approved" }), SHIP, PLAN, () => JSON.stringify({ decision: "hold" }));
+    const provider = fakeTeam(APPROVED, SHIP, PLAN, () => JSON.stringify({ decision: "hold" }));
     const { ran, runCommand } = fakeGit({ staged: true });
     const events: WorkflowEvent[] = [];
 

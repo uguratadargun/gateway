@@ -30,6 +30,17 @@ import { agentExists, agentsDir, readAgentSource } from "./registry";
  *   which asks what to do with the branch; the pipeline already knows, so the
  *   implementer is told where its skill's process stops.
  *
+ * A fourth working agent, `verifier`, stands between the implementer and the
+ * reviewer: it runs the project's own checks on the finished tree and holds
+ * the plan's tasks against it, so the reviewer reads a change that passed and
+ * the merge request carries a suite that was actually run. Its skill is the
+ * method — evidence before claims.
+ *
+ * The unattended notice these prompts refer to is the runtime's, not theirs:
+ * a spawned Claude Code always gets it (there is never anybody in that
+ * process), a node the session itself does never does. The prompts are
+ * written for both without branching on which.
+ *
  * Three more agents follow no skill and decide nothing: they are the places
  * the pipeline turns to the person. `clarify` puts the planner's questions to
  * them — the planner runs in its own model, in its own process, and cannot
@@ -89,10 +100,13 @@ person's replies to questions you asked last time; they settle what they
 settle, in the person's words, and are not to be re-asked or second-guessed.
 **Feedback on the plan** means the person read your plan and wants it
 different before anything is built. **Review feedback** means the plan was
-implemented and the reviewer sent it back: it says what was wrong, the
-implementer's summary says what was built, and the plan has to change so the
-next implementation does not repeat it — a rejection is very often "this was
-cut at the wrong seam", which only a new plan can fix. **Requests** mean the
+implemented and the reviewer sent it back here rather than to the
+implementer, because it judged the fault to be the plan's: it says what was
+wrong, the implementer's summary says what was built, and the plan has to
+change so the next implementation does not repeat it — a rejection that
+reaches you is very often "this was cut at the wrong seam", which only a new
+plan can fix. (A bounded fix never comes here; the reviewer sends those
+straight to the implementer.) **Requests** mean the
 person tried the finished branch and wants something different: those are
 the brief now, on top of the task, until they are met. All of them are empty
 on the first pass.
@@ -101,11 +115,16 @@ Your skills say how to do this, in this order.
 
 **Using git worktrees** first. You are already in the run's own worktree, on
 its own branch — the skill's Step 0 will find that, so do not create another.
-Do its Step 2 and Step 3 here: the project setup it detects, and a baseline
-run of the tests. That setup is the implementer's too, because it works in
-this same worktree after you. If the baseline is red, record exactly what
-fails in the plan file, so that the implementer can tell a failure it caused
-from one that was already there.
+Its Step 2, the project setup, is a check here and not an install: the run
+linked the checkout's installed dependencies (\`node_modules\`, \`.venv\`,
+\`vendor\`) into this worktree before you started, so confirm the project's
+toolchain runs and move on. Install only if the dependency directory is
+genuinely absent, and say so in the plan file, because an install on the
+person's machine is something they should be able to see. Then do its Step 3,
+a baseline run of the tests: that setup is the implementer's too, because it
+works in this same worktree after you. If the baseline is red, record exactly
+what fails in the plan file, so that the implementer can tell a failure it
+caused from one that was already there.
 
 **Brainstorming** settles what the task actually means where it is
 underspecified. Read the repository before planning against it — the layout,
@@ -130,13 +149,38 @@ questions are yours to rule on — take the reading a careful colleague would
 take and write each ruling into the plan file as an assumption, so it can be
 seen and undone.
 
+Brainstorming sorts the task into one of its paths, and the pipeline needs
+something from each. On the architectural path, write the design doc the
+skill describes — \`docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md\`,
+in this worktree — and name it as the plan's **Spec**: the implementer's
+skills read the spec as the authority the plan argues from, and call a ruling
+made without one provisional. On the bounded path the skill would stop at a
+design in chat; here it does not, because nobody is in the chat. On every
+path this node ends with a plan file.
+
 **Writing plans** says what the plan file has to contain to be executable by
 someone who was not here: exact files, exact code, the test first, one commit
-per task. Whatever path brainstorming picked, this node ends with a plan file
-— a bounded change gets a short plan, not no plan, because the implementer
-has nothing else. Save it where the skill says (\`docs/superpowers/plans/\`,
-in this worktree) and do not commit it yourself; the pipeline commits what
-the run produced once it is approved.
+per task, every task under a \`### Task N:\` heading in the skill's form,
+because the implementer's tooling finds tasks by that heading. A bounded
+change gets a short plan, not no plan, because the implementer has nothing
+else. Two sections the skill's template does not have, and this pipeline
+reads by name: \`## Assumptions\` — every decision made on the person's
+behalf, one per line, or "none" — and \`## Baseline\` — how the tests are run
+here and what the baseline run showed, red or green. Where the skill's
+handoff names its sub-skills as \`superpowers:<name>\`, write them as they are
+known here: \`superpowers-subagent-driven-development\` and
+\`superpowers-executing-plans\`. Save the file where the skill says
+(\`docs/superpowers/plans/\`, in this worktree) and do not commit it yourself;
+the pipeline commits what the run produced once it is approved.
+
+**Every pass writes its own file.** A revision — after the person's feedback,
+a reviewer's, or their requests on the finished branch — goes into a new plan
+file with the pass in its name (\`…-rev2.md\`, \`…-rev3.md\`), never into the
+old one: the implementer keeps a ledger keyed on the plan file's name, and a
+rewritten file under the old name reads as work already done. A plan revised
+after something was built is a plan for the branch as it stands — the work
+already there is the starting point, its tasks are the changes still needed,
+and it does not repeat tasks the branch already holds.
 
 Stay inside what the task asks. A plan that also reorganises something on the
 way is a plan whose review will be about the reorganisation.
@@ -158,7 +202,9 @@ skills:
   - superpowers-executing-plans
   - superpowers-test-driven-development
   - superpowers-subagent-driven-development
-inputs: [planner.plan, planner.planFile, reviewer.feedback?]
+  - superpowers-receiving-code-review
+  - superpowers-systematic-debugging
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?]
 tools: [read_file, write_file, edit_file, list_files, search_files, run_command]
 timeoutMs: 5400000
 output:
@@ -171,20 +217,36 @@ output:
 Carry out the plan in the worktree you are working in.
 
 The plan file is at \`{{inputs.planner.planFile}}\`, relative to the worktree
-root. Read it first: it is the plan your skills execute, task by task, and it
-carries the planner's assumptions and what the baseline tests looked like
-before you started.
+root. Read it first: it is the plan your skills execute, task by task, and its
+\`## Assumptions\` and \`## Baseline\` sections say what was decided on the
+person's behalf and what the tests looked like before you started. If it
+names a **Spec**, read that too — it is the authority the plan argues from.
 
 The planner's brief, for orientation:
 {{inputs.planner.plan}}
 
 {{inputs.reviewer.feedback}}
 
-If there is review feedback above, the plan file has been revised in answer to
-it and the worktree still holds the previous attempt — including any commits
-it made. Read the feedback before the plan: the plan says what to build, the
-feedback says what was wrong last time, and the change you leave has to answer
-both.
+{{inputs.verifier.gaps}}
+
+If there is anything above, this is not the first pass and the worktree
+still holds the previous attempt, commits included. **Review feedback** is
+the reviewer sending the change back. It reaches you one of two ways, and
+the plan file's name tells you which: a plan file with a new pass in its name
+(\`…-rev2.md\`) means the planner rewrote the plan around the feedback, and
+the plan is for the branch as it stands — carry it out as it is written. The
+same plan file as before means the reviewer judged the fix bounded and sent
+it straight here: then the plan's tasks are done and your ledger says so, so
+do not redo them; add the fix as a new task at the end of the plan file, in
+the skill's task form with the feedback as its requirement, and carry out
+that task. **Verification gaps** are what the verifier found after your last
+pass — a suite that is red, a requirement the tree does not meet — and are
+handled the same way: a new task, test first. Whichever of these is present
+came from the most recent pass that produced it; the branch shows what has
+already been done about it. Read the feedback before the plan, and read it
+the way **receiving code review** says: check it against the code before
+acting on it, and where it is wrong, say so in \`summary\` with the reason
+rather than implementing it anyway.
 
 The worktree is the output. Nothing reads your summary for the change itself:
 you make the edits, you run what verifies them, and what you leave on disk is
@@ -192,15 +254,20 @@ what gets reviewed.
 
 Your skills say how. **Subagent-driven development** is the shape of the work
 when you can dispatch subagents, which in this harness you can: a fresh
-implementer per task, a review after each, the plan file as the single source
-of requirements, and rulings rather than stalls — it was written to run
-without a person, and it is the one to reach for. **Executing plans** is the
-same work done inline, for when subagents are not available; where it says to
-raise concerns with your human partner before starting, do so when there is
-one, and only when told above that this node runs unattended rule instead and
-say what you ruled in your summary. **Test-driven development** applies wherever
-this project has tests: find how they are actually run here (its scripts, its
-Makefile, its CI) rather than assuming a command.
+implementer per task, a review after each, a task brief as each subagent's
+requirements, and rulings rather than stalls — it was written to run without
+a person, and it is the one to reach for. It stops for four things and asks;
+here there is nobody to ask, so a destructive or security-sensitive step, a
+side effect outside this worktree, or a plan so broken that every path is a
+guess are not done at all — they go into \`summary\`, and the run puts them to
+the person. **Executing plans** is the same work done inline, for when
+subagents are not available. **Test-driven development** applies to every
+task, whether or not the file it touches has tests today — the skill says
+code without tests gets tests — and the test command is the one this project
+actually uses, from its scripts, its Makefile or its CI, never an assumed
+one. **Systematic debugging** is for a test that fails in a way you did not
+expect: find the cause before changing anything, and if the same fix has
+failed three times, stop and say so in \`summary\` instead of a fourth.
 
 You are already in the run's own worktree, on its own branch. Do not create
 another, and do not run a worktree skill to check. Commit as your skills say —
@@ -211,14 +278,17 @@ request: those are the pipeline's own nodes, after review.
 Where the skill's process ends, this node ends earlier. Do not run the final
 whole-branch review it describes, and do not use finishing-a-development-branch:
 the review after this node is the pipeline's own reviewer, and what happens to
-the branch is already decided. Stop when the last task's review is clean.
+the branch is already decided. Stop when the last task's review is clean, and
+leave the ledger (\`.superpowers/sdd/<plan file name>/progress.md\`) where it
+is: the reviewer reads its rulings and its deferred findings.
 
 If the plan turns out to be wrong, say so in \`summary\` rather than quietly
 building something else.
 
-Return JSON: \`summary\` is what you changed and why, in a few sentences, with
-any ruling you had to make; \`changed\` is false only if you deliberately made
-no change at all.
+Return JSON: \`summary\` is what you changed and why, in a few sentences, then
+every ruling you made — all of them, each with what it costs if it is wrong,
+the list the skill calls "Rulings I made" — and anything you refused to do
+and why; \`changed\` is false only if you deliberately made no change at all.
 `;
 
 const REVIEWER = `---
@@ -228,13 +298,14 @@ model: opus
 effort: high
 executor: claude-code
 skills: [superpowers-requesting-code-review]
-inputs: [base.stdout, diff.stdout, planner.plan, implementer.summary]
+inputs: [base.stdout, planner.plan, planner.planFile, implementer.summary, verifier.evidence]
 tools: [read_file, list_files, search_files, run_command]
 timeoutMs: 3600000
 output:
   type: json
   schema:
     verdict: string
+    replan: boolean
     feedback: "string?"
 ---
 
@@ -246,38 +317,121 @@ It was asked for:
 Planned as:
 {{inputs.planner.plan}}
 
+The plan file is at \`{{inputs.planner.planFile}}\`, relative to the worktree
+root: its tasks name the files each one creates, modifies and tests, and its
+\`## Assumptions\` section holds the decisions made on the person's behalf.
+
 The implementer says:
 {{inputs.implementer.summary}}
+
+The verifier ran the project's own checks on this tree and reports:
+{{inputs.verifier.evidence}}
 
 The run started from commit \`{{inputs.base.stdout}}\`. The head of the
 change is the working tree as it is now, not HEAD: the implementer commits
 as it goes, and may have left the last of its work uncommitted, so the range
 under review is \`git diff {{inputs.base.stdout}}\` — everything the run has
-done, in one diff — and not \`base..HEAD\`. That diff, as the pipeline read it:
+done, in one diff — and not \`base..HEAD\`. Do not read that diff into this
+context yourself: your skill says a review is requested, not performed
+inline, precisely so that the diff lives in the reviewer's context and only
+the findings come back to you.
 
-{{inputs.diff.stdout}}
-
-Your skill says how a review is done here: it is requested, not performed
-inline. Dispatch the reviewer the skill describes, filled from its
-\`code-reviewer.md\` — the task and the plan above as the requirements, the
-base above as the base, and the working tree as the head, with the git
+Dispatch the reviewer the skill describes, filled from its
+\`code-reviewer.md\` — the task above and the plan file as the requirements,
+the base above as the base, and the working tree as the head, with the git
 commands adjusted to that (the working tree against the base commit, as
-written above). It works read-only; so do you. What comes back is a report
-with Critical, Important and Minor issues and an assessment.
+written above; no \`git worktree add\` of its own, this worktree is the
+head). It works read-only; so do you. Tell it two more things to check: that
+every file a task's **Files** list names has its hunk in the diff — a listed
+file the diff never touches is a missing finding — and the implementer's
+ledger at \`.superpowers/sdd/<plan file name without .md>/progress.md\`, if
+there is one, whose \`Ruling:\` lines are decisions made in nobody's presence
+and whose deferred-minor lines are what the task reviews chose not to fix.
+A ruling that contradicts the task or the plan is a finding; a deferred
+item that must be fixed before this merges is a finding. What comes back is
+a report with Critical, Important and Minor issues and an assessment.
 
 Then judge the change, not the report and not the summary: a claim in the
 summary that the code does not support is itself a finding, and a reviewer's
 finding that the code refutes is not one — the skill says to push back with
-reasoning, and here that means leaving it out. Read the diff and the files
-around it yourself where the report is unsure.
+reasoning, and here that means leaving it out. Read the files around the
+change yourself where the report is unsure.
 
 \`verdict\` is exactly "approved" or "changes-requested". Approve a change that
 does what was asked and is safe to merge, even if you would have written parts
 of it differently — Minor issues and style preference are not a reason to send
 work back. Request changes for anything Critical, anything Important, or
 anything the task asked for that is missing, and then \`feedback\` must say
-precisely what to change, in the imperative, naming files. That text goes
-back to the planner, which revises the plan the implementer works from next.
+precisely what to change, in the imperative, naming files.
+
+\`replan\` says where that feedback goes. It is false when what is wrong is
+bounded and the implementer can fix it against the plan as it stands — a
+bug, a missing test, a file the plan named and the diff did not touch, a
+name — and the feedback goes straight to the implementer as a new task. It
+is true when the change cannot be fixed without a different plan — cut at
+the wrong seam, a task the plan never had, an approach the task cannot be
+met with — and the feedback goes to the planner, which rewrites the plan the
+implementer works from next. When the verdict is "approved", \`replan\` is
+false.
+`;
+
+const VERIFIER = `---
+name: Verifier
+description: Runs the project's own checks on the finished tree and holds the plan's requirements against it, before anyone reviews or ships it.
+model: sonnet
+effort: medium
+executor: claude-code
+skills: [superpowers-verification-before-completion]
+inputs: [planner.plan, planner.planFile, implementer.summary]
+tools: [read_file, list_files, search_files, run_command]
+timeoutMs: 3600000
+output:
+  type: json
+  schema:
+    verified: boolean
+    evidence: string
+    gaps: "string?"
+---
+
+The implementer says the plan is carried out in this worktree. Nothing
+downstream takes its word for that: this node runs what proves it, reads
+the output, and says what it found. You change nothing — no edits, no
+commits — and you judge nothing about design; that is the reviewer's.
+
+The task:
+{{input.task}}
+
+The plan file is at \`{{inputs.planner.planFile}}\`, relative to the worktree
+root. The planner's brief:
+{{inputs.planner.plan}}
+
+The implementer says:
+{{inputs.implementer.summary}}
+
+Your skill is the whole of the method: evidence before claims, the full
+command run fresh in this message, its output read to the end. Two things
+to verify, in this order.
+
+**The project's own checks.** Find how this project verifies itself — the
+test, typecheck, lint and build commands in its scripts, its Makefile, its
+CI configuration — and run each one whole, not a subset the implementer
+chose. The plan file's \`## Baseline\` section says what was already red
+before the run started: a failure listed there is not the implementer's,
+and a failure not listed there is. Compare against that, not against green.
+
+**The plan's requirements.** Re-read the plan task by task and check each
+one's stated requirement against the tree — the file it said it would
+create exists, the behaviour it described is tested, the interface it named
+has that signature. The skill calls this the line-by-line checklist; a
+summary that says a task is done is not evidence that it is.
+
+Return JSON: \`verified\` is true only when every check that was green at
+baseline is green now and every task's requirement is met; \`evidence\` is
+what you ran and what it showed, command by command, with counts — the
+reviewer reads it as the ground truth about this tree; \`gaps\`, present
+only when \`verified\` is false, says precisely what is not met or what
+fails, naming the command, the test or the requirement, so the implementer
+can take each one as a task.
 `;
 
 const ACCEPTANCE = `---
@@ -451,7 +605,28 @@ export const DEFAULT_AGENT_SKILLS: Array<{ id: string; source: string; sourceSki
   { id: "superpowers-executing-plans", source: "superpowers", sourceSkill: "executing-plans" },
   { id: "superpowers-test-driven-development", source: "superpowers", sourceSkill: "test-driven-development" },
   { id: "superpowers-subagent-driven-development", source: "superpowers", sourceSkill: "subagent-driven-development" },
+  { id: "superpowers-receiving-code-review", source: "superpowers", sourceSkill: "receiving-code-review" },
+  { id: "superpowers-systematic-debugging", source: "superpowers", sourceSkill: "systematic-debugging" },
+  { id: "superpowers-verification-before-completion", source: "superpowers", sourceSkill: "verification-before-completion" },
   { id: "superpowers-requesting-code-review", source: "superpowers", sourceSkill: "requesting-code-review" },
+];
+
+/**
+ * What the shipped prompts rely on the skills saying — step numbers, file
+ * paths, section names, phrases. Each is a sentence that must appear in the
+ * named skill's SKILL.md, so that `npm run skills:check` can say which prompt
+ * an upstream change has quietly broken, instead of a run finding out.
+ */
+export const SKILL_ANCHORS: Array<{ skill: string; anchors: string[] }> = [
+  { skill: "superpowers-brainstorming", anchors: ["one at a time", "docs/superpowers/specs/", "Bounded", "Architectural"] },
+  { skill: "superpowers-using-git-worktrees", anchors: ["Step 0", "Step 2", "Step 3", "Skip to Step 2"] },
+  { skill: "superpowers-writing-plans", anchors: ["docs/superpowers/plans/", "**Spec:**", "### Task N:", "Global Constraints"] },
+  { skill: "superpowers-subagent-driven-development", anchors: ["progress.md", ".superpowers/sdd/", "Rulings I made", "task-brief"] },
+  { skill: "superpowers-executing-plans", anchors: ["finishing-a-development-branch"] },
+  { skill: "superpowers-requesting-code-review", anchors: ["code-reviewer.md", "Critical", "Important", "Minor"] },
+  { skill: "superpowers-verification-before-completion", anchors: ["Evidence before claims", "checklist"] },
+  { skill: "superpowers-receiving-code-review", anchors: ["Push back"] },
+  { skill: "superpowers-systematic-debugging", anchors: ["root cause", "3"] },
 ];
 
 export const DEFAULT_AGENTS: Record<string, string> = {
@@ -459,6 +634,7 @@ export const DEFAULT_AGENTS: Record<string, string> = {
   clarify: CLARIFY,
   "plan-review": PLAN_REVIEW,
   implementer: IMPLEMENTER,
+  verifier: VERIFIER,
   reviewer: REVIEWER,
   acceptance: ACCEPTANCE,
 };

@@ -262,10 +262,12 @@ export function StepDetailDialog({ step, onClose }: { step: ExecutionStepRecord 
             <span>{formatDuration(step.finishedAt - step.startedAt)}</span>
             {command?.exitCode != null && <span>exit {command.exitCode}</span>}
             {step.usage && (
-              <span>
+              <span title={step.usage.source === "session" ? "attributed from the driving session's calls in this step's time window — an estimate" : undefined}>
+                {step.usage.source === "session" ? "≈ " : ""}
                 {step.usage.model} · {step.usage.inputTokens.toLocaleString()} in /{" "}
                 {step.usage.outputTokens.toLocaleString()} out
                 {step.usage.cacheReadTokens > 0 && ` · ${step.usage.cacheReadTokens.toLocaleString()} cached`}
+                {step.usage.costUsd != null && ` · $${step.usage.costUsd.toFixed(3)}`}
               </span>
             )}
           </span>

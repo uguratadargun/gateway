@@ -13,7 +13,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "defaults:restore": "node scripts/restore-defaults.mjs"
+    "defaults:restore": "node scripts/restore-defaults.mjs",
+    "skills:check": "node scripts/check-skills.mjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.6",

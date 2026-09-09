@@ -1,12 +1,13 @@
 import { DEFAULT_TEAM } from "@/lib/def-root";
 import { getDb } from "@/lib/db";
+import { costForUsage, tierOf } from "@/lib/pricing";
 import type { StepRecord, WorkflowState } from "@/runtime/state";
 
 import type { ToolCallRecord } from "@/runtime/state";
 
 import type { ExecutionQuota } from "./quota";
 import { summarizeExecutionQuota } from "./quota-summary";
-import type { ExecutionClient, ExecutionRecord, ExecutionStepRecord, ExecutionWorkspace, WorkflowLayout } from "./types";
+import type { ExecutionClient, ExecutionRecord, ExecutionStepRecord, ExecutionWorkspace, StepUsage, WorkflowLayout } from "./types";
 
 /**
  * Execution history in SQLite. Definitions stay in files; only what actually
@@ -80,8 +81,8 @@ export function createExecution(
     .prepare(
       `INSERT INTO workflow_executions
          (id, workflow_id, status, started_at, input_json, resumed_from,
-          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver, client_session)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       id,
@@ -98,7 +99,114 @@ export function createExecution(
       meta.client?.branch ?? null,
       startedAt,
       meta.driver ?? "engine",
+      meta.client?.session ?? null,
     );
+}
+
+/**
+ * Reopens a session-driven run that failed, so the session can try the node
+ * it failed on again in the same worktree.
+ *
+ * The walk a session replays stops at the first failed step, so the failed
+ * attempt is taken out of the history rather than marked: the node then reads
+ * as never having run, and `gate next` hands it out at the same step index.
+ * Every step before it stays — nothing that already ran is redone. Only the
+ * trailing failed steps go; a failed step is always the last thing such a run
+ * recorded, because failing is what ended it.
+ *
+ * Returns which nodes were dropped for retry, or null when the run is not one
+ * this applies to: still running, never failed, or not a session's.
+ */
+export function reopenSessionExecution(id: string, at = Date.now()): { retried: string[] } | null {
+  const db = getDb();
+  const execution = getExecution(id);
+  if (!execution || execution.driver !== "session" || execution.status !== "failed") return null;
+  const failed = db
+    .prepare(
+      `SELECT step_index, node_id FROM workflow_execution_steps
+        WHERE execution_id = ? AND status = 'failed'
+          AND step_index > COALESCE((SELECT MAX(step_index) FROM workflow_execution_steps WHERE execution_id = ? AND status = 'completed'), -1)
+        ORDER BY step_index ASC`,
+    )
+    .all(id, id) as Array<{ step_index: number; node_id: string }>;
+  for (const step of failed) {
+    db.prepare("DELETE FROM workflow_execution_steps WHERE execution_id = ? AND step_index = ?").run(id, step.step_index);
+  }
+  const remaining = db.prepare("SELECT COUNT(*) AS n FROM workflow_execution_steps WHERE execution_id = ?").get(id) as { n: number };
+  db.prepare(
+    `UPDATE workflow_executions
+        SET status = 'running', finished_at = NULL, error_code = NULL, error_message = NULL,
+            cancel_requested = 0, last_seen_at = ?, step_count = ?, quota_json = NULL, paused_at = NULL
+      WHERE id = ?`,
+  ).run(at, Number(remaining.n), id);
+  return { retried: failed.map((s) => s.node_id) };
+}
+
+interface SessionUsageRow {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
+/**
+ * Costs a step the session did itself, from the gateway's own record.
+ *
+ * A node the session runs — or runs as its subagent — makes its model calls
+ * through the person's own Claude Code, which the gateway files under that
+ * session's id, not under the run. So such a step arrives with no usage, and
+ * a run driven this way showed as nearly free. The plugin's session hook tells
+ * the CLI the session's id, the run records it, and here the calls that
+ * session made between the step's start and end are summed against the step.
+ * An estimate, and marked as one: the session may have answered something
+ * else in the same minutes. Better than a zero nobody believes.
+ *
+ * Only a step without usage of its own, and only once.
+ */
+export function attributeSessionUsage(executionId: string, stepIndex: number): StepUsage | null {
+  const db = getDb();
+  const execution = getExecution(executionId);
+  const session = execution?.client?.session;
+  if (!execution || !session) return null;
+  const step = db
+    .prepare("SELECT started_at, finished_at, model FROM workflow_execution_steps WHERE execution_id = ? AND step_index = ?")
+    .get(executionId, stepIndex) as { started_at: number; finished_at: number; model: string | null } | undefined;
+  if (!step || step.model) return null;
+  const rows = db
+    .prepare(
+      `SELECT model, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+              SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,
+              SUM(COALESCE(cache_creation_tokens, 0)) AS cache_creation_tokens
+         FROM usage
+        WHERE session_id = ? AND ts BETWEEN ? AND ? AND status < 400
+        GROUP BY model`,
+    )
+    .all(session, step.started_at, step.finished_at) as unknown as SessionUsageRow[];
+  if (!rows.length) return null;
+  const usage: StepUsage = { model: "", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0, source: "session" };
+  let dominant = -1;
+  for (const r of rows) {
+    usage.inputTokens += r.input_tokens;
+    usage.outputTokens += r.output_tokens;
+    usage.cacheReadTokens += r.cache_read_tokens;
+    usage.costUsd! += costForUsage(
+      tierOf(r.model),
+      { input: r.input_tokens, output: r.output_tokens, cacheRead: r.cache_read_tokens, cacheCreation: r.cache_creation_tokens },
+      { model: r.model },
+    );
+    // One model names the step; the cost above is exact across all of them.
+    if (r.output_tokens > dominant) {
+      dominant = r.output_tokens;
+      usage.model = r.model;
+    }
+  }
+  db.prepare(
+    `UPDATE workflow_execution_steps
+        SET model = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, usage_source = 'session'
+      WHERE execution_id = ? AND step_index = ?`,
+  ).run(usage.model, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.costUsd, executionId, stepIndex);
+  return usage;
 }
 
 /**
@@ -286,6 +394,7 @@ interface ExecutionRow {
   driver: string | null;
   paused_at: number | null;
   paused_ms: number | null;
+  client_session: string | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -305,8 +414,8 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
     userId: r.user_id,
     teamId: r.team_id ?? DEFAULT_TEAM,
     client:
-      r.client_host || r.client_repo || r.client_branch
-        ? { host: r.client_host, repo: r.client_repo, branch: r.client_branch, version: null }
+      r.client_host || r.client_repo || r.client_branch || r.client_session
+        ? { host: r.client_host, repo: r.client_repo, branch: r.client_branch, version: null, session: r.client_session ?? null }
         : null,
     lastSeenAt: r.last_seen_at,
     cancelRequested: !!r.cancel_requested,
@@ -409,6 +518,8 @@ interface StepRow {
   output_tokens: number;
   cache_read_tokens: number;
   tool_calls_json: string | null;
+  cost_usd: number | null;
+  usage_source: string | null;
 }
 
 /** The exact path a run took, in order — the source for replay. */
@@ -433,6 +544,8 @@ export function getExecutionSteps(executionId: string): ExecutionStepRecord[] {
           inputTokens: r.input_tokens,
           outputTokens: r.output_tokens,
           cacheReadTokens: r.cache_read_tokens,
+          ...(r.cost_usd != null ? { costUsd: r.cost_usd } : {}),
+          source: r.usage_source === "session" ? "session" : "reported",
         }
       : null,
     toolCalls: parse<ToolCallRecord[] | null>(r.tool_calls_json, null),

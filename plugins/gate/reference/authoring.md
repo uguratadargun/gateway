@@ -25,8 +25,12 @@ output:
     notes: "string?"
 timeoutMs: 3600000                  # DEFAULT when omitted, and what a new agent should
                                     # carry. Covers the whole node — every tool round,
-                                    # not one model call. Raise it for an agent that
-                                    # works a large repo; 0 = no timeout at all.
+                                    # not one model call. On the server the node is
+                                    # stopped at it; in a run a session drives it is
+                                    # the point the person is told the node is
+                                    # overrunning, and stopping is theirs (gate cancel).
+                                    # Raise it for an agent that works a large repo;
+                                    # 0 = never mention it.
 maxTokens: 32000                    # optional; thinking counts against it (default 8192)
 maxToolIterations: 0                # optional; 0 (the default) = as many tool rounds as it needs
 executor: gate                      # or: claude-code — see Executors below
@@ -65,13 +69,15 @@ workspace: {}                   # this pipeline works in a git worktree of the
                                 # add `repo: /path` to pin one project instead.
                                 # omit `workspace` entirely for a prose-only
                                 # pipeline — then agents get NO tools.
-                                # No ceilings unless you ask for them:
-maxWorkflowSteps: 0             # 0 = uncapped; a number stops the whole run there
-maxVisits: 0                    # 0 = uncapped; a number fails a node that revisits past it
-maxCostUsd: 0                   # 0 = uncapped. THIS is the ceiling worth setting: how
-                                # many rounds a task needs cannot be known up front,
-                                # what you will pay for it can. Checked between nodes,
-                                # cumulative across a Continue.
+                                # No ceilings. Rounds cannot be counted up front, and
+                                # a run cut off mid-review throws away everything it
+                                # already spent. Loops end on give-up edges (below)
+                                # that land on a terminal naming what is stuck; the
+                                # cost is read on the execution page, not enforced.
+maxWorkflowSteps: 0             # 0 = uncapped, and what the shipped pipeline sets
+maxVisits: 0                    # 0 = uncapped
+maxCostUsd: 0                   # 0 = uncapped. The engine honours a number here on
+                                # the server; a run a session drives does not read it.
 nodes:
   - id: planner
     type: agent
@@ -85,8 +91,9 @@ nodes:
     command: [npm, test]        # argv array, no shell
     cwd: packages/core          # optional, relative to the worktree
     timeoutMs: 3600000          # DEFAULT when omitted — same hour an agent gets.
-                                # A test suite that runs longer needs a bigger
-                                # number here, or 0 for no timeout at all.
+                                # A command is killed at it wherever it runs: a
+                                # suite that takes longer needs a bigger number,
+                                # or 0 for no timeout at all.
     edges:
       - when: outputs.tests.ok == true
         to: checks
@@ -310,15 +317,23 @@ Every tool call it makes is streamed back (`--output-format stream-json`) and
 becomes a `tool.called` event, so a claude-code node is watchable on the
 executions page while it runs, not only once it is over.
 
-Routing, metering and `maxCostUsd` are unaffected: the child is pointed at this
-gate's own gateway, so every call it makes is routed and counted exactly like one
-gate made itself. It needs a `workspace` — the worktree is what it runs in — and it runs
-unattended with `--permission-mode bypassPermissions`, the
-`--dangerously-skip-permissions` setting: an implementer that must run the
-project's own toolchain cannot have its commands enumerated in advance, and a
-denied call in an unattended run surfaces as a mysterious failure an hour later.
-Know what that buys and costs — the worktree is a throwaway branch, but Bash is
-not confined to it, so a node is bounded by the machine gate runs on.
+Routing and metering are unaffected: the child is pointed at this gate's own
+gateway, so every call it makes is routed and counted exactly like one gate
+made itself. It needs a `workspace` — the worktree is what it runs in — and it
+runs unattended with `--permission-mode auto --permission-prompts none`:
+`auto` decides without asking, and anything that would still have prompted is
+denied rather than left hanging on a question nobody is there to answer. (Not
+`bypassPermissions`: Claude Code refuses that as root, which is how gate runs
+as a service.) An implementer that must run the project's own toolchain cannot
+have its commands enumerated in advance, and a denied call surfaces in the
+step's error as a count of denials. Know what that buys and costs — the
+worktree is a throwaway branch, but Bash is not confined to it, so a node is
+bounded by the machine gate runs on.
+
+A node the session runs itself, or runs as its subagent, is costed too: the
+session's own gateway calls between the step's start and its end are summed
+against the step, marked as an attribution rather than a measurement, so a run
+driven from a session no longer reads as nearly free.
 
 ## Skills — the process an agent follows
 
@@ -352,10 +367,15 @@ with a person in it and a pipeline node often has none. Three things the
 - **They stop for a human.** Brainstorming will not proceed past its approval
   gate; executing plans raises concerns "before starting". A node run headless
   or on gate's own loop is told, in its system prompt, that it is running
-  unattended and should rule and record instead; a run driven from a session
-  is not told that, because the person is right there. Write the prompt to
-  follow the skill as written, with the unattended notice as the only
-  exception — never leave the agent to guess whether anyone is listening; it
+  unattended and should rule and record instead. Who gets the notice follows
+  the executor, not the driver: every `claude-code` node does, as a worker
+  and as a subagent of the person's session alike, because neither can ask
+  them; an `executor: gate` node the session does itself never does, because
+  there the person is right there. So a claude-code agent's prompt may take
+  "unattended" as given — a prompt that hedges "when there is a person" is
+  hedging against a case that does not happen — and must give the questions
+  a skill would ask a way out (an output field the pipeline carries to the
+  person). Never leave the agent to guess whether anyone is listening; it
   guesses "nobody", and approves its own plan.
 - **They commit as they go.** Writing plans puts a commit step in every task;
   subagent-driven development commits after each one. A pipeline that then
@@ -365,12 +385,28 @@ with a person in it and a pipeline node often has none. Three things the
   subagent-driven development end in `finishing-a-development-branch`, which
   asks what to do with the branch. The pipeline already knows; tell the agent
   where its skill's process stops.
+- **They keep state keyed on file names.** Subagent-driven development keeps
+  a ledger under `.superpowers/sdd/<plan file name>/` and resumes from it:
+  a plan file rewritten under its old name reads as work already done, and
+  the reddened tasks are skipped. A revision is a new file (`…-rev2.md`), and
+  a bounded fix on the same plan is a new task appended to it.
+
+A prompt written against a skill's text is only right for that text. Three
+things keep them together: an imported skill's references to its siblings —
+`../requesting-code-review/code-reviewer.md`, `superpowers:writing-plans` —
+are rewritten to the prefixed ids the team knows them by, so the link the
+prose follows exists (a team that imported before this re-imports with
+replace to get it); a library can be **pinned** to a commit on the Skills
+page, so a sync fetches but does not move it until somebody moves the pin; and
+`npm run skills:check` reads the phrases the shipped prompts rely on (the
+step numbers, the paths, the section names) out of the imported skills and
+names the prompt an upstream change has broken, before a run finds out.
 
 ## Shape that works
 
-gate ships this as `dev`, using the team's `planner`, `implementer` and
-`reviewer`, and its three gates to the person — `clarify`, `plan-review` and
-`acceptance`:
+gate ships this as `dev`, using the team's `planner`, `implementer`,
+`verifier` and `reviewer`, and its three gates to the person — `clarify`,
+`plan-review` and `acceptance`:
 
 ```
 base ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ planner
@@ -378,20 +414,31 @@ base ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ 
           │                    └─▶ plan-review ─▶ plan-decision ─┬─ revise ─▶ planner
           │                                                      ├─ hold ───▶ awaiting-plan-approval
           │                                                      └─ approve ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
-          │                                                                                 └─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
-          │                                                                                                    └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─┐
-          │                                                                                                                             ├─ 4th review ─▶ review-stuck     └─▶ commit ─────┤
-          │                                                                                                                             └─ changes requested ──▶ planner                  ▼
-          │                                                                                                                                                                       acceptance ─▶ decision ─┬─ ship ─▶ merge-request ─▶ done
-          │                                                                                                                                                                                              ├─ hold ─▶ awaiting-approval
-          └───────────────────────────────────────────────────────── revise: the person asked for changes ───────────────────────────────────────────────────────────────────────────────────────────────┘
+          │                                                                        ▲        └─▶ verifier ─┬─ gaps ─▶ implementer
+          │                                                                        │                      ├─ 3rd check ─▶ not-verified
+          │                                                                        │                      └─ verified ─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
+          │                                                                        │                                                    └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─┐
+          │                                                                        │                                                                             ├─ 4th review ─▶ review-stuck     └─▶ commit ─────┤
+          │                                                                        └──────────────────────────────────────────── fix requested (replan: false) ──┤                                                 ▼
+          │                                                                                                                                                      └─ plan changes requested ──▶ planner      acceptance ─▶ decision ─┬─ ship ─▶ merge-request ─▶ done
+          │                                                                                                                                                                                                                        ├─ hold ─▶ awaiting-approval
+          └───────────────────────────────────────────────────────── revise: the person asked for changes ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 `base` records the commit the run started from, `diff` is the working tree
-against it, and the reviewer is handed both — because the agents' skills
-commit as they go and a diff against the index would be empty. The planner
-writes a plan *file* (`planFile`) and the implementer executes that file: the
-implementer's skills take a plan file, not a list of steps in a prompt.
+against it — because the agents' skills commit as they go and a diff against
+the index would be empty — and the reviewer is handed the base and the plan
+file, and has its dispatched reviewer read `git diff <base>` itself: its
+skill says the diff belongs in that reviewer's context, not pasted into the
+coordinator's. The planner writes a plan *file* (`planFile`) and the
+implementer executes that file: the implementer's skills take a plan file,
+not a list of steps in a prompt. The verifier stands between them and the
+review: it runs the project's own checks on the tree as it is and holds every
+task's requirement against it, so the reviewer reads a change that passed and
+the merge request carries a suite that was actually run; its gaps go back to
+the implementer as tasks. A rejected review goes where the reviewer says —
+`replan: false` sends a bounded fix straight to the implementer, `replan:
+true` sends a fault in the plan back to the planner.
 
 The person is in the graph three times, and every one of those nodes runs
 on the loop driving the run — the session — and decides nothing itself.
@@ -421,16 +468,21 @@ unpushed.
 
 It contains no `npm ci` and no `npm test` on purpose: those are facts about one
 project, and a default that assumes them fails on the first machine it meets.
-What a particular repository needs goes around it — install and codegen before
-the planner, its real test command between the implementer and the review, and
-a merge-request node that matches its host. `/gate:design` writes those, reading
+The worktree borrows the checkout's installed dependencies instead
+(`node_modules`, `.venv`, `vendor` are linked in when it is created), and
+the verifier finds the project's own checks by reading it. What a particular
+repository needs goes around it — codegen before the planner, its real test
+command as a deterministic node between the verifier and `stage`, and a
+merge-request node that matches its host. `/gate:design` writes those, reading
 them out of the repository rather than guessing.
 
 The shipped agents follow skills (brainstorming, using git worktrees and
-writing plans for the planner; executing plans, test-driven development and
-subagent-driven development for the implementer; requesting code review for
-the reviewer), which is what makes them a team rather than three prompts. Name
-them; do not copy them into project-specific variants.
+writing plans for the planner; executing plans, test-driven development,
+subagent-driven development, receiving code review and systematic debugging
+for the implementer; verification before completion for the verifier;
+requesting code review for the reviewer), which is what makes them a team
+rather than four prompts. Name them; do not copy them into project-specific
+variants.
 
 Three things in that picture are easy to get wrong, and each one is a rule.
 
@@ -473,22 +525,31 @@ Against the base commit, not a bare `git diff`: the implementer's skills commit
 task by task, and the working tree against the index is then empty however
 much was built. `git diff <base>` is everything the run did, committed or not.
 
-Every reviewer then declares `inputs: [base.stdout, diff.stdout, …]` and reads
-`{{inputs.diff.stdout}}` — and a reviewer whose skill wants a git range gets
-the base from `{{inputs.base.stdout}}`, with the working tree as its head. The
+Every reviewer then declares `inputs: [base.stdout, …]` and reads the range
+itself — `git diff {{inputs.base.stdout}}`, the working tree as its head — in
+the context of the reviewer it dispatches, not in its own: a diff pasted into
+the coordinating prompt is the thing requesting-code-review exists to avoid,
+and a large one crowds out the judgement the coordinator is there for. A
+reviewer on gate's own loop with `run_command` can read it the same way; only
+a reviewer with no command tool needs `diff.stdout` handed over. The
 empty-diff edge matters too: an implementer that wrote nothing must fail the
 run, not hand the reviewers a blank page to approve.
 
-### Rejection goes back to the planner, not the implementer
+### Rejection goes where the reviewer says: a fix to the implementer, a fault to the planner
 
 A failing test goes back to the **implementer** — the plan was fine, the code
-was not. A rejected review goes back to the **planner**, and the planner then
-hands a revised plan down.
+was not. A rejected review is either of two things, and the reviewer is the
+one that knows which, so it says so in its output (`replan`). A bounded fix
+— a bug, a missing test, a file the plan named and the diff did not touch —
+goes straight back to the **implementer** as a new task against the plan as
+it stands; measured here, sending those through the planner cost a ten-minute
+planning pass and a second plan approval for one missing call. A fault in the
+plan goes back to the **planner**, which hands a revised plan down.
 
-The reason is that a review rejection is very often "this was cut at the wrong
-seam", and the implementer cannot act on that: it is holding a plan that says
-to do exactly what was just rejected, so it produces the same shape again and
-the loop spins until the budget stops it. Give the planner the optional inputs
+The reason for the second route is that such a rejection is very often "this
+was cut at the wrong seam", and the implementer cannot act on that: it is
+holding a plan that says to do exactly what was just rejected, so it produces
+the same shape again and the loop spins. Give the planner the optional inputs
 that let it revise:
 
 ```yaml
@@ -554,7 +615,9 @@ itself and land somewhere that reports what is stuck:
 
 Order matters: edges are tried in declaration order and the first match wins, so
 the give-up edge goes after the success edge and before the loop-back fallback.
-Give the same treatment to the review-rejection loop (`visits.planner >= 4`).
+Give the same treatment to the review-rejection loop (`visits.reviewer >= 4`,
+counted in reviews because the planner also runs for the person's questions)
+and to the verification loop (`visits.verifier >= 3`).
 
 ### Approved work has to ship
 
@@ -667,20 +730,26 @@ A definition that fails any of these is wrong even though the server will
 accept it. The server validates shape, not sense.
 
 - [ ] **Every agent carries `timeoutMs: 3600000`** — explicitly, all of them, the
-      implementer included. Not `0`, which means no timeout at all and lets a
-      wedged node hang the run until someone notices it. Raise it for an agent
-      you expect to run longer; never lower it below the hour without a reason.
-- [ ] **`maxCostUsd` is set** to something the user would actually pay for one
-      run. It is the only ceiling that bounds an uncapped pipeline.
-- [ ] **`maxWorkflowSteps: 0` and `maxVisits: 0`** unless the user asked for a
-      cap. Rounds and revisits cannot be counted in advance; spend can.
+      implementer included. Not `0`, which means a wedged node is never
+      mentioned. Raise it for an agent you expect to run longer; never lower it
+      below the hour without a reason. It is a cut-off on the server and a
+      notice to the person in a session-driven run, never a budget.
+- [ ] **No ceilings: `maxWorkflowSteps: 0`, `maxVisits: 0`, `maxCostUsd: 0`**
+      unless the user asked for one. Rounds and revisits cannot be counted in
+      advance, and a run stopped mid-review throws away everything it spent;
+      loops end on their give-up edges, and the cost is read, not enforced.
 - [ ] **A `base` node is the entry, and a `stage` + `diff` pair diffs against
       it** (`git diff {{outputs.base.stdout}}`); every reviewer takes
-      `base.stdout` and `diff.stdout` — not `changed_files`, not a `diff`
-      field from the model, not a bare `git diff` that is empty once the
-      implementer's skills have committed.
+      `base.stdout` and reads `git diff <base>` in the reviewer it dispatches —
+      not `changed_files`, not a `diff` field from the model, not the whole
+      diff pasted into its own prompt, not a bare `git diff` that is empty
+      once the implementer's skills have committed.
 - [ ] **The empty-diff edge exists** and lands on a `status: failed` terminal.
-- [ ] **Review rejection routes to the planner**, test failure to the implementer.
+- [ ] **The verifier stands between the implementer and `stage`**, its gaps
+      route to the implementer, and a project's own test command goes between
+      the verifier and `stage` as a deterministic node.
+- [ ] **Review rejection routes on `replan`** — `false` to the implementer,
+      `true` to the planner; test failure to the implementer.
 - [ ] **The planner declares the optional review inputs** so a second pass can
       revise the plan.
 - [ ] **Command nodes that can fail feed both `stdout` and `stderr`** to whoever

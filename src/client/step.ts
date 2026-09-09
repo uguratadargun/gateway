@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 
 import { getAgent } from "@/agents/registry";
 import type { ExecutionStepRecord } from "@/executions/types";
+import { scopeAt, type DefinitionScope } from "@/lib/def-root";
 import { parseOutput, prepareAgentNode } from "@/runtime/executors/agent";
 import { runClaudeCodeNode } from "@/runtime/executors/claude-code";
 import { runCommand } from "@/runtime/executors/command";
@@ -12,7 +13,14 @@ import { WorkflowError } from "@/runtime/errors";
 import type { StepRecord, WorkflowState } from "@/runtime/state";
 import { renderTemplate } from "@/agents/template";
 import { conditionContext } from "@/runtime/state";
-import { createRunWorkspace, readRunDiff, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
+import {
+  borrowDependencies,
+  createRunWorkspace,
+  readRunDiff,
+  summarizeWorkspace,
+  tidyRunWorkspace,
+  type RunWorkspace,
+} from "@/runtime/workspace";
 import { unattendedNotice } from "@/skills/inject";
 import { getSkill, resolveSkillDir } from "@/skills/registry";
 import type { SkillDefinition } from "@/skills/types";
@@ -24,10 +32,18 @@ import { CLI_VERSION } from "./api";
 import { RunReporter } from "./reporter";
 import { subagentName } from "./subagents";
 import { describeCall, describeText } from "./worker-log";
-import { cacheScope } from "./cache";
+import { cacheDir, cacheScope } from "./cache";
 import { gateHome } from "./config";
 import { resolveRepo } from "./run";
 import { nextInSession } from "./walk";
+
+/**
+ * The environment variable the plugin's SessionStart hook sets, carrying the
+ * Claude Code session's id. Read here so a run can say which session drives
+ * it, which is what lets the gateway's record of that session's own calls be
+ * costed against the nodes the session did itself.
+ */
+export const SESSION_ID_ENV = "GATE_CLAUDE_SESSION";
 
 /**
  * A run the developer's own Claude Code session drives, one node at a time.
@@ -174,6 +190,52 @@ function clearPending(executionId: string): void {
   rmSync(pendingPath(executionId), { force: true });
 }
 
+/** Everything on this machine that belongs to one run and is not its worktree. */
+export function runDir(executionId: string): string {
+  return join(gateHome(), "runs", executionId);
+}
+
+function runDefinitionsDir(executionId: string): string {
+  return join(runDir(executionId), "definitions");
+}
+
+/**
+ * Freezes the definitions a run starts with.
+ *
+ * Every `gate` command re-syncs the team's mirror first, which is right for
+ * the next run and wrong for this one: a workflow edited on the dashboard
+ * — or a gate update that refreshed the shipped pipeline — changed the graph
+ * a run was halfway through, and its replay lined the recorded steps up
+ * against nodes that had moved (measured here: a run that fell back to a
+ * second plan approval the new graph no longer had). So the mirror is copied
+ * once, at `begin`, and every later command reads the run's own copy. The
+ * mirror keeps moving underneath, for runs not yet started.
+ */
+export function pinDefinitions(team: string, executionId: string): string {
+  const dir = runDefinitionsDir(executionId);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  cpSync(cacheDir(team), dir, { recursive: true });
+  return dir;
+}
+
+/** The scope a run reads its definitions from: its pinned copy, or the mirror for a run that predates pinning. */
+export function runScope(team: string, executionId: string): DefinitionScope {
+  const dir = runDefinitionsDir(executionId);
+  return existsSync(join(dir, "workflows")) ? scopeAt(dir, team) : cacheScope(team);
+}
+
+/** What a run kept on this machine besides its worktree: the pin, the marker, the logs. */
+export function forgetRun(executionId: string): void {
+  rmSync(runDir(executionId), { recursive: true, force: true });
+  clearPending(executionId);
+  const runs = join(gateHome(), "runs");
+  if (!existsSync(runs)) return;
+  for (const entry of readdirSync(runs)) {
+    if (entry.startsWith(`${executionId}-`) && entry.endsWith(".log")) rmSync(join(runs, entry), { force: true });
+  }
+}
+
 /** The run's workspace, as it was recorded when the run began. */
 function workspaceOf(execution: { workspace: RunWorkspace | null }): RunWorkspace | null {
   return execution.workspace ?? null;
@@ -272,17 +334,29 @@ export async function begin(
     runInput.repo = repo;
   }
 
+  // The session's id reaches this process through the plugin's hook; without
+  // it the run is still fine, only the nodes the session does itself go
+  // uncosted.
+  // The plugin's session hook, or the id Claude Code itself puts in a tool's
+  // environment: either names the session whose gateway calls cost the nodes
+  // it does itself.
+  const session = (process.env[SESSION_ID_ENV] ?? process.env.CLAUDE_CODE_SESSION_ID ?? "").trim() || undefined;
   const executionId = await ctx.client.startRun({
     workflowId: workflow.id,
     input: runInput,
-    client: { host: hostname(), repo: repo ?? undefined, version: CLI_VERSION },
+    client: { host: hostname(), repo: repo ?? undefined, version: CLI_VERSION, session },
     driver: "session",
   });
+
+  // The definitions this run will follow, frozen before anything reads them.
+  pinDefinitions(ctx.team, executionId);
 
   if (workflow.workspace) {
     try {
       const workspace = createRunWorkspace({ ...workflow.workspace, repo: repo! }, executionId);
       ctx.say(`worktree ${workspace.root} on branch ${workspace.branch}`);
+      const linked = borrowDependencies(workspace);
+      if (linked.length) ctx.say(`  linked ${linked.join(", ")} from ${workspace.repo}`);
       // Recorded now, not at the end: the dashboard should show the branch
       // while the run is going, and every later `gate next` reads the
       // worktree back from here rather than recomputing it.
@@ -325,13 +399,14 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
       ctx.say(`■ run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
       return { do: "stopped", executionId, error: stopped };
     }
-    const scope = cacheScope(ctx.team);
+    const scope = runScope(ctx.team, executionId);
     const workflow: WorkflowDefinition = getWorkflow(execution.workflowId, scope);
     const position = nextInSession(workflow, steps as ExecutionStepRecord[], execution.input);
 
     if (position.kind === "failed") {
       clearPending(executionId);
       await settle(ctx, executionId, execution, steps.length, "failed", position.error);
+      ctx.say(`  the worktree and the run's history are kept: \`gate continue ${executionId}\` tries "${position.nodeId}" again`);
       return { do: "failed", executionId, nodeId: position.nodeId, error: position.error };
     }
     if (position.kind === "done") {
@@ -387,14 +462,22 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           continue;
         }
       }
-      const startedAt = Date.now();
-      writePending({
-        executionId,
-        nodeId: node.id,
-        stepIndex: position.stepIndex,
-        visit: position.visit,
-        startedAt,
-      });
+      // A `gate next` repeated while the session still holds this node — it
+      // lost the thread, or asked where the run was — hands the same node
+      // out again as it was: same start time, and no second announcement.
+      // Re-marking it would restart the node's clock and pause the run twice.
+      const held = readPending(executionId);
+      const again = held && !held.worker && held.nodeId === node.id && held.visit === position.visit ? held : null;
+      const startedAt = again?.startedAt ?? Date.now();
+      if (!again) {
+        writePending({
+          executionId,
+          nodeId: node.id,
+          stepIndex: position.stepIndex,
+          visit: position.visit,
+          startedAt,
+        });
+      }
       const workspace = workspaceOf(execution);
 
       // Said now, not when the answer comes back. A node a session works on
@@ -405,25 +488,27 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
       // dashboard says so and the run's clock stops, because from here until
       // `gate step` the time is theirs.
       const personsTurn = asksPerson(prepared.agent);
-      await ctx.client
-        .report(executionId, {
-          events: [
-            {
-              type: "node.started",
-              at: startedAt,
-              nodeId: node.id,
-              stepIndex: position.stepIndex,
-              visit: position.visit,
-            },
-            ...(personsTurn ? [{ type: "run.paused", at: startedAt, nodeId: node.id }] : []),
-          ],
-          steps: [],
-        })
-        .catch(() => {});
+      if (!again) {
+        await ctx.client
+          .report(executionId, {
+            events: [
+              {
+                type: "node.started",
+                at: startedAt,
+                nodeId: node.id,
+                stepIndex: position.stepIndex,
+                visit: position.visit,
+              },
+              ...(personsTurn ? [{ type: "run.paused", at: startedAt, nodeId: node.id }] : []),
+            ],
+            steps: [],
+          })
+          .catch(() => {});
+      }
       ctx.say(
         `▸ ${node.id} · agent ${prepared.agent.id} (${prepared.agent.model}` +
           `${prepared.agent.effort ? `/${prepared.agent.effort}` : ""})` +
-          `${position.visit > 1 ? ` · pass ${position.visit}` : ""}`,
+          `${position.visit > 1 ? ` · pass ${position.visit}` : ""}${again ? " · still yours" : ""}`,
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
       if (personsTurn) ctx.say("  the user's turn · the run is paused until they answer");
@@ -541,6 +626,8 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
             ? `Work in ${workspace.root} — the run's worktree, not the user's checkout.`
             : "This node has no workspace: reason over what the prompt gives you, do not touch files.",
           "Say what you are doing as you go; the user is watching this happen.",
+          "What gate printed above this JSON — the command nodes it ran on the way here and their output — the user " +
+            "has not seen: relay those lines to them before you start, as they are.",
           "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
           `When the work is done, write ${shape} to a file and hand it back:`,
           `  gate step ${executionId} ${node.id} --output-file <file>`,
@@ -681,7 +768,7 @@ export async function step(
     ctx.say(`■ run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
     return { do: "stopped", executionId, error: stopped };
   }
-  const scope = cacheScope(ctx.team);
+  const scope = runScope(ctx.team, executionId);
   const workflow = getWorkflow(execution.workflowId, scope);
   const node = workflow.nodes.find((n) => n.id === nodeId);
   if (!node || node.type !== "agent") {
@@ -733,7 +820,7 @@ export async function work(ctx: SessionRunContext, executionId: string, nodeId: 
     throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `run ${executionId} is not waiting on a worker for "${nodeId}"`);
   }
   const { execution, steps } = await ctx.client.execution(executionId);
-  const scope = cacheScope(ctx.team);
+  const scope = runScope(ctx.team, executionId);
   const workflow: WorkflowDefinition = getWorkflow(execution.workflowId, scope);
   const position = nextInSession(workflow, steps as ExecutionStepRecord[], execution.input);
   if (position.kind !== "node" || position.node.id !== nodeId || position.node.type !== "agent") {
@@ -752,8 +839,26 @@ export async function work(ctx: SessionRunContext, executionId: string, nodeId: 
   });
   reporter.start();
 
+  // The agent's timeout is an expectation here, not a ceiling. A node on a
+  // laptop is doing real work in a real repository, and an implementer that
+  // is twenty minutes past its hour is usually twenty minutes from done —
+  // killing it throws away everything it built. So the log says it has run
+  // past what its file expected, once, and the person decides: Stop on the
+  // dashboard ends it, and nothing else does.
   const timeoutMs = prepared.agent.timeoutMs ?? 60 * 60_000;
-  const deadline = timeoutMs > 0 ? pending.startedAt + timeoutMs : null;
+  const overrun =
+    timeoutMs > 0
+      ? setTimeout(
+          () =>
+            appendFileSync(
+              log,
+              `── past the ${Math.round(timeoutMs / 60_000)} minutes its agent file expected, still running — ` +
+                "not stopped; Stop on the dashboard ends it\n",
+            ),
+          Math.max(0, pending.startedAt + timeoutMs - Date.now()),
+        )
+      : null;
+  overrun?.unref();
 
   let step: StepRecord;
   try {
@@ -790,7 +895,7 @@ export async function work(ctx: SessionRunContext, executionId: string, nodeId: 
           });
         },
       },
-      deadline,
+      null,
     );
     step = {
       nodeId,
@@ -819,6 +924,7 @@ export async function work(ctx: SessionRunContext, executionId: string, nodeId: 
     };
   }
 
+  if (overrun) clearTimeout(overrun);
   await reporter.stop();
   try {
     await record(ctx, executionId, step, false);
@@ -871,7 +977,7 @@ export async function wait(ctx: SessionRunContext, executionId: string, forMs = 
     // failed step with the log to look at.
     if (!alive(pending.worker.pid)) return next(ctx, executionId);
     if (Date.now() >= until) {
-      const scope = cacheScope(ctx.team);
+      const scope = runScope(ctx.team, executionId);
       const { execution } = await ctx.client.execution(executionId);
       const workflow: WorkflowDefinition = getWorkflow(execution.workflowId, scope);
       const node = workflow.nodes.find((n) => n.id === pending.nodeId);
@@ -955,4 +1061,67 @@ async function settle(
   await ctx.client
     .finish(executionId, { status, error, stepCount, workspace: summary, diff })
     .catch((e) => ctx.say(`could not report the run's outcome: ${(e as Error).message}`));
+
+  if (status === "completed") {
+    // Over for good: the pinned definitions and the logs have nothing left to
+    // serve, and a worktree whose every commit is on the remote is a copy.
+    // A failed run keeps all of it, because `gate continue` needs it.
+    if (workspace) {
+      const tidied = tidyRunWorkspace(workspace);
+      if (tidied) ctx.say(tidied);
+    }
+    forgetRun(executionId);
+  }
+}
+
+/**
+ * Picks a failed run back up at the node it failed on, in the same worktree.
+ *
+ * The server drops the failed attempt from the history and marks the run as
+ * running again; the next walk then lands on that node as if it had never
+ * run, with everything before it kept — a failed reviewer is retried, not
+ * the implementer that preceded it. Anything this machine still held for the
+ * node — a worker's marker, a worker still alive — is cleared first, so the
+ * retry starts clean.
+ */
+export async function continueRun(ctx: SessionRunContext, executionId: string): Promise<Instruction> {
+  const { execution } = await ctx.client.execution(executionId);
+  if (execution.driver !== "session") {
+    throw new WorkflowError(
+      "EXECUTION_NOT_RESUMABLE",
+      "only a run /gate:run drove can be continued here; a run `gate run` drove starts over with `gate run`",
+    );
+  }
+  if (execution.status === "running") return next(ctx, executionId);
+  if (execution.status !== "failed") {
+    throw new WorkflowError("EXECUTION_NOT_RESUMABLE", `this run ${execution.status}; there is nothing to continue`);
+  }
+  const workspace = workspaceOf(execution);
+  if (workspace && !existsSync(workspace.root)) {
+    throw new WorkflowError(
+      "EXECUTION_NOT_RESUMABLE",
+      `the worktree this run used (${workspace.root}) is gone; start the workflow again instead`,
+    );
+  }
+
+  const pending = readPending(executionId);
+  if (pending?.worker && alive(pending.worker.pid)) {
+    try {
+      process.kill(pending.worker.pid);
+    } catch {
+      // Already gone.
+    }
+  }
+  clearPending(executionId);
+
+  const reopened = await ctx.client.continueRun(executionId);
+  if (!reopened.continued) {
+    throw new WorkflowError("EXECUTION_NOT_RESUMABLE", reopened.reason ?? "this run cannot be continued");
+  }
+  ctx.say(
+    reopened.retried?.length
+      ? `▸ continuing ${executionId}: ${reopened.retried.join(", ")} will run again; everything before it stands`
+      : `▸ continuing ${executionId}`,
+  );
+  return next(ctx, executionId);
 }
