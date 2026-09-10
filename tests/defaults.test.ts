@@ -87,7 +87,7 @@ describe("restoring the shipped definitions", () => {
 });
 
 describe("what the shipped agents declare", () => {
-  it("is a planner, an implementer and a reviewer, each following its skills, and three gates to the person", () => {
+  it("is a planner, an implementer, a verifier and a reviewer, their super-* twins following skills, and three gates to the person", () => {
     ensureDefaultAgents();
     const byId = new Map(listAgents().agents.map((a) => [a.id, a]));
     expect([...byId.keys()].sort()).toEqual([
@@ -99,8 +99,35 @@ describe("what the shipped agents declare", () => {
       "quick-implementer",
       "quick-reviewer",
       "reviewer",
+      "super-implementer",
+      "super-planner",
+      "super-reviewer",
+      "super-verifier",
       "verifier",
     ]);
+    // The dev four follow no skill: their method is in the prompt, and a
+    // fresh install runs dev without importing anything. The super four are
+    // the same roles bound to superpowers, with the same inputs and outputs,
+    // so dev-super can be dev's graph with the agent names swapped.
+    for (const id of ["planner", "implementer", "verifier", "reviewer"]) {
+      const plain = byId.get(id)!;
+      const sup = byId.get(`super-${id}`)!;
+      expect(plain.skills).toEqual([]);
+      expect(sup.skills.length).toBeGreaterThan(0);
+      expect(plain.executor).toBe("claude-code");
+      expect(sup.executor).toBe("claude-code");
+      expect(sup.inputs).toEqual(plain.inputs);
+      expect(sup.output).toEqual(plain.output);
+      expect(sup.tools).toEqual(plain.tools);
+    }
+    // The skill-free planner keeps the rule that matters most: a plan, and
+    // nothing else, in a place of its own.
+    expect(DEFAULT_AGENTS.planner).toContain("You write a plan, and nothing else.");
+    expect(DEFAULT_AGENTS.planner).toContain("docs/plans/");
+    expect(DEFAULT_AGENTS.planner).not.toContain("superpowers");
+    expect(DEFAULT_AGENTS.implementer).not.toContain("superpowers");
+    expect(DEFAULT_AGENTS.reviewer).not.toContain("superpowers");
+    expect(DEFAULT_AGENTS.verifier).not.toContain("superpowers");
     // The quick pair follows no skill: it is the point of them. They run as
     // a spawned Claude Code like the rest of the working agents; the
     // implementer edits, the reviewer reads, and both read the base commit
@@ -136,16 +163,16 @@ describe("what the shipped agents declare", () => {
     const plannerOutput = byId.get("planner")!.output;
     expect(plannerOutput.type === "json" ? Object.keys(plannerOutput.schema) : []).toContain("notes");
 
-    // The skills are the point of the defaults: without them these are three
-    // ordinary prompts, and the processes somebody chose deliberately are gone.
-    expect(byId.get("planner")!.skills).toEqual([
+    // The skills are the point of the super four: without them these are
+    // the dev four, and the processes somebody chose deliberately are gone.
+    expect(byId.get("super-planner")!.skills).toEqual([
       "superpowers-brainstorming",
       "superpowers-using-git-worktrees",
       "superpowers-writing-plans",
     ]);
-    expect(byId.get("implementer")!.skills).toContain("superpowers-test-driven-development");
-    expect(byId.get("implementer")!.skills).toContain("superpowers-subagent-driven-development");
-    expect(byId.get("reviewer")!.skills).toEqual(["superpowers-requesting-code-review"]);
+    expect(byId.get("super-implementer")!.skills).toContain("superpowers-test-driven-development");
+    expect(byId.get("super-implementer")!.skills).toContain("superpowers-subagent-driven-development");
+    expect(byId.get("super-reviewer")!.skills).toEqual(["superpowers-requesting-code-review"]);
 
     // The planner writes the plan file its skills produce and runs the
     // worktree setup; only the implementer edits code; the reviewer reads.
@@ -170,7 +197,7 @@ describe("what the shipped agents declare", () => {
     expect(reviewerOutput.type === "json" ? Object.keys(reviewerOutput.schema) : []).toContain("replan");
     expect(byId.get("implementer")!.inputs).toContain("verifier.gaps?");
     // The verifier runs checks and reads; it never edits.
-    expect(byId.get("verifier")!.skills).toEqual(["superpowers-verification-before-completion"]);
+    expect(byId.get("super-verifier")!.skills).toEqual(["superpowers-verification-before-completion"]);
     expect(byId.get("verifier")!.tools).toContain("run_command");
     expect(byId.get("verifier")!.tools).not.toContain("edit_file");
     expect(byId.get("verifier")!.executor).toBe("claude-code");
@@ -184,15 +211,29 @@ describe("what the shipped agents declare", () => {
   });
 });
 
-describe("the shipped pipeline", () => {
+describe.each([
+  { workflowId: "dev", prefix: "" },
+  { workflowId: "dev-super", prefix: "super-" },
+])("the shipped pipeline: $workflowId", ({ workflowId, prefix }) => {
   /**
    * The graph, exercised with stand-ins.
    *
    * The shipped agents run as a spawned Claude Code, which a test cannot
-   * spawn, so three agents of the same names and output shapes stand in for
-   * them. What is under test is the workflow: where a rejection goes, what
-   * reaches the commit, and how the task travels into the merge request.
+   * spawn, so agents of the same names and output shapes stand in for them.
+   * What is under test is the workflow: where a rejection goes, what reaches
+   * the commit, and how the task travels into the merge request. dev-super
+   * is dev's graph on the super-* agents, so the same tests run over both,
+   * with the stand-ins saved under whichever names the pipeline uses.
    */
+  const WORKING = new Set(["planner", "implementer", "verifier", "reviewer"]);
+
+  /** The workflow under test, its agents replaced by the stand-ins. */
+  function standIn() {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(WORKING.has(id) ? `${prefix}${id}` : id, source);
+    return getWorkflow(workflowId);
+  }
+
   const STANDINS: Record<string, string> = {
     planner: `---
 name: Planner
@@ -310,7 +351,7 @@ Try {{inputs.implementer.summary}}
   const VERIFIED = () => JSON.stringify({ verified: true, evidence: "npm test: 12 passed, 0 failed" });
   const APPROVED = () => JSON.stringify({ verdict: "approved", replan: false });
   const APPROVE = () => JSON.stringify({ decision: "approve" });
-  const PLAN = (visit: number) => JSON.stringify({ questions: "", plan: `plan ${visit}`, planFile: "docs/superpowers/plans/2026-09-08-thing.md" });
+  const PLAN = (visit: number) => JSON.stringify({ questions: "", plan: `plan ${visit}`, planFile: "docs/plans/2026-09-08-thing.md" });
 
   function fakeTeam(
     reviews: (visit: number) => string,
@@ -346,9 +387,7 @@ Try {{inputs.implementer.summary}}
   }
 
   it("loops back to the planner on a rejected review, then commits and opens the merge request", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam((visit) =>
       visit === 1
@@ -410,9 +449,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("still carries a revision's questions to the person, and then builds without showing the plan again", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam(
       (visit) => (visit === 1 ? JSON.stringify({ verdict: "changes-requested", replan: true, feedback: "Wrong seam." }) : APPROVED()),
@@ -434,9 +471,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("sends the person's requests back to the planner, and ships once they say so", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam(
       APPROVED,
@@ -467,9 +502,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("holds when nobody is there to approve, leaving the branch committed and unpushed", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam(
       APPROVED,
@@ -487,9 +520,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("skips the commit when the implementer's skills already committed everything", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam(APPROVED);
     const { ran, runCommand } = fakeGit({ staged: false });
@@ -505,9 +536,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("sends a bounded fix straight to the implementer, and a plan fault to the planner", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam((visit) =>
       visit === 1
@@ -533,9 +562,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("sends the verifier's gaps back to the implementer, and gives up after three", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const gaps = () => JSON.stringify({ verified: false, evidence: "npm test: 1 failed", gaps: "tests/a.test.ts fails: expected 2, got 3" });
     const once = fakeTeam(APPROVED, SHIP, PLAN, APPROVE, undefined, (visit) => (visit === 1 ? gaps() : VERIFIED()));
@@ -560,9 +587,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("gives up on a review that never approves, keeping the branch", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam(() => JSON.stringify({ verdict: "changes-requested", replan: true, feedback: "No." }));
     const { ran, runCommand } = fakeGit({ staged: true });
@@ -577,9 +602,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("carries the planner's questions to the person and their answers back, then shows the plan before building", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam(
       APPROVED,
@@ -607,9 +630,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("revises the plan on the person's feedback, and builds nothing until they approve", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam(
       APPROVED,
@@ -632,9 +653,7 @@ Try {{inputs.implementer.summary}}
   });
 
   it("ends with the plan written and nothing built when nobody is there to approve it", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = fakeTeam(APPROVED, SHIP, PLAN, () => JSON.stringify({ decision: "hold" }));
     const { ran, runCommand } = fakeGit({ staged: true });
@@ -649,14 +668,12 @@ Try {{inputs.implementer.summary}}
   });
 
   it("fails as nothing-changed when the implementer deliberately made no change", async () => {
-    ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
-    const workflow = getWorkflow("dev");
+    const workflow = standIn();
 
     const provider = new FakeModelProvider((req) => {
       switch (req.context?.nodeId) {
         case "planner":
-          return JSON.stringify({ questions: "", plan: "plan", planFile: "docs/superpowers/plans/thing.md" });
+          return JSON.stringify({ questions: "", plan: "plan", planFile: "docs/plans/thing.md" });
         case "plan-review":
           return JSON.stringify({ decision: "approve" });
         case "implementer":
@@ -674,6 +691,38 @@ Try {{inputs.implementer.summary}}
     expect(terminalOf(events)).toBe("nothing-changed");
     expect(state.visitCounts.reviewer ?? 0).toBe(0);
     expect(ran.find((c) => c[0] === "git" && c[1] === "diff")).toBeUndefined();
+  });
+});
+
+describe("the shipped super pipeline", () => {
+  it("is dev's graph on the super-* agents, and nothing else differs", () => {
+    ensureDefaultWorkflows();
+    const dev = getWorkflow("dev");
+    const sup = getWorkflow("dev-super");
+    const agentsOf = (w: typeof dev) => w.nodes.filter((n) => n.type === "agent").map((n) => [n.id, (n as { agent: string }).agent]);
+    expect(agentsOf(sup)).toEqual([
+      ["planner", "super-planner"],
+      ["clarify", "clarify"],
+      ["plan-review", "plan-review"],
+      ["implementer", "super-implementer"],
+      ["verifier", "super-verifier"],
+      ["reviewer", "super-reviewer"],
+      ["acceptance", "acceptance"],
+    ]);
+    // Everything but the agent names is byte-for-byte dev's: same nodes,
+    // same edges, same commands, same terminals.
+    const shape = (w: typeof dev) =>
+      w.nodes.map((n) => {
+        const { agent: _agent, ...rest } = n as { agent?: string } & Record<string, unknown>;
+        return rest;
+      });
+    expect(shape(sup)).toEqual(shape(dev));
+    expect(sup.entry).toBe(dev.entry);
+    // The only shipped pipeline that needs a skill imported.
+    const source = DEFAULT_WORKFLOWS["dev-super"];
+    expect(source).toContain("agent: super-planner");
+    expect(DEFAULT_WORKFLOWS.dev).not.toContain("super-");
+    expect(DEFAULT_WORKFLOWS["dev-quick"]).not.toContain("super-");
   });
 });
 

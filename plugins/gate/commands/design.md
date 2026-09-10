@@ -24,35 +24,40 @@ own steps. Read the repository, work out what those are, and put a concrete
 proposal in front of them rather than asking what they want first.
 
 Build it for **this repository** — but not from nothing. gate ships a team with
-`planner`, `implementer`, `verifier` and `reviewer`, each following its
-skills, plus three gates to the person — `clarify` carries the planner's
-questions to them, `plan-review` shows them the plan before anything is built,
-`acceptance` puts the finished branch in front of them before anything leaves
-the machine — and a `dev` pipeline that plans with the person, builds once
-they approve, verifies, reviews, commits, asks, and opens a merge request.
-**That is the base. You write the ends.** The gates stay where they are;
-nothing you add goes around them.
+`planner`, `implementer`, `verifier` and `reviewer`, each carrying its own
+method in its prompt and following no skill, plus three gates to the person
+— `clarify` carries the planner's questions to them, `plan-review` shows them
+the plan before anything is built, `acceptance` puts the finished branch in
+front of them before anything leaves the machine — and a `dev` pipeline that
+plans with the person, builds once they approve, verifies, reviews, commits,
+asks, and opens a merge request. **That is the base. You write the ends.**
+The gates stay where they are; nothing you add goes around them.
 
-gate also ships `dev-quick`, with `quick-implementer` and `quick-reviewer`:
-the short road for a colour, a label, a default, a small fix in something
-that exists, with no planner and no skills. It is not the base for what you
-design — a pipeline shaped around a project is one worth planning in — and
-it is not yours to extend: the quick implementer finds this project's own
-check for the files it touched by reading the repository, which is the whole
-of what a quick change needs. Leave it as it is.
+gate also ships `dev-super`: the same graph as `dev`, on `super-planner`,
+`super-implementer`, `super-verifier` and `super-reviewer`, which are the
+same roles bound to the superpowers skills. Build on `dev` unless the person
+asks for the superpowers method; if they do, the same three places for
+command nodes apply, and the agents are the `super-*` four by name.
+
+And `dev-quick`, with `quick-implementer` and `quick-reviewer`: the short
+road for a colour, a label, a default, a small fix in something that exists,
+with no planner and no plan. It is not the base for what you design — a
+pipeline shaped around a project is one worth planning in — and it is not
+yours to extend: the quick implementer finds this project's own check for
+the files it touched by reading the repository, which is the whole of what a
+quick change needs. Leave it as it is.
 
 ## 1. Use the default team, do not rewrite it
 
 `planner`, `implementer`, `verifier` and `reviewer` are not starting points
 to improve on. They know nothing about any particular project on purpose —
-which is what lets every pipeline share them — and they carry the skills
-(brainstorming, using git worktrees and writing plans; executing plans,
-test-driven development, subagent-driven development, receiving code review
-and systematic debugging; verification before completion; requesting code
-review) that make them behave like a team rather than four prompts. Their prompts are written against what
-those skills do unattended — where a skill would wait for a person, that it
-commits as it goes, where its process hands off to the pipeline — so a copy
-with a paragraph added is a copy that has to get all of that right again.
+which is what lets every pipeline share them — and each prompt already says
+how its role is done unattended: what the planner asks the person and what
+it rules on, that the implementer commits task by task and test first, that
+the verifier trusts nothing it did not run, where each one stops and hands
+to the pipeline. A copy with a paragraph added is a copy that has to get
+all of that right again. The `super-*` four are the same, written against
+what their skills do unattended.
 
 So: **name them, never copy them.** Do not write a `my-project-planner` that is
 the shipped planner with a paragraph added; if a project genuinely needs

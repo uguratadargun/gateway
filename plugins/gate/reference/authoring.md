@@ -444,19 +444,28 @@ base ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
 ```
 
 `base` records the commit the run started from, `diff` is the working tree
-against it — because the agents' skills commit as they go and a diff against
-the index would be empty — and the reviewer is handed the base and the plan
-file, and has its dispatched reviewer read `git diff <base>` itself: its
-skill says the diff belongs in that reviewer's context, not pasted into the
-coordinator's. The planner writes a plan *file* (`planFile`) and the
-implementer executes that file: the implementer's skills take a plan file,
-not a list of steps in a prompt. The verifier stands between them and the
+against it — because the implementer commits as it goes, one commit per
+task, and a diff against the index would be empty — and the reviewer is
+handed the base and the plan file and reads `git diff <base>` itself, stat
+first, then file by file, then the code around each hunk. The planner writes
+a plan *file* (`planFile`, under `docs/plans/`) and the implementer executes
+that file: a plan the person approved, not a list of steps in a prompt. The
+verifier stands between them and the
 review: it runs the project's own checks on the tree as it is and holds every
 task's requirement against it, so the reviewer reads a change that passed and
 the merge request carries a suite that was actually run; its gaps go back to
 the implementer as tasks. A rejected review goes where the reviewer says —
 `replan: false` sends a bounded fix straight to the implementer, `replan:
 true` sends a fault in the plan back to the planner.
+
+`dev-super` is the same graph to the byte, with the four working agents
+swapped for `super-planner`, `super-implementer`, `super-verifier` and
+`super-reviewer` — the same roles bound to the superpowers skills. It is
+derived from `dev` in code rather than copied, so the two cannot drift; what
+differs is inside the agents (a spec document, a ledger under
+`.superpowers/sdd/`, a fresh subagent and a review per task, a dispatched
+code reviewer), and it is the only shipped pipeline that needs skills
+imported.
 
 The person is in the graph three times, and every one of those nodes runs
 on the loop driving the run — the session — and decides nothing itself.
@@ -494,13 +503,14 @@ command as a deterministic node between the verifier and `stage`, and a
 merge-request node that matches its host. `/gate:design` writes those, reading
 them out of the repository rather than guessing.
 
-The shipped agents follow skills (brainstorming, using git worktrees and
-writing plans for the planner; executing plans, test-driven development,
-subagent-driven development, receiving code review and systematic debugging
-for the implementer; verification before completion for the verifier;
-requesting code review for the reviewer), which is what makes them a team
-rather than four prompts. Name them; do not copy them into project-specific
-variants.
+The shipped agents follow no skill: each prompt carries its own method, and
+what makes them a team is that each one's prompt says where it stops and
+what the next one reads. Their `super-*` twins follow skills (brainstorming,
+using git worktrees and writing plans for the planner; executing plans,
+test-driven development, subagent-driven development, receiving code review
+and systematic debugging for the implementer; verification before completion
+for the verifier; requesting code review for the reviewer). Name them; do
+not copy them into project-specific variants.
 
 Three things in that picture are easy to get wrong, and each one is a rule.
 
@@ -539,15 +549,16 @@ entry, two after the implementer:
         label: worktree unchanged
 ```
 
-Against the base commit, not a bare `git diff`: the implementer's skills commit
-task by task, and the working tree against the index is then empty however
-much was built. `git diff <base>` is everything the run did, committed or not.
+Against the base commit, not a bare `git diff`: the implementer commits task
+by task, and the working tree against the index is then empty however much
+was built. `git diff <base>` is everything the run did, committed or not.
 
 Every reviewer then declares `inputs: [base.stdout, …]` and reads the range
-itself — `git diff {{inputs.base.stdout}}`, the working tree as its head — in
-the context of the reviewer it dispatches, not in its own: a diff pasted into
-the coordinating prompt is the thing requesting-code-review exists to avoid,
-and a large one crowds out the judgement the coordinator is there for. A
+itself — `git diff {{inputs.base.stdout}}`, the working tree as its head —
+stat first, then file by file, and by parts through read-only subagents
+when it is too large to hold (the super reviewer always dispatches: a diff
+pasted into the coordinating prompt is the thing requesting-code-review
+exists to avoid). A
 reviewer on gate's own loop with `run_command` can read it the same way; only
 a reviewer with no command tool needs `diff.stdout` handed over. The
 empty-diff edge matters too: an implementer that wrote nothing must fail the
@@ -650,7 +661,7 @@ delivery. Finish the graph with real command nodes:
     command: [git, add, -A]          # add -N staged intent only; commit needs the content
     next: staged
 
-  - id: staged                       # the skills may have committed everything already
+  - id: staged                       # the implementer may have committed everything already
     type: command
     label: Anything left to commit?
     command: [git, diff, --cached, --quiet]   # exits 0 when there is nothing
@@ -761,7 +772,7 @@ accept it. The server validates shape, not sense.
       `base.stdout` and reads `git diff <base>` in the reviewer it dispatches —
       not `changed_files`, not a `diff` field from the model, not the whole
       diff pasted into its own prompt, not a bare `git diff` that is empty
-      once the implementer's skills have committed.
+      once the implementer has committed.
 - [ ] **The empty-diff edge exists** and lands on a `status: failed` terminal.
 - [ ] **The verifier stands between the implementer and `stage`**, its gaps
       route to the implementer, and a project's own test command goes between

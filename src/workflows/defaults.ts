@@ -19,19 +19,25 @@ import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
  * It has to work in a repository nobody has looked at, which is the whole
  * reason it contains no `npm ci` and no `npm test`: those are facts about one
  * project, and a default that assumes them is a default that fails on the
- * first machine it meets. Verification lives inside the implementer, whose
- * test-driven-development skill finds how this project actually runs its
- * tests; a deterministic test node is something `/gate:design` adds once it
- * has read the repository and knows the command.
+ * first machine it meets. Verification lives in the agents — the planner
+ * finds how this project runs its tests and records the baseline, the
+ * implementer runs them as it goes, the verifier runs them whole at the end;
+ * a deterministic test node is something `/gate:design` adds once it has
+ * read the repository and knows the command.
  *
  * The diff is taken against the commit the run started from, not against the
- * index. The agents' skills commit as they go — writing plans puts a commit in
- * every task, subagent-driven development commits after each one — and a
- * plain `git diff` after that is empty: the run would end at "nothing was
- * changed" with a branch full of work. `base` records the starting commit
- * before anything else runs, `diff` compares the working tree to it, and the
- * reviewer is handed both. For the same reason the commit at the end is
- * allowed to find nothing left to commit.
+ * index. The implementer commits as it goes — one commit per task, so the log
+ * is its record of what is done — and a plain `git diff` after that is
+ * empty: the run would end at "nothing was changed" with a branch full of
+ * work. `base` records the starting commit before anything else runs, `diff`
+ * compares the working tree to it, and the reviewer is handed both. For the
+ * same reason the commit at the end is allowed to find nothing left to
+ * commit.
+ *
+ * The four working agents follow no skill; see src/agents/defaults.ts for
+ * what each carries instead. `dev-super` below is this same graph on the
+ * `super-*` agents, which follow the superpowers skills — derived from this
+ * text rather than copied, so the two pipelines cannot drift apart.
  *
  * The person is in the graph three times. `clarify` carries the planner's
  * questions to them and their answers back — the planner runs in its own
@@ -66,7 +72,7 @@ import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
  * parallel node joining at `verdict`, and widen the verdict's condition.
  */
 const DEV = `name: Dev
-description: Plan a change with the person, build it in a worktree once they approve the plan, verify and review it, let them try it, and open a merge request.
+description: Plan a change with the person, build it in a worktree once they approve the plan, verify and review it, let them try it, and open a merge request. The agents follow no skill; dev-super is the same road with the superpowers method.
 entry: base
 workspace: {}
 # No engine ceilings: rounds and revisits cannot be counted in advance, and
@@ -230,8 +236,8 @@ nodes:
   - id: staged
     type: command
     label: Anything left to commit?
-    # --quiet exits 0 when the index matches HEAD — the implementer's skills
-    # already committed everything — and 1 when there is something to commit.
+    # --quiet exits 0 when the index matches HEAD — the implementer already
+    # committed everything, task by task — and 1 when there is something to commit.
     command: [git, diff, --cached, --quiet]
     edges:
       - when: outputs.staged.ok == true
@@ -352,11 +358,31 @@ nodes:
 `;
 
 /**
+ * The same road with the superpowers method.
+ *
+ * Derived from `dev`, not copied: the graph is `dev`'s to the byte, with
+ * the four working agents swapped for their `super-*` counterparts, so a
+ * change to one pipeline's shape is a change to both and there is nothing
+ * to keep in step by hand. What differs is entirely inside the agents — the
+ * skills they follow, the spec document, the ledger, the subagent per task,
+ * the dispatched reviewer — and that is where the time goes: measured here,
+ * eighty minutes for a seven-task change against the same graph. It is
+ * here for the team that wants the method's full weight, and it is the
+ * only shipped pipeline that needs skills imported.
+ */
+const DEV_SUPER = DEV.replace(/^name: Dev$/m, "name: Dev super")
+  .replace(
+    /^description: .*$/m,
+    "description: Dev's road with the superpowers method — the same plan, gates, verifier and review, on the super-* agents, which follow the skills. Slower; for a change worth the method's full weight.",
+  )
+  .replace(/^(\s+agent: )(planner|implementer|verifier|reviewer)$/gm, "$1super-$2");
+
+/**
  * The short road, for a change that does not need a plan.
  *
  * `dev` earns its length on a change worth planning: a design settled with
- * the person, a plan they approve, a ledger, a verifier, a reviewer that
- * dispatches its own subagent. Put "make the save button blue" through it
+ * the person, a plan they approve, a verifier, a reviewer that reads the
+ * whole diff. Put "make the save button blue" through it
  * and the same machinery runs on a two-line diff — measured here, most of an
  * hour and three answers from the person for a change they could have
  * described in one. `dev-quick` is the pipeline for that change: something
@@ -557,6 +583,7 @@ nodes:
 
 export const DEFAULT_WORKFLOWS: Record<string, string> = {
   dev: DEV,
+  "dev-super": DEV_SUPER,
   "dev-quick": DEV_QUICK,
 };
 

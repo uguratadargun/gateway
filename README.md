@@ -568,11 +568,15 @@ history stays complete. Real upstream concurrency is still bounded by gate's
 concurrency limiter.
 
 gate ships one team that works in a repository nobody has looked at:
-**planner**, **implementer** and **reviewer**, each following skills from
-`superpowers` (brainstorming, using git worktrees and writing plans; executing
-plans, test-driven development and subagent-driven development; requesting
-code review), plus three agents that follow no skill and decide nothing —
-they are where the pipeline turns to the person. **clarify** carries the
+**planner**, **implementer**, **verifier** and **reviewer**, following no
+skill — each prompt carries its own method: the planner reads the
+repository, asks the person what is theirs to decide, runs the baseline once
+and writes a short plan file under `docs/plans/` with one task per commit;
+the implementer does the tasks in order, itself, test first where behaviour
+changes, one commit per task; the verifier runs the project's own checks
+whole and holds every task's "Done when" against the tree; the reviewer
+reads the diff itself and rules. Plus three agents that decide nothing — they
+are where the pipeline turns to the person. **clarify** carries the
 planner's questions to them and their answers back, since the planner runs in
 its own model and cannot ask from there. **plan-review** shows them the plan,
 and nothing is built until they say so — once; a plan revised after a review,
@@ -581,12 +585,25 @@ implementer rather than being shown again. **acceptance** tells them the branch
 is ready and how to try it (`git merge <branch>`), and only their answer opens
 the merge request or sends their requests back to the planner. Together they
 make a `dev` pipeline that plans with the person, builds once they approve,
-reviews, commits, asks, and opens a merge request. The prompts are written against
-what those skills do without a person in the session — where one would wait
-for approval, the planner rules and records the ruling; because they commit
-task by task, the pipeline diffs against the commit the run started from and
-lets the commit node find nothing left to commit; where one hands off to a
-finishing skill, the implementer stops and the pipeline ships.
+verifies, reviews, commits, asks, and opens a merge request — and because
+none of them names a skill, a fresh install runs it without importing anything.
+
+The same graph ships once more as **`dev-super`**, on **super-planner**,
+**super-implementer**, **super-verifier** and **super-reviewer**: the same
+roles bound to skills from `superpowers` (brainstorming, using git worktrees
+and writing plans; executing plans, test-driven development,
+subagent-driven development, receiving code review and systematic debugging;
+verification before completion; requesting code review). Their prompts are
+written against what those skills do without a person in the session — where
+one would wait for approval, the planner rules and records the ruling;
+because they commit task by task, the pipeline diffs against the commit the
+run started from and lets the commit node find nothing left to commit; where
+one hands off to a finishing skill, the implementer stops and the pipeline
+ships. It is the method's full weight — a spec document, a ledger, a fresh
+subagent and a review per task, a dispatched code reviewer — and it costs
+what that weighs: measured here, eighty minutes for a seven-task change on
+the same graph, most of it the ceremony. It is there for the team that wants
+it, and it is the only shipped pipeline that needs skills imported.
 
 Next to it ships **`dev-quick`**, the short road for a change that does not
 need a plan: a colour, a label, a default, a small fix in something that
@@ -608,15 +625,16 @@ writes exactly that: install and codegen before the planner, its real test
 command between the implementer and the review, a merge-request node matching
 its host, and — only where the project genuinely has a second thing that must
 be checked every time — one or two extra reviewers running alongside the
-default one. The three agents themselves are named, never copied.
+default one. The agents themselves are named, never copied.
 
-The skills are the point: without them these are three ordinary prompts. If the
-team has not imported them, `/skills` says which are missing and imports them in
-one button, and a run that needs one stops at that node with the reason rather
-than quietly proceeding without it.
+For `dev-super` the skills are the point: without them its agents are the
+`dev` four again, and the processes somebody chose deliberately are gone. If
+the team has not imported them, `/skills` says which are missing and imports
+them in one button, and a run that needs one stops at that node with the
+reason rather than quietly proceeding without it.
 
 The **default team's** directories are seeded with the agents above and the
-`dev` and `dev-quick` pipelines the first time you open `/agents` or `/workflows`; after that they are yours to edit (from
+`dev`, `dev-super` and `dev-quick` pipelines the first time you open `/agents` or `/workflows`; after that they are yours to edit (from
 the dashboard or in `$EDITOR`), and deletions stick. A team you create starts
 **empty**: it is a place someone made for their own work, and two pipelines
 nobody wrote — one of which runs `npm ci` on whichever machine picks it up — is
@@ -1090,8 +1108,10 @@ definition's hash, so an edited workflow asks again; `--yes` skips it for
 unattended use.
 
 `/gate:run` alone offers the list; `/gate:run dev fix the flaky test`
-starts that one and follows it to the end, and `/gate:run dev-quick make the
-save button blue` takes the short road for a change that needs no plan. A workflow that takes a `repo` input
+starts that one and follows it to the end, `/gate:run dev-quick make the
+save button blue` takes the short road for a change that needs no plan, and
+`/gate:run dev-super …` is the same road as `dev` with the superpowers
+method. A workflow that takes a `repo` input
 defaults to the repository you are standing in (`--input repo=…` to aim it
 elsewhere).
 
