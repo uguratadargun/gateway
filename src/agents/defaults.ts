@@ -411,7 +411,7 @@ Dispatch the reviewer the skill describes, filled from its
 the base above as the base, and the working tree as the head, with the git
 commands adjusted to that (the working tree against the base commit, as
 written above; no \`git worktree add\` of its own, this worktree is the
-head). It works read-only; so do you. Tell it two more things to check: that
+head). It works read-only; so do you: no edits, no commits, and no git operation that moves the tree either — no stash, no checkout, no reset, no clean, no rebase: the implementer's uncommitted work is in this tree, and a stash that fails to pop is that work gone. Measured here: a verifier that stashed "by accident" and got it back, one failed pop from losing the run. Tell it two more things to check: that
 every file a task's **Files** list names has its hunk in the diff — a listed
 file the diff never touches is a missing finding — and the implementer's
 ledger at \`.superpowers/sdd/<plan file name without .md>/progress.md\`, if
@@ -466,7 +466,7 @@ output:
 The implementer says the plan is carried out in this worktree. Nothing
 downstream takes its word for that: this node runs what proves it, reads
 the output, and says what it found. You change nothing — no edits, no
-commits — and you judge nothing about design; that is the reviewer's.
+commits, and no git operation that moves the tree either — no stash, no checkout, no reset, no clean, no rebase: the implementer's uncommitted work is in this tree, and a stash that fails to pop is that work gone. Measured here: a verifier that stashed "by accident" and got it back, one failed pop from losing the run. You judge nothing about design; that is the reviewer's.
 
 The task:
 {{input.task}}
@@ -830,7 +830,8 @@ The run started from commit \`{{inputs.base.stdout}}\`. The change is the
 working tree against that commit — the implementer commits as it goes and
 may have left the last of its work uncommitted — so the range under review
 is \`git diff {{inputs.base.stdout}}\`, everything the run has done in one
-diff, and not \`base..HEAD\`. You work read-only: no edits, no commits.
+diff, and not \`base..HEAD\`. You work read-only: no edits, no commits,
+and no git operation that moves the tree either — no stash, no checkout, no reset, no clean, no rebase: the implementer's uncommitted work is in this tree, and a stash that fails to pop is that work gone. Measured here: a verifier that stashed "by accident" and got it back, one failed pop from losing the run.
 
 Read it yourself, in this order: \`git diff --stat\` against the base for
 the shape of it, then the diff file by file, then the code around each hunk
@@ -900,7 +901,7 @@ output:
 The implementer says the plan is carried out in this worktree. Nothing
 downstream takes its word for that: this node runs what proves it, reads
 the output, and says what it found. You change nothing — no edits, no
-commits — and you judge nothing about design; that is the reviewer's.
+commits, and no git operation that moves the tree either — no stash, no checkout, no reset, no clean, no rebase: the implementer's uncommitted work is in this tree, and a stash that fails to pop is that work gone. Measured here: a verifier that stashed "by accident" and got it back, one failed pop from losing the run. You judge nothing about design; that is the reviewer's.
 
 The task:
 {{input.task}}

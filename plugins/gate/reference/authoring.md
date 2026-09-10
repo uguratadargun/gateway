@@ -409,7 +409,7 @@ gate ships this as `dev`, using the team's `planner`, `implementer`,
 `plan-review` and `acceptance`:
 
 ```
-base ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ planner
+base ─▶ plan-dir ─▶ planner ─▶ plan-check ─┬─ questions ─▶ clarify ─▶ planner
           ▲                    ├─ plan already approved ─────────────────────▶ implementer
           │                    └─▶ plan-review ─▶ plan-decision ─┬─ revise ─▶ planner
           │                                                      ├─ hold ───▶ awaiting-plan-approval
@@ -449,8 +449,12 @@ task, and a diff against the index would be empty — and the reviewer is
 handed the base and the plan file and reads `git diff <base>` itself, stat
 first, then file by file, then the code around each hunk. The planner writes
 a plan *file* (`planFile`, under `docs/plans/`) and the implementer executes
-that file: a plan the person approved, not a list of steps in a prompt. The
-verifier stands between them and the
+that file: a plan the person approved, not a list of steps in a prompt.
+`plan-dir`, right after `base`, drops a `docs/plans/.gitignore` of `*` into
+the worktree, so the plan stays on disk for the implementer, the verifier
+and the reviewer and out of the commit and the merge request; the reasoning
+it carried travels in the implementer's summary, which is the commit's body.
+The verifier stands between them and the
 review: it runs the project's own checks on the tree as it is and holds every
 task's requirement against it, so the reviewer reads a change that passed and
 the merge request carries a suite that was actually run; its gaps go back to

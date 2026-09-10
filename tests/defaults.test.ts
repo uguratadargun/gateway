@@ -422,7 +422,7 @@ Try {{inputs.implementer.summary}}
     const diff = ran.find((c) => c[0] === "git" && c[1] === "diff" && c.length === 3)!;
     expect(diff).toEqual(["git", "diff", BASE]);
 
-    const mr = ran.find((c) => c[0] === "sh")!;
+    const mr = ran.find((c) => c.includes("gate-open-mr"))!;
     expect(mr).toBeDefined();
     // The task is an argument, not part of the script: gate never builds a
     // shell string out of a run's own values, and a task is the most
@@ -445,7 +445,7 @@ Try {{inputs.implementer.summary}}
     // The merge request is opened only after the person said so, and after
     // the commit: what they try with `git merge` has to be on the branch.
     expect(state.visitCounts.acceptance).toBe(1);
-    expect(ran.findIndex((c) => c[0] === "git" && c[1] === "commit")).toBeLessThan(ran.findIndex((c) => c[0] === "sh"));
+    expect(ran.findIndex((c) => c[0] === "git" && c[1] === "commit")).toBeLessThan(ran.findIndex((c) => c.includes("gate-open-mr")));
   });
 
   it("still carries a revision's questions to the person, and then builds without showing the plan again", async () => {
@@ -498,7 +498,7 @@ Try {{inputs.implementer.summary}}
     expect(plans[0]).not.toContain("blue");
     expect(plans[1]).toContain("Make the button blue, not green.");
     // One merge request, at the end.
-    expect(ran.filter((c) => c[0] === "sh")).toHaveLength(1);
+    expect(ran.filter((c) => c.includes("gate-open-mr"))).toHaveLength(1);
   });
 
   it("holds when nobody is there to approve, leaving the branch committed and unpushed", async () => {
@@ -516,7 +516,7 @@ Try {{inputs.implementer.summary}}
     expect(state.status).toBe("completed");
     expect(terminalOf(events)).toBe("awaiting-approval");
     expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeDefined();
-    expect(ran.find((c) => c[0] === "sh")).toBeUndefined();
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
   });
 
   it("skips the commit when the implementer's skills already committed everything", async () => {
@@ -532,7 +532,7 @@ Try {{inputs.implementer.summary}}
     // Nothing staged after `add -A` means the work is already in commits:
     // straight to the merge request, not a failed `git commit`.
     expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeUndefined();
-    expect(ran.find((c) => c[0] === "sh")).toBeDefined();
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeDefined();
   });
 
   it("sends a bounded fix straight to the implementer, and a plan fault to the planner", async () => {
@@ -598,7 +598,7 @@ Try {{inputs.implementer.summary}}
     expect(state.status).toBe("failed");
     expect(terminalOf(events)).toBe("review-stuck");
     expect(state.visitCounts.reviewer).toBe(4);
-    expect(ran.find((c) => c[0] === "sh")).toBeUndefined();
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
   });
 
   it("carries the planner's questions to the person and their answers back, then shows the plan before building", async () => {
@@ -626,7 +626,7 @@ Try {{inputs.implementer.summary}}
     // The plan was shown before anything was built, and once approved, built.
     expect(state.visitCounts["plan-review"]).toBe(1);
     expect(state.visitCounts.implementer).toBe(1);
-    expect(ran.find((c) => c[0] === "sh")).toBeDefined();
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeDefined();
   });
 
   it("revises the plan on the person's feedback, and builds nothing until they approve", async () => {
@@ -858,7 +858,7 @@ Try {{inputs.implementer.summary}}
     const commit = ran.find((c) => c[0] === "git" && c[1] === "commit")!;
     expect(commit).toContain("Make the save button blue");
     expect(commit).toContain("pass 1");
-    const mr = ran.find((c) => c[0] === "sh")!;
+    const mr = ran.find((c) => c.includes("gate-open-mr"))!;
     expect(mr.at(-1)).toBe("Make the save button blue");
     expect(mr[2]).toContain("glab auth status");
     expect(ran.indexOf(commit)).toBeLessThan(ran.indexOf(mr));
@@ -906,7 +906,7 @@ Try {{inputs.implementer.summary}}
     const builds = provider.callsFor("implementer").map((c) => c.messages[0].content);
     expect(builds[0]).not.toContain("hover");
     expect(builds[1]).toContain("Lighter blue, and the hover state too.");
-    expect(ran.filter((c) => c[0] === "sh")).toHaveLength(1);
+    expect(ran.filter((c) => c.includes("gate-open-mr"))).toHaveLength(1);
   });
 
   it("holds when nobody is there to approve, leaving the branch committed and unpushed", async () => {
@@ -920,7 +920,7 @@ Try {{inputs.implementer.summary}}
     expect(state.status).toBe("completed");
     expect(terminalOf(events)).toBe("awaiting-approval");
     expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeDefined();
-    expect(ran.find((c) => c[0] === "sh")).toBeUndefined();
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
   });
 
   it("ends as nothing-changed when the implementer says the task is not small", async () => {

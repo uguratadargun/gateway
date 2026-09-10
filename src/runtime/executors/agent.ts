@@ -407,8 +407,11 @@ export function parseOutput(agent: { id: string; output: AgentOutputSpec }, text
   let parsed: unknown;
   try {
     parsed = JSON.parse(extractJson(text));
-  } catch {
-    throw new WorkflowError("AGENT_OUTPUT_VALIDATION_ERROR", `node "${nodeId}": agent "${agent.id}" did not return JSON`, {
+  } catch (e) {
+    // The parser's own words: a session handed a refusal with no reason once
+    // went looking for one by experiment, on a live run.
+    const reason = e instanceof Error ? e.message : String(e);
+    throw new WorkflowError("AGENT_OUTPUT_VALIDATION_ERROR", `node "${nodeId}": agent "${agent.id}" did not return JSON (${reason})`, {
       nodeId,
       agentId: agent.id,
       text: text.slice(0, 2000),

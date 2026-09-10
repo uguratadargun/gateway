@@ -51,6 +51,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate begin <workflow> [task…]                 start a run, print the first instruction
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
+        [--subagent <id>]                        which subagent did it, so its next pass continues it
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
   gate continue <execution-id>                  pick a failed run back up at the node it failed on
   gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
@@ -78,7 +79,7 @@ interface Args {
  * is short, and the alternative is a parser that is wrong in exactly the case
  * the tool exists for.
  */
-const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for"]);
+const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent"]);
 
 function parseArgs(argv: string[]): Args {
   const [command = "help", ...rest] = argv;
@@ -824,8 +825,9 @@ async function cmdStep(args: Args): Promise<number> {
   } catch (e) {
     die(`cannot read ${file}: ${(e as Error).message}`);
   }
+  const subagent = typeof args.flags.subagent === "string" ? args.flags.subagent : undefined;
   const { ctx } = await sessionContext();
-  return printInstruction(await step(ctx, executionId, nodeId, answer));
+  return printInstruction(await step(ctx, executionId, nodeId, answer, { subagent }));
 }
 
 async function cmdWait(args: Args): Promise<number> {

@@ -7682,7 +7682,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.30.2";
+var GATE_VERSION = "0.31.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -9680,8 +9680,9 @@ function parseOutput(agent, text, nodeId2) {
   let parsed;
   try {
     parsed = JSON.parse(extractJson(text));
-  } catch {
-    throw new WorkflowError("AGENT_OUTPUT_VALIDATION_ERROR", `node "${nodeId2}": agent "${agent.id}" did not return JSON`, {
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    throw new WorkflowError("AGENT_OUTPUT_VALIDATION_ERROR", `node "${nodeId2}": agent "${agent.id}" did not return JSON (${reason})`, {
       nodeId: nodeId2,
       agentId: agent.id,
       text: text.slice(0, 2e3)
@@ -9850,7 +9851,10 @@ task you are given is the whole brief: what to do, the worktree to do it in, the
 to read and follow first, the shape of the answer to end with, and \u2014 at its end \u2014 the terms
 under which you run unattended. Work only in the worktree the task names, with absolute paths
 under it, and nowhere else. End your final message with the answer in exactly the shape the
-task asks for, and nothing after it.
+task asks for, and nothing after it; where the task names a file for that answer, write it
+there too, exactly the answer, before you end. If you are continued later with a new message,
+it is the next pass of the same node: what you read and decided still stands, and the message
+carries what is new.
 
 ${backgroundSubagentNotice()}
 `;
@@ -10572,6 +10576,33 @@ function forgetRun(executionId) {
     if (entry.startsWith(`${executionId}-`) && entry.endsWith(".log")) rmSync8(join14(runs, entry), { force: true });
   }
 }
+function outputFileFor(executionId, nodeId2, visit2) {
+  const dir = join14(runDir(executionId), "out");
+  mkdirSync11(dir, { recursive: true, mode: 448 });
+  return join14(dir, `${nodeId2}-${visit2}.json`);
+}
+function subagentsPath(executionId) {
+  return join14(runDir(executionId), "subagents.json");
+}
+function recallSubagent(executionId, nodeId2) {
+  try {
+    const all = JSON.parse(readFileSync10(subagentsPath(executionId), "utf8"));
+    return all[nodeId2] ?? null;
+  } catch {
+    return null;
+  }
+}
+function rememberSubagent(executionId, nodeId2, subagentId) {
+  let all = {};
+  try {
+    all = JSON.parse(readFileSync10(subagentsPath(executionId), "utf8"));
+  } catch {
+  }
+  all[nodeId2] = subagentId;
+  mkdirSync11(runDir(executionId), { recursive: true, mode: 448 });
+  writeFileSync9(subagentsPath(executionId), `${JSON.stringify(all)}
+`, { mode: 384 });
+}
 function workspaceOf(execution) {
   return execution.workspace ?? null;
 }
@@ -10770,7 +10801,11 @@ async function next(ctx, executionId) {
       if (prepared.agent.executor === "claude-code" && ctx.throughGateway) {
         const shape2 = prepared.agent.output.type === "json" ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema).map(([k, t]) => `${k} (${t})`).join(", ")}` : "the answer as plain text";
         const subagent = subagentName(ctx.team, prepared.agent.id);
-        ctx.say(`  as subagent ${subagent} in ${prepared.agent.model} \xB7 live in this session`);
+        const outputFile2 = outputFileFor(executionId, node.id, position.visit);
+        const resume = position.visit > 1 ? recallSubagent(executionId, node.id) : null;
+        ctx.say(
+          `  as subagent ${subagent} in ${prepared.agent.model} \xB7 live in this session` + (resume ? ` \xB7 continuing ${resume}` : "")
+        );
         return {
           do: "delegate",
           executionId,
@@ -10778,23 +10813,28 @@ async function next(ctx, executionId) {
           agent: prepared.agent.id,
           model: prepared.agent.model,
           subagent,
+          resume,
           prompt: `${prepared.prompt}
 
-${unattendedNotice()}`,
+${unattendedNotice()}
+
+${answerFileNotice(outputFile2, shape2)}`,
+          outputFile: outputFile2,
           output: prepared.agent.output.type === "json" ? { type: "json", schema: prepared.agent.output.schema } : { type: "text" },
           workspace: workspace?.root ?? null,
           skills,
           timeoutMs: prepared.agent.timeoutMs ?? null,
           remember: [
-            `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not pick a model for it: its file sets the agent's own model.`,
+            resume ? `This node ran earlier in this run as subagent ${resume}. Continue that same agent with SendMessage (to: "${resume}"), giving it \`prompt\` whole and unchanged as the message: it keeps everything it read and decided last time, and the prompt carries what is new \u2014 the answers, the feedback. Only if the send fails because that agent is gone, start "${subagent}" fresh with the Agent tool instead.` : `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not pick a model for it: its file sets the agent's own model.`,
             workspace ? `Tell it: work in ${workspace.root} \u2014 the run's worktree, not the user's checkout \u2014 with absolute paths under it, and nowhere else.` : "Tell it: this node has no workspace; reason over the task, touch no files.",
             ...skills.length ? [
               `Tell it: read and follow, before starting, ${skills.length === 1 ? "this skill" : "these skills"}: ` + skills.map((s) => `${s.id} (${s.path ?? "not pulled"})`).join(", ") + ". They are part of the node."
             ] : [],
             `Tell it: end the final message with ${shape2}, and nothing after it.`,
             "It cannot ask the user anything. Do not answer for it either; what it needs settled goes into its answer the way the prompt says.",
-            "When it returns, take that answer from its final message, write it to a file, and hand it back:",
-            `  gate step ${executionId} ${node.id} --output-file <file>`
+            `The prompt tells it to write that answer to ${outputFile2} itself. The moment it returns, hand that file back as it is \u2014 before telling the user anything, and without retyping it \u2014 naming the subagent so the next pass of this node can continue it:`,
+            `  gate step ${executionId} ${node.id} --output-file ${outputFile2} --subagent <its agent id or name>`,
+            "If the file is not there, take the answer from its final message, write it to that path, and hand it back the same way."
           ]
         };
       }
@@ -10818,12 +10858,14 @@ ${unattendedNotice()}`,
         return waitInstruction(executionId, pending, prepared.agent);
       }
       const shape = prepared.agent.output.type === "json" ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema).map(([k, t]) => `${k} (${t})`).join(", ")}` : "the answer as plain text";
+      const outputFile = outputFileFor(executionId, node.id, position.visit);
       return {
         do: "agent",
         executionId,
         nodeId: node.id,
         agent: prepared.agent.id,
         prompt: prepared.prompt,
+        outputFile,
         skills,
         remember: [
           ...skills.length ? [
@@ -10833,8 +10875,8 @@ ${unattendedNotice()}`,
           "Say what you are doing as you go; the user is watching this happen.",
           "What gate printed above this JSON \u2014 the command nodes it ran on the way here and their output \u2014 the user has not seen: relay those lines to them before you start, as they are.",
           "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
-          `When the work is done, write ${shape} to a file and hand it back:`,
-          `  gate step ${executionId} ${node.id} --output-file <file>`
+          `When the work is done, write ${shape} to ${outputFile} and hand it back:`,
+          `  gate step ${executionId} ${node.id} --output-file ${outputFile}`
         ],
         output: prepared.agent.output.type === "json" ? { type: "json", schema: prepared.agent.output.schema } : { type: "text" },
         workspace: workspace?.root ?? null,
@@ -10844,6 +10886,9 @@ ${unattendedNotice()}`,
     }
     await runControlNode(ctx, executionId, node, state, position, workspaceOf(execution));
   }
+}
+function answerFileNotice(outputFile, shape) {
+  return `When you are done, write your answer \u2014 ${shape}, exactly what your final message ends with, and nothing else \u2014 to the file ${outputFile} (create the directory if it is missing), then end your final message with that same answer. The file is what the run reads; the message is for the person watching.`;
 }
 function asksPerson(agent) {
   return agent.asks === "person" && agent.executor === "gate";
@@ -10904,7 +10949,7 @@ async function runControlNode(ctx, executionId, node, state, position, workspace
     ...error ? { error } : {}
   });
 }
-async function step(ctx, executionId, nodeId2, answer) {
+async function step(ctx, executionId, nodeId2, answer, opts = {}) {
   const pending = readPending(executionId);
   if (!pending || pending.executionId !== executionId) {
     throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `nothing is waiting on an answer for run ${executionId}`);
@@ -10952,6 +10997,7 @@ async function step(ctx, executionId, nodeId2, answer) {
     asksPerson(agent) ? [{ type: "run.resumed", at: finishedAt, nodeId: nodeId2 }] : []
   );
   ctx.say(`\u2713 ${nodeId2} (${Math.max(1, Math.round((finishedAt - pending.startedAt) / 1e3))}s)`);
+  if (opts.subagent) rememberSubagent(executionId, nodeId2, opts.subagent);
   clearPending(executionId);
   return next(ctx, executionId);
 }
@@ -11340,6 +11386,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate begin <workflow> [task\u2026]                 start a run, print the first instruction
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
+        [--subagent <id>]                        which subagent did it, so its next pass continues it
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
   gate continue <execution-id>                  pick a failed run back up at the node it failed on
   gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
@@ -11351,7 +11398,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate cancel <execution-id>                    ask a run to stop
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent"]);
 function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const positional = [];
@@ -11889,8 +11936,9 @@ async function cmdStep(args) {
   } catch (e) {
     die(`cannot read ${file}: ${e.message}`);
   }
+  const subagent = typeof args.flags.subagent === "string" ? args.flags.subagent : void 0;
   const { ctx } = await sessionContext();
-  return printInstruction(await step(ctx, executionId, nodeId2, answer));
+  return printInstruction(await step(ctx, executionId, nodeId2, answer, { subagent }));
 }
 async function cmdWait(args) {
   const [executionId] = args.positional;

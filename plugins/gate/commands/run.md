@@ -145,6 +145,14 @@ Each call prints one JSON instruction:
     This is their session: they are there, they can answer, and a question costs a minute
     where a wrong guess costs the rest of the run. The node's answer goes in a file, not in
     what you say, so asking never gets in the way of finishing it.
+  - **But never stop a run for something the pipeline has already decided.** What the
+    pipeline's own nodes do next — stage, commit, open the merge request, which files the
+    commit takes — is the workflow's, settled when it was written, and not a question for
+    the middle of a run. A preference you remember about the user (which files they like
+    committed, how they name branches) is something to mention when the run is over, not a
+    reason to hold a node: measured here, a reviewer's approval waited thirty-four minutes
+    on "shall I take the plan file out of the commit?" while the user was away. Hand the
+    step back, then say what you noticed.
   - **`gate step` is final.** What you hand back becomes the node's output, the edges are
     taken on it, and there is no way to take it back: the next nodes read it as the truth.
     So never hand back a test, a placeholder or a minimal output to see whether the command
@@ -156,9 +164,10 @@ Each call prints one JSON instruction:
     and `acceptance` nodes are the person's turn: while one is in your hands the dashboard
     shows the run as *paused* and its clock stands still, and `gate step` sets it running
     again. Nothing for you to do about it; take as long as they need.
-  - When the work is done, write the answer to a file and hand it back:
+  - When the work is done, write the answer to `outputFile` — a path under the run's own
+    directory that gate has already made — and hand it back:
     ```
-    node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" step <execution-id> <node-id> --output-file <file>
+    node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" step <execution-id> <node-id> --output-file <outputFile>
     ```
     `output.type: json` means the file holds **exactly** that JSON object — the keys in
     `output.schema`, nothing else, no prose, no code fence. A type ending in `?` is optional.
@@ -171,10 +180,23 @@ Each call prints one JSON instruction:
   `prompt` as its task — whole and unchanged — followed by what `remember` says to tell it:
   the worktree, the skill files to read first, the shape of its answer. Do not do the node
   yourself, and do not choose a model for it: the subagent's file carries the agent's own
-  model, which is the point. It cannot ask the user, and you do not answer for it. When it
-  returns, take the answer from its final message, write it to a file, and hand it back with
-  the `gate step` line in `remember`. You only get this instruction when your session runs
-  through the gateway (see the end of this file); otherwise the same node arrives as `wait`.
+  model, which is the point. It cannot ask the user, and you do not answer for it.
+  - **It writes its own answer file.** The prompt already tells it to write its final JSON to
+    `outputFile`. When it returns, hand that file back with the `gate step` line in
+    `remember` — as it is, without opening it to retype it, and before you say anything to
+    the user; the file is what the run reads, and the minute you would spend reproducing it
+    is a minute the run stands still. Name the subagent on that line (`--subagent`, its
+    agent id or name from the Agent tool's result) so the next pass can continue it. Only if
+    the file is missing do you take the answer from its final message and write it there.
+  - **A node's next pass continues the same subagent.** When `resume` names one, this node
+    ran earlier in this run — a planner coming back with the person's answers, an
+    implementer with a bounded fix — and that subagent still holds everything it read and
+    decided. Continue it with SendMessage (`to` is `resume`, the message is `prompt` whole
+    and unchanged) instead of starting a fresh one that reads it all again; the prompt
+    carries what is new. If the send fails because the agent is gone, start `subagent` fresh
+    with the Agent tool as on a first pass.
+  - You only get this instruction when your session runs through the gateway (see the end of
+    this file); otherwise the same node arrives as `wait`.
 - **`{"do": "wait", …}`** — a node is running on its own, in its own model. `log` is where it
   writes what it is doing, one short line per thing done, the way you show your own tool
   calls: `⏺ Read src/a.ts`, `⏺ Edit src/a.ts (+2 −1)`, `⏺ Bash: Run tests`, and what it says

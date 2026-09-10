@@ -90,6 +90,25 @@ nodes:
     # format: (not tformat:) prints no trailing newline, so the output is a
     # bare commit id that can be handed straight to git again.
     command: [git, log, "-1", --format=format:%H]
+    next: plan-dir
+
+  - id: plan-dir
+    type: command
+    label: Keep the plan out of the commit
+    # The plan file stays on disk for the implementer, the verifier and the
+    # reviewer to read, and out of the commit and the merge request: a
+    # docs/plans/.gitignore of "*" ignores the directory, itself included,
+    # for this worktree's tree and nothing else — an info/exclude in a
+    # linked worktree is the common one, shared with the person's checkout.
+    # The reasoning the plan carried travels in the implementer's summary,
+    # which is the commit's body. Only written when there is not one already:
+    # a project that ships its own docs/plans/.gitignore keeps it.
+    command:
+      - sh
+      - -c
+      - >-
+        mkdir -p docs/plans &&
+        { [ -e docs/plans/.gitignore ] || printf '*\\n' > docs/plans/.gitignore; }
     next: planner
 
   - id: planner

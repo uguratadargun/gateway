@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { GateClient } from "@/client/api";
-import { next, step, work, wait, type SessionRunContext } from "@/client/step";
+import { next, outputFileFor, recallSubagent, step, work, wait, type SessionRunContext } from "@/client/step";
 import { syncSubagents } from "@/client/subagents";
 import type { ExecutionStepRecord } from "@/executions/types";
 
@@ -64,6 +64,25 @@ nodes:
     status: completed
 `,
   );
+  // The same node twice: the second pass is the first subagent continued.
+  writeFileSync(
+    join(cache, "workflows", "twice.yaml"),
+    `name: Twice
+entry: build
+workspace: {}
+nodes:
+  - id: build
+    type: agent
+    agent: builder
+    edges:
+      - when: visits.build >= 2
+        to: done
+      - to: build
+  - id: done
+    type: terminal
+    status: completed
+`,
+  );
 });
 
 afterAll(() => {
@@ -71,7 +90,7 @@ afterAll(() => {
 });
 
 /** The server, as far as the client can tell: a run, its steps, what it was told. */
-function fakeServer(executionId: string) {
+function fakeServer(executionId: string, workflowId = "w") {
   const steps: ExecutionStepRecord[] = [];
   const events: Array<Record<string, unknown>> = [];
   const finished: unknown[] = [];
@@ -82,7 +101,7 @@ function fakeServer(executionId: string) {
       return {
         execution: {
           id: executionId,
-          workflowId: "w",
+          workflowId,
           status: finished.length ? "completed" : "running",
           input: { task: "a thing", repo: worktree },
           workspace: { root: worktree, repo: worktree, branch: "gate/run-x", baseRef: "HEAD" },
@@ -237,13 +256,67 @@ describe("the same node when the session itself runs through the gateway", () =>
       expect(first.prompt).toContain("running unattended");
       expect(first.workspace).toBe(worktree);
       expect(first.remember.some((r) => r.includes("gate step e4 build"))).toBe(true);
+      // The subagent writes its own answer file, under the run's directory,
+      // and the session hands that file back rather than retyping it.
+      expect(first.outputFile).toBe(outputFileFor("e4", "build", 1));
+      expect(first.outputFile).toContain(join("runs", "e4", "out", "build-1.json"));
+      expect(first.prompt).toContain(first.outputFile);
+      expect(first.remember.some((r) => r.includes(`--output-file ${first.outputFile}`))).toBe(true);
+      expect(first.remember.some((r) => r.includes("--subagent"))).toBe(true);
+      // A first pass: nothing to continue.
+      expect(first.resume).toBeNull();
       // No worker: the session runs it.
       expect(spawned).toEqual([]);
       expect(existsSync(join(home, "runs", "e4.json"))).toBe(true);
 
-      const after = await step(ctx, "e4", "build", '{"summary": "built live"}');
+      const after = await step(ctx, "e4", "build", '{"summary": "built live"}', { subagent: "a1b2c3" });
       expect(after.do).toBe("done");
       expect(server.steps[0]).toMatchObject({ nodeId: "build", status: "completed", output: { summary: "built live" } });
+      // The run is over, and everything on this machine about it went with it.
+      expect(recallSubagent("e4", "build")).toBeNull();
+    } finally {
+      if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousConfig;
+    }
+  });
+
+  it("continues the same subagent on the node's next pass, and starts fresh when none was named", async () => {
+    const previousConfig = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "gate-claude-"));
+    try {
+      const server = fakeServer("e5", "twice");
+      const ctx = context(server.client, { throughGateway: true, spawnWorker: () => process.pid });
+      syncSubagents("t", { root: join(home, "cache", "t"), teamId: "t" });
+
+      const first = await next(ctx, "e5");
+      expect(first.do).toBe("delegate");
+      if (first.do !== "delegate") return;
+      expect(first.resume).toBeNull();
+      const second = await step(ctx, "e5", "build", '{"summary": "pass one"}', { subagent: "agent-one" });
+      expect(recallSubagent("e5", "build")).toBe("agent-one");
+      expect(second.do).toBe("delegate");
+      if (second.do !== "delegate") return;
+      // The second pass continues the first pass's subagent, with everything
+      // it read still there, and its answer goes to a file of its own.
+      expect(second.resume).toBe("agent-one");
+      expect(second.remember.some((r) => r.includes('SendMessage') && r.includes('"agent-one"'))).toBe(true);
+      expect(second.outputFile).toBe(outputFileFor("e5", "build", 2));
+      expect(second.outputFile).not.toBe(first.outputFile);
+      // Handed back without naming a subagent: the next pass would start fresh.
+      const done = await step(ctx, "e5", "build", '{"summary": "pass two"}');
+      expect(done.do).toBe("done");
+      expect(recallSubagent("e5", "build")).toBeNull();
+
+      // A run whose first pass named nothing has nothing to continue.
+      const other = fakeServer("e6", "twice");
+      const octx = context(other.client, { throughGateway: true, spawnWorker: () => process.pid });
+      const o1 = await next(octx, "e6");
+      if (o1.do !== "delegate") return;
+      const o2 = await step(octx, "e6", "build", '{"summary": "pass one"}');
+      expect(o2.do).toBe("delegate");
+      if (o2.do !== "delegate") return;
+      expect(o2.resume).toBeNull();
+      expect(o2.remember[0]).toContain("Start the subagent");
     } finally {
       if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
       else process.env.CLAUDE_CONFIG_DIR = previousConfig;

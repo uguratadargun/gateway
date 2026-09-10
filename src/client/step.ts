@@ -79,6 +79,8 @@ export type Instruction =
       agent: string;
       /** The agent's prompt, inputs already resolved. */
       prompt: string;
+      /** Where to write the answer before handing it back; any file works, this one is ready. */
+      outputFile: string;
       output: { type: "json" | "text"; schema?: Record<string, string> };
       /** Where the work happens. Never the user's own checkout. */
       workspace: string | null;
@@ -138,8 +140,20 @@ export type Instruction =
       model: string;
       /** The subagent to start, by name: a file gate keeps under ~/.claude/agents. */
       subagent: string;
+      /**
+       * The subagent that did this node's last pass in this run, when there
+       * was one: continue it, context and all, instead of starting a fresh
+       * one that reads everything again. Null on a node's first pass.
+       */
+      resume: string | null;
       /** The whole task for the subagent, inputs resolved; passed as it is. */
       prompt: string;
+      /**
+       * Where the answer goes. The prompt tells the subagent to write its
+       * final JSON here itself, so the session hands the file back as it is
+       * rather than retyping ten kilobytes through its own context.
+       */
+      outputFile: string;
       output: { type: "json" | "text"; schema?: Record<string, string> };
       workspace: string | null;
       skills: Array<{ id: string; description: string; path: string | null }>;
@@ -234,6 +248,47 @@ export function forgetRun(executionId: string): void {
   for (const entry of readdirSync(runs)) {
     if (entry.startsWith(`${executionId}-`) && entry.endsWith(".log")) rmSync(join(runs, entry), { force: true });
   }
+}
+
+/**
+ * Where a node's answer is written before `gate step` hands it back. One
+ * file per pass, under the run's own directory, so nothing lands in /tmp
+ * and a pass never overwrites the last one.
+ */
+export function outputFileFor(executionId: string, nodeId: string, visit: number): string {
+  const dir = join(runDir(executionId), "out");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return join(dir, `${nodeId}-${visit}.json`);
+}
+
+function subagentsPath(executionId: string): string {
+  return join(runDir(executionId), "subagents.json");
+}
+
+/**
+ * Which subagent did each node's last pass, by node id. Kept on disk rather
+ * than in the session's memory: a run is an hour and a compaction away from
+ * forgetting, and the file is what `gate next` reads to say "continue it".
+ */
+export function recallSubagent(executionId: string, nodeId: string): string | null {
+  try {
+    const all = JSON.parse(readFileSync(subagentsPath(executionId), "utf8")) as Record<string, string>;
+    return all[nodeId] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberSubagent(executionId: string, nodeId: string, subagentId: string): void {
+  let all: Record<string, string> = {};
+  try {
+    all = JSON.parse(readFileSync(subagentsPath(executionId), "utf8")) as Record<string, string>;
+  } catch {
+    // First one.
+  }
+  all[nodeId] = subagentId;
+  mkdirSync(runDir(executionId), { recursive: true, mode: 0o700 });
+  writeFileSync(subagentsPath(executionId), `${JSON.stringify(all)}\n`, { mode: 0o600 });
 }
 
 /** The run's workspace, as it was recorded when the run began. */
@@ -540,7 +595,16 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
                 .join(", ")}`
             : "the answer as plain text";
         const subagent = subagentName(ctx.team, prepared.agent.id);
-        ctx.say(`  as subagent ${subagent} in ${prepared.agent.model} · live in this session`);
+        const outputFile = outputFileFor(executionId, node.id, position.visit);
+        // The same node again — a planner after the person's answers, an
+        // implementer after a bounded fix — is the same subagent continued,
+        // with everything it read still in its context. Only when this run
+        // saw it before; the file says.
+        const resume = position.visit > 1 ? recallSubagent(executionId, node.id) : null;
+        ctx.say(
+          `  as subagent ${subagent} in ${prepared.agent.model} · live in this session` +
+            (resume ? ` · continuing ${resume}` : ""),
+        );
         return {
           do: "delegate",
           executionId,
@@ -548,7 +612,9 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           agent: prepared.agent.id,
           model: prepared.agent.model,
           subagent,
-          prompt: `${prepared.prompt}\n\n${unattendedNotice()}`,
+          resume,
+          prompt: `${prepared.prompt}\n\n${unattendedNotice()}\n\n${answerFileNotice(outputFile, shape)}`,
+          outputFile,
           output:
             prepared.agent.output.type === "json"
               ? { type: "json", schema: prepared.agent.output.schema }
@@ -557,9 +623,14 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           skills,
           timeoutMs: prepared.agent.timeoutMs ?? null,
           remember: [
-            `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` ` +
-              "as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not " +
-              "pick a model for it: its file sets the agent's own model.",
+            resume
+              ? `This node ran earlier in this run as subagent ${resume}. Continue that same agent with SendMessage ` +
+                `(to: "${resume}"), giving it \`prompt\` whole and unchanged as the message: it keeps everything it ` +
+                "read and decided last time, and the prompt carries what is new — the answers, the feedback. Only if " +
+                `the send fails because that agent is gone, start "${subagent}" fresh with the Agent tool instead.`
+              : `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` ` +
+                "as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not " +
+                "pick a model for it: its file sets the agent's own model.",
             workspace
               ? `Tell it: work in ${workspace.root} — the run's worktree, not the user's checkout — with absolute paths under it, and nowhere else.`
               : "Tell it: this node has no workspace; reason over the task, touch no files.",
@@ -572,8 +643,11 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
               : []),
             `Tell it: end the final message with ${shape}, and nothing after it.`,
             "It cannot ask the user anything. Do not answer for it either; what it needs settled goes into its answer the way the prompt says.",
-            "When it returns, take that answer from its final message, write it to a file, and hand it back:",
-            `  gate step ${executionId} ${node.id} --output-file <file>`,
+            `The prompt tells it to write that answer to ${outputFile} itself. The moment it returns, hand that file back ` +
+              "as it is — before telling the user anything, and without retyping it — naming the subagent so the next " +
+              "pass of this node can continue it:",
+            `  gate step ${executionId} ${node.id} --output-file ${outputFile} --subagent <its agent id or name>`,
+            "If the file is not there, take the answer from its final message, write it to that path, and hand it back the same way.",
           ],
         };
       }
@@ -606,12 +680,14 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
               .map(([k, t]) => `${k} (${t})`)
               .join(", ")}`
           : "the answer as plain text";
+      const outputFile = outputFileFor(executionId, node.id, position.visit);
       return {
         do: "agent",
         executionId,
         nodeId: node.id,
         agent: prepared.agent.id,
         prompt: prepared.prompt,
+        outputFile,
         skills,
         remember: [
           ...(skills.length
@@ -629,8 +705,8 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           "What gate printed above this JSON — the command nodes it ran on the way here and their output — the user " +
             "has not seen: relay those lines to them before you start, as they are.",
           "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
-          `When the work is done, write ${shape} to a file and hand it back:`,
-          `  gate step ${executionId} ${node.id} --output-file <file>`,
+          `When the work is done, write ${shape} to ${outputFile} and hand it back:`,
+          `  gate step ${executionId} ${node.id} --output-file ${outputFile}`,
         ],
         output:
           prepared.agent.output.type === "json"
@@ -645,6 +721,20 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
     // Everything else is gate's own work: run it, record it, go round again.
     await runControlNode(ctx, executionId, node, state, position, workspaceOf(execution));
   }
+}
+
+/**
+ * Told to a subagent at the end of its task: where its answer goes. The
+ * session used to copy the answer out of the subagent's final message into
+ * a file by hand — ten kilobytes retyped through the session's own context,
+ * a minute or two per node, and one chance per node to drop a character.
+ */
+function answerFileNotice(outputFile: string, shape: string): string {
+  return (
+    `When you are done, write your answer — ${shape}, exactly what your final message ends with, and nothing ` +
+    `else — to the file ${outputFile} (create the directory if it is missing), then end your final message with ` +
+    "that same answer. The file is what the run reads; the message is for the person watching."
+  );
 }
 
 /**
@@ -747,6 +837,7 @@ export async function step(
   executionId: string,
   nodeId: string,
   answer: string,
+  opts: { subagent?: string } = {},
 ): Promise<Instruction> {
   const pending = readPending(executionId);
   if (!pending || pending.executionId !== executionId) {
@@ -803,6 +894,8 @@ export async function step(
     asksPerson(agent) ? [{ type: "run.resumed", at: finishedAt, nodeId }] : [],
   );
   ctx.say(`✓ ${nodeId} (${Math.max(1, Math.round((finishedAt - pending.startedAt) / 1000))}s)`);
+  // Which subagent did it, for the next pass of this node to continue.
+  if (opts.subagent) rememberSubagent(executionId, nodeId, opts.subagent);
   clearPending(executionId);
   return next(ctx, executionId);
 }

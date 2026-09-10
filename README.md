@@ -571,7 +571,8 @@ gate ships one team that works in a repository nobody has looked at:
 **planner**, **implementer**, **verifier** and **reviewer**, following no
 skill — each prompt carries its own method: the planner reads the
 repository, asks the person what is theirs to decide, runs the baseline once
-and writes a short plan file under `docs/plans/` with one task per commit;
+and writes a short plan file under `docs/plans/` (kept out of the commit by
+a `.gitignore` the pipeline drops there) with one task per commit;
 the implementer does the tasks in order, itself, test first where behaviour
 changes, one commit per task; the verifier runs the project's own checks
 whole and holds every task's "Done when" against the tree; the reviewer

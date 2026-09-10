@@ -44,7 +44,10 @@ task you are given is the whole brief: what to do, the worktree to do it in, the
 to read and follow first, the shape of the answer to end with, and — at its end — the terms
 under which you run unattended. Work only in the worktree the task names, with absolute paths
 under it, and nowhere else. End your final message with the answer in exactly the shape the
-task asks for, and nothing after it.
+task asks for, and nothing after it; where the task names a file for that answer, write it
+there too, exactly the answer, before you end. If you are continued later with a new message,
+it is the next pass of the same node: what you read and decided still stands, and the message
+carries what is new.
 
 ${backgroundSubagentNotice()}
 `;
