@@ -176,6 +176,12 @@ repository — agents as `<id>.md`, the workflow as `<id>.yaml` — then:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" push .gate-proposal/*.md .gate-proposal/*.yaml
 ```
 
+Give the workflow a description that names this repository and what the
+pipeline adds to `dev`: `/gate:run` with a task and no workflow named reads the
+list and takes the team's own pipeline as the long road — any workflow that is
+not one of the shipped three, takes a `task` and works in a worktree — so the
+description is what the user sees when it says which road it picked.
+
 Agents are saved before workflows whatever order you list them in, because a
 workflow naming an agent the server does not have yet is refused. Ids are
 lowercase letters, digits and dashes, taken from the filename. An id that

@@ -16,8 +16,10 @@ Workflows your team has defined — id, then name, description and the run input
 
 The user asked for: $ARGUMENTS
 
-If that is empty, ambiguous, or matches nothing above, show the workflows in a short readable
-form and ask which one to run. Do not guess, and do not invent an id that is not in the list.
+If it is empty, show the workflows in a short readable form and ask which one to run. If it
+starts with an id from the list, that is the workflow and the rest is the task. If it is a task
+with no workflow named, **you pick the road** — the section after the brief says how — and do
+not ask which workflow unless that section says to. Never invent an id that is not in the list.
 If the list came back as an error, say what it said — `not connected` means this machine has
 never been given a key, and `/gate:login <token>` with a token from the dashboard fixes it.
 
@@ -53,6 +55,47 @@ one-liner deserves a run, not a questionnaire.
 Then fold what you learn into the task you pass to `begin` — the run input is what the
 dashboard shows and what every agent reads, so it should say what was actually agreed, not
 what was first typed.
+
+## Pick the road, when the user did not
+
+A task with no workflow named goes down one of two roads, and which one is your call: the
+reading you just did to settle the brief is the reading that answers it, so decide now rather
+than asking the user to. Say which road and why in one line before you start it — a run is
+visible from the moment `begin` is called, and that line is what lets them stop a wrong pick
+before it costs anything.
+
+**The short road is `dev-quick`.** Take it only when all of these hold:
+
+- the task adjusts something that already exists — a colour, a label, a default, a copy
+  change, a small fix in behaviour that is already there;
+- you can name the files it touches from the reading you did, and there are one or two of
+  them;
+- it needs no design: no new surface (a screen, an endpoint, a command, a setting), no new
+  behaviour that has to be chosen between ways of doing it, no migration, no change to a
+  protocol, a schema or a public API, no new dependency;
+- nothing is left for the user to decide once the brief is settled;
+- the project's own check for those files is the whole of what verifies it.
+
+**The long road is the team's own pipeline for this repository, when it has one**: a workflow
+in the list above that is not one of the shipped three (`dev`, `dev-super`, `dev-quick`), takes
+a `task`, and works in a git worktree — `/gate:design` builds those around this project's own
+codegen, test command and merge-request host, and that is what a real change here should run
+through. If there is more than one such workflow, ask which, once. If there is none, the long
+road is `dev`. `dev-super` is never picked on your own: it runs when the user names it.
+
+Any condition of the short road that does not hold sends the task down the long road. When
+it is genuinely on the line — the files are two but one is shared by half the app, the fix is
+small but the behaviour is not settled — ask once, with AskUserQuestion, both roads as the
+options and your recommendation first with its reason in one line; put that question in the
+same round as any brief questions you have, never a round of its own.
+
+The picks are not symmetric, and the pipeline knows it: a task that turns out not to be small
+ends `dev-quick` at its `nothing-changed` terminal with the implementer's reason in the
+summary, in minutes, before anything is half-built. When a run you sent down the short road
+ends that way — the summary says the task needs a plan, a design, or touches more than a quick
+pass should — start the long road with the same brief, plus one line saying what the quick
+implementer found, without asking. Only that case: a `nothing-changed` that says the task was
+already done, or that nothing needed changing, ends there.
 
 ## How a run works
 

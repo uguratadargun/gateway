@@ -1111,7 +1111,13 @@ unattended use.
 starts that one and follows it to the end, `/gate:run dev-quick make the
 save button blue` takes the short road for a change that needs no plan, and
 `/gate:run dev-super …` is the same road as `dev` with the superpowers
-method. A workflow that takes a `repo` input
+method. `/gate:run make the save button blue`, with no workflow named,
+picks the road itself: `dev-quick` when the task adjusts something that
+exists in a file or two and needs no design, otherwise the team's own
+pipeline for the repository if `/gate:design` built one, else `dev`; it
+says which and why before starting, asks once when the task is genuinely
+on the line, and when a quick run ends with "this is not small" it starts
+the long road with the same brief. A workflow that takes a `repo` input
 defaults to the repository you are standing in (`--input repo=…` to aim it
 elsewhere).
 
