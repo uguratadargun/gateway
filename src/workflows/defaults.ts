@@ -48,10 +48,12 @@ import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
  * `plan-check` reads the approval that is still in the outputs and skips the
  * gate, and the planner's questions are still the way to the person if a
  * revision needs one. And between the
- * commit and the merge request stands `acceptance`
+ * commit and the merge request stands `acceptance`, which
  * tells them the branch is ready and how to try it, and only their answer
- * opens the merge request or sends the work back to the planner with what
- * they asked for. Unattended, that node cannot ask, so it holds, and the run
+ * opens the merge request or sends the work back with what they asked for —
+ * to the implementer when the request is bounded, to the planner when it
+ * changes what was planned; the acceptance node says which, as the reviewer
+ * does with `replan`. Unattended, that node cannot ask, so it holds, and the run
  * ends with the branch committed and unpushed.
  *
  * Between the implementer and the diff stands `verifier`: it runs the
@@ -290,9 +292,19 @@ nodes:
       - when: outputs.acceptance.decision == "ship"
         to: merge-request
         label: approved by the person
+      # The person's request goes where the acceptance node says, the way a
+      # rejection goes where the reviewer says: a bounded change — a wording,
+      # a name, a small fix in what the branch already has — is one more task
+      # for the implementer, against the plan as it stands; a change to what
+      # was planned goes to the planner first. Measured here: a request to
+      # translate commit messages, sent through the planner, cost a seven-
+      # minute plan and a nine-minute build.
+      - when: outputs.acceptance.decision == "revise" && outputs.acceptance.replan == false
+        to: implementer
+        label: bounded change requested by the person
       - when: outputs.acceptance.decision == "revise"
         to: planner
-        label: changes requested by the person
+        label: plan changes requested by the person
       # "hold", and anything else: nobody was there to ask. The branch stays
       # committed and unpushed, and the merge request waits for a person.
       - to: awaiting-approval

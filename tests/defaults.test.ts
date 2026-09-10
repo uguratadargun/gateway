@@ -196,6 +196,11 @@ describe("what the shipped agents declare", () => {
     const reviewerOutput = byId.get("reviewer")!.output;
     expect(reviewerOutput.type === "json" ? Object.keys(reviewerOutput.schema) : []).toContain("replan");
     expect(byId.get("implementer")!.inputs).toContain("verifier.gaps?");
+    // The acceptance node says where the person's request goes the same way,
+    // and a bounded one reaches the implementer directly.
+    const acceptanceOutput = byId.get("acceptance")!.output;
+    expect(acceptanceOutput.type === "json" ? Object.keys(acceptanceOutput.schema) : []).toContain("replan");
+    expect(byId.get("implementer")!.inputs).toContain("acceptance.requests?");
     // The verifier runs checks and reads; it never edits.
     expect(byId.get("super-verifier")!.skills).toEqual(["superpowers-verification-before-completion"]);
     expect(byId.get("verifier")!.tools).toContain("run_command");
@@ -270,14 +275,14 @@ Show {{inputs.planner.plan}} at {{inputs.planner.planFile}}
 `,
     implementer: `---
 name: Implementer
-inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?]
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?]
 output:
   type: json
   schema:
     summary: string
     changed: boolean
 ---
-Do {{inputs.planner.planFile}} {{inputs.reviewer.feedback}} {{inputs.verifier.gaps}}
+Do {{inputs.planner.planFile}} {{inputs.reviewer.feedback}} {{inputs.verifier.gaps}} {{inputs.acceptance.requests}}
 `,
     verifier: `---
 name: Verifier
@@ -310,6 +315,7 @@ output:
   type: json
   schema:
     decision: string
+    replan: "boolean?"
     requests: "string?"
 ---
 Try {{inputs.implementer.summary}}
@@ -477,8 +483,8 @@ Try {{inputs.implementer.summary}}
       APPROVED,
       (visit) =>
         visit === 1
-          ? JSON.stringify({ decision: "revise", requests: "Make the button blue, not green." })
-          : JSON.stringify({ decision: "ship" }),
+          ? JSON.stringify({ decision: "revise", replan: true, requests: "Make the button blue, not green." })
+          : JSON.stringify({ decision: "ship", replan: false }),
     );
     const { ran, runCommand } = fakeGit({ staged: true });
 
@@ -487,7 +493,7 @@ Try {{inputs.implementer.summary}}
     expect(state.error).toBeNull();
     expect(state.status).toBe("completed");
     // Tried once, sent back once, tried again, shipped — through the planner,
-    // not the implementer: a person's request is a change of brief.
+    // because the acceptance node judged the request a change of plan.
     expect(state.visitCounts.acceptance).toBe(2);
     expect(state.visitCounts.planner).toBe(2);
     expect(state.visitCounts.reviewer).toBe(2);
@@ -499,6 +505,32 @@ Try {{inputs.implementer.summary}}
     expect(plans[1]).toContain("Make the button blue, not green.");
     // One merge request, at the end.
     expect(ran.filter((c) => c.includes("gate-open-mr"))).toHaveLength(1);
+  });
+
+  it("sends a bounded request from the person straight to the implementer, and a plan change to the planner", async () => {
+    const workflow = standIn();
+    const provider = fakeTeam(APPROVED, (visit) =>
+      visit === 1
+        ? JSON.stringify({ decision: "revise", replan: false, requests: "Translate the Turkish commit messages to English." })
+        : SHIP(),
+    );
+    const { runCommand } = fakeGit({ staged: true });
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
+
+    expect(state.status).toBe("completed");
+    // A wording change is one more task against the plan as it stands: the
+    // implementer continues, the verifier and reviewer run again, and the
+    // planner is never woken — measured here, a seven-minute plan and a
+    // nine-minute build for a change of words when every request went there.
+    expect(state.visitCounts.planner).toBe(1);
+    expect(state.visitCounts.implementer).toBe(2);
+    expect(state.visitCounts.verifier).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(2);
+    expect(state.visitCounts.acceptance).toBe(2);
+    const builds = provider.callsFor("implementer").map((c) => c.messages[0].content);
+    expect(builds[0]).not.toContain("Turkish");
+    expect(builds[1]).toContain("Translate the Turkish commit messages to English.");
   });
 
   it("holds when nobody is there to approve, leaving the branch committed and unpushed", async () => {
@@ -763,6 +795,7 @@ output:
   type: json
   schema:
     decision: string
+    replan: "boolean?"
     requests: "string?"
 ---
 Try {{inputs.implementer.summary}}

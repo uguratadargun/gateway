@@ -422,7 +422,7 @@ base ─▶ plan-dir ─▶ planner ─▶ plan-check ─┬─ questions ─▶
           │                                                                        └──────────────────────────────────────────── fix requested (replan: false) ──┤                                                 ▼
           │                                                                                                                                                      └─ plan changes requested ──▶ planner      acceptance ─▶ decision ─┬─ ship ─▶ merge-request ─▶ done
           │                                                                                                                                                                                                                        ├─ hold ─▶ awaiting-approval
-          └───────────────────────────────────────────────────────── revise: the person asked for changes ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+          └──────────────────────────────────── revise, replan: true — the person asked for a change of plan (replan: false goes to the implementer) ─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 And `dev-quick`, the short road: the same base, diff, commit, acceptance and
@@ -460,7 +460,11 @@ task's requirement against it, so the reviewer reads a change that passed and
 the merge request carries a suite that was actually run; its gaps go back to
 the implementer as tasks. A rejected review goes where the reviewer says —
 `replan: false` sends a bounded fix straight to the implementer, `replan:
-true` sends a fault in the plan back to the planner.
+true` sends a fault in the plan back to the planner. The person's request
+at `acceptance` goes the same way: the node answers `replan` too, and a
+wording, a name, a translation, a small fix in what the branch already has
+is one more task for the implementer — which continues where it stopped —
+while a change to what was planned goes to the planner first.
 
 `dev-super` is the same graph to the byte, with the four working agents
 swapped for `super-planner`, `super-implementer`, `super-verifier` and
@@ -799,8 +803,9 @@ accept it. The server validates shape, not sense.
 - [ ] **A person approves the plan before anything is built, and the branch
       before anything leaves the machine** — `plan-review` stands between the
       planner and the implementer, `acceptance` between the commit and the
-      merge request; each "revise" edge goes to the planner, each "hold" edge
-      ends the run rather than proceeding on nobody's say-so. The plan is
+      merge request; a "revise" edge goes to the planner, or to the implementer
+      when the node judged the request bounded (`replan: false`); each "hold"
+      edge ends the run rather than proceeding on nobody's say-so. The plan is
       approved once — a revision after a review or after the person's own
       requests skips `plan-review` on the approval still in the outputs — but
       it is never skipped before there is one. The planner's

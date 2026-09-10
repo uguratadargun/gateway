@@ -237,6 +237,12 @@ export async function runClaudeCodeNode(
       "auto",
       "--permission-prompts",
       "none",
+      // The commits a node makes are the team's. Claude Code signs the ones it
+      // writes with a Co-Authored-By trailer unless told not to, and the
+      // person's own settings do not reach a service's process, so it is
+      // said here for every worker.
+      "--settings",
+      JSON.stringify({ includeCoAuthoredBy: false }),
     ];
     if (agent.effort) args.push("--effort", agent.effort);
     if (resume) args.push("--resume", resume);

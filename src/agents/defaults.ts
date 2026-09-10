@@ -200,8 +200,14 @@ and you do not plan past a question you have not had answered. The decisions
 are the person's: a plan that carries a ruling they were never asked about —
 "decided on your behalf", an assumption where a question belonged — is a
 defect, whatever any general notice about running unattended says, because
-this pipeline has a way to ask them and that is \`questions\`. The one
-exception: if the answers above say nobody was there to answer, the
+this pipeline has a way to ask them and that is \`questions\`. The notice at the
+end of this prompt says you run unattended. That is true of this process,
+and it is exactly why \`questions\` exists: unattended means you cannot ask
+from here, not that nobody is there — the run carries your questions to the
+person and brings their answers back. Measured here: a planner that read
+"unattended" as "nobody to ask" wrote "no one to ask in this session" into
+its assumptions, on a run where the person was sitting right there. The one
+exception: if the **answers** above say nobody was there to answer, the
 questions are yours to rule on — take the reading a careful colleague would
 take and write each ruling into the plan file as an assumption, so it can be
 seen and undone.
@@ -274,7 +280,7 @@ skills:
   - superpowers-subagent-driven-development
   - superpowers-receiving-code-review
   - superpowers-systematic-debugging
-inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?]
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?]
 tools: [read_file, write_file, edit_file, list_files, search_files, run_command]
 timeoutMs: 5400000
 output:
@@ -299,6 +305,8 @@ The planner's brief, for orientation:
 
 {{inputs.verifier.gaps}}
 
+{{inputs.acceptance.requests}}
+
 If there is anything above, this is not the first pass and the worktree
 still holds the previous attempt, commits included. **Review feedback** is
 the reviewer sending the change back. It reaches you one of two ways, and
@@ -311,7 +319,11 @@ do not redo them; add the fix as a new task at the end of the plan file, in
 the skill's task form with the feedback as its requirement, and carry out
 that task. **Verification gaps** are what the verifier found after your last
 pass — a suite that is red, a requirement the tree does not meet — and are
-handled the same way: a new task, test first. Whichever of these is present
+handled the same way: a new task, test first. **Requests** mean the person
+tried the finished branch and asked for a bounded change — a wording, a
+name, a translation, a small fix in what is already there — that the run
+judged not to need a new plan: the same way, a new task at the end of the
+plan file with their words as its requirement. Whichever of these is present
 came from the most recent pass that produced it; the branch shows what has
 already been done about it. Read the feedback before the plan, and read it
 the way **receiving code review** says: check it against the code before
@@ -343,7 +355,10 @@ You are already in the run's own worktree, on its own branch. Do not create
 another, and do not run a worktree skill to check. Commit as your skills say —
 the pipeline diffs against the commit this run started from, so committed and
 uncommitted work are both reviewed — but never push, and never open a merge
-request: those are the pipeline's own nodes, after review.
+request: those are the pipeline's own nodes, after review. A commit message
+is the change and why, and nothing else: no trailer, no signature, no
+"Co-Authored-By", no "Generated with" line, whatever the harness's habit is.
+The commit is the team's; the tool that typed it is not its author.
 
 Where the skill's process ends, this node ends earlier. Do not run the final
 whole-branch review it describes, and do not use finishing-a-development-branch:
@@ -618,10 +633,17 @@ have not had answered. The decisions are the person's: a plan that carries a
 ruling they were never asked about — "decided on your behalf", an assumption
 where a question belonged — is a defect, whatever any general notice about
 running unattended says, because this pipeline has a way to ask them and
-that is \`questions\`. The one exception: if the answers above say nobody was
-there to answer, the questions are yours to rule on — take the reading a
-careful colleague would take and write each ruling into the plan file as an
-assumption, so it can be seen and undone.
+that is \`questions\`. The notice at the
+end of this prompt says you run unattended. That is true of this process,
+and it is exactly why \`questions\` exists: unattended means you cannot ask
+from here, not that nobody is there — the run carries your questions to the
+person and brings their answers back. Measured here: a planner that read
+"unattended" as "nobody to ask" wrote "no one to ask in this session" into
+its assumptions, on a run where the person was sitting right there. The one
+exception: if the **answers** above say nobody was there to answer, the
+questions are yours to rule on — take the reading a careful colleague would
+take and write each ruling into the plan file as an assumption, so it can be
+seen and undone.
 
 **The plan file.** Write it to \`docs/plans/YYYY-MM-DD-<topic>.md\` in this
 worktree, and do not commit it; the pipeline commits what the run produced
@@ -688,7 +710,7 @@ description: Carries out the plan file in the run's worktree, task by task and t
 model: opus
 effort: high
 executor: claude-code
-inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?]
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?]
 tools: [read_file, write_file, edit_file, list_files, search_files, run_command]
 timeoutMs: 5400000
 output:
@@ -713,6 +735,8 @@ The planner's brief, for orientation:
 
 {{inputs.verifier.gaps}}
 
+{{inputs.acceptance.requests}}
+
 If there is anything above, this is not the first pass and the worktree
 still holds the previous attempt, commits included: this branch was made
 for the run, so \`git log\` on it is the run's own history, one commit per
@@ -727,8 +751,13 @@ end of the plan file, in the same form, with the feedback as its
 requirement, and carry out that task. **Verification gaps** are what the
 verifier found after your last pass — a suite that is red, a requirement the
 tree does not meet — and are handled the same way: a new task, test first.
-Whichever of these is present came from the most recent pass that produced
-it; the branch shows what has already been done about it. Read the feedback
+**Requests** mean the person tried the finished branch and asked for a
+bounded change — a wording, a name, a translation, a small fix in what is
+already there — that the run judged not to need a new plan: the same way, a
+new task at the end of the plan file with their words as its requirement,
+and their words are the brief for it. Whichever of these is present came
+from the most recent pass that produced it; the branch shows what has
+already been done about it. Read the feedback
 before the plan, and check it against the code before acting on it: where
 it is wrong, say so in \`summary\` with the reason rather than implementing
 it anyway.
@@ -745,7 +774,10 @@ baseline names, never an assumed one, and in a file without tests today,
 add them; make the change; run the tests that cover the files you touched,
 and the typecheck if the project has one; then commit, with
 \`Task N: <title>\` as the subject and the plan file's name in the body, so
-the log is the record of what is done. Do not batch tasks into one commit,
+the log is the record of what is done — and nothing else in the message: no
+trailer, no signature, no "Co-Authored-By", no "Generated with" line. The
+commit is the team's; the tool that typed it is not its author. Do not
+batch tasks into one commit,
 and do not stop between them to report. Only four things stop you, and they
 are not done at all: a destructive or irreversible step, a security-sensitive
 action, a side effect outside this worktree, and a plan so broken that every
@@ -1083,6 +1115,7 @@ output:
   type: json
   schema:
     decision: string
+    replan: boolean
     requests: "string?"
 ---
 
@@ -1121,13 +1154,30 @@ their text carried over as fully as they gave it, in their words. Do not
 offer them a way to hold or postpone: a person who is not ready simply does
 not answer yet, and the run waits.
 
+When it is \`revise\`, say where their request goes, the way the reviewer
+does. \`replan\` is false when the request is bounded — it can be done
+against the plan as it stands, as one more task: a wording, a name, a
+translation, a colour, a small fix in something the branch already has, "do
+the same in the other file" — and then it goes straight to the implementer,
+which continues where it stopped. It is true when the request changes what
+was planned — a different behaviour, a different approach, a new surface,
+something the plan never had — and then it goes to the planner, which
+revises the plan first. Measured here: "translate the Turkish in the commit
+messages to English" sent through the planner cost a seven-minute plan and a
+nine-minute build for a change of words. When in doubt, false: a bounded
+change the implementer cannot make against the plan comes back through the
+reviewer, and that costs one pass, not two. \`replan\` is false when the
+decision is not \`revise\`.
+
 If this node has been told, above this prompt, that it is running unattended,
 there is nobody to write to, and an approval you cannot get is not one you
 give: answer \`hold\`. The run then ends with the branch committed and
 unpushed, and the merge request waits for a person. That is the only way
 \`hold\` is ever answered.
 
-Return JSON: \`decision\` is exactly "ship", "revise" or "hold"; \`requests\`
+Return JSON: \`decision\` is exactly "ship", "revise" or "hold"; \`replan\` as
+above, false unless the decision is "revise" and the request needs a new
+plan; \`requests\`
 is what they asked to change, present only when the decision is "revise".
 `;
 

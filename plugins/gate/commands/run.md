@@ -153,6 +153,11 @@ Each call prints one JSON instruction:
     reason to hold a node: measured here, a reviewer's approval waited thirty-four minutes
     on "shall I take the plan file out of the commit?" while the user was away. Hand the
     step back, then say what you noticed.
+  - **No signature on any commit.** A commit the run makes — a subagent's, a worker's, or
+    one you make yourself for a node — carries no "Co-Authored-By" and no "Generated with"
+    trailer, whatever your own habit is: the commit is the team's, and the tool that typed it
+    is not its author. The shipped agents are told the same; if you see one on the branch,
+    say so at the end rather than rewriting history mid-run.
   - **`gate step` is final.** What you hand back becomes the node's output, the edges are
     taken on it, and there is no way to take it back: the next nodes read it as the truth.
     So never hand back a test, a placeholder or a minimal output to see whether the command

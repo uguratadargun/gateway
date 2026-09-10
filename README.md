@@ -584,7 +584,8 @@ and nothing is built until they say so — once; a plan revised after a review,
 or after their own requests on the branch, goes straight back to the
 implementer rather than being shown again. **acceptance** tells them the branch
 is ready and how to try it (`git merge <branch>`), and only their answer opens
-the merge request or sends their requests back to the planner. Together they
+the merge request or sends their requests back — to the implementer when the
+request is bounded, to the planner when it changes what was planned. Together they
 make a `dev` pipeline that plans with the person, builds once they approve,
 verifies, reviews, commits, asks, and opens a merge request — and because
 none of them names a skill, a fresh install runs it without importing anything.

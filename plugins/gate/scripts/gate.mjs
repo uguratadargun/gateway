@@ -7682,7 +7682,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.31.0";
+var GATE_VERSION = "0.31.1";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -9288,7 +9288,13 @@ async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
       "--permission-mode",
       "auto",
       "--permission-prompts",
-      "none"
+      "none",
+      // The commits a node makes are the team's. Claude Code signs the ones it
+      // writes with a Co-Authored-By trailer unless told not to, and the
+      // person's own settings do not reach a service's process, so it is
+      // said here for every worker.
+      "--settings",
+      JSON.stringify({ includeCoAuthoredBy: false })
     ];
     if (agent.effort) args.push("--effort", agent.effort);
     if (resume) args.push("--resume", resume);
@@ -9852,7 +9858,9 @@ to read and follow first, the shape of the answer to end with, and \u2014 at its
 under which you run unattended. Work only in the worktree the task names, with absolute paths
 under it, and nowhere else. End your final message with the answer in exactly the shape the
 task asks for, and nothing after it; where the task names a file for that answer, write it
-there too, exactly the answer, before you end. If you are continued later with a new message,
+there too, exactly the answer, before you end. A commit you make carries no trailer and no
+signature \u2014 no "Co-Authored-By", no "Generated with" line: it is the team's commit, and the
+tool that typed it is not its author. If you are continued later with a new message,
 it is the next pass of the same node: what you read and decided still stands, and the message
 carries what is new.
 

@@ -106,6 +106,9 @@ describe("claude-code executor", () => {
     // target denies whatever is left rather than waiting for nobody.
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("auto");
     expect(args[args.indexOf("--permission-prompts") + 1]).toBe("none");
+    // The team's commits carry no Co-Authored-By trailer, whatever the
+    // person's own settings say: a worker under a service has none of them.
+    expect(JSON.parse(args[args.indexOf("--settings") + 1])).toEqual({ includeCoAuthoredBy: false });
     // Full toolset on purpose — --allowed-tools gates prompts, not capability.
     expect(args).not.toContain("--allowed-tools");
     expect(args).not.toContain("--disallowed-tools");
