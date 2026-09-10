@@ -315,6 +315,22 @@ describe("runWorkflow", () => {
     expect(state.outputs.implementation).toEqual({ diff: "+++ p" });
   });
 
+  it("takes a clean JSON answer whole, even when its strings contain fences", async () => {
+    // A planner's notes quote code. The fence heuristic, applied first, took
+    // the text between two fences inside a string value and refused a valid
+    // answer; the whole text is tried before any heuristic.
+    const notes = "Read a.ts:\n```ts\nconst a = 1;\n```\nand b.ts:\n```ts\nconst b = 2;\n```\n";
+    const provider = new FakeModelProvider((req) => {
+      const node = req.context?.nodeId;
+      if (node === "planner") return JSON.stringify({ plan: notes });
+      if (node === "implementation") return JSON.stringify({ diff: "+++ p" });
+      return '{"passed": true, "failures": 0}';
+    });
+    const state = await run(provider);
+    expect(state.status).toBe("completed");
+    expect(state.outputs.planner).toEqual({ plan: notes });
+  });
+
   it("runs command nodes and branches on the exit code without a shell", async () => {
     const src = `
 name: Build

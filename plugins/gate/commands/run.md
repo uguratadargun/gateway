@@ -145,6 +145,13 @@ Each call prints one JSON instruction:
     This is their session: they are there, they can answer, and a question costs a minute
     where a wrong guess costs the rest of the run. The node's answer goes in a file, not in
     what you say, so asking never gets in the way of finishing it.
+  - **`gate step` is final.** What you hand back becomes the node's output, the edges are
+    taken on it, and there is no way to take it back: the next nodes read it as the truth.
+    So never hand back a test, a placeholder or a minimal output to see whether the command
+    works — measured here, `{"plan":"x","planFile":"y"}` sent to find out why a real output
+    was refused advanced the run past its plan with nothing in it. If `step` refuses your
+    file, keep the file, read the message, and fix the file or say what it said; do not
+    experiment on a live run.
   - **A node that exists to ask them pauses the run.** The shipped `clarify`, `plan-review`
     and `acceptance` nodes are the person's turn: while one is in your hands the dashboard
     shows the run as *paused* and its clock stands still, and `gate step` sets it running

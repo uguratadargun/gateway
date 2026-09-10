@@ -378,10 +378,25 @@ function resolveSkills(
   });
 }
 
-/** Models add fences and commentary even when told not to; recover the object. */
+/**
+ * Models add fences and commentary even when told not to; recover the object.
+ *
+ * The text as a whole is tried first. The fence and brace heuristics exist
+ * for a chatty answer, and applied to a clean one they can break it: a
+ * planner's notes are JSON strings that themselves contain markdown fences,
+ * and the first fence found was inside a string value — measured here, a
+ * valid 11 KB output refused as "did not return JSON".
+ */
 function extractJson(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const body = (fenced ? fenced[1] : text).trim();
+  const whole = text.trim();
+  try {
+    JSON.parse(whole);
+    return whole;
+  } catch {
+    // fall through to the heuristics
+  }
+  const fenced = whole.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const body = (fenced ? fenced[1] : whole).trim();
   const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
   return start >= 0 && end > start ? body.slice(start, end + 1) : body;

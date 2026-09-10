@@ -7682,7 +7682,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.30.1";
+var GATE_VERSION = "0.30.2";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -9663,8 +9663,14 @@ function resolveSkills(agent, nodeId2, loadSkill) {
   });
 }
 function extractJson(text) {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const body = (fenced ? fenced[1] : text).trim();
+  const whole = text.trim();
+  try {
+    JSON.parse(whole);
+    return whole;
+  } catch {
+  }
+  const fenced = whole.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const body = (fenced ? fenced[1] : whole).trim();
   const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
   return start >= 0 && end > start ? body.slice(start, end + 1) : body;
