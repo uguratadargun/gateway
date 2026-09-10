@@ -714,13 +714,13 @@ The planner's brief, for orientation:
 {{inputs.verifier.gaps}}
 
 If there is anything above, this is not the first pass and the worktree
-still holds the previous attempt, commits included: the log since the run's
-base commit shows which tasks were committed, one commit each, named after
-the task. **Review feedback** is the reviewer sending the change back. It
-reaches you one of two ways, and the plan file's name tells you which: a
-plan file with a new pass in its name (\`…-rev2.md\`) means the planner
-rewrote the plan around the feedback, for the branch as it stands — carry it
-out as it is written. The same plan file as before means the reviewer judged
+still holds the previous attempt, commits included: this branch was made
+for the run, so \`git log\` on it is the run's own history, one commit per
+task, each named after the task it completed. **Review feedback** is the
+reviewer sending the change back. It reaches you one of two ways, and the
+plan file's name tells you which: a plan file with a new pass in its name
+(\`…-rev2.md\`) means the planner rewrote the plan around the feedback, for
+the branch as it stands — carry it out as it is written. The same plan file as before means the reviewer judged
 the fix bounded and sent it straight here: then the plan's tasks are done
 and the log says so, so do not redo them; add the fix as a new task at the
 end of the plan file, in the same form, with the feedback as its
