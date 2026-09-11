@@ -10459,7 +10459,12 @@ function fromAnthropicMessage(json, requestedModel, routedModel) {
     stopReason: json.stop_reason ?? null,
     model: routedModel || json.model || requestedModel,
     usage: {
-      inputTokens: json.usage?.input_tokens ?? 0,
+      // Tokens written to the prompt cache were read by the model all the
+      // same: with prompt caching on, the API reports a 20k-token prompt as
+      // `input_tokens: 2` plus `cache_creation_input_tokens: 19998`, and a
+      // node's usage used to show the 2. Counted as input here; the gateway's
+      // own usage record keeps the exact split and the exact price.
+      inputTokens: (json.usage?.input_tokens ?? 0) + (json.usage?.cache_creation_input_tokens ?? 0),
       outputTokens: json.usage?.output_tokens ?? 0,
       cacheReadTokens: json.usage?.cache_read_input_tokens ?? 0
     }
