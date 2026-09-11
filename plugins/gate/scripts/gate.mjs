@@ -8885,7 +8885,7 @@ function configPath() {
 function readConfig() {
   const url = process.env.GATE_URL;
   const key = process.env.GATE_KEY;
-  if (url && key) return { url: url.replace(/\/+$/, ""), key };
+  if (url && key) return { url: url.replace(/\/+$/, ""), key, fromEnv: true };
   try {
     const raw = JSON.parse(readFileSync5(configPath(), "utf8"));
     if (!raw?.url || !raw?.key) return null;
@@ -11653,7 +11653,7 @@ async function sync(client, team, quiet = false) {
 async function teamOf(client, config) {
   if (config.team) return config.team;
   const me = await client.me();
-  writeConfig({ ...config, team: me.team.id, user: me.user?.email });
+  if (!config.fromEnv) writeConfig({ ...config, team: me.team.id, user: me.user?.email });
   return me.team.id;
 }
 async function cmdLogin(args) {

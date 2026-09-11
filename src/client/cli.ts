@@ -171,7 +171,9 @@ async function sync(client: GateClient, team: string | undefined, quiet = false)
 async function teamOf(client: GateClient, config: ClientConfig): Promise<string> {
   if (config.team) return config.team;
   const me = await client.me();
-  writeConfig({ ...config, team: me.team.id, user: me.user?.email });
+  // A connection from the environment is for this command only; the login
+  // on disk stays whatever the person made it.
+  if (!config.fromEnv) writeConfig({ ...config, team: me.team.id, user: me.user?.email });
   return me.team.id;
 }
 

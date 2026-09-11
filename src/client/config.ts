@@ -28,6 +28,8 @@ export interface ClientConfig {
    * the person's own clone, and only they can say where.
    */
   repos?: Record<string, string>;
+  /** True when url and key came from GATE_URL/GATE_KEY: never written to disk. */
+  fromEnv?: boolean;
 }
 
 export function gateHome(): string {
@@ -42,7 +44,11 @@ export function readConfig(): ClientConfig | null {
   // The environment wins, so CI and one-off runs need no file on disk.
   const url = process.env.GATE_URL;
   const key = process.env.GATE_KEY;
-  if (url && key) return { url: url.replace(/\/+$/, ""), key };
+  // Marked, so nothing that learns something about this connection (the
+  // team, the person) writes the environment's credentials over the login
+  // saved on disk — measured here: one `GATE_KEY=… gate run` against a
+  // local gate left the machine logged out of the company's.
+  if (url && key) return { url: url.replace(/\/+$/, ""), key, fromEnv: true };
 
   try {
     const raw = JSON.parse(readFileSync(configPath(), "utf8")) as ClientConfig;
