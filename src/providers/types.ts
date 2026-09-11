@@ -67,7 +67,14 @@ export interface ModelProviderResult {
   stopReason: string | null;
   /** The model that actually served the request (may differ after routing). */
   model: string;
-  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
+  /**
+   * `inputTokens` is the whole prompt the model was shown, cache write
+   * included; `cacheCreationTokens` is how much of it was written to the
+   * prompt cache — a breakdown of `inputTokens`, not a figure to add to it.
+   * It is kept because a cache write bills at 1.25× (5m) or 2× (1h) plain
+   * input, so anything pricing a call needs the split.
+   */
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens?: number };
 }
 
 export interface ModelProvider {

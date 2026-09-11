@@ -199,8 +199,15 @@ export async function consolidateImplementation(
       outputTokens: result.usage.outputTokens,
       costUsd: costForUsage(
         tierOf(result.model),
-        { input: result.usage.inputTokens, output: result.usage.outputTokens, cacheRead: result.usage.cacheReadTokens, cacheCreation: 0 },
-        { model: result.model },
+        // The cache write is part of `inputTokens` and priced apart from it:
+        // a write bills at 1.25× (5m) or 2× (1h) the input rate.
+        {
+          input: result.usage.inputTokens - (result.usage.cacheCreationTokens ?? 0),
+          output: result.usage.outputTokens,
+          cacheRead: result.usage.cacheReadTokens,
+          cacheCreation: result.usage.cacheCreationTokens ?? 0,
+        },
+        { model: result.model, cacheTtl: loadSettings().promptCache.ttl },
       ),
     };
     let answer: ConsolidationAnswer;

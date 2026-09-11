@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getExecution, getExecutionDiff, getExecutionLineage } from "@/executions/store";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 import { costForUsage, tierOf } from "@/lib/pricing";
+import { loadSettings } from "@/lib/settings";
 import type { ModelProvider } from "@/providers/types";
 
 import { hybridSearchDecisions, hybridSearchFeatures } from "./hybrid";
@@ -280,8 +281,16 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
       outputTokens: result.usage.outputTokens,
       costUsd: costForUsage(
         tierOf(result.model),
-        { input: result.usage.inputTokens, output: result.usage.outputTokens, cacheRead: result.usage.cacheReadTokens, cacheCreation: 0 },
-        { model: result.model },
+        // `inputTokens` already counts what was written to the cache; the
+        // write is priced apart from plain input because it bills at 1.25×
+        // (5m) or 2× (1h), and pricing it as input reads too cheap.
+        {
+          input: result.usage.inputTokens - (result.usage.cacheCreationTokens ?? 0),
+          output: result.usage.outputTokens,
+          cacheRead: result.usage.cacheReadTokens,
+          cacheCreation: result.usage.cacheCreationTokens ?? 0,
+        },
+        { model: result.model, cacheTtl: loadSettings().promptCache.ttl },
       ),
     };
 
