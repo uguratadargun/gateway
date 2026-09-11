@@ -1,4 +1,5 @@
-import { getFeature, implementationsOf, memoryScopeFor, searchDecisions, searchFeatures } from "./store";
+import { hybridSearchDecisions, hybridSearchFeatures } from "./hybrid";
+import { getFeature, implementationsOf, memoryScopeFor, searchDecisions } from "./store";
 
 import { implementationLine, toDecisionCard, toFeatureCard, type FeatureDetail, type MemoryAccess, type MemorySearchRequest, type MemorySearchResult } from "./cards";
 
@@ -15,15 +16,17 @@ export class LocalMemoryAccess implements MemoryAccess {
   async search(req: MemorySearchRequest): Promise<MemorySearchResult> {
     const scope = memoryScopeFor(this.teamId);
     const limit = Math.min(Math.max(req.limit ?? 10, 1), 50);
-    const features = req.query ? searchFeatures(scope, req.query, 5).map((f) => toFeatureCard(f)) : [];
-    const decisions = searchDecisions(scope, {
-      query: req.query,
-      paths: req.paths,
-      featureId: req.featureId,
-      asOf: req.asOf,
-      since: req.since,
-      limit,
-    }).map(toDecisionCard);
+    const features = req.query ? (await hybridSearchFeatures(scope, req.query, 5)).map((f) => toFeatureCard(f)) : [];
+    const decisions = (
+      await hybridSearchDecisions(scope, {
+        query: req.query,
+        paths: req.paths,
+        featureId: req.featureId,
+        asOf: req.asOf,
+        since: req.since,
+        limit,
+      })
+    ).map(toDecisionCard);
     return { scope: { own: scope.own, teams: scope.teams }, features, decisions };
   }
 

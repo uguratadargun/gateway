@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import { getDb } from "@/lib/db";
 import { teamFamily, teamRoot } from "@/lib/teams";
 
+import { deleteEmbedding } from "./embeddings";
+
 import type {
   Decision,
   DecisionDraft,
@@ -145,6 +147,7 @@ export function upsertFeature(input: {
       );
       const updated = getFeature(input.id)!;
       writeFeatureIndex(updated);
+      deleteEmbedding("feature", updated.id);
       return updated;
     }
   }
@@ -327,6 +330,7 @@ export function replaceDecisions(
       db.prepare("DELETE FROM memory_decisions_fts WHERE id = ?").run(old.id);
       db.prepare("DELETE FROM memory_touches WHERE decision_id = ?").run(old.id);
       db.prepare("DELETE FROM memory_decisions WHERE id = ?").run(old.id);
+      deleteEmbedding("decision", old.id);
     }
     const written: Decision[] = [];
     drafts.forEach((draft, n) => {

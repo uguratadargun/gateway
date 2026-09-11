@@ -70,7 +70,14 @@ export const settingsPatchSchema = z
       })
       .partial(),
     routingPrecision: z.object({ countTokens: z.boolean() }).partial(),
-    memory: z.object({ enabled: z.boolean(), model: z.string().min(1).max(100) }).partial(),
+    memory: z
+      .object({
+        enabled: z.boolean(),
+        model: z.string().min(1).max(100),
+        embeddings: z.object({ provider: z.string().max(100), model: z.string().max(100) }).partial(),
+        consolidateEvery: z.number().int().min(0).max(1000),
+      })
+      .partial(),
     accountPool: z
       .object({
         strategy: z.enum(["fill-first", "round-robin", "least-used", "p2c", "random"]),

@@ -332,6 +332,38 @@ CREATE TABLE IF NOT EXISTS memory_extractions (
 );
 CREATE INDEX IF NOT EXISTS memory_extractions_status ON memory_extractions(status, queued_at);
 
+-- Vectors, when an embedding provider is configured: one per feature and per
+-- decision, as Float32 little-endian blobs, keyed by the model that made
+-- them so a change of model re-embeds rather than compares apples to pears.
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+  kind TEXT NOT NULL,
+  id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  dims INTEGER NOT NULL,
+  vector BLOB NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (kind, id)
+);
+
+-- The consolidation ledger: one row per pass over a team's implementation
+-- of a feature, so what it cost and what it changed is on record.
+CREATE TABLE IF NOT EXISTS memory_consolidations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_id TEXT NOT NULL,
+  team_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  model TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL,
+  decisions_read INTEGER NOT NULL DEFAULT 0,
+  superseded INTEGER NOT NULL DEFAULT 0,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS memory_consolidations_impl ON memory_consolidations(feature_id, team_id, started_at);
+
 -- Full-text indexes. Kept by the store, not by triggers, so the text a query
 -- matches is exactly the text the store wrote.
 -- Porter stemming, so "notify" finds "notifications" and "synced" finds
@@ -441,6 +473,10 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // what a team's runs may read from memory — a sibling's feature record is
   // visible, another company's is not. NULL is a root.
   ["teams", "parent_id", "parent_id TEXT"],
+  // How many of the implementation's decisions the last consolidation read,
+  // and when: the pass is due again once enough new ones have landed.
+  ["memory_feature_impls", "consolidated_count", "consolidated_count INTEGER NOT NULL DEFAULT 0"],
+  ["memory_feature_impls", "consolidated_at", "consolidated_at INTEGER"],
 ];
 
 let db: SqlDatabase | null = null;

@@ -77,6 +77,23 @@ export default function MemoryPage() {
     }
   }
 
+  /** Rewrites one team's page on the open feature from all of its decisions: one model call, now. */
+  async function consolidate(featureId: string, teamId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await fetch(withTeam(`/api/memory/consolidate?id=${encodeURIComponent(featureId)}&teamId=${encodeURIComponent(teamId)}`, team), { method: "POST" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "could not consolidate");
+      if (data.status !== "done") setError(`consolidation ${data.status}: ${data.reason ?? ""}`);
+      await openFeature(featureId);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function openFeature(id: string) {
     setError(null);
     try {
@@ -176,6 +193,16 @@ export default function MemoryPage() {
                   <span className="text-xs text-muted-foreground">
                     {i.decisionCount} decision{i.decisionCount === 1 ? "" : "s"} · {i.updatedAt.slice(0, 10)}
                   </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto"
+                    disabled={busy}
+                    onClick={() => void consolidate(detail.feature.id, i.team)}
+                    title="Rewrite this team's summary and pitfalls from every decision under the feature. One model call."
+                  >
+                    Consolidate
+                  </Button>
                 </div>
                 <p className="mt-2 whitespace-pre-wrap">{i.summary || "(no summary yet)"}</p>
                 {i.pitfalls && (
@@ -187,6 +214,24 @@ export default function MemoryPage() {
               </div>
             ))}
           </div>
+          {detail.consolidations && detail.consolidations.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Consolidation passes</div>
+              {detail.consolidations.map((c, n) => (
+                <div key={n} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant={c.status === "done" ? "success" : c.status === "failed" ? "destructive" : "secondary"}>{c.status}</Badge>
+                  <span>{c.team}</span>
+                  <span>{c.at.slice(0, 16).replace("T", " ")}</span>
+                  <span>
+                    read {c.decisionsRead}, closed {c.superseded}
+                  </span>
+                  {c.model && <span>{c.model}</span>}
+                  {c.costUsd != null && <span>${c.costUsd.toFixed(4)}</span>}
+                  {c.error && <span className="text-destructive">{c.error}</span>}
+                </div>
+              ))}
+            </div>
+          )}
           {detail.decisions.length > 0 && (
             <div className="space-y-3">
               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Decisions</div>

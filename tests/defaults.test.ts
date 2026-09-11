@@ -97,6 +97,7 @@ describe("what the shipped agents declare", () => {
       "acceptance",
       "clarify",
       "implementer",
+      "investigator",
       "plan-review",
       "planner",
       "quick-implementer",
@@ -228,6 +229,17 @@ describe("what the shipped agents declare", () => {
       expect(byId.get(id)!.inputs).toContain("recall.brief?");
       expect(DEFAULT_AGENTS[id]).toContain("{{inputs.recall.brief}}");
     }
+
+    // The investigator reads history and may try a fix in the worktree; it
+    // runs in its own model, reads the recall brief, and labels its certainty.
+    const investigator = byId.get("investigator")!;
+    expect(investigator.executor).toBe("claude-code");
+    expect(investigator.inputs).toContain("recall.brief?");
+    expect(investigator.inputs).toContain("base.stdout");
+    expect(investigator.output.type === "json" ? Object.keys(investigator.output.schema) : []).toEqual(
+      expect.arrayContaining(["certainty", "related", "suspected", "confirmed", "fix", "verified", "report"]),
+    );
+    expect(DEFAULT_AGENTS.investigator).toContain("No commit, no push.");
 
     // Every agent carries an explicit timeout, the implementer a longer one.
     expect(byId.get("planner")!.timeoutMs).toBe(3_600_000);
@@ -1034,5 +1046,71 @@ describe("refreshing shipped definitions an update left behind", () => {
     } finally {
       process.env.GATE_HOME = home;
     }
+  });
+});
+
+describe("the shipped blame road", () => {
+  /** Memory, then the investigator, then a report — and nothing shipped. */
+  const STANDINS: Record<string, string> = {
+    investigator: `---
+name: Investigator
+inputs: [recall.brief?, base.stdout]
+output:
+  type: json
+  schema:
+    certainty: string
+    related: string
+    suspected: string
+    confirmed: string
+    fix: string
+    verified: boolean
+    report: string
+---
+Investigate {{input.task}} from {{inputs.base.stdout}} given {{inputs.recall.brief}}
+`,
+  };
+
+  function standIn() {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    return getWorkflow("blame");
+  }
+
+  const runCommand = (async (node: { id: string }) => ({ ok: true, exitCode: 0, stdout: node.id === "base" ? "abc" : "", stderr: "" })) as never;
+
+  it("reads memory, investigates, and ends with the report — no stage, no commit, no merge request", async () => {
+    const workflow = standIn();
+    expect(workflow.nodes.map((n) => n.id)).toEqual(["base", "recall", "investigator", "done", "nothing-related"]);
+    expect(workflow.nodes.some((n) => n.type === "command" && n.command.includes("commit"))).toBe(false);
+    const provider = new FakeModelProvider((req) => {
+      switch (req.context?.nodeId) {
+        case "recall":
+          return JSON.stringify({ brief: "Runs that touched this: run-9 (commits a..b) changed the flush rule.", sources: ["run-9-1-x"] });
+        case "investigator":
+          expect(String(req.messages[0].content)).toContain("changed the flush rule");
+          return JSON.stringify({ certainty: "suspected", related: "run-9", suspected: "the flush rule", confirmed: "", fix: "restore the timer", verified: false, report: "…" });
+        default:
+          return "{}";
+      }
+    });
+    const events: WorkflowEvent[] = [];
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Sync stopped flushing" }, emit: (e) => events.push(e) });
+    expect(state.error).toBeNull();
+    expect(state.status).toBe("completed");
+    expect(events.find((e) => e.type === "workflow.completed")).toMatchObject({ terminalNodeId: "done" });
+    expect(state.outputs.investigator).toMatchObject({ certainty: "suspected" });
+  });
+
+  it("ends as nothing-related when neither memory nor history touched it", async () => {
+    const workflow = standIn();
+    const provider = new FakeModelProvider((req) =>
+      req.context?.nodeId === "investigator"
+        ? JSON.stringify({ certainty: "none", related: "", suspected: "", confirmed: "", fix: "", verified: false, report: "Nothing touched it." })
+        : RECALLED,
+    );
+    const events: WorkflowEvent[] = [];
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "x" }, emit: (e) => events.push(e) });
+    expect(state.status).toBe("completed");
+    expect(events.find((e) => e.type === "workflow.completed")).toMatchObject({ terminalNodeId: "nothing-related" });
   });
 });

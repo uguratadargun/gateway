@@ -5,13 +5,13 @@ import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 import { costForUsage, tierOf } from "@/lib/pricing";
 import type { ModelProvider } from "@/providers/types";
 
+import { hybridSearchDecisions, hybridSearchFeatures } from "./hybrid";
 import {
   claimExtraction,
   getImplementation,
   memoryScopeFor,
   replaceDecisions,
   searchDecisions,
-  searchFeatures,
   settleExtraction,
   upsertFeature,
   upsertImplementation,
@@ -108,9 +108,22 @@ function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n… [truncated at ${max} characters]` : s;
 }
 
-/** The steps worth reading: agents that answered, in the order they ran. */
+/**
+ * The steps worth reading: agents that answered, in the order they ran.
+ *
+ * The recall node's answer is left out: it is memory read back, not a
+ * decision, and a run that got no further than recall — stopped there, or a
+ * recall-only check — has nothing to record and costs no model call.
+ */
 export function readableSteps(steps: ExecutionStepRecord[]): ExecutionStepRecord[] {
-  return steps.filter((s) => s.output !== null && s.output !== undefined && typeof s.output === "object" && !("stdout" in (s.output as object)));
+  return steps.filter(
+    (s) =>
+      s.output !== null &&
+      s.output !== undefined &&
+      typeof s.output === "object" &&
+      !("stdout" in (s.output as object)) &&
+      !("brief" in (s.output as object) && "sources" in (s.output as object)),
+  );
 }
 
 function outcomeOf(execution: ExecutionRecord, steps: ExecutionStepRecord[]): DecisionOutcome {
@@ -128,6 +141,7 @@ Rules:
 - Logic, not code. Describe flows, states, invariants, trade-offs, the shape of the data. Never paste code, never describe syntax. A file path is fine as a pointer; a function body is not.
 - One decision per real choice. A run that did one thing has one decision; a run that chose a storage model, a retry policy and a conflict rule has three. Do not pad. A run that changed nothing, or was stopped before it decided anything, has zero decisions — say so with an empty list.
 - A run that failed or was stopped still made decisions: record what was tried and why it did not ship, with the reviewer's or verifier's reason in "consequences". That is often the most useful record of all.
+- An investigation (a "blame" run) that established a cause is a decision too: title it "Cause of <symptom>", put the cause in "decision" with its certainty stated in the first words (suspected / confirmed / verified), the evidence in "rationale", the proposed fix in "how", and name the decision it found at fault in "supersedes" only when the cause was confirmed. An investigation that found nothing related has no decisions.
 - "how" is the part that lets someone rebuild it elsewhere: the sequence, the components and what each is responsible for, the edge cases handled and how, the ones deliberately not handled.
 - "touches" lists the files and areas the decision lives in, as paths relative to the repository root and short area names (e.g. "sync", "auth"). Take the paths from the run's changed files where they apply.
 - "supersedes" names an earlier decision id, only when this run replaced one of the earlier decisions you are shown and you are sure.
@@ -237,10 +251,10 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
     const scope = memoryScopeFor(execution.teamId);
     const changedFiles = execution.workspace?.changedFiles?.length ? execution.workspace.changedFiles : pathsInDiff(getExecutionDiff(executionId));
     const task = Object.values(execution.input).filter((v): v is string => typeof v === "string").join(" ");
-    const candidates = searchFeatures(scope, task, 8);
+    const candidates = await hybridSearchFeatures(scope, task, 8);
     const previous = [
       ...searchDecisions(scope, { paths: changedFiles.slice(0, 50), limit: 15 }),
-      ...searchDecisions(scope, { query: task, limit: 10 }),
+      ...(await hybridSearchDecisions(scope, { query: task, limit: 10 })),
     ]
       .filter((d, i, all) => d.executionId !== executionId && all.findIndex((x) => x.id === d.id) === i)
       .slice(0, 20)

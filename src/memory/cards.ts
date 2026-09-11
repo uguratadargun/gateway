@@ -63,8 +63,10 @@ export interface MemorySearchResult {
 
 export interface FeatureDetail {
   feature: FeatureCard;
-  implementations: Array<{ team: string; summary: string; pitfalls: string; decisionCount: number; updatedAt: string }>;
+  implementations: Array<{ team: string; summary: string; pitfalls: string; decisionCount: number; updatedAt: string; consolidatedAt?: string | null }>;
   decisions: DecisionCard[];
+  /** The consolidation passes made over it, newest first. Absent over the client API. */
+  consolidations?: Array<{ team: string; status: string; at: string; model: string | null; costUsd: number | null; decisionsRead: number; superseded: number; error: string | null }>;
 }
 
 export interface MemoryAccess {

@@ -2,8 +2,10 @@ import { loadSettings } from "@/lib/settings";
 import { GateModelProvider } from "@/providers/gate-provider";
 import type { ModelProvider } from "@/providers/types";
 
+import { consolidateImplementation, dueConsolidations } from "./consolidate";
 import { extractRun } from "./extract";
-import { pendingExtractions, releaseStaleExtractions } from "./store";
+import { embedMissing } from "./hybrid";
+import { memoryScopeFor, pendingExtractions, releaseStaleExtractions } from "./store";
 
 /**
  * When the recorder runs.
@@ -37,6 +39,18 @@ export async function drainExtractions(provider?: ModelProvider): Promise<number
   for (const row of pendingExtractions(10)) {
     const outcome = await extractRun(row.executionId, model, { model: settings.memory.model });
     if (outcome) done++;
+  }
+  // A team's page on a feature is rewritten from all its decisions once
+  // enough new ones have landed since the last pass.
+  for (const due of dueConsolidations(settings.memory.consolidateEvery)) {
+    await consolidateImplementation(memoryScopeFor(due.teamId), due.featureId, due.teamId, model, { model: settings.memory.model });
+  }
+  // What was just written gets its vectors, when there is a model to make
+  // them; a provider that is down is tried again on the next drain.
+  try {
+    await embedMissing();
+  } catch {
+    // Words still answer; the ledger is not the place for a provider's outage.
   }
   return done;
 }

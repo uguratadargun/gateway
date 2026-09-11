@@ -76,8 +76,16 @@ before it costs anything.
 - nothing is left for the user to decide once the brief is settled;
 - the project's own check for those files is the whole of what verifies it.
 
+**The blame road is `blame`.** Take it when the task is not a change but a question about one:
+something that used to work does not, and the user wants to know what changed, why, and what
+would fix it. It changes nothing — memory says which runs and decisions touched the area, the
+investigator reads the history against that and reports how sure the cause is (related,
+suspected, confirmed, verified) — and the fix, once they have read the report, is a task for
+the long road with that report as its brief. A task that both describes a breakage and asks
+for it to be fixed goes down the long road directly; the planner reads memory first anyway.
+
 **The long road is the team's own pipeline for this repository, when it has one**: a workflow
-in the list above that is not one of the shipped three (`dev`, `dev-super`, `dev-quick`), takes
+in the list above that is not one of the shipped four (`dev`, `dev-super`, `dev-quick`, `blame`), takes
 a `task`, and works in a git worktree — `/gate:design` builds those around this project's own
 codegen, test command and merge-request host, and that is what a real change here should run
 through. If there is more than one such workflow, ask which, once. If there is none, the long

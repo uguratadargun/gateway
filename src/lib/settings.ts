@@ -86,6 +86,18 @@ export interface GateSettings {
   memory: {
     enabled: boolean;
     model: string;
+    /**
+     * Semantic search, when a configured OpenAI-compatible provider serves an
+     * embedding model: `provider` is the provider's name, `model` the model
+     * to ask it for. Both empty means words alone (FTS5), which is the default.
+     */
+    embeddings: { provider: string; model: string };
+    /**
+     * After how many new decisions a team's implementation summary of a
+     * feature is rewritten from all of them by the consolidation pass. 0 turns
+     * the automatic pass off; the button on the feature stays.
+     */
+    consolidateEvery: number;
   };
   /** How a request picks among several connected Claude accounts. */
   accountPool: {
@@ -128,7 +140,7 @@ export const DEFAULT_SETTINGS: GateSettings = {
   throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
   routingPrecision: { countTokens: false },
-  memory: { enabled: true, model: "sonnet" },
+  memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5 },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
   accountPool: { strategy: "fill-first", stickyRoundRobinLimit: 3, quotaMinRemainingPercent: 0, quotaRefreshMinutes: 30 },
@@ -168,7 +180,7 @@ export interface SettingsPatch {
   throttle?: Partial<GateSettings["throttle"]>;
   retry?: Partial<GateSettings["retry"]>;
   routingPrecision?: Partial<GateSettings["routingPrecision"]>;
-  memory?: Partial<GateSettings["memory"]>;
+  memory?: Partial<Omit<GateSettings["memory"], "embeddings">> & { embeddings?: Partial<GateSettings["memory"]["embeddings"]> };
   accountPool?: Partial<GateSettings["accountPool"]>;
 }
 
@@ -205,6 +217,11 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
     memory: {
       enabled: patch.memory?.enabled ?? base.memory.enabled,
       model: patch.memory?.model?.trim() || base.memory.model,
+      embeddings: {
+        provider: (patch.memory?.embeddings?.provider ?? base.memory.embeddings.provider).trim(),
+        model: (patch.memory?.embeddings?.model ?? base.memory.embeddings.model).trim(),
+      },
+      consolidateEvery: Math.max(0, Math.floor(patch.memory?.consolidateEvery ?? base.memory.consolidateEvery)),
     },
     accountPool: {
       ...base.accountPool,

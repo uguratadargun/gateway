@@ -630,10 +630,66 @@ nodes:
     status: failed
 `;
 
+/**
+ * The blame road: something that used to work does not, and the person
+ * wants to know what changed, why, and what would fix it.
+ *
+ * Nothing is shipped from here. Memory says which runs and decisions
+ * touched the area (recall), the investigator reads the code and the
+ * history against that and says how sure it is — related, suspected,
+ * confirmed, verified — and the run ends with the report. A fix the
+ * investigator tried stays in the worktree, uncommitted, for the person to
+ * look at; the fix itself is a task for dev, with this report as its brief.
+ */
+const BLAME = `name: Blame
+description: Something that used to work does not — find the runs, commits and decisions that touched it, say how sure the cause is, and propose the fix. Nothing is committed; the run ends with a report.
+entry: base
+workspace: {}
+maxWorkflowSteps: 0
+maxVisits: 0
+maxCostUsd: 0
+nodes:
+  - id: base
+    type: command
+    label: Record the starting commit
+    command: [git, log, "-1", --format=format:%H]
+    next: recall
+
+  # Which runs touched the area, with their commits and what they decided —
+  # the list the investigator reads the history against.
+  - id: recall
+    type: agent
+    agent: recall
+    label: Read the team's memory
+    next: investigator
+
+  - id: investigator
+    type: agent
+    agent: investigator
+    label: Investigate
+    edges:
+      - when: outputs.investigator.certainty == "none"
+        to: nothing-related
+        label: nothing touched it
+      - to: done
+        label: report written
+
+  - id: done
+    type: terminal
+    label: Report written
+    status: completed
+
+  - id: nothing-related
+    type: terminal
+    label: Nothing in memory or history touched this
+    status: completed
+`;
+
 export const DEFAULT_WORKFLOWS: Record<string, string> = {
   dev: DEV,
   "dev-super": DEV_SUPER,
   "dev-quick": DEV_QUICK,
+  blame: BLAME,
 };
 
 /**

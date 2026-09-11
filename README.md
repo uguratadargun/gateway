@@ -863,7 +863,7 @@ failed extraction is retried up to three times and can be re-run from the
 run's page. Its model is `memory.model` in Settings (`sonnet` by default) and
 its cost is on the run.
 
-**Reading.** The shipped `dev`, `dev-super` and `dev-quick` pipelines open with
+**Reading.** The shipped `dev`, `dev-super`, `dev-quick` and `blame` pipelines open with
 a `recall` node that searches memory — words, path prefixes, a time — and
 briefs the planner (or the quick implementer) as `recall.brief`: the same
 feature built by a sibling team and how, decisions that hold in the areas the
@@ -881,9 +881,48 @@ SQL (`team_id IN (…)`), never into a prompt. Decisions are bi-temporal
 row), so "what held on date D" is a range query, and a superseding decision
 closes the one it replaces rather than deleting it.
 
+**Meaning, beside the words.** Full-text search finds "notifications" from
+"notify" (Porter stemming) and misses "alerts". Name an embedding model on a
+configured OpenAI-compatible provider in Settings → Memory (`memory.embeddings`,
+any endpoint that answers `POST /embeddings`: Ollama, vLLM with an embedding
+model, OpenAI) and every feature and decision gets a vector; a search then
+runs words and vectors both and fuses the two rankings (reciprocal rank
+fusion), own team first. Vectors are Float32 blobs in the same database,
+compared in-process over the ids the scope already allowed — a vector never
+widens what a team may read. Without a provider, or with one that is down,
+the words answer alone. `tests/memory-paraphrase.test.ts` is the labelled
+set that says how often a feature is found from other words: with words
+alone, top-1 89% and top-3 96% over 45 asks; the misses are pure synonyms.
+
+**Blame.** `blame` is the road for something that used to work and does not:
+`recall` lists the runs, commits and decisions that touched the area, the
+`investigator` reads the code and the history against that, and the run
+ends with a report — nothing staged, nothing committed. The report keeps
+four levels apart and names which it reached: *related* (touched the area
+in the window), *suspected* (the logic, read against the symptom, would
+produce it), *confirmed* (a check that fails at the change and passes just
+before it, run here — only when a known-good state, a deterministic
+reproduction and runnable history all exist; `git bisect` is a tool for
+this, not a requirement), *verified* (the fix applied in the worktree and
+the check passing; the change stays there, uncommitted). It also walks back
+from the triggering commit along the decisions' `supersedes` chain, because
+the change that broke X is often right by its own plan and inherited an
+assumption from an earlier decision. The recorder files a confirmed cause as
+a decision of its own.
+
+**Consolidation.** The recorder updates a team's summary of a feature one run
+at a time, which drifts. After every `memory.consolidateEvery` new decisions
+(5 by default; 0 leaves it to the button on `/memory`), a pass reads every
+decision under the feature for that team and rewrites the summary and the
+pitfalls whole, and closes the decisions a later one replaced — `valid_to`
+set, `supersedes` filled, nothing deleted — so "what did we believe then" still
+answers. A catalogue entry that looks like a duplicate of another is
+proposed to a person, never folded. Every pass is on the feature's page with
+its cost.
+
 **Storage.** The same `~/.gate/gate.db`: `memory_decisions`, `memory_touches`,
-`memory_features`, `memory_feature_impls`, `memory_extractions`, with FTS5
-indexes over the text. Search is bm25 over the text plus an index range over
+`memory_features`, `memory_feature_impls`, `memory_extractions`,
+`memory_embeddings`, `memory_consolidations`, with FTS5 indexes over the text. Search is bm25 over the text plus an index range over
 the touched paths, own team first. `GATE_BENCH=1 npx vitest run
 tests/memory-bench.test.ts` seeds twenty teams × five hundred features × five
 decisions and prints p50/p99 for each kind of read, and for a write landing
