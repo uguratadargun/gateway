@@ -44,9 +44,11 @@ Ask when the answer would change what gets built:
 - **Done** — what counts as finished, when the pipeline has a test node and the project's tests
   do not cover this.
 
-Use AskUserQuestion when the answers are a small set of choices; plain questions otherwise. Ask
-them **together, once** — a run is not an interrogation, and three rounds of one question each
-is worse than starting.
+Ask with AskUserQuestion, every time — its options where there are natural ones, the person's
+own words through Other — and never with a plain message that ends your turn: a question asked
+that way reaches only this terminal, and a person following several runs from elsewhere never
+sees it. Ask them **together, once** — a run is not an interrogation, and three rounds of one
+question each is worse than starting.
 
 Do not ask when the brief already settles it, when the answer is discoverable by reading the
 repository (read it), or when it is a detail the workflow's own agents decide. A clear
@@ -161,8 +163,10 @@ Each call prints one JSON instruction:
   - **Ask the user when you need to.** A choice the brief does not settle, something that
     looks wrong, a destructive step, anything you would otherwise guess at — ask, and wait.
     This is their session: they are there, they can answer, and a question costs a minute
-    where a wrong guess costs the rest of the run. The node's answer goes in a file, not in
-    what you say, so asking never gets in the way of finishing it.
+    where a wrong guess costs the rest of the run. Ask with AskUserQuestion, one question at
+    a time, their own words through Other — never with a plain message that ends your turn,
+    which reaches only this terminal. The node's answer goes in a file, not in what you say,
+    so asking never gets in the way of finishing it.
   - **But never stop a run for something the pipeline has already decided.** What the
     pipeline's own nodes do next — stage, commit, open the merge request, which files the
     commit takes — is the workflow's, settled when it was written, and not a question for
@@ -186,7 +190,10 @@ Each call prints one JSON instruction:
   - **A node that exists to ask them pauses the run.** The shipped `clarify`, `plan-review`
     and `acceptance` nodes are the person's turn: while one is in your hands the dashboard
     shows the run as *paused* and its clock stands still, and `gate step` sets it running
-    again. Nothing for you to do about it; take as long as they need.
+    again. Nothing for you to do about it; take as long as they need. The instruction's
+    `asks` says which kind of turn it is — `question` wants their answer, `approval` a yes
+    or a change — and the same is written to `~/.gate/sessions/<session>.json` for anything
+    watching this session from outside.
   - When the work is done, write the answer to `outputFile` — a path under the run's own
     directory that gate has already made — and hand it back:
     ```

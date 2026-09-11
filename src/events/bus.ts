@@ -55,7 +55,7 @@ export function publishWorkflowEvent(e: WorkflowEvent): void {
   t.lastAt = e.at;
   if (t.events.length > MAX_BUFFERED) t.events.shift();
   if (e.type === "workflow.completed" || e.type === "workflow.failed") t.done = true;
-  for (const l of t.listeners) {
+  for (const l of [...t.listeners, ...everyone]) {
     try {
       l(e);
     } catch {
@@ -78,6 +78,20 @@ export function subscribeWorkflow(executionId: string, listener: Listener): () =
   return () => {
     t.listeners.delete(listener);
     t.lastAt = Date.now();
+  };
+}
+
+const everyone = new Set<Listener>();
+
+/**
+ * Every event of every run, as it happens — no replay. For a stream that
+ * follows a person's runs together rather than one run at a time; the caller
+ * decides which executions it may see.
+ */
+export function subscribeAllWorkflows(listener: Listener): () => void {
+  everyone.add(listener);
+  return () => {
+    everyone.delete(listener);
   };
 }
 

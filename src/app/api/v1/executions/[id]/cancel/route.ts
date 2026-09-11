@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { publishWorkflowEvent } from "@/events/bus";
-import { requireClient } from "@/lib/tenancy";
+import { ownsExecution, requireClient } from "@/lib/tenancy";
 import { getExecution, requestExecutionCancel, stopSessionExecution } from "@/executions/store";
 import { scheduleExtraction } from "@/memory/queue";
 
@@ -21,8 +21,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const execution = getExecution(id);
   if (!execution) return NextResponse.json({ error: "no such run" }, { status: 404 });
-  // A teammate may stop a run they can see; only its owner may report on it.
-  if (execution.teamId !== auth.teamId) return NextResponse.json({ error: "not your team's run" }, { status: 403 });
+  // The person who started it, like everything else on this API; a teammate's
+  // run is stopped from the dashboard.
+  if (!ownsExecution(execution, auth)) return NextResponse.json({ error: "not your run" }, { status: 403 });
   if (execution.status !== "running") {
     return NextResponse.json({ requested: false, reason: `run already ${execution.status}` });
   }

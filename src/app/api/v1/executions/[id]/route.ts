@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireClient } from "@/lib/tenancy";
+import { ownsExecution, requireClient } from "@/lib/tenancy";
 import { getExecution, getExecutionSteps } from "@/executions/store";
 
 export const runtime = "nodejs";
@@ -10,7 +10,8 @@ export const runtime = "nodejs";
  *
  * This is what a session-driven run reads to work out where it is: each
  * `gate next` is a new process, so the steps recorded here are the only memory
- * the walk has. Visible to the whole team, like the dashboard's own view of it.
+ * the walk has. Visible to the person who started it; the team's view is the
+ * dashboard's.
  */
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const auth = requireClient(req);
@@ -19,7 +20,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 
   const execution = getExecution(id);
   if (!execution) return NextResponse.json({ error: "no such run" }, { status: 404 });
-  if (execution.teamId !== auth.teamId) return NextResponse.json({ error: "not your team's run" }, { status: 403 });
+  if (!ownsExecution(execution, auth)) return NextResponse.json({ error: "not your run" }, { status: 403 });
 
   return NextResponse.json({ execution, steps: getExecutionSteps(id) });
 }

@@ -18,7 +18,7 @@ import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest }
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
 import { applyClean, describeVerdict, listWorkspaces, planClean } from "./clean";
 import { runLocal } from "./run";
-import { begin, continueRun, next, step, wait, work, type Instruction, type SessionRunContext } from "./step";
+import { begin, continueRun, next, noteSession, step, wait, work, type Instruction, type SessionRunContext } from "./step";
 import { applyGatewaySettings, gatewayEnv, settingsPath } from "./live";
 import { removeSubagents, syncSubagents } from "./subagents";
 
@@ -796,6 +796,7 @@ function cmdEnv(): number {
 }
 
 function printInstruction(instruction: Instruction): number {
+  noteSession(instruction);
   console.log(JSON.stringify(instruction, null, 2));
   return instruction.do === "failed" || instruction.do === "stopped" ? 1 : 0;
 }

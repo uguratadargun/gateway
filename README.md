@@ -1014,7 +1014,7 @@ gate repo <id> /path/to/clone   # where this machine keeps a repository a workfl
 gate agents                     # the agents behind them
 gate show <id>                  # a definition as it is on the server
 gate run dev "…"                # run it here, in this repository
-gate status                     # your team's recent runs, and where each ran
+gate status                     # your recent runs, and where each ran
 gate usage                      # what the pool has left, and when each window resets
 gate cancel <execution-id>      # ask one to stop, wherever it is running
 gate continue <execution-id>    # reopen a session-driven run that failed, at the node it failed on
@@ -1041,6 +1041,12 @@ What travels where:
 - **Progress goes up.** Steps and events are batched to `/api/v1/executions/…`
   about once a second, so `/executions/<id>` animates a run on your laptop the
   same way it animates one of its own, and the history is in the same table.
+  What comes back down is **yours**: the client API lists, reads, stops and
+  streams the runs the key's person started, never a teammate's — the team's
+  view together is the dashboard's, behind the admin login. A cockpit on your
+  machine follows all of them on one connection, `/api/v1/executions/stream`:
+  a snapshot of your unfinished runs first, then every event of every run you
+  own as it happens.
 - **The work stays here.** The worktree is on your disk, on its own branch, from
   *your* HEAD — so `/gate:run` is safe to start mid-task, and the diff is
   something you can review with `git` immediately. It is uploaded once when the
@@ -1165,10 +1171,17 @@ session — is settled as `RUN_ABANDONED` rather than claiming to be alive for
 ever.
 
 **The person's time is not the run's.** The shipped `clarify`, `plan-review`
-and `acceptance` nodes carry `asks: person`: while one of them is in the
-session's hands the run shows as **paused** on the dashboard, its clock stands
-still, and it is never written off for silence — the answer can take a day.
-`gate step` sets it running again.
+and `acceptance` nodes carry `asks:` — `question` for the first, `approval`
+for the other two; the older `asks: person` still reads as a question. While
+one of them is in the session's hands the run shows as **paused** on the
+dashboard, its clock stands still, and it is never written off for silence —
+the answer can take a day. `gate step` sets it running again. Every such node
+asks through `AskUserQuestion`, never with a plain message that ends the turn,
+so that a Claude Code hook can carry the question out of the terminal and the
+answer back in; and every instruction the session is handed is also written
+to `~/.gate/sessions/<claude-session>.json` — which run, which node, and
+whether it is a question or an approval — so a desktop cockpit can say which
+of five terminals wants you without asking the server.
 
 **A run is never cut off.** No spend, step or visit ceiling applies to a run a
 session drives; loops end on the workflow's own give-up edges, which land on a

@@ -12,13 +12,20 @@ import { getWorkflow } from "@/workflows/registry";
 
 export const runtime = "nodejs";
 
-/** This team's runs, for `gate status`. */
+/**
+ * The caller's own runs, for `gate status` and for a cockpit on their machine.
+ *
+ * A key names a person, and what that person sees here is what they started:
+ * the team's runs together are the dashboard's view, behind the admin login,
+ * not the client API's. A key with no person behind it (the server's own
+ * `GATE_API_KEY`) has nothing to narrow by and sees its team's.
+ */
 export async function GET(req: Request) {
   const auth = requireClient(req);
   if (auth instanceof Response) return auth;
   const limit = Number(new URL(req.url).searchParams.get("limit") ?? 20);
   return NextResponse.json({
-    executions: listExecutions({ teamId: auth.teamId, limit: Number.isFinite(limit) ? limit : 20 }),
+    executions: listExecutions({ teamId: auth.teamId, userId: auth.userId ?? undefined, limit: Number.isFinite(limit) ? limit : 20 }),
   });
 }
 

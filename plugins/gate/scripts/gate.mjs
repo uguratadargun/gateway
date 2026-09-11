@@ -7814,7 +7814,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.33.0";
+var GATE_VERSION = "0.34.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -7917,14 +7917,20 @@ var agentFrontmatterSchema = external_exports.object({
    */
   executor: external_exports.enum(["gate", "claude-code"]).default("gate"),
   /**
-   * Whose turn the node is. `asks: person` marks an agent that exists to put
+   * Whose turn the node is. Any value marks an agent that exists to put
    * something in front of the person and carry back their answer — the
    * shipped clarify, plan-review and acceptance gates. A run driven from a
    * session is *paused* while such a node is out: the dashboard says so,
    * and its clock stops, because the time is the person's and not the
    * run's. No effect on how the node is executed.
+   *
+   * The value says what kind of turn it is, for whatever puts the node in
+   * front of the person: `question` wants an answer in their words (the
+   * shipped clarify), `approval` wants a yes or a change (plan-review,
+   * acceptance). `person` is the older spelling and means only "theirs";
+   * it is read as a question.
    */
-  asks: external_exports.enum(["person"]).optional(),
+  asks: external_exports.enum(["person", "question", "approval"]).optional(),
   /**
    * Tool names this agent may invoke. Which names are valid depends on the
    * executor: gate's own (`read_file`, `edit_file`, …) or Claude Code's
@@ -10734,6 +10740,32 @@ function writePending(pending) {
 function clearPending(executionId) {
   rmSync8(pendingPath(executionId), { force: true });
 }
+function currentSession() {
+  return (process.env[SESSION_ID_ENV] ?? process.env.CLAUDE_CODE_SESSION_ID ?? "").trim() || void 0;
+}
+function sessionStatePath(session) {
+  return join14(gateHome2(), "sessions", `${session}.json`);
+}
+function noteSession(instruction, at = Date.now()) {
+  const session = currentSession();
+  if (!session || !/^[A-Za-z0-9._-]{1,80}$/.test(session)) return null;
+  const state = {
+    session,
+    executionId: instruction.executionId,
+    state: instruction.do,
+    nodeId: "nodeId" in instruction ? instruction.nodeId : null,
+    agent: "agent" in instruction ? instruction.agent : null,
+    asks: instruction.do === "agent" ? instruction.asks : null,
+    at
+  };
+  try {
+    mkdirSync11(join14(gateHome2(), "sessions"), { recursive: true, mode: 448 });
+    writeFileSync9(sessionStatePath(session), `${JSON.stringify(state)}
+`, { mode: 384 });
+  } catch {
+  }
+  return state;
+}
 function runDir(executionId) {
   return join14(gateHome2(), "runs", executionId);
 }
@@ -11050,6 +11082,7 @@ ${answerFileNotice(outputFile2, shape2)}`,
         agent: prepared.agent.id,
         prompt: prepared.prompt,
         outputFile,
+        asks: personsTurn ? askKind(prepared.agent) : null,
         skills,
         remember: [
           ...skills.length ? [
@@ -11058,7 +11091,7 @@ ${answerFileNotice(outputFile2, shape2)}`,
           workspace ? `Work in ${workspace.root} \u2014 the run's worktree, not the user's checkout.` : "This node has no workspace: reason over what the prompt gives you, do not touch files.",
           "Say what you are doing as you go; the user is watching this happen.",
           "What gate printed above this JSON \u2014 the command nodes it ran on the way here and their output \u2014 the user has not seen: relay those lines to them before you start, as they are.",
-          "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
+          "Ask the user when the brief does not settle something, or something looks wrong. They can answer. Ask with AskUserQuestion, one question at a time, their own words through Other \u2014 never with a plain message that ends your turn: a question asked that way reaches only this terminal, and a person watching several runs from elsewhere never sees it.",
           ...prepared.agent.tools.some((t) => t.startsWith("memory_")) ? [
             "This agent reads the team's memory, and here the memory tools are commands: `gate memory search \"<words>\"` and `gate memory search --path <prefix>` are memory_search, `gate memory feature <id>` is memory_feature. Run them, read what they print, and treat it as the tool's result. They read only; nothing you do here writes memory."
           ] : [],
@@ -11078,7 +11111,11 @@ function answerFileNotice(outputFile, shape) {
   return `When you are done, write your answer \u2014 ${shape}, exactly what your final message ends with, and nothing else \u2014 to the file ${outputFile} (create the directory if it is missing), then end your final message with that same answer. The file is what the run reads; the message is for the person watching.`;
 }
 function asksPerson(agent) {
-  return agent.asks === "person" && agent.executor === "gate";
+  return agent.asks !== void 0 && agent.executor === "gate";
+}
+function askKind(agent) {
+  if (agent.asks === void 0) return null;
+  return agent.asks === "approval" ? "approval" : "question";
 }
 function stoppedOutside(execution) {
   if (execution.status === "running" || !execution.error) return null;
@@ -12095,6 +12132,7 @@ function cmdEnv() {
   return 0;
 }
 function printInstruction(instruction) {
+  noteSession(instruction);
   console.log(JSON.stringify(instruction, null, 2));
   return instruction.do === "failed" || instruction.do === "stopped" ? 1 : 0;
 }

@@ -84,6 +84,12 @@ export type Instruction =
       output: { type: "json" | "text"; schema?: Record<string, string> };
       /** Where the work happens. Never the user's own checkout. */
       workspace: string | null;
+      /**
+       * Set when this node is the person's turn: `question` wants their
+       * answer in their words, `approval` a yes or a change. The run is
+       * paused while it is out. Null for a node the session works on itself.
+       */
+      asks: "question" | "approval" | null;
       /** What the agent file says it needs; a session has its own tools. */
       tools: string[];
       /**
@@ -202,6 +208,61 @@ function writePending(pending: Pending): void {
 
 function clearPending(executionId: string): void {
   rmSync(pendingPath(executionId), { force: true });
+}
+
+/**
+ * What a Claude Code session was last told to do, on this machine.
+ *
+ * A person driving several runs from several terminals has nothing that says
+ * which one is waiting on them. The session's id is known here (the plugin's
+ * hook puts it in the environment), so every instruction handed out is also
+ * written to `~/.gate/sessions/<session>.json`: which run, which node, and
+ * whether it is the person's turn — a question or an approval. A desktop
+ * cockpit, or a Claude Code hook, reads that file to say "this one wants
+ * you" without a network call, and to sort a question from an approval
+ * without guessing from its words. Nothing here reads it back.
+ */
+export interface SessionState {
+  session: string;
+  executionId: string;
+  /** What the session was last told to do; done, failed and stopped are over. */
+  state: "agent" | "wait" | "delegate" | "done" | "failed" | "stopped";
+  nodeId: string | null;
+  agent: string | null;
+  /** Set while a node is the person's turn: what kind of turn. */
+  asks: "question" | "approval" | null;
+  at: number;
+}
+
+/** The session this process runs in, as the plugin's hook or Claude Code itself named it. */
+export function currentSession(): string | undefined {
+  return (process.env[SESSION_ID_ENV] ?? process.env.CLAUDE_CODE_SESSION_ID ?? "").trim() || undefined;
+}
+
+export function sessionStatePath(session: string): string {
+  return join(gateHome(), "sessions", `${session}.json`);
+}
+
+/** Records an instruction against the session it was handed to. Silent without a session. */
+export function noteSession(instruction: Instruction, at = Date.now()): SessionState | null {
+  const session = currentSession();
+  if (!session || !/^[A-Za-z0-9._-]{1,80}$/.test(session)) return null;
+  const state: SessionState = {
+    session,
+    executionId: instruction.executionId,
+    state: instruction.do,
+    nodeId: "nodeId" in instruction ? instruction.nodeId : null,
+    agent: "agent" in instruction ? instruction.agent : null,
+    asks: instruction.do === "agent" ? instruction.asks : null,
+    at,
+  };
+  try {
+    mkdirSync(join(gateHome(), "sessions"), { recursive: true, mode: 0o700 });
+    writeFileSync(sessionStatePath(session), `${JSON.stringify(state)}\n`, { mode: 0o600 });
+  } catch {
+    // A file that cannot be written is a session nobody can watch; the run is unaffected.
+  }
+  return state;
 }
 
 /** Everything on this machine that belongs to one run and is not its worktree. */
@@ -688,6 +749,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
         agent: prepared.agent.id,
         prompt: prepared.prompt,
         outputFile,
+        asks: personsTurn ? askKind(prepared.agent) : null,
         skills,
         remember: [
           ...(skills.length
@@ -704,7 +766,10 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           "Say what you are doing as you go; the user is watching this happen.",
           "What gate printed above this JSON — the command nodes it ran on the way here and their output — the user " +
             "has not seen: relay those lines to them before you start, as they are.",
-          "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
+          "Ask the user when the brief does not settle something, or something looks wrong. They can answer. " +
+            "Ask with AskUserQuestion, one question at a time, their own words through Other — never with a plain " +
+            "message that ends your turn: a question asked that way reaches only this terminal, and a person " +
+            "watching several runs from elsewhere never sees it.",
           ...(prepared.agent.tools.some((t) => t.startsWith("memory_"))
             ? [
                 "This agent reads the team's memory, and here the memory tools are commands: `gate memory search \"<words>\"` " +
@@ -749,8 +814,16 @@ function answerFileNotice(outputFile: string, shape: string): string {
  * agent the session itself runs can be: a headless one cannot ask anybody,
  * whatever its file says.
  */
-function asksPerson(agent: { asks?: "person"; executor: string }): boolean {
-  return agent.asks === "person" && agent.executor === "gate";
+function asksPerson(agent: { asks?: AsksValue; executor: string }): boolean {
+  return agent.asks !== undefined && agent.executor === "gate";
+}
+
+type AsksValue = "person" | "question" | "approval";
+
+/** What kind of turn a person's node is; the older `person` is a question. */
+function askKind(agent: { asks?: AsksValue }): "question" | "approval" | null {
+  if (agent.asks === undefined) return null;
+  return agent.asks === "approval" ? "approval" : "question";
 }
 
 /**

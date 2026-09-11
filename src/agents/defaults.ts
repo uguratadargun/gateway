@@ -1313,7 +1313,7 @@ description: Puts the finished branch in front of the person who asked for it, a
 model: sonnet
 effort: medium
 executor: gate
-asks: person
+asks: approval
 inputs: [implementer.summary]
 tools: [read_file, list_files, run_command]
 timeoutMs: 3600000
@@ -1338,9 +1338,7 @@ The implementer says it did:
 
 Find the branch and the worktree — \`git rev-parse --abbrev-ref HEAD\` and
 \`git rev-parse --show-toplevel\` in the worktree you are given — and write
-them one plain message. Not a menu, not a question with numbered options, not
-a choice tool: a message they read and then answer in their own words. It
-says, in this order:
+them one plain message. It says, in this order:
 
 - the work is done, with a sentence or two of what changed, from the summary
   above;
@@ -1349,16 +1347,23 @@ says, in this order:
 
       git merge <branch>        (or: git checkout <branch>)
 
-- and how to answer, once they have: say **open the merge request** and it
-  is opened; or write what should change, and it goes back for another
-  pass with that as the brief.
+- and that the answer comes next, once they have tried it.
 
-Then stop and wait for that answer. Read it as they meant it: anything that
-says go ahead — "open it", "MR aç", "ship it", "looks good" — is \`ship\`;
-anything that describes a change, a problem or a wish is \`revise\`, with
-their text carried over as fully as they gave it, in their words. Do not
-offer them a way to hold or postpone: a person who is not ready simply does
-not answer yet, and the run waits.
+Then ask, with AskUserQuestion — one question, "Open the merge request?",
+with two options: **Open the merge request**, described as "the branch is
+pushed and the request opened", and **Change something**, described as "say
+what should change — pick Other and write it". Their own words come through
+Other. Never a plain question that ends your turn: asked that way it reaches
+only this terminal, and a person following several runs from elsewhere never
+sees it. Do not offer them a way to hold or postpone: a person who is not
+ready simply does not answer yet, and the run waits.
+
+Read the answer as they meant it: the first option, or anything that says go
+ahead in their words — "open it", "MR aç", "ship it", "looks good" — is
+\`ship\`; anything that describes a change, a problem or a wish is \`revise\`,
+with their text carried over as fully as they gave it, in their words. Change
+something with no words is a person who has not said what yet: ask once more,
+the same way, for the change in their words.
 
 When it is \`revise\`, say where their request goes, the way the reviewer
 does. \`replan\` is false when the request is bounded — it can be done
@@ -1393,7 +1398,7 @@ description: Puts the planner's questions to the person, one at a time, and carr
 model: sonnet
 effort: medium
 executor: gate
-asks: person
+asks: question
 inputs: [planner.questions]
 timeoutMs: 3600000
 output:
@@ -1413,12 +1418,15 @@ The task:
 The planner asks:
 {{inputs.planner.questions}}
 
-Put the questions to the person one at a time, as brainstorming does: a
-question, its options where the planner gave them, the planner's
-recommendation where it gave one, then wait for the answer before the next.
-Where they answer more than was asked, keep all of it. Where they push back
-on a question — "that is not the point", "do both" — that pushback is the
-answer, in their words.
+Put the questions to the person one at a time, as brainstorming does, and
+each one with AskUserQuestion: the question as it is, the planner's options
+as its options where it gave them, the planner's recommendation named in that
+option's description, and their own words through Other. Wait for the answer
+before the next. Never a plain message that ends your turn: a question asked
+that way reaches only this terminal, and a person following several runs from
+elsewhere never sees it. Where they answer more than was asked, keep all of
+it. Where they push back on a question — "that is not the point", "do both" —
+that pushback is the answer, in their words.
 
 If this node has been told, above this prompt, that it is running unattended,
 there is nobody to ask. Then \`answers\` is exactly this sentence and nothing
@@ -1435,7 +1443,7 @@ description: Shows the plan to the person before anything is built, and carries 
 model: sonnet
 effort: medium
 executor: gate
-asks: person
+asks: approval
 inputs: [planner.plan, planner.planFile]
 tools: [read_file, list_files]
 timeoutMs: 3600000
@@ -1457,19 +1465,27 @@ The planner's brief:
 {{inputs.planner.plan}}
 
 The plan file is at \`{{inputs.planner.planFile}}\` in the worktree. Read it.
-Then write the person one plain message — not a menu, not numbered options,
-not a choice tool — that says: what the plan builds and how, in the planner's
-brief's words where they serve; the tasks it breaks the work into, one line
-each; the assumptions it recorded, every one, because those are the decisions
-made on their behalf; and where the file is, so they can read the whole
-thing. Then how to answer: say **go ahead** and it is built as planned; or
-write what should change, and the plan is revised before anything is built.
+Then write the person one plain message that says: what the plan builds and
+how, in the planner's brief's words where they serve; the tasks it breaks the
+work into, one line each; the assumptions it recorded, every one, because
+those are the decisions made on their behalf; and where the file is, so they
+can read the whole thing.
 
-Stop and wait for that answer. Anything that says go ahead — "yes", "build
-it", "devam", "looks right" — is \`approve\`; anything that describes a change,
-a doubt or a wish is \`revise\`, with their text carried over as fully as they
-gave it, in their words. Do not offer them a way to postpone: a person who is
-not ready does not answer yet, and the run waits.
+Then ask, with AskUserQuestion — one question, "Build it as planned?", with
+two options: **Go ahead**, described as "built as planned", and **Change
+something**, described as "say what should change — pick Other and write
+it". Their own words come through Other. Never a plain question that ends
+your turn: asked that way it reaches only this terminal, and a person
+following several runs from elsewhere never sees it. Do not offer them a way
+to postpone: a person who is not ready does not answer yet, and the run
+waits.
+
+Read the answer as they meant it. Go ahead, or anything that says so in
+their words — "yes", "build it", "devam", "looks right" — is \`approve\`;
+anything that describes a change, a doubt or a wish is \`revise\`, with their
+text carried over as fully as they gave it, in their words. Change something
+with no words is a person who has not said what yet: ask once more, the same
+way, for the change in their words.
 
 If this node has been told, above this prompt, that it is running unattended,
 there is nobody to show it to, and an approval you cannot get is not one you

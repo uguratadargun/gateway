@@ -63,14 +63,20 @@ export const agentFrontmatterSchema = z
      */
     executor: z.enum(["gate", "claude-code"]).default("gate"),
     /**
-     * Whose turn the node is. `asks: person` marks an agent that exists to put
+     * Whose turn the node is. Any value marks an agent that exists to put
      * something in front of the person and carry back their answer — the
      * shipped clarify, plan-review and acceptance gates. A run driven from a
      * session is *paused* while such a node is out: the dashboard says so,
      * and its clock stops, because the time is the person's and not the
      * run's. No effect on how the node is executed.
+     *
+     * The value says what kind of turn it is, for whatever puts the node in
+     * front of the person: `question` wants an answer in their words (the
+     * shipped clarify), `approval` wants a yes or a change (plan-review,
+     * acceptance). `person` is the older spelling and means only "theirs";
+     * it is read as a question.
      */
-    asks: z.enum(["person"]).optional(),
+    asks: z.enum(["person", "question", "approval"]).optional(),
     /**
      * Tool names this agent may invoke. Which names are valid depends on the
      * executor: gate's own (`read_file`, `edit_file`, …) or Claude Code's
