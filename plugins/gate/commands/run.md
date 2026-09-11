@@ -111,6 +111,16 @@ the agent's `executor`, exactly as it does on the server:
   reviewer are these. They run unattended — they were told so — and do not ask; what needed
   settling was settled above, before the run, and the acceptance node asks at the end.
 
+**The run reads the team's memory first, and writes to it last.** The shipped pipelines open
+with a `recall` node: it searches what earlier runs decided — across the team's whole tree, so a
+feature the android team built is found when desktop is asked for it — and briefs the planner,
+with ids. In your session that node is yours to do (`executor: gate`), and its tools are
+commands: `gate memory search "<words>"`, `gate memory search --path <prefix>`,
+`gate memory feature <id>`. Run them, read what they print, write the brief; a brief that says
+memory holds nothing is a real answer. When the run ends — however it ends — the server's
+recorder reads its steps and writes what was decided, why and how; nothing you do here writes
+memory, and the run's page on the dashboard shows what was recorded.
+
 Start it, then repeat until it says it is done:
 
 ```

@@ -12,11 +12,14 @@ import { createRunWorkspace, summarizeWorkspace, type ResolvedWorkspaceSpec, typ
 import { getRepo, type RepoRecord } from "@/repos/store";
 import { isPathLike, prepareWorktree } from "@/repos/setup";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
-import { teamScope, type DefinitionScope } from "@/lib/def-root";
+import { DEFAULT_TEAM, teamScope, type DefinitionScope } from "@/lib/def-root";
 import { getWorkflow } from "@/workflows/registry";
 import type { WorkflowDefinition, WorkspaceSpec } from "@/workflows/types";
 
 import { assertResumable, planResume } from "./resume";
+import { LocalMemoryAccess } from "@/memory/access";
+import { scheduleExtraction } from "@/memory/queue";
+
 import { createExecution, finishExecution, getExecution, getExecutionLineage, recordStep, setExecutionWorkspace } from "./store";
 import type { ExecutionWorkspace } from "./types";
 
@@ -226,6 +229,8 @@ async function launch(
       workspace,
       loadAgent: (id) => getAgent(id, scope),
       loadSkill: (id) => getSkill(id, scope),
+      // Memory answers as the run's team: its own tree, nothing else.
+      memory: new LocalMemoryAccess(scope.teamId ?? DEFAULT_TEAM),
       emit: publishWorkflowEvent,
       onStep: (step) => recordStep(executionId, step),
       signal: controller.signal,
@@ -233,6 +238,7 @@ async function launch(
     });
     inFlight.delete(executionId);
     finishExecution(state, workspaceSummary(workspace));
+    scheduleExtraction();
     return state;
   } catch (e) {
     // The engine records its own node failures; this covers preparing the
@@ -244,6 +250,7 @@ async function launch(
     const state = failedState(executionId, workflow.id, input, code, message);
     finishExecution(state, workspaceSummary(workspace));
     publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: code as never, message });
+    scheduleExtraction();
     return state;
   }
 }

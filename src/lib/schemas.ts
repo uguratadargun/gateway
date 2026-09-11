@@ -70,6 +70,7 @@ export const settingsPatchSchema = z
       })
       .partial(),
     routingPrecision: z.object({ countTokens: z.boolean() }).partial(),
+    memory: z.object({ enabled: z.boolean(), model: z.string().min(1).max(100) }).partial(),
     accountPool: z
       .object({
         strategy: z.enum(["fill-first", "round-robin", "least-used", "p2c", "random"]),
@@ -120,7 +121,21 @@ export const createTeamSchema = z.object({
     .string()
     .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "use lowercase letters, digits and dashes")
     .optional(),
+  /** The team this one sits under, for android and desktop under ulak. */
+  parentId: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "use lowercase letters, digits and dashes")
+    .nullish(),
 });
+
+export const updateTeamSchema = z
+  .object({
+    parentId: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "use lowercase letters, digits and dashes")
+      .nullable(),
+  })
+  .strict();
 
 export const createUserSchema = z.object({
   email: z.string().email().max(160),

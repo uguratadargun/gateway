@@ -2764,8 +2764,8 @@ function needIndentIndicator(string) {
 }
 function blockHeader(string, shiftOfParent, shiftOfContent) {
   const indentIndicator = needIndentIndicator(string) ? String(shiftOfContent - shiftOfParent) : "";
-  const clip2 = string[string.length - 1] === "\n";
-  return `${indentIndicator}${clip2 && (string[string.length - 2] === "\n" || string === "\n") ? "+" : clip2 ? "" : "-"}
+  const clip3 = string[string.length - 1] === "\n";
+  return `${indentIndicator}${clip3 && (string[string.length - 2] === "\n" || string === "\n") ? "+" : clip3 ? "" : "-"}
 `;
 }
 function dropEndingNewline(string) {
@@ -7316,6 +7316,143 @@ function getSkill(id, scope = teamScope()) {
   return loadDir(id, dir);
 }
 
+// src/memory/cards.ts
+var MAX_FIELD = 1200;
+function clip(s, max = MAX_FIELD) {
+  return s.length > max ? `${s.slice(0, max)}\u2026` : s;
+}
+function describeSearch(result) {
+  const out = [];
+  if (result.features.length) {
+    out.push("Features in the catalogue that match:");
+    for (const f of result.features) {
+      out.push(`- ${f.id} \u2014 ${f.name}${f.aliases.length ? ` (also: ${f.aliases.join(", ")})` : ""} \xB7 built by: ${f.teams.join(", ") || "nobody yet"}${f.summary ? `
+  ${clip(f.summary, 300)}` : ""}`);
+    }
+    out.push("");
+  }
+  if (!result.decisions.length) {
+    out.push(result.features.length ? "No decisions matched the text or paths; use memory_feature on a feature above for its decisions." : "Nothing in memory matches. The team has no recorded decision about this.");
+    return out.join("\n");
+  }
+  out.push(`${result.decisions.length} decision${result.decisions.length === 1 ? "" : "s"} (searched teams: ${result.scope.teams.join(", ")}; own team ${result.scope.own} first):`);
+  for (const d of result.decisions) out.push(describeDecision(d));
+  return out.join("\n");
+}
+function describeDecision(d) {
+  const lines = [
+    `
+## ${d.title}`,
+    `id: ${d.id} \xB7 team: ${d.team} \xB7 ${d.outcome} \xB7 from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` \xB7 feature: ${d.featureId}` : ""}${d.supersedes ? ` \xB7 supersedes ${d.supersedes}` : ""}`,
+    `run: ${d.executionId}${d.commits.base || d.commits.head ? ` \xB7 commits ${d.commits.base ?? "?"}..${d.commits.head ?? "?"}` : ""}`
+  ];
+  if (d.decision) lines.push(`decision: ${clip(d.decision)}`);
+  if (d.rationale) lines.push(`why: ${clip(d.rationale)}`);
+  if (d.how) lines.push(`how: ${clip(d.how, 2e3)}`);
+  if (d.alternatives) lines.push(`not taken: ${clip(d.alternatives, 600)}`);
+  if (d.consequences) lines.push(`consequences: ${clip(d.consequences)}`);
+  if (d.touches.length) lines.push(`touches: ${d.touches.slice(0, 30).join(", ")}${d.touches.length > 30 ? ` (+${d.touches.length - 30})` : ""}`);
+  return lines.join("\n");
+}
+function describeFeature(detail) {
+  const { feature } = detail;
+  const out = [
+    `# ${feature.name} (${feature.id})`,
+    feature.aliases.length ? `also known as: ${feature.aliases.join(", ")}` : "",
+    feature.summary,
+    ""
+  ];
+  if (detail.implementations.length) {
+    out.push("How each team built it:");
+    for (const i of detail.implementations) {
+      out.push(`
+### ${i.team} \xB7 ${i.decisionCount} decision${i.decisionCount === 1 ? "" : "s"} \xB7 updated ${i.updatedAt.slice(0, 10)}`);
+      out.push(i.summary || "(no summary yet)");
+      if (i.pitfalls) out.push(`pitfalls: ${i.pitfalls}`);
+    }
+  } else {
+    out.push("No team has recorded an implementation of it yet.");
+  }
+  if (detail.decisions.length) {
+    out.push(`
+Decisions (${detail.decisions.length}):`);
+    for (const d of detail.decisions) out.push(describeDecision(d));
+  }
+  return out.filter((l) => l !== "").join("\n");
+}
+
+// src/runtime/tools/types.ts
+var ToolError = class extends Error {
+};
+
+// src/runtime/tools/memory-tools.ts
+function parseSince(v, now = Date.now()) {
+  if (typeof v !== "string" || !v.trim()) return null;
+  const s = v.trim().toLowerCase();
+  const rel = s.match(/^(\d+)\s*(d|day|days|w|week|weeks|m|month|months|y|year|years)$/);
+  if (rel) {
+    const n = Number(rel[1]);
+    const unit = rel[2][0];
+    const days = unit === "d" ? n : unit === "w" ? n * 7 : unit === "m" ? n * 30 : n * 365;
+    return now - days * 864e5;
+  }
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : null;
+}
+var memorySearch = {
+  name: "memory_search",
+  description: "Search the team's memory of past runs: what was decided, why and how, and which files or areas each decision touched. Reads the whole team tree (sibling teams included), own team first. Give a query in words, path prefixes, or both; narrow with a time. Every hit names the run and the commits it came from.",
+  mutates: false,
+  workspaceFree: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Words to match: the feature, the problem, the component. Optional if paths are given." },
+      paths: { type: "array", items: { type: "string" }, description: 'Repository path prefixes a decision must have touched, e.g. ["src/sync"].' },
+      feature: { type: "string", description: "Only decisions filed under this catalogue feature id." },
+      since: { type: "string", description: 'Only decisions from this time on: "30d", "6 months", or a date.' },
+      as_of: { type: "string", description: "Only decisions that held at this date \u2014 what was believed then." },
+      limit: { type: "integer", description: "How many decisions at most (default 10, max 50)." }
+    }
+  },
+  async execute(input, ctx) {
+    if (!ctx.memory) throw new ToolError("memory is not reachable from this run");
+    const query = typeof input.query === "string" ? input.query.trim() : "";
+    const paths = Array.isArray(input.paths) ? input.paths.filter((p) => typeof p === "string" && !!p.trim()) : [];
+    const feature = typeof input.feature === "string" && input.feature.trim() ? input.feature.trim() : void 0;
+    if (!query && !paths.length && !feature) throw new ToolError("give a query, paths, or a feature");
+    const result = await ctx.memory.search({
+      query: query || void 0,
+      paths: paths.length ? paths : void 0,
+      featureId: feature,
+      since: parseSince(input.since) ?? void 0,
+      asOf: parseSince(input.as_of) ?? void 0,
+      limit: typeof input.limit === "number" ? input.limit : void 0
+    });
+    return describeSearch(result);
+  }
+};
+var memoryFeature = {
+  name: "memory_feature",
+  description: "Read one catalogue feature in full: what it is, how each team in the tree built it (summary and pitfalls), and every decision filed under it. Use it after memory_search names a feature, before planning the same thing on another platform.",
+  mutates: false,
+  workspaceFree: true,
+  inputSchema: {
+    type: "object",
+    properties: { id: { type: "string", description: "The feature id, as memory_search printed it." } },
+    required: ["id"]
+  },
+  async execute(input, ctx) {
+    if (!ctx.memory) throw new ToolError("memory is not reachable from this run");
+    const id = typeof input.id === "string" ? input.id.trim() : "";
+    if (!id) throw new ToolError('"id" is required');
+    const detail = await ctx.memory.feature(id);
+    if (!detail) return `No feature "${id}" in this team's catalogue.`;
+    return describeFeature(detail);
+  }
+};
+var MEMORY_TOOLS = [memorySearch, memoryFeature];
+
 // src/runtime/tools/workspace-tools.ts
 import { execFile } from "node:child_process";
 import { existsSync as existsSync3, lstatSync, mkdirSync as mkdirSync3, readFileSync as readFileSync2, readdirSync as readdirSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
@@ -7324,12 +7461,6 @@ import { join as join3, relative as relative3, resolve as resolve2 } from "node:
 // src/runtime/tools/paths.ts
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative as relative2, resolve, sep } from "node:path";
-
-// src/runtime/tools/types.ts
-var ToolError = class extends Error {
-};
-
-// src/runtime/tools/paths.ts
 function resolveInWorkspace(root, input, label = "path") {
   if (typeof input !== "string" || !input.trim()) throw new ToolError(`${label} is required`);
   const candidate = isAbsolute(input) ? input : resolve(root, input);
@@ -7591,7 +7722,7 @@ ${errOut}`].filter(Boolean).join("\n\n")
 var WORKSPACE_TOOLS = [readFile, writeFile, editFile, listFiles, searchFiles, runCommandTool];
 
 // src/runtime/tools/registry.ts
-var BY_NAME = new Map(WORKSPACE_TOOLS.map((t) => [t.name, t]));
+var BY_NAME = new Map([...WORKSPACE_TOOLS, ...MEMORY_TOOLS].map((t) => [t.name, t]));
 function knownToolNames() {
   return [...BY_NAME.keys()].sort();
 }
@@ -7602,11 +7733,12 @@ function getTool(name) {
   return BY_NAME.get(name);
 }
 function toolsFor(names, hasWorkspace) {
-  if (!hasWorkspace) return [];
   const out = [];
   for (const name of names) {
     const tool = BY_NAME.get(name);
-    if (tool) out.push(tool);
+    if (!tool) continue;
+    if (!hasWorkspace && !tool.workspaceFree) continue;
+    out.push(tool);
   }
   return out;
 }
@@ -7682,7 +7814,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.31.1";
+var GATE_VERSION = "0.32.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -7730,6 +7862,7 @@ var DEFAULT_SETTINGS = {
   throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5e3 },
   routingPrecision: { countTokens: false },
+  memory: { enabled: true, model: "sonnet" },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
   accountPool: { strategy: "fill-first", stickyRoundRobinLimit: 3, quotaMinRemainingPercent: 0, quotaRefreshMinutes: 30 }
@@ -8709,6 +8842,26 @@ var GateClient = class {
   async execution(executionId) {
     return (await this.request(`/api/v1/executions/${executionId}`)).body;
   }
+  /** The team's memory: decisions and features matching words, paths, or a time. */
+  async memorySearch(req) {
+    const params = new URLSearchParams();
+    if (req.query) params.set("q", req.query);
+    for (const p of req.paths ?? []) params.append("path", p);
+    if (req.featureId) params.set("feature", req.featureId);
+    if (req.asOf != null) params.set("asOf", String(req.asOf));
+    if (req.since != null) params.set("since", String(req.since));
+    if (req.limit != null) params.set("limit", String(req.limit));
+    return (await this.request(`/api/v1/memory/search?${params}`)).body;
+  }
+  /** One feature in full; null when the team's catalogue has no such id. */
+  async memoryFeature(id) {
+    try {
+      return (await this.request(`/api/v1/memory/features/${encodeURIComponent(id)}`)).body;
+    } catch (e) {
+      if (e instanceof GateApiError && e.status === 404) return null;
+      throw e;
+    }
+  }
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
@@ -9538,7 +9691,7 @@ async function executeAgentNode(node, state, deps) {
   const tools = toolsFor(agent.tools, Boolean(workspace));
   const canWrite = tools.some((t) => WRITE_TOOLS.has(t.name));
   const toolDefs = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
-  const toolCtx = workspace ? { root: workspace.root, nodeId: node.id, executionId: state.executionId } : null;
+  const toolCtx = workspace || tools.length ? { root: workspace?.root ?? "", nodeId: node.id, executionId: state.executionId, memory: deps.memory } : null;
   const messages = [{ role: "user", content: prompt }];
   const toolCalls = [];
   let writes = 0;
@@ -9914,12 +10067,12 @@ function syncSubagents(team, scope) {
 import { relative as relative5 } from "node:path";
 var LINE_WIDTH = 120;
 var TEXT_LINES = 3;
-function clip(s, width = LINE_WIDTH) {
+function clip2(s, width = LINE_WIDTH) {
   const line = s.trim().replace(/\s+/g, " ");
   return line.length > width ? `${line.slice(0, width - 1)}\u2026` : line;
 }
 function firstLine(s) {
-  return clip(s.split("\n").find((l) => l.trim()) ?? "", 80);
+  return clip2(s.split("\n").find((l) => l.trim()) ?? "", 80);
 }
 function field(input, key) {
   const v = input && typeof input === "object" ? input[key] : void 0;
@@ -9948,21 +10101,21 @@ function summary(call, root) {
     case "Write":
       return `Write ${file} (${lineCount(field(input, "content") ?? "")} lines)`;
     case "Bash":
-      return `Bash: ${clip(field(input, "description") ?? field(input, "command") ?? "", 100)}`;
+      return `Bash: ${clip2(field(input, "description") ?? field(input, "command") ?? "", 100)}`;
     case "Grep":
       return `Grep ${JSON.stringify(field(input, "pattern") ?? "")}${field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : ""}`;
     case "Glob":
       return `Glob ${field(input, "pattern") ?? ""}${field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : ""}`;
     case "Task":
     case "Agent":
-      return `Agent: ${clip(field(input, "description") ?? "", 100)}`;
+      return `Agent: ${clip2(field(input, "description") ?? "", 100)}`;
     case "Skill":
       return `Skill ${field(input, "skill") ?? field(input, "name") ?? "?"}`;
     case "TodoWrite":
       return "Update todos";
     case "WebFetch":
     case "WebSearch":
-      return `${call.tool} ${clip(field(input, "url") ?? field(input, "query") ?? "", 100)}`;
+      return `${call.tool} ${clip2(field(input, "url") ?? field(input, "query") ?? "", 100)}`;
     default:
       return call.tool;
   }
@@ -9976,7 +10129,7 @@ function describeCall(call, root = "") {
 function describeText(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return "";
-  const shown = lines.slice(0, TEXT_LINES).map((l, i) => `${i === 0 ? "\u23FA " : "  "}${clip(l)}`);
+  const shown = lines.slice(0, TEXT_LINES).map((l, i) => `${i === 0 ? "\u23FA " : "  "}${clip2(l)}`);
   if (lines.length > TEXT_LINES) shown.push("  \u2026");
   return `${shown.join("\n")}
 `;
@@ -10150,6 +10303,7 @@ async function runWorkflow(workflow, opts) {
             workspace: opts.workspace ?? null,
             maxToolIterations: opts.maxToolIterations,
             claudeCode: opts.claudeCode,
+            memory: opts.memory,
             signal: opts.signal,
             onToolCall: (call) => emit({
               type: "tool.called",
@@ -10370,6 +10524,20 @@ function truncate2(s) {
   return s.length > 300 ? `${s.slice(0, 300)}\u2026` : s;
 }
 
+// src/client/memory.ts
+var HttpMemoryAccess = class {
+  constructor(client) {
+    this.client = client;
+  }
+  client;
+  search(req) {
+    return this.client.memorySearch(req);
+  }
+  feature(id) {
+    return this.client.memoryFeature(id);
+  }
+};
+
 // src/client/run.ts
 function isPathLike(value) {
   return value.startsWith("/") || value.startsWith("~") || value.startsWith(".") || value.includes("/");
@@ -10447,6 +10615,8 @@ async function runLocal(client, opts) {
       // A node that runs as a spawned Claude Code talks to the same gateway
       // with the same key, so its calls are metered like every other call.
       claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
+      // The team's memory, read through the same key.
+      memory: new HttpMemoryAccess(client),
       emit: (event) => {
         reporter.event(event);
         opts.onEvent?.(event);
@@ -10883,6 +11053,9 @@ ${answerFileNotice(outputFile2, shape2)}`,
           "Say what you are doing as you go; the user is watching this happen.",
           "What gate printed above this JSON \u2014 the command nodes it ran on the way here and their output \u2014 the user has not seen: relay those lines to them before you start, as they are.",
           "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
+          ...prepared.agent.tools.some((t) => t.startsWith("memory_")) ? [
+            "This agent reads the team's memory, and here the memory tools are commands: `gate memory search \"<words>\"` and `gate memory search --path <prefix>` are memory_search, `gate memory feature <id>` is memory_feature. Run them, read what they print, and treat it as the tool's result. They read only; nothing you do here writes memory."
+          ] : [],
           `When the work is done, write ${shape} to ${outputFile} and hand it back:`,
           `  gate step ${executionId} ${node.id} --output-file ${outputFile}`
         ],
@@ -11404,9 +11577,13 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
+  gate memory search [words\u2026] [--path <prefix>]\u2026 [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]
+                                                what your team's tree decided before: why, how, where, which commits
+  gate memory feature <id> [--json]             one feature: how each team built it, and every decision under it
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of"]);
+var REPEATABLE_FLAGS = /* @__PURE__ */ new Set(["input", "path"]);
 function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
   const positional = [];
@@ -11418,7 +11595,7 @@ function parseArgs(argv) {
       continue;
     }
     const [name, inline] = arg.slice(2).split(/=(.*)/s);
-    const collect = (value) => flags[name] = name === "input" && typeof flags.input === "string" ? `${flags.input} ${value}` : value;
+    const collect = (value) => flags[name] = REPEATABLE_FLAGS.has(name) && typeof flags[name] === "string" ? `${flags[name]}\0${value}` : value;
     if (inline !== void 0) {
       collect(inline);
       continue;
@@ -11990,6 +12167,46 @@ async function cmdWork(args) {
   const { ctx } = await sessionContext();
   return await work(ctx, executionId, nodeId2) ? 0 : 1;
 }
+async function cmdMemory(args) {
+  const [sub, ...rest] = args.positional;
+  const client = connect();
+  const json = args.flags.json === true;
+  const many = (v) => typeof v === "string" ? v.split("\0").filter(Boolean) : [];
+  const one = (v) => typeof v === "string" ? v : void 0;
+  if (sub === "search") {
+    const query = rest.join(" ").trim();
+    const paths = many(args.flags.path);
+    const featureId = one(args.flags.feature);
+    if (!query && !paths.length && !featureId) die("usage: gate memory search <words\u2026> [--path <prefix>]\u2026 [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]");
+    const since = parseSince(one(args.flags.since));
+    const asOf = parseSince(one(args.flags["as-of"]));
+    if (one(args.flags.since) && since == null) die(`--since: not a time: ${args.flags.since}`);
+    if (one(args.flags["as-of"]) && asOf == null) die(`--as-of: not a time: ${args.flags["as-of"]}`);
+    const limit = args.flags.limit ? Number(args.flags.limit) : void 0;
+    const result = await client.memorySearch({
+      query: query || void 0,
+      paths: paths.length ? paths : void 0,
+      featureId,
+      since: since ?? void 0,
+      asOf: asOf ?? void 0,
+      limit: Number.isFinite(limit) ? limit : void 0
+    });
+    console.log(json ? JSON.stringify(result, null, 2) : describeSearch(result));
+    return 0;
+  }
+  if (sub === "feature") {
+    const [id] = rest;
+    if (!id) die("usage: gate memory feature <id> [--json]");
+    const detail = await client.memoryFeature(id);
+    if (!detail) {
+      console.log(`no feature "${id}" in your team's catalogue`);
+      return 1;
+    }
+    console.log(json ? JSON.stringify(detail, null, 2) : describeFeature(detail));
+    return 0;
+  }
+  die("usage: gate memory search <words\u2026> | gate memory feature <id>");
+}
 async function cmdStatus(args) {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -12067,6 +12284,8 @@ async function main(argv) {
         return cmdReset();
       case "status":
         return await cmdStatus(args);
+      case "memory":
+        return await cmdMemory(args);
       case "cancel":
         return await cmdCancel(args);
       case "help":

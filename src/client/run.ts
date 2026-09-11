@@ -15,6 +15,7 @@ import type { WorkflowDefinition } from "@/workflows/types";
 import { CLI_VERSION, type GateClient } from "./api";
 import { cacheScope } from "./cache";
 import { HttpGateProvider } from "./http-provider";
+import { HttpMemoryAccess } from "./memory";
 import { RunReporter } from "./reporter";
 
 /**
@@ -159,6 +160,8 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
       // A node that runs as a spawned Claude Code talks to the same gateway
       // with the same key, so its calls are metered like every other call.
       claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
+      // The team's memory, read through the same key.
+      memory: new HttpMemoryAccess(client),
       emit: (event) => {
         reporter.event(event);
         opts.onEvent?.(event);

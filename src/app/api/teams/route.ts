@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid team", issues: parsed.error.issues }, { status: 400 });
   }
   try {
-    return NextResponse.json(createTeam(parsed.data.name, parsed.data.id));
+    return NextResponse.json(createTeam(parsed.data.name, parsed.data.id, parsed.data.parentId ?? null));
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
   }

@@ -5,6 +5,7 @@ import { getAgent } from "@/agents/registry";
 import { renderTemplate, TemplateError } from "@/agents/template";
 import type { AgentDefinition } from "@/agents/types";
 import type { EventSink, WorkflowEvent } from "@/events/types";
+import type { MemoryAccess } from "@/memory/cards";
 import type { ModelProvider } from "@/providers/types";
 import { costForUsage, tierOf } from "@/lib/pricing";
 import type { SkillDefinition } from "@/skills/types";
@@ -53,6 +54,8 @@ export interface RunWorkflowOptions {
   maxToolIterations?: number;
   /** Passed through to agents that run as a spawned Claude Code. */
   claudeCode?: { gatewayUrl?: string; authToken?: string };
+  /** The team's memory, for agents that declare the memory tools. */
+  memory?: MemoryAccess;
   /** Called as each step lands in history, so a run can be persisted live. */
   onStep?: (step: StepRecord) => void;
   /**
@@ -232,6 +235,7 @@ export async function runWorkflow(workflow: WorkflowDefinition, opts: RunWorkflo
             workspace: opts.workspace ?? null,
             maxToolIterations: opts.maxToolIterations,
             claudeCode: opts.claudeCode,
+            memory: opts.memory,
             signal: opts.signal,
             onToolCall: (call) =>
               emit({

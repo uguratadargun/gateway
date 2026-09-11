@@ -13,6 +13,9 @@ import { deleteWorkflow, getWorkflow, listWorkflows, workflowsDir } from "@/work
 
 import { FakeModelProvider } from "./fakes/fake-model-provider";
 
+/** What the recall node answers when memory holds nothing: the shipped agent's honest shape. */
+const RECALLED = JSON.stringify({ brief: "Nothing found — memory holds nothing about this.", sources: [] });
+
 /**
  * The shipped defaults are validated by the same loaders the UI uses, so a
  * change to the agent or workflow schema that the seeds no longer satisfy
@@ -98,6 +101,7 @@ describe("what the shipped agents declare", () => {
       "planner",
       "quick-implementer",
       "quick-reviewer",
+      "recall",
       "reviewer",
       "super-implementer",
       "super-planner",
@@ -208,6 +212,22 @@ describe("what the shipped agents declare", () => {
     expect(byId.get("verifier")!.executor).toBe("claude-code");
     // The implementer takes the plan file, which is what its skills execute.
     expect(byId.get("implementer")!.inputs).toContain("planner.planFile");
+
+    // The recall node reads memory and nothing else: it runs on gate's own
+    // loop (in a session, the session does it with `gate memory`), holds the
+    // two memory tools and no write, and every planner reads its brief.
+    const recall = byId.get("recall")!;
+    expect(recall.executor).toBe("gate");
+    expect(recall.skills).toEqual([]);
+    expect(recall.tools).toContain("memory_search");
+    expect(recall.tools).toContain("memory_feature");
+    expect(recall.tools).not.toContain("write_file");
+    expect(recall.tools).not.toContain("edit_file");
+    expect(recall.output.type === "json" ? Object.keys(recall.output.schema) : []).toEqual(["brief", "sources"]);
+    for (const id of ["planner", "super-planner", "quick-implementer"]) {
+      expect(byId.get(id)!.inputs).toContain("recall.brief?");
+      expect(DEFAULT_AGENTS[id]).toContain("{{inputs.recall.brief}}");
+    }
 
     // Every agent carries an explicit timeout, the implementer a longer one.
     expect(byId.get("planner")!.timeoutMs).toBe(3_600_000);
@@ -387,7 +407,7 @@ Try {{inputs.implementer.summary}}
         case "acceptance":
           return accepts(visit);
         default:
-          return "{}";
+          return req.context?.nodeId === "recall" ? RECALLED : "{}";
       }
     });
   }
@@ -711,7 +731,7 @@ Try {{inputs.implementer.summary}}
         case "implementer":
           return JSON.stringify({ summary: "The task is already done on this branch.", changed: false });
         default:
-          return "{}";
+          return req.context?.nodeId === "recall" ? RECALLED : "{}";
       }
     });
     const { ran, runCommand } = fakeGit({ staged: false });
@@ -733,6 +753,7 @@ describe("the shipped super pipeline", () => {
     const sup = getWorkflow("dev-super");
     const agentsOf = (w: typeof dev) => w.nodes.filter((n) => n.type === "agent").map((n) => [n.id, (n as { agent: string }).agent]);
     expect(agentsOf(sup)).toEqual([
+      ["recall", "recall"],
       ["planner", "super-planner"],
       ["clarify", "clarify"],
       ["plan-review", "plan-review"],
@@ -849,7 +870,7 @@ Try {{inputs.implementer.summary}}
         case "acceptance":
           return accepts(visit);
         default:
-          return "{}";
+          return req.context?.nodeId === "recall" ? RECALLED : "{}";
       }
     });
   }

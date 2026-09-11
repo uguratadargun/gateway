@@ -22,6 +22,7 @@ import { installLines, PLUGIN_ID, PLUGIN_MARKETPLACE } from "@/lib/protocol";
 interface Team {
   id: string;
   name: string;
+  parentId: string | null;
   createdAt: number;
   userCount: number;
 }
@@ -72,6 +73,8 @@ export default function TeamPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [teamName, setTeamName] = useState("");
+  /** The team a new one sits under: android and desktop under ulak. */
+  const [parentId, setParentId] = useState("");
   // Where this gate's people fetch the plugin from — the dashboard's setting,
   // the public repository until it has loaded or when nothing is set.
   const [pluginSource, setPluginSource] = useState(PLUGIN_MARKETPLACE);
@@ -116,12 +119,39 @@ export default function TeamPage() {
   async function addTeam() {
     setError(null);
     try {
-      await post("/api/teams", { name: teamName });
+      await post("/api/teams", { name: teamName, parentId: parentId || null });
       setTeamName("");
       await load();
     } catch (e) {
       setError((e as Error).message);
     }
+  }
+
+  async function moveTeam(id: string, nextParent: string) {
+    setError(null);
+    try {
+      await request(`/api/teams/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parentId: nextParent || null }),
+      });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  /** "ulak / android": where a team sits, for the list. */
+  function pathOf(id: string): string {
+    const chain: string[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = id;
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      chain.unshift(cursor);
+      cursor = teams.find((t) => t.id === cursor)?.parentId ?? null;
+    }
+    return chain.join(" / ");
   }
 
   async function addUser() {
@@ -238,18 +268,50 @@ export default function TeamPage() {
         </div>
         <div className="flex gap-2">
           <Input placeholder="Team name (e.g. Platform)" value={teamName} onChange={(e) => setTeamName(e.target.value)} />
+          <select
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={parentId}
+            onChange={(e) => setParentId(e.target.value)}
+            title="The team this one sits under. Teams in one tree share a memory: a sibling's features and decisions are readable, another tree's are not."
+          >
+            <option value="">top level</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                under {pathOf(t.id)}
+              </option>
+            ))}
+          </select>
           <Button size="sm" onClick={addTeam} disabled={!teamName.trim()}>
             <Plus /> Add team
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Teams nest. A tree shares one memory: what android decided is readable from desktop when both sit under ulak, and a
+          run&apos;s recall node reads the whole tree before planning. Another tree on this gate sees none of it.
+        </p>
         <div className="space-y-1">
           {teams.map((t) => (
             <div key={t.id} className="flex items-center gap-3 rounded-md border p-2 text-sm">
               <span className="font-medium">{t.name}</span>
-              <code className="text-xs text-muted-foreground">{t.id}</code>
+              <code className="text-xs text-muted-foreground">{pathOf(t.id)}</code>
               <span className="ml-auto text-xs text-muted-foreground">
                 {t.userCount} {t.userCount === 1 ? "person" : "people"} · agents and workflows in ~/.gate/teams/{t.id}
               </span>
+              <select
+                className="h-7 rounded-md border bg-background px-1 text-xs"
+                value={t.parentId ?? ""}
+                onChange={(e) => void moveTeam(t.id, e.target.value)}
+                title="Move this team under another"
+              >
+                <option value="">top level</option>
+                {teams
+                  .filter((o) => o.id !== t.id)
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      under {o.id}
+                    </option>
+                  ))}
+              </select>
             </div>
           ))}
         </div>

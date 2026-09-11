@@ -121,3 +121,25 @@ export const finishRunSchema = z
     diff: z.string().max(4_000_000).nullish(),
   })
   .strict();
+
+/** Query-string parameters of `GET /api/v1/memory/search`, as strings. */
+const epochMs = z
+  .string()
+  .transform((v) => (/^\d+$/.test(v) ? Number(v) : Date.parse(v)))
+  .refine((n) => Number.isFinite(n), "not a time")
+  .optional();
+
+export const memorySearchSchema = z
+  .object({
+    query: z.string().max(2000).optional(),
+    paths: z.array(z.string().max(500)).max(50).default([]),
+    featureId: z.string().max(100).optional(),
+    asOf: epochMs,
+    since: epochMs,
+    limit: z
+      .string()
+      .transform((v) => Number(v))
+      .refine((n) => Number.isInteger(n) && n > 0, "not a count")
+      .optional(),
+  })
+  .refine((v) => v.query || v.paths.length || v.featureId, { message: "give q, path, or feature" });

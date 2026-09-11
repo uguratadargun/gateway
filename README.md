@@ -841,6 +841,54 @@ five tries. Continue refuses outright (with a plain reason) for a run that is
 still going, one that already finished at a terminal, or one whose worktree no
 longer exists on disk.
 
+### Memory — what a run decided, for the runs after it
+
+A run's steps are its transcript. Its **record** is what it decided, why, and
+how — at the level of logic, not code — with the files and areas it touched and
+the commits it came from. gate keeps that record, per team tree, and the
+shipped pipelines read it before they plan.
+
+**Recording.** When a run ends — completed, failed, stopped from the dashboard,
+or written off after its machine went quiet — a ledger row is queued for it,
+and the server's *recorder* reads the run's steps and writes its decisions:
+title, context, decision, rationale, alternatives not taken, how it works,
+consequences, `touches`. It files the run under a **feature** in the tree's
+shared catalogue ("Offline sync", whatever each team called it) and keeps a
+per-team **implementation summary** with its pitfalls as a field of its own.
+A run that failed still gets a record: "tried X, the reviewer refused it
+because Y" is the entry the next planner most needs. The recorder is a
+server-side job, not a node, precisely so that a stopped run is recorded too;
+it claims the ledger row before it writes, so a run is recorded once, and a
+failed extraction is retried up to three times and can be re-run from the
+run's page. Its model is `memory.model` in Settings (`sonnet` by default) and
+its cost is on the run.
+
+**Reading.** The shipped `dev`, `dev-super` and `dev-quick` pipelines open with
+a `recall` node that searches memory — words, path prefixes, a time — and
+briefs the planner (or the quick implementer) as `recall.brief`: the same
+feature built by a sibling team and how, decisions that hold in the areas the
+task touches, attempts that were abandoned and why, and for something broken,
+the runs that touched the area with their commits. Two agent tools do the
+reading, `memory_search` and `memory_feature`; in a session, the same reads
+are `gate memory search …` and `gate memory feature <id>`. `/memory` on the
+dashboard is the same view for a person.
+
+**Scope.** Teams nest — set a parent on the Team page — and one tree shares
+one memory: android's decisions are readable from desktop when both sit under
+ulak; another tree on the same gate sees none of it. The scope is put into the
+SQL (`team_id IN (…)`), never into a prompt. Decisions are bi-temporal
+(`valid_from`/`valid_to` for the world, `recorded_at`/`retracted_at` for the
+row), so "what held on date D" is a range query, and a superseding decision
+closes the one it replaces rather than deleting it.
+
+**Storage.** The same `~/.gate/gate.db`: `memory_decisions`, `memory_touches`,
+`memory_features`, `memory_feature_impls`, `memory_extractions`, with FTS5
+indexes over the text. Search is bm25 over the text plus an index range over
+the touched paths, own team first. `GATE_BENCH=1 npx vitest run
+tests/memory-bench.test.ts` seeds twenty teams × five hundred features × five
+decisions and prints p50/p99 for each kind of read, and for a write landing
+while reads are going.
+
 ### What a run cost
 
 An execution shows what it used: its own tokens and API-equivalent cost, summed

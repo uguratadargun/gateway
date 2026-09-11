@@ -1,3 +1,5 @@
+import type { MemoryAccess } from "@/memory/cards";
+
 /**
  * Agent tools: the boundary between reasoning and side effects. An agent can
  * only ever use the tools its Markdown file declares, and every tool here is
@@ -6,10 +8,12 @@
  */
 
 export interface ToolContext {
-  /** Absolute path the run may touch. Nothing outside it is reachable. */
+  /** Absolute path the run may touch. Nothing outside it is reachable. Empty when the run has no workspace. */
   root: string;
   nodeId: string;
   executionId: string;
+  /** The team's memory, when the run can reach it. Read-only from here. */
+  memory?: MemoryAccess;
 }
 
 export interface AgentTool {
@@ -19,6 +23,8 @@ export interface AgentTool {
   inputSchema: Record<string, unknown>;
   /** Tools that change something, for the UI and for read-only agents. */
   mutates: boolean;
+  /** A tool that needs no worktree — memory reads — is offered without one. */
+  workspaceFree?: boolean;
   /** Returns the text handed back to the model as the tool result. */
   execute(input: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }

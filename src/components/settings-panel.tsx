@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useEffect, useState } from "react";
-import { Coins, Gauge, Layers, Puzzle, Route, Save } from "lucide-react";
+import { BookOpen, Coins, Gauge, Layers, Puzzle, Route, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +21,7 @@ interface Settings {
   throttle: { enabled: boolean; downgradeAt: number; blockAt: number };
   retry: { maxRetries: number; maxRateLimitWaitMs: number };
   routingPrecision: { countTokens: boolean };
+  memory: { enabled: boolean; model: string };
   plugin: { source: string };
 }
 
@@ -259,6 +260,25 @@ export function SettingsPanel() {
               <Switch
                 checked={s.fallback.enabled}
                 onCheckedChange={(v) => setS({ ...s, fallback: { ...s.fallback, enabled: v } })}
+              />
+            </Row>
+          </div>
+        </Group>
+
+        <Group icon={BookOpen} title="Memory" description="After a run, the recorder writes what it decided — why, how, where — for the runs after it.">
+          <div className="pb-2">
+            <Row>
+              <Head label="Record runs" hint="Off, runs still finish; nothing is written to memory and the recall node finds nothing new." />
+              <Switch checked={s.memory?.enabled ?? true} onCheckedChange={(v) => setS({ ...s, memory: { ...(s.memory ?? { model: "sonnet" }), enabled: v } })} />
+            </Row>
+          </div>
+          <div className="pt-2">
+            <Row>
+              <Head label="Recorder model" hint="A tier (sonnet), a model id, or provider:<name>/<model>. It reads a run and writes a page." />
+              <Input
+                className="w-56"
+                value={s.memory?.model ?? "sonnet"}
+                onChange={(e) => setS({ ...s, memory: { ...(s.memory ?? { enabled: true }), model: e.target.value } })}
               />
             </Row>
           </div>

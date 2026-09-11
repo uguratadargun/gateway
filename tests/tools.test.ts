@@ -76,10 +76,21 @@ describe("workspace tools", () => {
 
 describe("tool registry", () => {
   it("exposes the known names and gates tools on having a workspace", () => {
-    expect(knownToolNames()).toEqual(["edit_file", "list_files", "read_file", "run_command", "search_files", "write_file"]);
+    expect(knownToolNames()).toEqual([
+      "edit_file",
+      "list_files",
+      "memory_feature",
+      "memory_search",
+      "read_file",
+      "run_command",
+      "search_files",
+      "write_file",
+    ]);
     expect(toolsFor(["read_file", "nope"], true).map((t) => t.name)).toEqual(["read_file"]);
-    // No workspace, no tools — the same agent file still runs, in prose mode.
+    // No workspace, no file tools — the same agent file still runs, in prose
+    // mode. The memory tools need no worktree and stay.
     expect(toolsFor(["read_file"], false)).toEqual([]);
+    expect(toolsFor(["read_file", "memory_search", "memory_feature"], false).map((t) => t.name)).toEqual(["memory_search", "memory_feature"]);
   });
 });
 

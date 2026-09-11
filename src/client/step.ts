@@ -705,6 +705,13 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           "What gate printed above this JSON — the command nodes it ran on the way here and their output — the user " +
             "has not seen: relay those lines to them before you start, as they are.",
           "Ask the user when the brief does not settle something, or something looks wrong. They can answer.",
+          ...(prepared.agent.tools.some((t) => t.startsWith("memory_"))
+            ? [
+                "This agent reads the team's memory, and here the memory tools are commands: `gate memory search \"<words>\"` " +
+                  "and `gate memory search --path <prefix>` are memory_search, `gate memory feature <id>` is memory_feature. " +
+                  "Run them, read what they print, and treat it as the tool's result. They read only; nothing you do here writes memory.",
+              ]
+            : []),
           `When the work is done, write ${shape} to ${outputFile} and hand it back:`,
           `  gate step ${executionId} ${node.id} --output-file ${outputFile}`,
         ],

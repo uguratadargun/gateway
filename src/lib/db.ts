@@ -235,7 +235,150 @@ CREATE TABLE IF NOT EXISTS workflow_layouts (
   layout_json TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+-- ── Memory: what a run decided, kept for the runs that come after it ─────────
+--
+-- A run's steps say what happened; these say what was decided and why, at the
+-- level of logic rather than code, so a later run can read "how did the android
+-- team do offline sync" or "which runs touched src/sync/" without replaying
+-- every step. Raw rows are never rewritten: a decision that stops being true is
+-- closed with retracted_at, and a new one names it in supersedes.
+
+-- The shared feature catalogue of one team tree. Owned by the root team of the
+-- tree so every team under it reads the same names; an implementation row
+-- below says how one team built it.
+CREATE TABLE IF NOT EXISTS memory_features (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  -- JSON string[]: other names the same feature goes by.
+  aliases_json TEXT NOT NULL DEFAULT '[]',
+  summary TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS memory_features_org ON memory_features(org_id);
+
+CREATE TABLE IF NOT EXISTS memory_feature_impls (
+  feature_id TEXT NOT NULL,
+  team_id TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  pitfalls TEXT NOT NULL DEFAULT '',
+  decision_count INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (feature_id, team_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_decisions (
+  id TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL,
+  team_id TEXT NOT NULL,
+  user_id TEXT,
+  feature_id TEXT,
+  title TEXT NOT NULL,
+  context TEXT NOT NULL DEFAULT '',
+  decision TEXT NOT NULL DEFAULT '',
+  rationale TEXT NOT NULL DEFAULT '',
+  alternatives TEXT NOT NULL DEFAULT '',
+  how TEXT NOT NULL DEFAULT '',
+  consequences TEXT NOT NULL DEFAULT '',
+  -- JSON: [{kind: "file"|"area", ref}] — what the decision touched.
+  touches_json TEXT NOT NULL DEFAULT '[]',
+  base_commit TEXT,
+  head_commit TEXT,
+  -- shipped: the run ended at a completed terminal; unshipped: the branch
+  -- exists but did not reach its merge request; abandoned: the run failed or
+  -- was stopped. An abandoned decision is still a decision — "we tried X and
+  -- the reviewer refused it because Y" is worth keeping.
+  outcome TEXT NOT NULL DEFAULT 'shipped',
+  supersedes TEXT,
+  -- Bi-temporal: when the decision held in the world, and when this row was
+  -- written and closed. "What was believed on date D" is a range query.
+  valid_from INTEGER NOT NULL,
+  valid_to INTEGER,
+  recorded_at INTEGER NOT NULL,
+  retracted_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS memory_decisions_execution ON memory_decisions(execution_id);
+CREATE INDEX IF NOT EXISTS memory_decisions_team ON memory_decisions(team_id, valid_from);
+CREATE INDEX IF NOT EXISTS memory_decisions_feature ON memory_decisions(feature_id);
+
+-- One row per thing a decision touched, so "which decisions touched src/x/"
+-- is an index range rather than a scan of JSON.
+CREATE TABLE IF NOT EXISTS memory_touches (
+  decision_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  PRIMARY KEY (decision_id, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS memory_touches_ref ON memory_touches(ref);
+
+-- The extraction ledger: one row per run, claimed and settled so the same run
+-- is never written twice, and a failed extraction is retried, not lost.
+CREATE TABLE IF NOT EXISTS memory_extractions (
+  execution_id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  version INTEGER NOT NULL DEFAULT 1,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  queued_at INTEGER NOT NULL,
+  started_at INTEGER,
+  finished_at INTEGER,
+  model TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL,
+  decision_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS memory_extractions_status ON memory_extractions(status, queued_at);
+
+-- Full-text indexes. Kept by the store, not by triggers, so the text a query
+-- matches is exactly the text the store wrote.
+-- Porter stemming, so "notify" finds "notifications" and "synced" finds
+-- "sync": the words a person asks with are rarely the recorder's exact forms.
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_decisions_fts USING fts5(
+  id UNINDEXED, title, context, decision, rationale, how, consequences, touches, tokenize = 'porter unicode61'
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_features_fts USING fts5(
+  id UNINDEXED, name, aliases, summary, tokenize = 'porter unicode61'
+);
 `;
+
+/**
+ * Rebuilds a full-text index whose tokenizer is not the one the schema names.
+ *
+ * CREATE IF NOT EXISTS leaves an existing table as it was, tokenizer and all,
+ * so a change to how text is indexed would otherwise apply only to fresh
+ * installs. The index is derived from the base table, so rebuilding it loses
+ * nothing: drop, create, and fill it again from the rows.
+ */
+function ensureFtsTokenizer(d: SqlDatabase): void {
+  const wanted = "tokenize = 'porter unicode61'";
+  const rebuild: Array<[table: string, create: string, fill: string]> = [
+    [
+      "memory_decisions_fts",
+      `CREATE VIRTUAL TABLE memory_decisions_fts USING fts5(id UNINDEXED, title, context, decision, rationale, how, consequences, touches, ${wanted})`,
+      `INSERT INTO memory_decisions_fts (id, title, context, decision, rationale, how, consequences, touches)
+         SELECT d.id, d.title, d.context, d.decision, d.rationale, d.how, d.consequences,
+                COALESCE((SELECT group_concat(t.ref, ' ') FROM memory_touches t WHERE t.decision_id = d.id), '')
+           FROM memory_decisions d`,
+    ],
+    [
+      "memory_features_fts",
+      `CREATE VIRTUAL TABLE memory_features_fts USING fts5(id UNINDEXED, name, aliases, summary, ${wanted})`,
+      `INSERT INTO memory_features_fts (id, name, aliases, summary)
+         SELECT id, name, REPLACE(REPLACE(REPLACE(aliases_json, '["', ''), '"]', ''), '","', ' '), summary FROM memory_features`,
+    ],
+  ];
+  for (const [table, create, fill] of rebuild) {
+    const row = d.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string } | undefined;
+    if (!row || row.sql.includes("porter")) continue;
+    d.exec(`DROP TABLE ${table}`);
+    d.exec(create);
+    d.exec(fill);
+  }
+}
+
 
 /** Columns added after the first schema; applied idempotently on open. */
 const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
@@ -294,6 +437,10 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // than the remote's head, so the prompts written against a skill's text
   // keep meeting that text until somebody moves the pin.
   ["skill_sources", "pinned_sha", "pinned_sha TEXT"],
+  // Teams nest: android and desktop under ulak. The tree is the boundary of
+  // what a team's runs may read from memory — a sibling's feature record is
+  // visible, another company's is not. NULL is a root.
+  ["teams", "parent_id", "parent_id TEXT"],
 ];
 
 let db: SqlDatabase | null = null;
@@ -312,6 +459,7 @@ export function getDb(): SqlDatabase {
     if (!cols.includes(column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
   }
   d.exec("CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id)");
+  ensureFtsTokenizer(d);
   db = d;
   importLegacyFiles(d);
   return d;

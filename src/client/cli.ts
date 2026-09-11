@@ -10,6 +10,8 @@ import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 
 import { windowLabel } from "@/lib/account-pool";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
+import { describeFeature, describeSearch } from "@/memory/cards";
+import { parseSince } from "@/runtime/tools/memory-tools";
 
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
@@ -61,6 +63,9 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
+  gate memory search [words…] [--path <prefix>]… [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]
+                                                what your team's tree decided before: why, how, where, which commits
+  gate memory feature <id> [--json]             one feature: how each team built it, and every decision under it
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
 
@@ -79,7 +84,10 @@ interface Args {
  * is short, and the alternative is a parser that is wrong in exactly the case
  * the tool exists for.
  */
-const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent"]);
+const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of"]);
+
+/** Flags that collect when repeated, rather than the last one winning. */
+const REPEATABLE_FLAGS = new Set(["input", "path"]);
 
 function parseArgs(argv: string[]): Args {
   const [command = "help", ...rest] = argv;
@@ -94,7 +102,7 @@ function parseArgs(argv: string[]): Args {
     const [name, inline] = arg.slice(2).split(/=(.*)/s);
     // Repeated --input key=value pairs collect rather than overwrite.
     const collect = (value: string) =>
-      (flags[name] = name === "input" && typeof flags.input === "string" ? `${flags.input} ${value}` : value);
+      (flags[name] = REPEATABLE_FLAGS.has(name) && typeof flags[name] === "string" ? `${flags[name]}\u0000${value}` : value);
 
     if (inline !== undefined) {
       collect(inline);
@@ -890,6 +898,48 @@ async function cmdWork(args: Args): Promise<number> {
   return (await work(ctx, executionId, nodeId)) ? 0 : 1;
 }
 
+/** `gate memory …`: the memory tools, for a person and for the session driving a run. */
+async function cmdMemory(args: Args): Promise<number> {
+  const [sub, ...rest] = args.positional;
+  const client = connect();
+  const json = args.flags.json === true;
+  const many = (v: string | boolean | undefined) => (typeof v === "string" ? v.split("\u0000").filter(Boolean) : []);
+  const one = (v: string | boolean | undefined) => (typeof v === "string" ? v : undefined);
+  if (sub === "search") {
+    const query = rest.join(" ").trim();
+    const paths = many(args.flags.path);
+    const featureId = one(args.flags.feature);
+    if (!query && !paths.length && !featureId) die("usage: gate memory search <words…> [--path <prefix>]… [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]");
+    const since = parseSince(one(args.flags.since));
+    const asOf = parseSince(one(args.flags["as-of"]));
+    if (one(args.flags.since) && since == null) die(`--since: not a time: ${args.flags.since}`);
+    if (one(args.flags["as-of"]) && asOf == null) die(`--as-of: not a time: ${args.flags["as-of"]}`);
+    const limit = args.flags.limit ? Number(args.flags.limit) : undefined;
+    const result = await client.memorySearch({
+      query: query || undefined,
+      paths: paths.length ? paths : undefined,
+      featureId,
+      since: since ?? undefined,
+      asOf: asOf ?? undefined,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    });
+    console.log(json ? JSON.stringify(result, null, 2) : describeSearch(result));
+    return 0;
+  }
+  if (sub === "feature") {
+    const [id] = rest;
+    if (!id) die("usage: gate memory feature <id> [--json]");
+    const detail = await client.memoryFeature(id);
+    if (!detail) {
+      console.log(`no feature "${id}" in your team's catalogue`);
+      return 1;
+    }
+    console.log(json ? JSON.stringify(detail, null, 2) : describeFeature(detail));
+    return 0;
+  }
+  die("usage: gate memory search <words…> | gate memory feature <id>");
+}
+
 async function cmdStatus(args: Args): Promise<number> {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -972,6 +1022,8 @@ export async function main(argv: string[]): Promise<number> {
         return cmdReset();
       case "status":
         return await cmdStatus(args);
+      case "memory":
+        return await cmdMemory(args);
       case "cancel":
         return await cmdCancel(args);
       case "help":

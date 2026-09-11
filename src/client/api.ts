@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 
 import { GATE_VERSION, isOlderThan, VERSION_HEADERS } from "@/lib/protocol";
+import type { FeatureDetail, MemorySearchRequest, MemorySearchResult } from "@/memory/cards";
 
 import type { ClientConfig } from "./config";
 
@@ -253,6 +254,28 @@ export class GateClient {
   /** One run and its steps — the memory a session-driven walk replays. */
   async execution(executionId: string): Promise<{ execution: any; steps: any[] }> {
     return (await this.request<{ execution: any; steps: any[] }>(`/api/v1/executions/${executionId}`)).body;
+  }
+
+  /** The team's memory: decisions and features matching words, paths, or a time. */
+  async memorySearch(req: MemorySearchRequest): Promise<MemorySearchResult> {
+    const params = new URLSearchParams();
+    if (req.query) params.set("q", req.query);
+    for (const p of req.paths ?? []) params.append("path", p);
+    if (req.featureId) params.set("feature", req.featureId);
+    if (req.asOf != null) params.set("asOf", String(req.asOf));
+    if (req.since != null) params.set("since", String(req.since));
+    if (req.limit != null) params.set("limit", String(req.limit));
+    return (await this.request<MemorySearchResult>(`/api/v1/memory/search?${params}`)).body;
+  }
+
+  /** One feature in full; null when the team's catalogue has no such id. */
+  async memoryFeature(id: string): Promise<FeatureDetail | null> {
+    try {
+      return (await this.request<FeatureDetail>(`/api/v1/memory/features/${encodeURIComponent(id)}`)).body;
+    } catch (e) {
+      if (e instanceof GateApiError && e.status === 404) return null;
+      throw e;
+    }
   }
 
   async listRuns(limit = 20): Promise<Array<Record<string, any>>> {

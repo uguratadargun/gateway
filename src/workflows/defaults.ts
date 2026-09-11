@@ -111,6 +111,16 @@ nodes:
       - >-
         mkdir -p docs/plans &&
         { [ -e docs/plans/.gitignore ] || printf '*\\n' > docs/plans/.gitignore; }
+    next: recall
+
+  # What the team already knows, before anything is planned: the same
+  # feature built by a sibling team, decisions that hold in the areas the
+  # task touches, attempts that were abandoned. The planner reads the brief
+  # as recall.brief; a brief that says "nothing" is a real answer.
+  - id: recall
+    type: agent
+    agent: recall
+    label: Read the team's memory
     next: planner
 
   - id: planner
@@ -457,6 +467,14 @@ nodes:
     type: command
     label: Record the starting commit
     command: [git, log, "-1", --format=format:%H]
+    next: recall
+
+  # Even a small change reads memory first: the decision it would quietly
+  # undo is the one the quick implementer cannot see in the file.
+  - id: recall
+    type: agent
+    agent: recall
+    label: Read the team's memory
     next: implementer
 
   # Named implementer, not quick-implementer: outputs are keyed by node id,

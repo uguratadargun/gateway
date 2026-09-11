@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DiffView } from "@/components/diff-view";
 import { StepDetailDialog } from "@/components/step-detail";
+import { RunMemory } from "@/components/run-memory";
 import { formatDuration, formatElapsed } from "@/lib/duration";
 import { type RunDisplayStatus, runElapsed, runStatus } from "@/lib/run-clock";
 import { stripAnsi } from "@/lib/utils";
@@ -595,6 +596,7 @@ export default function ExecutionDetailPage() {
           )}
         </Card>
       )}
+      {ex && ex.status !== "running" && <RunMemory executionId={id} />}
       <StepDetailDialog step={detailStep} onClose={() => setDetailStep(null)} />
     </main>
   );

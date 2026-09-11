@@ -77,6 +77,16 @@ export interface GateSettings {
   routingPrecision: {
     countTokens: boolean;
   };
+  /**
+   * The memory layer: a finished run is read by the recorder, which writes
+   * the decisions it made — logic, not code — for the runs that come after.
+   * `model` is what the recorder runs on; it reads a run's outputs and
+   * writes a page, so a mid tier is enough.
+   */
+  memory: {
+    enabled: boolean;
+    model: string;
+  };
   /** How a request picks among several connected Claude accounts. */
   accountPool: {
     strategy: PoolStrategy;
@@ -118,6 +128,7 @@ export const DEFAULT_SETTINGS: GateSettings = {
   throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
   routingPrecision: { countTokens: false },
+  memory: { enabled: true, model: "sonnet" },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
   accountPool: { strategy: "fill-first", stickyRoundRobinLimit: 3, quotaMinRemainingPercent: 0, quotaRefreshMinutes: 30 },
@@ -157,6 +168,7 @@ export interface SettingsPatch {
   throttle?: Partial<GateSettings["throttle"]>;
   retry?: Partial<GateSettings["retry"]>;
   routingPrecision?: Partial<GateSettings["routingPrecision"]>;
+  memory?: Partial<GateSettings["memory"]>;
   accountPool?: Partial<GateSettings["accountPool"]>;
 }
 
@@ -190,6 +202,10 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
     throttle: { ...base.throttle, ...patch.throttle },
     retry: { ...base.retry, ...patch.retry },
     routingPrecision: { ...base.routingPrecision, ...patch.routingPrecision },
+    memory: {
+      enabled: patch.memory?.enabled ?? base.memory.enabled,
+      model: patch.memory?.model?.trim() || base.memory.model,
+    },
     accountPool: {
       ...base.accountPool,
       ...patch.accountPool,

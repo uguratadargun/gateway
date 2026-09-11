@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { finishRunSchema } from "@/lib/client-api-schemas";
 import { ownsExecution, requireClient } from "@/lib/tenancy";
 import { finishExecution, getExecution, setExecutionDiff } from "@/executions/store";
+import { scheduleExtraction } from "@/memory/queue";
 import type { WorkflowState } from "@/runtime/state";
 
 export const runtime = "nodejs";
@@ -42,5 +43,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   finishExecution(state, workspace ?? null);
   if (diff) setExecutionDiff(id, diff);
+  // The diff is in; the recorder may read the run now.
+  scheduleExtraction();
   return NextResponse.json({ ok: true });
 }

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { publishWorkflowEvent } from "@/events/bus";
 import { requireClient } from "@/lib/tenancy";
 import { getExecution, requestExecutionCancel, stopSessionExecution } from "@/executions/store";
+import { scheduleExtraction } from "@/memory/queue";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const stopped = stopSessionExecution(id, at);
     if (stopped) {
       publishWorkflowEvent({ type: "workflow.failed", executionId: id, at, code: "RUN_CANCELLED", message: "stopped from the dashboard" });
+      scheduleExtraction();
     }
     return NextResponse.json({ requested: stopped, stopped, ...(stopped ? {} : { reason: "this run has already settled" }) });
   }

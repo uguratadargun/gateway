@@ -1,6 +1,7 @@
 import { DEFAULT_TEAM } from "@/lib/def-root";
 import { getDb } from "@/lib/db";
 import { costForUsage, tierOf } from "@/lib/pricing";
+import { queueExtraction } from "@/memory/store";
 import type { StepRecord, WorkflowState } from "@/runtime/state";
 
 import type { ToolCallRecord } from "@/runtime/state";
@@ -307,6 +308,11 @@ export function finishExecution(state: WorkflowState, workspace: ExecutionWorksp
       finishedAt,
       state.executionId,
     );
+  // The run is over, however it ended; the recorder reads it from here. Queued
+  // in the same place the run is closed, so no path to "finished" — the engine,
+  // a local run's report, a stop from the dashboard — can miss it.
+  const row = getDb().prepare("SELECT team_id FROM workflow_executions WHERE id = ?").get(state.executionId) as { team_id: string | null } | undefined;
+  queueExtraction(state.executionId, row?.team_id ?? DEFAULT_TEAM, finishedAt);
 }
 
 /**
@@ -350,7 +356,7 @@ export function resumeExecution(id: string, at = Date.now()): boolean {
  * session finds the run stopped on its next `gate next`.
  */
 export function stopSessionExecution(id: string, at = Date.now()): boolean {
-  return (
+  const stopped =
     Number(
       getDb()
         .prepare(
@@ -361,8 +367,14 @@ export function stopSessionExecution(id: string, at = Date.now()): boolean {
             WHERE id = ? AND status = 'running' AND driver = 'session'`,
         )
         .run(at, at, id).changes,
-    ) > 0
-  );
+    ) > 0;
+  // A stopped run is a finished run to the recorder: what it decided before
+  // the stop is the part worth keeping.
+  if (stopped) {
+    const row = getDb().prepare("SELECT team_id FROM workflow_executions WHERE id = ?").get(id) as { team_id: string | null } | undefined;
+    queueExtraction(id, row?.team_id ?? DEFAULT_TEAM, at);
+  }
+  return stopped;
 }
 
 /** Recorded as soon as the worktree exists, so a running job shows its branch. */
@@ -560,7 +572,11 @@ export function getExecutionSteps(executionId: string): ExecutionStepRecord[] {
  * to be alive, so they are settled at boot for what they are: interrupted.
  */
 export function failInterruptedExecutions(startedBefore: number, at = Date.now()): number {
-  const res = getDb()
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT id, team_id FROM workflow_executions WHERE status = 'running' AND started_at < ? AND COALESCE(origin, 'server') <> 'local'")
+    .all(startedBefore) as Array<{ id: string; team_id: string | null }>;
+  const res = db
     .prepare(
       `UPDATE workflow_executions
           SET status = 'failed', finished_at = ?, error_code = 'RUN_INTERRUPTED',
@@ -568,6 +584,7 @@ export function failInterruptedExecutions(startedBefore: number, at = Date.now()
         WHERE status = 'running' AND started_at < ? AND COALESCE(origin, 'server') <> 'local'`,
     )
     .run(at, startedBefore);
+  for (const r of rows) queueExtraction(r.id, r.team_id ?? DEFAULT_TEAM, at);
   return Number(res.changes ?? 0);
 }
 
@@ -621,20 +638,30 @@ export function failAbandonedLocalExecutions(
   silenceMs = LOCAL_RUN_SILENCE_MS,
   sessionSilenceMs = SESSION_RUN_SILENCE_MS,
 ): number {
-  const res = getDb()
+  const db = getDb();
+  const where = `status = 'running' AND origin = 'local' AND paused_at IS NULL
+          AND COALESCE(last_seen_at, started_at) < (CASE WHEN driver = 'session' THEN ? ELSE ? END)`;
+  const rows = db.prepare(`SELECT id, team_id FROM workflow_executions WHERE ${where}`).all(at - sessionSilenceMs, at - silenceMs) as Array<{
+    id: string;
+    team_id: string | null;
+  }>;
+  const res = db
     .prepare(
       `UPDATE workflow_executions
           SET status = 'failed', finished_at = ?, error_code = 'RUN_ABANDONED',
               error_message = 'the machine running this stopped reporting'
-        WHERE status = 'running' AND origin = 'local' AND paused_at IS NULL
-          AND COALESCE(last_seen_at, started_at) < (CASE WHEN driver = 'session' THEN ? ELSE ? END)`,
+        WHERE ${where}`,
     )
     .run(at, at - sessionSilenceMs, at - silenceMs);
+  for (const r of rows) queueExtraction(r.id, r.team_id ?? DEFAULT_TEAM, at);
   return Number(res.changes ?? 0);
 }
 
 export function deleteExecution(id: string): boolean {
   const db = getDb();
+  // The ledger row goes with the run; what the run taught the team stays.
+  // A decision outlives the transcript it was read from.
+  db.prepare("DELETE FROM memory_extractions WHERE execution_id = ?").run(id);
   db.prepare("DELETE FROM workflow_execution_steps WHERE execution_id = ?").run(id);
   const res = db.prepare("DELETE FROM workflow_executions WHERE id = ?").run(id);
   return Number(res.changes ?? 0) > 0;

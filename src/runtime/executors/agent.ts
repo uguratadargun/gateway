@@ -1,6 +1,7 @@
 import { renderTemplate, TemplateError } from "@/agents/template";
 import { buildOutputSchema, type AgentDefinition, type AgentOutputSpec } from "@/agents/types";
 import type { ModelProvider, ModelProviderMessage, ProviderContentBlock, ToolUseBlock } from "@/providers/types";
+import type { MemoryAccess } from "@/memory/cards";
 import { WorkflowError } from "@/runtime/errors";
 import { resolveInputs, type NodeUsageRecord, type ToolCallRecord, type WorkflowState } from "@/runtime/state";
 import { getTool, toolsFor } from "@/runtime/tools/registry";
@@ -106,6 +107,8 @@ export interface AgentExecutorDeps {
    * unset on the server, where the child talks to this process.
    */
   claudeCode?: { gatewayUrl?: string; authToken?: string };
+  /** The team's memory, for agents that declare the memory tools. */
+  memory?: MemoryAccess;
 }
 
 export interface AgentNodeResult {
@@ -193,9 +196,12 @@ export async function executeAgentNode(
   const tools = toolsFor(agent.tools, Boolean(workspace));
   const canWrite = tools.some((t) => WRITE_TOOLS.has(t.name));
   const toolDefs = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
-  const toolCtx: ToolContext | null = workspace
-    ? { root: workspace.root, nodeId: node.id, executionId: state.executionId }
-    : null;
+  // Without a workspace the file tools are already filtered out above, so a
+  // context with an empty root is only ever reached by the memory tools.
+  const toolCtx: ToolContext | null =
+    workspace || tools.length
+      ? { root: workspace?.root ?? "", nodeId: node.id, executionId: state.executionId, memory: deps.memory }
+      : null;
 
   const messages: ModelProviderMessage[] = [{ role: "user", content: prompt }];
   const toolCalls: ToolCallRecord[] = [];
