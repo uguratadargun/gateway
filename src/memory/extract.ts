@@ -60,6 +60,8 @@ const answerSchema = z.object({
       match: z.string().max(100).nullish(),
       name: z.string().max(120).default(""),
       aliases: z.array(z.string().max(120)).max(20).default([]),
+      /** One platform-free sentence on what the feature is: the catalogue's own line. */
+      description: z.string().max(600).default(""),
       /** This team's implementation, as it stands after this run. */
       summary: z.string().max(4000).default(""),
       pitfalls: z.string().max(4000).default(""),
@@ -129,7 +131,7 @@ Rules:
 - "how" is the part that lets someone rebuild it elsewhere: the sequence, the components and what each is responsible for, the edge cases handled and how, the ones deliberately not handled.
 - "touches" lists the files and areas the decision lives in, as paths relative to the repository root and short area names (e.g. "sync", "auth"). Take the paths from the run's changed files where they apply.
 - "supersedes" names an earlier decision id, only when this run replaced one of the earlier decisions you are shown and you are sure.
-- The feature: pick the catalogue entry this work belongs to, by id, when one of the candidates is the same feature under any name; otherwise name a new one — short, product-level ("Offline sync", "Login with SSO"), not a task title — or null when the run was housekeeping that belongs to no feature. Then write this team's implementation summary as it stands after this run: a few sentences that would let a sibling team plan the same feature, and its pitfalls as a separate field. If a previous summary is shown, update it rather than restarting.
+- The feature: pick the catalogue entry this work belongs to, by id, when one of the candidates is the same feature under any name; otherwise name a new one — short, product-level ("Offline sync", "Login with SSO"), not a task title — or null when the run was housekeeping that belongs to no feature. Give it a one-sentence, platform-free description of what the feature is for the catalogue. Then write this team's implementation summary as it stands after this run: a few sentences that would let a sibling team plan the same feature, and its pitfalls as a separate field. If a previous summary is shown, update it rather than restarting.
 
 Answer with one JSON object and nothing else — no prose before or after, no code fence:
 {
@@ -150,6 +152,7 @@ Answer with one JSON object and nothing else — no prose before or after, no co
     "match": "<catalogue id>" | null,
     "name": "...",
     "aliases": ["..."],
+    "description": "...",
     "summary": "...",
     "pitfalls": "..."
   } | null
@@ -257,7 +260,9 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
     });
     const usage = {
       model: result.model,
-      inputTokens: result.usage.inputTokens,
+      // Read from the prompt cache or not, it was read: the ledger's input
+      // figure is what the recorder was shown, and the cost is exact either way.
+      inputTokens: result.usage.inputTokens + result.usage.cacheReadTokens,
       outputTokens: result.usage.outputTokens,
       costUsd: costForUsage(
         tierOf(result.model),
@@ -278,10 +283,20 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
     let featureId: string | null = null;
     if (answer.feature) {
       const matched = answer.feature.match ? candidates.find((c) => c.id === answer.feature!.match) : null;
+      // The catalogue line: the model's description, or failing that the
+      // first sentence of the implementation summary — never left blank.
+      const description = answer.feature.description.trim() || answer.feature.summary.trim().split(/(?<=[.!?])\s/)[0] || "";
       if (matched) {
-        featureId = upsertFeature({ id: matched.id, orgId: scope.orgId, name: matched.name, aliases: answer.feature.aliases, now: now() }).id;
+        featureId = upsertFeature({
+          id: matched.id,
+          orgId: scope.orgId,
+          name: matched.name,
+          aliases: answer.feature.aliases,
+          summary: matched.summary || description,
+          now: now(),
+        }).id;
       } else if (answer.feature.name.trim()) {
-        featureId = upsertFeature({ orgId: scope.orgId, name: answer.feature.name, aliases: answer.feature.aliases, now: now() }).id;
+        featureId = upsertFeature({ orgId: scope.orgId, name: answer.feature.name, aliases: answer.feature.aliases, summary: description, now: now() }).id;
       }
     }
 

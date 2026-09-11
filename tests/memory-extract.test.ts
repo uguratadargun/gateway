@@ -73,7 +73,7 @@ const ANSWER = {
       supersedes: null,
     },
   ],
-  feature: { match: null, name: "Offline sync", aliases: ["background sync"], summary: "Queue + worker.", pitfalls: "Ordering is per entity." },
+  feature: { match: null, name: "Offline sync", aliases: ["background sync"], description: "Edits made offline reach the server later.", summary: "Queue + worker.", pitfalls: "Ordering is per entity." },
 };
 
 describe("the recorder", () => {
@@ -97,7 +97,7 @@ describe("the recorder", () => {
     const [decision] = decisionsForExecution("rec-1");
     expect(decision).toMatchObject({ teamId: "acme-android", userId: "u-1", outcome: "shipped", baseCommit: "abc123", headCommit: "def456", validFrom: 2_000 });
     expect(decision.featureId).toBe("offline-sync");
-    expect(getFeature("offline-sync")).toMatchObject({ orgId: "acme", aliases: ["background sync"] });
+    expect(getFeature("offline-sync")).toMatchObject({ orgId: "acme", aliases: ["background sync"], summary: "Edits made offline reach the server later." });
     expect(implementationsOf(memoryScopeFor("acme-desktop"), "offline-sync")[0]).toMatchObject({ teamId: "acme-android", decisionCount: 1, pitfalls: "Ordering is per entity." });
     expect(getExtraction("rec-1")).toMatchObject({ status: "done", decisionCount: 1, model: "claude-sonnet-5", inputTokens: 1000 });
     expect(getExtraction("rec-1")!.costUsd).toBeGreaterThan(0);
