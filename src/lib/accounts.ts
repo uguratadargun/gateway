@@ -34,6 +34,15 @@ export interface AccountQuota {
   source: "usage-endpoint" | "headers";
   /** Why the last poll failed, when it did. The windows shown stay the old ones. */
   error?: string | null;
+  /**
+   * When the usage endpoint was last asked (answered or not). Headers never
+   * set it and a merge keeps it, so "polled lately" is a different question
+   * from "written lately" — a busy account's replies refresh the session and
+   * weekly windows every minute, but the model-scoped weekly limit (Fable's)
+   * exists only in the endpoint's answer and goes stale if the account is
+   * never asked again.
+   */
+  polledAt?: number | null;
 }
 
 export interface Account {

@@ -199,17 +199,19 @@ export async function refreshAccountQuota(account: Account): Promise<UsageFetchR
     if (!creds) return { quota: null, error: "no usable credentials" };
 
     const result = await fetchClaudeUsage(creds.accessToken);
+    const polledAt = Date.now();
     try {
       if (result.quota) {
-        saveAccountQuota(account.id, result.quota);
+        saveAccountQuota(account.id, { ...result.quota, polledAt });
       } else {
-        // The timestamp is written on failure too: it is the "last tried" mark
+        // The poll time is written on failure too: it is the "last tried" mark
         // that keeps a failing account from being re-polled on every page load.
         saveAccountQuota(account.id, {
           windows: account.quota?.windows ?? {},
           plan: account.quota?.plan ?? null,
           source: account.quota?.source ?? "usage-endpoint",
           error: result.error,
+          polledAt,
         });
       }
     } catch {
@@ -225,10 +227,19 @@ export async function refreshAccountQuota(account: Account): Promise<UsageFetchR
   return run;
 }
 
-/** True when this account has never been polled, or not within the interval. */
+/**
+ * True when the usage endpoint has not been asked about this account within
+ * the interval. The header readings its replies carry do not count: they keep
+ * the session and weekly windows current but say nothing about the
+ * model-scoped weekly limit, which only the endpoint reports — measured here,
+ * a busy account's "Fable limit" sat at 45% left for days while the account
+ * was at 18%, because its replies kept it looking fresh. A snapshot written
+ * before the poll time was recorded is read by its write time, once.
+ */
 export function quotaIsStale(account: Account, refreshMinutes: number, now = Date.now()): boolean {
-  if (!account.quotaFetchedAt) return true;
-  return now - account.quotaFetchedAt >= refreshMinutes * 60_000;
+  const last = account.quota?.polledAt ?? (account.quota?.source === "headers" ? null : account.quotaFetchedAt);
+  if (!last) return true;
+  return now - last >= refreshMinutes * 60_000;
 }
 
 /** Stale, and not inside the backoff a run of failed polls earned. */
@@ -250,9 +261,10 @@ async function refreshAll(accounts: Account[]): Promise<void> {
 
 /**
  * Periodic refresh — the startup daemon's job, so the pool's quota floor and
- * the throttle keep working on an idle account. A busy account is skipped for
- * free: the unified headers on its replies already refreshed the same
- * timestamp, so it is never stale when this runs.
+ * the throttle keep working on an idle account, and the model-scoped weekly
+ * window stays current on a busy one: replies refresh the session and weekly
+ * windows, but only the endpoint reports the per-model limit, so every
+ * account is asked once per interval whatever its replies said.
  */
 export async function refreshStaleQuotas(refreshMinutes: number): Promise<void> {
   await refreshAll(listAccounts().filter((a) => a.enabled && shouldPollQuota(a, refreshMinutes)));

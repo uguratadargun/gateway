@@ -507,5 +507,6 @@ export function mergeQuota(previous: AccountQuota | null, incoming: AccountQuota
     windows: { ...(previous?.windows ?? {}), ...incoming.windows },
     plan: previous?.plan ?? null,
     source: incoming.source,
+    polledAt: incoming.polledAt ?? previous?.polledAt ?? null,
   };
 }

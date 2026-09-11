@@ -424,11 +424,29 @@ describe("claude usage endpoint", () => {
     expect(shouldPollQuota(account({ id: "aged", quotaFetchedAt: now - 60 * 60_000 }), 30, now)).toBe(true);
   });
 
-  it("does not re-poll an account whose reply carried fresh headers", () => {
+  it("polls a busy account on its interval even though its replies keep the snapshot fresh", () => {
     _resetQuotaPollState();
     const now = 1_000_000_000;
-    // captureQuota stamps the same timestamp, so a busy account is never stale
-    // and the endpoint is never asked about it at all.
-    expect(shouldPollQuota(account({ id: "busy", quotaFetchedAt: now - 60_000 }), 30, now)).toBe(false);
+    // Headers wrote the snapshot a minute ago, but the endpoint was last asked
+    // an hour ago: the model-scoped weekly window only it reports is stale.
+    const busy = account({
+      id: "busy",
+      quotaFetchedAt: now - 60_000,
+      quota: { windows: { five_hour: { utilization: 81, resetsAt: null } }, source: "headers", polledAt: now - 60 * 60_000 },
+    });
+    expect(shouldPollQuota(busy, 30, now)).toBe(true);
+    // Asked ten minutes ago: current, whatever the headers did since.
+    const asked = account({ ...busy, id: "asked", quota: { ...busy.quota!, polledAt: now - 10 * 60_000 } });
+    expect(shouldPollQuota(asked, 30, now)).toBe(false);
+    // A snapshot headers wrote before poll times existed is stale: the
+    // endpoint has never been asked as far as anyone can tell.
+    const legacy = account({ id: "legacy", quotaFetchedAt: now - 60_000, quota: { windows: {}, source: "headers" } });
+    expect(shouldPollQuota(legacy, 30, now)).toBe(true);
+  });
+
+  it("keeps the poll time when headers are merged over a polled snapshot", () => {
+    const polled = { windows: { five_hour: { utilization: 40, resetsAt: null }, seven_day_fable: { utilization: 82, resetsAt: null } }, source: "usage-endpoint" as const, polledAt: 5 };
+    const merged = mergeQuota(polled, { windows: { five_hour: { utilization: 41, resetsAt: null } }, source: "headers" });
+    expect(merged).toMatchObject({ polledAt: 5, windows: { five_hour: { utilization: 41 }, seven_day_fable: { utilization: 82 } } });
   });
 });

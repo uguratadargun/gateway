@@ -1,36 +1,25 @@
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Sweeps the temp directories a test run leaves behind.
+ * One temp directory per test run, removed whole when the run ends.
  *
  * Every suite makes its own `gate-*` directory under the OS temp dir with
  * mkdtemp and most never remove it: measured here, 17,000 of them held
- * 3.3 GB and filled the disk. This runs once after the whole run and removes
- * the `gate-*` entries created since it started — those and only those, so
- * a run happening alongside keeps its own.
+ * 3.3 GB and filled the disk. This runs before the workers start and points
+ * TMPDIR — which os.tmpdir() reads on every call — at a directory of this
+ * run's own; the workers inherit it, every mkdtemp lands inside, and the
+ * teardown removes it. A run happening alongside has its own.
  */
 export function setup(): () => void {
-  const startedAt = Date.now() - 1_000;
+  const own = mkdtempSync(join(tmpdir(), "gate-run-"));
+  process.env.TMPDIR = own;
   return () => {
-    const root = tmpdir();
-    let entries: string[];
     try {
-      entries = readdirSync(root);
+      rmSync(own, { recursive: true, force: true });
     } catch {
-      return;
-    }
-    for (const name of entries) {
-      if (!name.startsWith("gate-")) continue;
-      const path = join(root, name);
-      try {
-        const st = statSync(path);
-        if (!st.isDirectory() || (st.birthtimeMs || st.ctimeMs) < startedAt) continue;
-        rmSync(path, { recursive: true, force: true });
-      } catch {
-        // gone already, or not ours to remove
-      }
+      // gone already
     }
   };
 }
