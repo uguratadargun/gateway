@@ -11,9 +11,9 @@ type Params = { params: Promise<{ id: string }> };
 /**
  * What this run actually changed, as a unified diff read live from its worktree.
  *
- * Live and not stored: the worktree is the deliverable and it outlives the run,
- * so the diff is whatever is in it now — which is also what makes this useful
- * while a run is still going.
+ * Live and not stored: while the run is going the diff is whatever is in its
+ * worktree now, and once it has ended — and the worktree with it — whatever
+ * its branch holds.
  */
 export async function GET(_req: Request, { params }: Params) {
   const { id } = await params;
@@ -35,7 +35,8 @@ export async function GET(_req: Request, { params }: Params) {
   }
 
   try {
-    return NextResponse.json(readRunDiff(execution.workspace.root, execution.workspace.baseCommit));
+    const { root, baseCommit, repo, branch } = execution.workspace;
+    return NextResponse.json(readRunDiff(root, baseCommit, { repo, branch }));
   } catch (e) {
     const message = e instanceof WorkflowError ? e.message : "could not read the worktree";
     return NextResponse.json({ error: message }, { status: 409 });

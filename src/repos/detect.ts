@@ -95,6 +95,8 @@ export function detectRepoCommands(root: string): RepoCommands {
  * to the checkout's, so the worktree borrows it instead. A symlink, because
  * these directories are large and disposable.
  */
+export const LINKED_DIRECTORIES = ["node_modules", "vendor", ".venv"] as const;
+
 export function linkedDirectories(root: string): string[] {
-  return ["node_modules", "vendor", ".venv"].filter((d) => existsSync(join(root, d)));
+  return LINKED_DIRECTORIES.filter((d) => existsSync(join(root, d)));
 }

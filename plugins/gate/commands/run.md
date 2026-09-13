@@ -244,17 +244,17 @@ Each call prints one JSON instruction:
   `wait`, relay the lines it printed, as they are, in one fenced code block: nothing added,
   nothing summarised, nothing left out. Then run `wait` again. A node can take an hour; that
   is the worker's hour, not yours.
-- **`{"do": "done", …}`** — the run is over. Report `status`, the `branch` and
-  `git -C <workspace> diff` for reviewing it, then offer to review that diff. A completed run
-  whose every commit reached the remote has its worktree removed on the spot and says so —
-  the branch stays, and `git checkout <branch>` in the user's own checkout brings the work
-  back; anything unpushed or uncommitted keeps its worktree. `gate clean` lists and removes
-  the worktrees older runs left behind, by the same rule.
+- **`{"do": "done", …}`** — the run is over. Report `status`, the `branch` and the `review`
+  command for reviewing it, then offer to review that diff. Every run that ends has its
+  worktree removed on the spot and says so: what it left uncommitted became the branch's last
+  commit, the branch stays, and `git checkout <branch>` in the user's own checkout brings the
+  work back. Do not look for the worktree directory afterwards — read the diff with `review`.
+  `gate clean` lists and removes the worktrees older runs left behind.
 - **`{"do": "failed", …}`** — a node failed. Report the node and the error as they came; do not
-  work around it. The worktree and everything the run did before that node are kept, and
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" continue <execution-id>` reopens the run at
-  that node, in the same worktree, without redoing what already ran — offer that, and run it
-  only if the user wants the node tried again.
+  work around it. The branch and everything the run did before that node are kept, and
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" continue <execution-id>` checks the worktree
+  out again from the branch and reopens the run at that node, without redoing what already
+  ran — offer that, and run it only if the user wants the node tried again.
 - **`{"do": "stopped", …}`** — the run was ended from outside while you were between calls:
   Stop on the dashboard, or written off after this machine went quiet for hours. Say so, with
   the error as it came, and do nothing further for it; a new run needs `begin`.

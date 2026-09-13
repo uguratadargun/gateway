@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
-import { linkedDirectories } from "@/repos/detect";
+import { LINKED_DIRECTORIES, linkedDirectories } from "@/repos/detect";
 
 import { WorkflowError } from "./errors";
 import type { WorkspaceSpec } from "@/workflows/types";
@@ -15,7 +15,8 @@ import type { WorkspaceSpec } from "@/workflows/types";
  * each run gets its own `git worktree` on its own branch under
  * ~/.gate/workspaces/<executionId>. Agents write there, tests run there, and
  * the user's checkout and current branch are untouched no matter what the
- * agents do. The worktree is left behind on purpose — it is the deliverable.
+ * agents do. The branch is the deliverable: when the run ends the worktree
+ * goes and the branch keeps the work (`releaseRunWorkspace`).
  */
 
 /** A workspace spec with its repository settled — pinned, or given per run. */
@@ -122,27 +123,129 @@ export function isFullyPushed(root: string): boolean {
   }
 }
 
-/**
- * What a finished run leaves behind on disk, tidied.
- *
- * A worktree is the deliverable while the work is only here; once every
- * commit is on the remote and the tree is clean, it is a copy of something
- * git already holds — and worktrees that are never removed were measured at
- * a dozen per repository and gigabytes. So a completed run whose branch is
- * fully pushed loses its worktree and keeps its branch: `git checkout
- * <branch>` brings the work back, and the merge request points at the same
- * commits. Anything unpushed or uncommitted stays exactly where it is.
- * Returns what happened, for the person to read; never throws.
- */
-export function tidyRunWorkspace(ws: RunWorkspace): string | null {
-  if (!existsSync(ws.root)) return null;
-  if (!isFullyPushed(ws.root)) return null;
+/** Whether `path` is a symlink — how a borrowed dependency directory looks in a worktree. */
+function isSymlink(path: string): boolean {
   try {
-    removeRunWorkspace(ws, { keepBranch: true });
-    return `worktree ${ws.root} removed: every commit is on the remote, and branch ${ws.branch} keeps the work`;
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** Whether git ignores `path` in the worktree at `root`. */
+function isIgnored(root: string, path: string): boolean {
+  try {
+    git(root, ["check-ignore", "-q", "--", path]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Commits whatever the run left uncommitted onto its own branch.
+ *
+ * A worktree only goes once the branch holds everything in it, so nothing is
+ * lost with the directory. The borrowed dependency links are left out — they
+ * point at the checkout next door, and a `node_modules/` ignore rule does not
+ * match a symlink. Hooks are skipped: this is a snapshot, not a change someone
+ * is proposing, and a pre-commit lint must not decide whether it is kept.
+ */
+function commitLeftovers(ws: Pick<RunWorkspace, "root" | "branch">, executionId: string): boolean {
+  if (!git(ws.root, ["status", "--porcelain"]).length) return false;
+  // Only a link nothing ignores yet: git refuses an exclude that names an ignored path.
+  const excluded = LINKED_DIRECTORIES.filter((d) => isSymlink(join(ws.root, d)) && !isIgnored(ws.root, d)).map((d) => `:(exclude)${d}`);
+  git(ws.root, ["add", "-A", "--", ".", ...excluded]);
+  if (!git(ws.root, ["diff", "--cached", "--name-only"]).length) return false;
+  let identity: string[] = [];
+  try {
+    git(ws.root, ["config", "user.email"]);
+  } catch {
+    // No identity configured anywhere: the commit would be refused over it.
+    identity = ["-c", "user.name=gate", "-c", "user.email=gate@localhost"];
+  }
+  git(ws.root, [...identity, "commit", "--no-verify", "-q", "-m", `gate: what run ${executionId.slice(0, 8)} left uncommitted when it ended`]);
+  return true;
+}
+
+/**
+ * What a run leaves behind on disk once it has ended, removed.
+ *
+ * Worktrees that outlive their run were measured at gigabytes each — a
+ * worktree gets its own `node_modules` the moment an agent installs — and
+ * they piled up with every run, so a run's worktree does not outlive it.
+ * The branch is the deliverable, not the directory: whatever the run left
+ * uncommitted is committed onto it first, then the worktree goes and the
+ * branch stays — `git checkout <branch>` or `git diff <base>..<branch>` in
+ * the checkout brings all of it back, and `restoreRunWorkspace` rebuilds the
+ * worktree when a run is continued. A branch with nothing on it past its
+ * base goes too. If the leftovers cannot be committed, the worktree stays
+ * exactly as it is. Returns what happened, for the person to read; never throws.
+ */
+export function releaseRunWorkspace(ws: RunWorkspace, executionId: string): string | null {
+  if (!existsSync(ws.root)) return null;
+  try {
+    // Not a worktree git knows — nothing here to judge, so nothing is removed.
+    if (git(ws.root, ["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
   } catch {
     return null;
   }
+  let committed: boolean;
+  try {
+    committed = commitLeftovers(ws, executionId);
+  } catch (e) {
+    return `worktree ${ws.root} kept: what the run left uncommitted could not be committed onto ${ws.branch} (${(e as Error).message})`;
+  }
+  let empty = false;
+  try {
+    empty = !!ws.baseCommit && git(ws.root, ["rev-list", "--count", `${ws.baseCommit}..HEAD`]) === "0";
+  } catch {
+    // Unknown is not empty: keep the branch.
+  }
+  try {
+    removeRunWorkspace(ws, { keepBranch: !empty });
+  } catch (e) {
+    return `worktree ${ws.root} could not be removed: ${(e as Error).message}`;
+  }
+  if (empty) return `worktree ${ws.root} removed: the run changed nothing, so branch ${ws.branch} went with it`;
+  return `worktree ${ws.root} removed; branch ${ws.branch} keeps the work${committed ? " (what was uncommitted is its last commit)" : ""}`;
+}
+
+/**
+ * Brings back the worktree of a run that ended, so it can be continued.
+ *
+ * The inverse of `releaseRunWorkspace`: the branch holds everything the run
+ * did, so the worktree is checked out from it again at the same path — or,
+ * for a run whose branch went because it held nothing, cut fresh from the
+ * base commit. Returns false when the worktree is already there; throws a
+ * WorkflowError when it cannot be brought back.
+ */
+export function restoreRunWorkspace(ws: RunWorkspace): boolean {
+  if (existsSync(ws.root)) return false;
+  if (!existsSync(ws.repo)) {
+    throw new WorkflowError("WORKSPACE_ERROR", `the repository this run worked in (${ws.repo}) is gone`);
+  }
+  mkdirSync(dirname(ws.root), { recursive: true, mode: 0o700 });
+  try {
+    // The registration outlives a directory removed by hand.
+    git(ws.repo, ["worktree", "prune"]);
+  } catch {
+    // Nothing to prune.
+  }
+  let hasBranch = true;
+  try {
+    git(ws.repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${ws.branch}`]);
+  } catch {
+    hasBranch = false;
+  }
+  if (hasBranch) {
+    git(ws.repo, ["worktree", "add", ws.root, ws.branch]);
+  } else if (ws.baseCommit) {
+    git(ws.repo, ["worktree", "add", "-b", ws.branch, ws.root, ws.baseCommit]);
+  } else {
+    throw new WorkflowError("WORKSPACE_ERROR", `branch ${ws.branch} is gone, and the run recorded no base commit to cut it from again`);
+  }
+  return true;
 }
 
 /** What the run left behind, recorded on the execution for the UI. */
@@ -177,20 +280,37 @@ const MAX_DIFF_BYTES = 4_000_000;
  * skills commit task by task, and a diff against the index would show a
  * finished run as empty. That is also what the pipeline's own `diff` node
  * does, so a diff read here matches the diff the reviewers were given.
+ *
+ * A run that ended has no worktree any more; its branch holds everything it
+ * did, so given the repository and branch the diff is read from there.
  */
-export function readRunDiff(root: string, baseCommit?: string): { diff: string; truncated: boolean } {
-  if (!existsSync(root)) throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
-  git(root, ["add", "-N", "."]);
-  const diff = git(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
+export function readRunDiff(
+  root: string,
+  baseCommit?: string,
+  ended?: { repo: string; branch: string },
+): { diff: string; truncated: boolean } {
+  let diff: string;
+  if (existsSync(root)) {
+    git(root, ["add", "-N", "."]);
+    diff = git(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
+  } else if (ended && baseCommit && existsSync(ended.repo)) {
+    try {
+      diff = git(ended.repo, ["diff", baseCommit, `refs/heads/${ended.branch}`]);
+    } catch {
+      throw new WorkflowError("WORKSPACE_ERROR", `this run's worktree is gone, and so is its branch ${ended.branch}`);
+    }
+  } else {
+    throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
+  }
   return diff.length > MAX_DIFF_BYTES
     ? { diff: diff.slice(0, MAX_DIFF_BYTES), truncated: true }
     : { diff, truncated: false };
 }
 
 /**
- * Removes a worktree, and its branch unless told to keep it. Only ever
- * called explicitly, or by `tidyRunWorkspace` for a branch that is on the
- * remote in full.
+ * Removes a worktree, and its branch unless told to keep it. Whatever is
+ * uncommitted in it goes with it: `releaseRunWorkspace` is the caller that
+ * commits that first.
  */
 export function removeRunWorkspace(ws: { repo: string; root: string; branch: string }, opts: { keepBranch?: boolean } = {}): void {
   try {

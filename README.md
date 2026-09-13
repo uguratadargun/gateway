@@ -674,13 +674,17 @@ Every run gets **its own `git worktree` on its own branch** under
 (`node_modules`, `.venv`, `vendor`) linked in, so the first agent to run in
 it is not installing them. Agents write there, commands run there, and your
 checkout and current branch are never touched — whatever the agents do, the
-worst case is a branch you delete. The worktree is left behind while it *is*
-the deliverable: review it with `git -C <worktree> diff`, merge the branch, or
-throw it away. Once every commit on it has reached the remote and the tree is
-clean — a run that ended by opening its merge request — the worktree is
-removed as the run completes and the branch kept; `gate clean` (or `/gate:clean`
-in Claude Code) does the same for the worktrees older runs left, and `--all`
-takes the unpushed ones too.
+worst case is a branch you delete. The **branch** is the deliverable, not the
+directory: when a run ends — completed, failed or stopped, on the server or on
+your machine — whatever it left uncommitted is committed onto its branch
+(`gate: what run … left uncommitted when it ended`), the worktree is removed,
+and the branch stays. Review it with `git diff <base>...<branch>` in your
+checkout, merge it, or delete it; a branch the run put nothing on goes with
+its worktree. A worktree grows its own `node_modules` the moment an agent
+installs, so leaving them behind cost gigabytes per run. Continue checks the
+worktree out again from the branch, at the same path. `gate clean` (or
+`/gate:clean` in Claude Code) removes the worktrees runs from before this
+left, the same way.
 
 The tools an agent may use are declared per agent, so roles stay honest — the
 implementer writes, the reviewers only read:
@@ -815,8 +819,9 @@ A run can be stopped: **Stop** on the execution page, or `gate cancel
 node *and* inside an agent's tool loop, so a stop does not wait out a step that
 is making a dozen tool calls; the upstream model request is really aborted, and
 a running command node's child process is killed rather than abandoned. The run
-settles as `failed` with `RUN_CANCELLED`, and its worktree is kept — half-done
-work is still work, and `git diff` will show it. A run a session drives has no
+settles as `failed` with `RUN_CANCELLED`, and its half-done work is committed
+onto its branch before the worktree goes — half-done work is still work, and
+the execution page's diff still shows it. A run a session drives has no
 process to ask, so Stop settles it on the spot; the session finds out on its
 next `gate` call.
 
@@ -824,7 +829,8 @@ A stopped run offers two ways back on the execution page — for a run that
 happened here; one that happened on someone's machine is continued there,
 with `gate continue <execution-id>` for a run a session drove.
 **Restart** begins the workflow fresh — a new worktree from HEAD, the same
-input — and **Continue** picks up in the *same* worktree, at the node
+input — and **Continue** picks up in the *same* worktree, checked out again
+from the run's branch, at the node
 it stopped on, without redoing what already ran. Where it resumes falls out of
 history alone: a step that failed is retried; a step that finished cleanly
 means the run stopped between nodes, so the node after it is re-derived with
@@ -838,8 +844,8 @@ in the chain, never reset. A run that hit `maxVisits` lands back on the very
 node that tripped it, already at the limit, and halts again immediately —
 at no cost — rather than a Continue click quietly buying the workflow another
 five tries. Continue refuses outright (with a plain reason) for a run that is
-still going, one that already finished at a terminal, or one whose worktree no
-longer exists on disk.
+still going, one that already finished at a terminal, or one whose worktree
+cannot be brought back from its branch.
 
 ### Memory — what a run decided, for the runs after it
 
@@ -1047,8 +1053,9 @@ What travels where:
   machine follows all of them on one connection, `/api/v1/executions/stream`:
   a snapshot of your unfinished runs first, then every event of every run you
   own as it happens.
-- **The work stays here.** The worktree is on your disk, on its own branch, from
-  *your* HEAD — so `/gate:run` is safe to start mid-task, and the diff is
+- **The work stays here.** The run works on its own branch of your clone, from
+  *your* HEAD — so `/gate:run` is safe to start mid-task — in a worktree that is
+  removed when the run ends, the branch keeping everything, so the diff is
   something you can review with `git` immediately. It is uploaded once when the
   run ends, so the dashboard can show what it did.
 
@@ -1196,9 +1203,10 @@ those minutes. That needs the plugin's session hook to have told the CLI
 which session this is (a Claude Code that offers `CLAUDE_ENV_FILE`); without
 it those nodes stay uncosted, and say nothing rather than claim zero.
 
-**A failed node is not a lost run.** The worktree and every step before the
-failure are kept, and `gate continue <execution-id>` reopens the run at the
-node that failed, in the same worktree, so nothing that already ran is redone.
+**A failed node is not a lost run.** The branch and every step before the
+failure are kept, and `gate continue <execution-id>` checks the worktree out
+again from that branch and reopens the run at the node that failed, so nothing
+that already ran is redone.
 **Restart** and **Continue** on the execution page stay where the worktree is:
 for a run on your machine the page shows that command instead of the buttons.
 

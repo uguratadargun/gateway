@@ -17,8 +17,9 @@ import {
   borrowDependencies,
   createRunWorkspace,
   readRunDiff,
+  releaseRunWorkspace,
+  restoreRunWorkspace,
   summarizeWorkspace,
-  tidyRunWorkspace,
   type RunWorkspace,
 } from "@/runtime/workspace";
 import { unattendedNotice } from "@/skills/inject";
@@ -166,7 +167,16 @@ export type Instruction =
       timeoutMs: number | null;
       remember: string[];
     }
-  | { do: "done"; executionId: string; status: "completed" | "failed"; branch: string | null; workspace: string | null }
+  | {
+      do: "done";
+      executionId: string;
+      status: "completed" | "failed";
+      branch: string | null;
+      /** The worktree, when it is still there — a run that ended has it removed and its branch kept. */
+      workspace: string | null;
+      /** The command that shows what the run did, from wherever the work now is. */
+      review: string | null;
+    }
   | { do: "failed"; executionId: string; nodeId: string; error: { code: string; message: string } }
   /**
    * The run was ended from outside — Stop on the dashboard, or written off
@@ -357,6 +367,12 @@ function workspaceOf(execution: { workspace: RunWorkspace | null }): RunWorkspac
   return execution.workspace ?? null;
 }
 
+/** How to see what a run did: in its worktree while there is one, else its branch against where it began. */
+export function reviewCommand(ws: RunWorkspace): string {
+  if (existsSync(ws.root)) return `git -C ${ws.root} diff${ws.baseCommit ? ` ${ws.baseCommit}` : ""}`;
+  return `git -C ${ws.repo} diff ${ws.baseCommit ?? ws.baseRef}...${ws.branch}`;
+}
+
 export interface SessionRunContext {
   client: GateClient;
   team: string;
@@ -513,6 +529,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
       }
       clearPending(executionId);
       ctx.say(`■ run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
+      releaseStopped(ctx, executionId, execution);
       return { do: "stopped", executionId, error: stopped };
     }
     const scope = runScope(ctx.team, executionId);
@@ -522,7 +539,9 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
     if (position.kind === "failed") {
       clearPending(executionId);
       await settle(ctx, executionId, execution, steps.length, "failed", position.error);
-      ctx.say(`  the worktree and the run's history are kept: \`gate continue ${executionId}\` tries "${position.nodeId}" again`);
+      ctx.say(
+        `  the run's history and its branch are kept: \`gate continue ${executionId}\` brings the worktree back and tries "${position.nodeId}" again`,
+      );
       return { do: "failed", executionId, nodeId: position.nodeId, error: position.error };
     }
     if (position.kind === "done") {
@@ -534,7 +553,8 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
         executionId,
         status: position.status,
         branch: workspace?.branch ?? null,
-        workspace: workspace?.root ?? null,
+        workspace: workspace && existsSync(workspace.root) ? workspace.root : null,
+        review: workspace ? reviewCommand(workspace) : null,
       };
     }
 
@@ -937,6 +957,7 @@ export async function step(
   if (stopped) {
     clearPending(executionId);
     ctx.say(`■ run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
+    releaseStopped(ctx, executionId, execution);
     return { do: "stopped", executionId, error: stopped };
   }
   const scope = runScope(ctx.team, executionId);
@@ -1238,16 +1259,22 @@ async function settle(
     .finish(executionId, { status, error, stepCount, workspace: summary, diff })
     .catch((e) => ctx.say(`could not report the run's outcome: ${(e as Error).message}`));
 
-  if (status === "completed") {
-    // Over for good: the pinned definitions and the logs have nothing left to
-    // serve, and a worktree whose every commit is on the remote is a copy.
-    // A failed run keeps all of it, because `gate continue` needs it.
-    if (workspace) {
-      const tidied = tidyRunWorkspace(workspace);
-      if (tidied) ctx.say(tidied);
-    }
-    forgetRun(executionId);
+  // Ended either way: the worktree goes and its branch keeps the work — a
+  // failed run's `gate continue` checks it out again from there.
+  if (workspace) {
+    const released = releaseRunWorkspace(workspace, executionId);
+    if (released) ctx.say(released);
   }
+  // Over for good: the pinned definitions and the logs have nothing left to
+  // serve. A failed run keeps them, because `gate continue` needs them.
+  if (status === "completed") forgetRun(executionId);
+}
+
+/** A run stopped from outside ends like any other: its worktree goes, its branch stays. */
+function releaseStopped(ctx: SessionRunContext, executionId: string, execution: { workspace: RunWorkspace | null }): void {
+  const workspace = workspaceOf(execution);
+  const released = workspace ? releaseRunWorkspace(workspace, executionId) : null;
+  if (released) ctx.say(released);
 }
 
 /**
@@ -1258,7 +1285,8 @@ async function settle(
  * run, with everything before it kept — a failed reviewer is retried, not
  * the implementer that preceded it. Anything this machine still held for the
  * node — a worker's marker, a worker still alive — is cleared first, so the
- * retry starts clean.
+ * retry starts clean. The worktree went when the run ended; it is checked
+ * out again from the run's branch, at the same path, before anything runs.
  */
 export async function continueRun(ctx: SessionRunContext, executionId: string): Promise<Instruction> {
   const { execution } = await ctx.client.execution(executionId);
@@ -1273,11 +1301,17 @@ export async function continueRun(ctx: SessionRunContext, executionId: string): 
     throw new WorkflowError("EXECUTION_NOT_RESUMABLE", `this run ${execution.status}; there is nothing to continue`);
   }
   const workspace = workspaceOf(execution);
+  let restored = false;
   if (workspace && !existsSync(workspace.root)) {
-    throw new WorkflowError(
-      "EXECUTION_NOT_RESUMABLE",
-      `the worktree this run used (${workspace.root}) is gone; start the workflow again instead`,
-    );
+    try {
+      restored = restoreRunWorkspace(workspace);
+      borrowDependencies(workspace);
+    } catch (e) {
+      throw new WorkflowError(
+        "EXECUTION_NOT_RESUMABLE",
+        `the worktree this run used (${workspace.root}) is gone and could not be brought back from branch ${workspace.branch}: ${(e as Error).message}; start the workflow again instead`,
+      );
+    }
   }
 
   const pending = readPending(executionId);
@@ -1292,8 +1326,10 @@ export async function continueRun(ctx: SessionRunContext, executionId: string): 
 
   const reopened = await ctx.client.continueRun(executionId);
   if (!reopened.continued) {
+    if (restored && workspace) releaseRunWorkspace(workspace, executionId);
     throw new WorkflowError("EXECUTION_NOT_RESUMABLE", reopened.reason ?? "this run cannot be continued");
   }
+  if (restored && workspace) ctx.say(`worktree ${workspace.root} brought back from branch ${workspace.branch}`);
   ctx.say(
     reopened.retried?.length
       ? `▸ continuing ${executionId}: ${reopened.retried.join(", ")} will run again; everything before it stands`

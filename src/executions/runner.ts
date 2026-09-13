@@ -8,7 +8,14 @@ import { GateModelProvider } from "@/providers/gate-provider";
 import { runWorkflow, type RunWorkflowOptions } from "@/runtime/engine";
 import { WorkflowError } from "@/runtime/errors";
 import type { WorkflowState } from "@/runtime/state";
-import { createRunWorkspace, summarizeWorkspace, type ResolvedWorkspaceSpec, type RunWorkspace } from "@/runtime/workspace";
+import {
+  createRunWorkspace,
+  releaseRunWorkspace,
+  restoreRunWorkspace,
+  summarizeWorkspace,
+  type ResolvedWorkspaceSpec,
+  type RunWorkspace,
+} from "@/runtime/workspace";
 import { getRepo, type RepoRecord } from "@/repos/store";
 import { isPathLike, prepareWorktree } from "@/repos/setup";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
@@ -169,7 +176,17 @@ export function resumeExecution(parentId: string): StartExecutionResult {
   if (!lineage) throw new WorkflowError("EXECUTION_NOT_RESUMABLE", "could not read this run's history");
   const plan = planResume(workflow, lineage.steps, lineage.input);
 
-  const workspace = reuseWorkspace(lineage.workspace);
+  const { workspace, restored } = reuseWorkspace(lineage.workspace);
+  // A worktree checked out again from its branch is as bare as a fresh one:
+  // a connected repo's preparation runs on it again before the first node.
+  let connected: RepoRecord | null = null;
+  if (restored && workflow.workspace) {
+    try {
+      connected = resolveWorkspace(workflow.workspace, lineage.input).repo;
+    } catch {
+      // A repo disconnected since: the run goes on with what git brought back.
+    }
+  }
 
   const executionId = randomUUID();
   createExecution(executionId, parent.workflowId, lineage.input, Date.now(), parentId, {
@@ -185,19 +202,37 @@ export function resumeExecution(parentId: string): StartExecutionResult {
     history: plan.history,
     startNodeId: plan.startNodeId,
   };
-  return { executionId, done: launch(workflow, lineage.input, executionId, workspace, scope, resume) };
+  return { executionId, done: launch(workflow, lineage.input, executionId, workspace, scope, resume, connected) };
 }
 
-/** The worktree a resumed run reuses. Refuses cleanly if it is no longer there. */
-function reuseWorkspace(workspace: ExecutionWorkspace | null): RunWorkspace | null {
-  if (!workspace) return null;
-  if (!existsSync(workspace.root)) {
+/**
+ * The worktree a resumed run reuses — checked out again from the run's branch
+ * when it went with the run that ended. Refuses cleanly if it cannot be.
+ */
+function reuseWorkspace(workspace: ExecutionWorkspace | null): { workspace: RunWorkspace | null; restored: boolean } {
+  if (!workspace) return { workspace: null, restored: false };
+  const ws: RunWorkspace = {
+    root: workspace.root,
+    repo: workspace.repo,
+    branch: workspace.branch,
+    baseRef: workspace.baseRef,
+    baseCommit: workspace.baseCommit,
+  };
+  try {
+    return { workspace: ws, restored: restoreRunWorkspace(ws) };
+  } catch (e) {
     throw new WorkflowError(
       "EXECUTION_NOT_RESUMABLE",
-      `the worktree this run used (${workspace.root}) no longer exists on disk; Restart instead`,
+      `the worktree this run used (${workspace.root}) is gone and could not be brought back from branch ${workspace.branch}: ${(e as Error).message}; Restart instead`,
     );
   }
-  return { root: workspace.root, repo: workspace.repo, branch: workspace.branch, baseRef: workspace.baseRef, baseCommit: workspace.baseCommit };
+}
+
+/** The run is over, whichever way: its worktree goes, its branch keeps the work. */
+function releaseWorkspace(workspace: RunWorkspace | null, executionId: string): void {
+  if (!workspace) return;
+  const released = releaseRunWorkspace(workspace, executionId);
+  if (released) console.log(`gate: ${released}`);
 }
 
 /** Runs the engine, tracks it as cancellable, and settles the execution either way. */
@@ -238,6 +273,7 @@ async function launch(
     });
     inFlight.delete(executionId);
     finishExecution(state, workspaceSummary(workspace));
+    releaseWorkspace(workspace, executionId);
     scheduleExtraction();
     return state;
   } catch (e) {
@@ -249,6 +285,7 @@ async function launch(
     const code = e instanceof WorkflowError ? e.code : "WORKFLOW_ROUTING_ERROR";
     const state = failedState(executionId, workflow.id, input, code, message);
     finishExecution(state, workspaceSummary(workspace));
+    releaseWorkspace(workspace, executionId);
     publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: code as never, message });
     scheduleExtraction();
     return state;

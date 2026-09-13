@@ -18,7 +18,7 @@ import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest }
 import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
 import { applyClean, describeVerdict, listWorkspaces, planClean } from "./clean";
 import { runLocal } from "./run";
-import { begin, continueRun, next, noteSession, step, wait, work, type Instruction, type SessionRunContext } from "./step";
+import { begin, continueRun, next, noteSession, reviewCommand, step, wait, work, type Instruction, type SessionRunContext } from "./step";
 import { applyGatewaySettings, gatewayEnv, settingsPath } from "./live";
 import { removeSubagents, syncSubagents } from "./subagents";
 
@@ -59,7 +59,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
   gate env                                      the same, as shell exports for one session
   gate repo [<id> <path>]                       point a pinned repository at your clone
-  gate clean [--all] [--dry-run]                remove worktrees of finished runs (branches are kept)
+  gate clean [--all] [--dry-run]                remove worktrees runs left behind (branches keep the work)
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
@@ -605,8 +605,8 @@ async function cmdRun(args: Args): Promise<number> {
   console.log(`${state.status}: ${workflowId} (${executionId})`);
   if (state.error) console.log(`${state.error.code}: ${state.error.message}`);
   if (workspace) {
-    console.log(`branch ${workspace.branch} in ${workspace.root}`);
-    console.log(`review it with: git -C ${workspace.root} diff`);
+    console.log(existsSync(workspace.root) ? `branch ${workspace.branch} in ${workspace.root}` : `branch ${workspace.branch} in ${workspace.repo}`);
+    console.log(`review it with: ${reviewCommand(workspace)}`);
   }
   console.log(`${client.url}/executions/${executionId}`);
   return state.status === "completed" ? 0 : 1;
@@ -850,10 +850,11 @@ async function cmdWait(args: Args): Promise<number> {
 }
 
 /**
- * A failed run, picked back up where it failed — the node is tried again in
- * the same worktree, and everything before it stands. Only for a run
- * /gate:run drove: the worktree and the pinned definitions are on this
- * machine, and the walk is replayed from the history the server keeps.
+ * A failed run, picked back up where it failed — the worktree is checked out
+ * again from the run's branch, the node is tried again there, and everything
+ * before it stands. Only for a run /gate:run drove: the branch and the pinned
+ * definitions are on this machine, and the walk is replayed from the history
+ * the server keeps.
  */
 async function cmdContinue(args: Args): Promise<number> {
   const [executionId] = args.positional;
@@ -863,8 +864,9 @@ async function cmdContinue(args: Args): Promise<number> {
 }
 
 /**
- * The worktrees runs left on this machine, and the removal of the ones that
- * are plainly done. Branches are never deleted, so nothing committed is lost.
+ * The worktrees runs left on this machine, and the removal of the ones whose
+ * run is over. What each left uncommitted is committed onto its branch first,
+ * and branches are never deleted, so nothing is lost.
  */
 async function cmdClean(args: Args): Promise<number> {
   const client = connect();
@@ -885,8 +887,11 @@ async function cmdClean(args: Args): Promise<number> {
     console.log(`${plan.removed.length} of ${entries.length} would be removed; run without --dry-run to do it`);
     return 0;
   }
-  applyClean(plan);
-  console.log(`removed ${plan.removed.length} worktree(s), kept ${plan.kept.length}; every branch is still there`);
+  const notes = applyClean(plan);
+  for (const note of notes) console.log(note);
+  console.log(
+    `removed ${plan.removed.length - notes.length} worktree(s), kept ${plan.kept.length + notes.length}; every branch is still there`,
+  );
   return 0;
 }
 

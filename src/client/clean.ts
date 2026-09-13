@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { isFullyPushed, removeRunWorkspace } from "@/runtime/workspace";
+import { isFullyPushed, releaseRunWorkspace, removeRunWorkspace } from "@/runtime/workspace";
 
 import type { GateClient } from "./api";
 import { gateHome } from "./config";
@@ -11,16 +11,17 @@ import { forgetRun } from "./step";
 /**
  * `gate clean`: the worktrees runs left behind, and what to do with each.
  *
- * A run's worktree is its deliverable while the work is only there, and
- * nothing removes it on the run's behalf except a completed run whose
- * commits are all on the remote. Everything else accumulates — measured
- * here as thirteen worktrees of one repository, twelve of them dead, near
- * three gigabytes — and nobody wants to work out by hand which of them still
- * hold something. So this lists them with what git and the server say about
- * each, and removes the ones that are plainly done: not running, and either
- * fully pushed or holding nothing at all. `--all` removes every worktree
- * whose run is not running, dirty or not; the branch is kept in every case,
- * so `git checkout <branch>` brings back anything that was committed.
+ * A run's worktree goes when the run ends, its branch keeping the work. What
+ * is still here is from before that, or from a run that never got to end on
+ * this machine — a session closed mid-run, a server that wrote it off — and
+ * those were measured at gigabytes each. So this lists them with what git and
+ * the server say about each, and removes every one whose run the server says
+ * is not running: what it left uncommitted is committed onto its branch
+ * first, exactly as a run ending does. A worktree the server has no record of
+ * goes only when it plainly holds nothing that could be lost — fully pushed,
+ * or nothing past its base — unless `--all` says to take it anyway, the same
+ * way. The branch is kept in every case, so `git checkout <branch>` brings
+ * back everything.
  */
 
 export type WorkspaceVerdict = "running" | "pushed" | "empty" | "unpushed" | "dirty" | "unknown";
@@ -30,6 +31,8 @@ export interface WorkspaceEntry {
   root: string;
   repo: string | null;
   branch: string | null;
+  /** The commit the run's branch was cut from, when the server still knows the run. */
+  baseCommit: string | null;
   /** What the server says the run is, or "unknown" when it has no record of it. */
   status: string;
   verdict: WorkspaceVerdict;
@@ -83,7 +86,7 @@ export async function listWorkspaces(client: Pick<GateClient, "execution">): Pro
       // worktree is judged on what git says alone.
     }
     const verdict: WorkspaceVerdict = status === "running" ? "running" : judgeWorkspace(root, baseCommit);
-    out.push({ executionId: entry.name, root, repo, branch, status, verdict });
+    out.push({ executionId: entry.name, root, repo, branch, baseCommit, status, verdict });
   }
   return out;
 }
@@ -98,19 +101,37 @@ export function planClean(entries: WorkspaceEntry[], all: boolean): CleanResult 
   const removed: WorkspaceEntry[] = [];
   const kept: WorkspaceEntry[] = [];
   for (const e of entries) {
-    const goes = e.verdict !== "running" && (all || e.verdict === "pushed" || e.verdict === "empty");
+    const ended = e.status !== "unknown";
+    const goes = e.verdict !== "running" && (all || ended || e.verdict === "pushed" || e.verdict === "empty");
     (goes ? removed : kept).push(e);
   }
   return { removed, kept };
 }
 
-/** Removes what the plan says, keeping every branch; also drops the run's own files. */
-export function applyClean(plan: CleanResult): void {
+/**
+ * Removes what the plan says — committing what each left uncommitted onto its
+ * branch first — and drops the run's own files, except for a failed run,
+ * whose `gate continue` still needs them. Returns a line for each worktree
+ * that stayed after all.
+ */
+export function applyClean(plan: CleanResult): string[] {
+  const notes: string[] = [];
   for (const e of plan.removed) {
-    if (e.repo && e.branch) removeRunWorkspace({ repo: e.repo, root: e.root, branch: e.branch }, { keepBranch: true });
-    else removeRunWorkspace({ repo: e.root, root: e.root, branch: "" }, { keepBranch: true });
-    forgetRun(e.executionId);
+    if (e.repo && e.branch) {
+      const ws = { repo: e.repo, root: e.root, branch: e.branch, baseRef: "", baseCommit: e.baseCommit ?? undefined };
+      const released = releaseRunWorkspace(ws, e.executionId);
+      // Not a worktree git knows: nothing in it can be committed, so it is only a directory.
+      if (released === null && existsSync(e.root)) removeRunWorkspace(ws, { keepBranch: true });
+    } else {
+      removeRunWorkspace({ repo: e.root, root: e.root, branch: "" }, { keepBranch: true });
+    }
+    if (existsSync(e.root)) {
+      notes.push(`kept ${e.executionId.slice(0, 8)}: its worktree could not be removed, or what it left uncommitted could not be committed`);
+      continue;
+    }
+    if (e.status !== "failed") forgetRun(e.executionId);
   }
+  return notes;
 }
 
 export function describeVerdict(v: WorkspaceVerdict): string {
@@ -122,9 +143,9 @@ export function describeVerdict(v: WorkspaceVerdict): string {
     case "empty":
       return "nothing was produced";
     case "unpushed":
-      return "has commits not on any remote — kept unless --all";
+      return "has commits not on any remote — they stay on its branch";
     case "dirty":
-      return "has uncommitted changes — kept unless --all";
+      return "has uncommitted changes — committed onto its branch before it goes";
     default:
       return "unknown";
   }

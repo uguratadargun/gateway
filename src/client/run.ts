@@ -8,7 +8,7 @@ import type { WorkflowEvent } from "@/events/types";
 import { runWorkflow } from "@/runtime/engine";
 import { WorkflowError } from "@/runtime/errors";
 import type { WorkflowState } from "@/runtime/state";
-import { borrowDependencies, createRunWorkspace, readRunDiff, summarizeWorkspace, tidyRunWorkspace, type RunWorkspace } from "@/runtime/workspace";
+import { borrowDependencies, createRunWorkspace, readRunDiff, releaseRunWorkspace, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
 import { getWorkflow } from "@/workflows/registry";
 import type { WorkflowDefinition } from "@/workflows/types";
 
@@ -200,11 +200,11 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
     })
     .catch((e) => opts.onNotice?.(`could not report the run's outcome: ${(e as Error).message}`));
 
-  // A finished run whose every commit is on the remote does not need its
-  // worktree any more; one that is not stays, work and all.
-  if (workspace && state.status === "completed") {
-    const tidied = tidyRunWorkspace(workspace);
-    if (tidied) opts.onNotice?.(tidied);
+  // The run is over, whichever way: the worktree goes and its branch keeps
+  // the work — a run `gate run` drove is never continued, only started again.
+  if (workspace) {
+    const released = releaseRunWorkspace(workspace, executionId);
+    if (released) opts.onNotice?.(released);
   }
 
   return { executionId, state, workspace };
