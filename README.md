@@ -121,10 +121,46 @@ existed before teams belongs to `default`, and an install that had
 a single-person gate keeps working with nothing to do.
 
 Keys carry scopes: `gateway` (model calls), `workflows` (pull definitions,
-report runs) and `author` (write them). A key for a third-party tool can be
-issued `gateway` only. `author` is off by default and ticked deliberately when
-the key is issued: reading a team's definitions is what everyone on it needs,
-writing them is a decision about that team's pipelines.
+report runs), `author` (write them) and `remote` (run sessions on this server).
+A key for a third-party tool can be issued `gateway` only. `author` and
+`remote` are off by default and ticked deliberately when the key is issued:
+reading a team's definitions is what everyone on it needs, writing them is a
+decision about that team's pipelines, and a terminal on the gate's own machine
+is a decision about that machine.
+
+## Remote sessions
+
+A cockpit can run a session **on the gate server** instead of on the person's
+machine — the laptop can close and the run goes on. It is the same thing as a
+local session, moved: a real interactive `claude` in a pty on the server, in
+one of gate's connected repositories (`/repos`), driven over `/api/v1/remote`.
+Its screen streams to the cockpit and keystrokes go back; its AskUserQuestion
+prompts and permission requests are held by a hook until the person answers
+them from the cockpit, which shows them in Questions and Approvals like any
+other; a `/gate:run` it starts is an ordinary run on the person's key, so it is
+in their Executions stream as always.
+
+- **Who:** keys with the `remote` scope, and only their own sessions — another
+  person's terminal, questions and runs read as not there.
+- **As what:** the child runs as the user gate runs as, in a worktree per run.
+  It is given its person's key (`GATE_KEY`, `ANTHROPIC_AUTH_TOKEN` against this
+  gate's own gateway, so every call is metered as theirs) and none of the
+  server's environment secrets. Each person has their own Claude Code config
+  and gate client home under `~/.gate/remote/people/<person>/`, so their
+  transcripts and run pointers are theirs.
+- **The plugin** is loaded from this checkout's `plugins/gate` with
+  `--plugin-dir`, so it is always the server's own version; nothing is
+  installed for it.
+- **Lifetime:** a session keeps running when the cockpit disconnects; a
+  reconnecting cockpit gets each terminal's recent output back. An idle session
+  holding no run is put to sleep after `GATE_REMOTE_IDLE_MIN` minutes (default
+  30, `0` never) and resumes from its transcript. `GATE_REMOTE_MAX` caps live
+  sessions per person (default 8).
+- **Needs:** `node-pty` (an optional dependency — it builds from source on
+  Linux, so a C++ toolchain) and `claude` on the server's PATH
+  (`GATE_CLAUDE_PATH` otherwise). `GET /api/v1/remote` says which is missing.
+  `GATE_SELF_URL` is where the child reaches this gate when it is not
+  `http://127.0.0.1:$PORT`.
 
 ## Storage
 

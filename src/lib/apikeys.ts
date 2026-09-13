@@ -22,10 +22,14 @@ import { getDb } from "./db";
  * team's definitions is what everyone on it needs, and writing them is a
  * decision about that team's pipelines. Someone designing one — `/gate:design`
  * on their own machine — is given it on purpose.
+ *
+ * `remote` is the same kind of grant: a key with it may start Claude Code
+ * sessions on the gate server itself, from a cockpit — an interactive
+ * terminal on that machine, running as the user gate runs as.
  */
-export type KeyScope = "gateway" | "workflows" | "author";
+export type KeyScope = "gateway" | "workflows" | "author" | "remote";
 
-export const ALL_SCOPES: KeyScope[] = ["gateway", "workflows", "author"];
+export const ALL_SCOPES: KeyScope[] = ["gateway", "workflows", "author", "remote"];
 
 /** What a new key gets unless the person issuing it says otherwise. */
 export const DEFAULT_SCOPES: KeyScope[] = ["gateway", "workflows"];

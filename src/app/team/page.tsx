@@ -89,6 +89,7 @@ export default function TeamPage() {
   const [issued, setIssued] = useState<{ userId: string; key: string } | null>(null);
   /** Whether the next key issued may write the team's definitions. */
   const [canAuthor, setCanAuthor] = useState(false);
+  const [canRemote, setCanRemote] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -172,7 +173,10 @@ export default function TeamPage() {
       const data = await post("/api/keys", {
         name: `${user.email}`,
         userId: user.id,
-        scopes: canAuthor ? ["gateway", "workflows", "author"] : undefined,
+        scopes:
+          canAuthor || canRemote
+            ? ["gateway", "workflows", ...(canAuthor ? ["author"] : []), ...(canRemote ? ["remote"] : [])]
+            : undefined,
       });
       setIssued({ userId: user.id, key: data.plaintext });
       await load();
@@ -327,6 +331,15 @@ export default function TeamPage() {
             <input type="checkbox" checked={canAuthor} onChange={(e) => setCanAuthor(e.target.checked)} />
             New keys may author definitions (<code>/gate:design</code>)
           </label>
+          {/* A remote session is a terminal on this server, as the user gate
+              runs as — a grant of its own, never a default. */}
+          <label
+            className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground"
+            title="Lets a cockpit start Claude Code sessions on this server, in its connected repositories"
+          >
+            <input type="checkbox" checked={canRemote} onChange={(e) => setCanRemote(e.target.checked)} />
+            New keys may run sessions on this server
+          </label>
         </div>
         <div className="flex flex-wrap gap-2">
           <Input
@@ -444,6 +457,7 @@ export default function TeamPage() {
                       <div key={k.id} className="flex items-center gap-3 text-xs text-muted-foreground">
                         <code>{k.prefix}…</code>
                         {k.scopes.includes("author") && <Badge variant="outline">author</Badge>}
+                        {k.scopes.includes("remote") && <Badge variant="outline">remote</Badge>}
                         {k.revoked && <Badge variant="destructive">revoked</Badge>}
                         <span>{k.lastUsedAt ? `last used ${new Date(k.lastUsedAt).toLocaleString()}` : "never used"}</span>
                         {k.lastHost && <span>from {k.lastHost}</span>}

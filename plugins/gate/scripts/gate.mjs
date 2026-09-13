@@ -7814,7 +7814,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.34.0";
+var GATE_VERSION = "0.35.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -9026,15 +9026,16 @@ import { join as join15 } from "node:path";
 
 // src/runtime/workspace.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync8, mkdirSync as mkdirSync8, rmSync as rmSync5, symlinkSync } from "node:fs";
+import { existsSync as existsSync8, lstatSync as lstatSync2, mkdirSync as mkdirSync8, rmSync as rmSync5, symlinkSync } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join10, resolve as resolve3 } from "node:path";
+import { dirname as dirname3, join as join10, resolve as resolve3 } from "node:path";
 
 // src/repos/detect.ts
 import { existsSync as existsSync7, readFileSync as readFileSync7 } from "node:fs";
 import { join as join9 } from "node:path";
+var LINKED_DIRECTORIES = ["node_modules", "vendor", ".venv"];
 function linkedDirectories(root) {
-  return ["node_modules", "vendor", ".venv"].filter((d) => existsSync7(join9(root, d)));
+  return LINKED_DIRECTORIES.filter((d) => existsSync7(join9(root, d)));
 }
 
 // src/runtime/workspace.ts
@@ -9092,15 +9093,85 @@ function isFullyPushed(root) {
     return false;
   }
 }
-function tidyRunWorkspace(ws) {
-  if (!existsSync8(ws.root)) return null;
-  if (!isFullyPushed(ws.root)) return null;
+function isSymlink(path) {
   try {
-    removeRunWorkspace(ws, { keepBranch: true });
-    return `worktree ${ws.root} removed: every commit is on the remote, and branch ${ws.branch} keeps the work`;
+    return lstatSync2(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+function isIgnored(root, path) {
+  try {
+    git(root, ["check-ignore", "-q", "--", path]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function commitLeftovers(ws, executionId) {
+  if (!git(ws.root, ["status", "--porcelain"]).length) return false;
+  const excluded = LINKED_DIRECTORIES.filter((d) => isSymlink(join10(ws.root, d)) && !isIgnored(ws.root, d)).map((d) => `:(exclude)${d}`);
+  git(ws.root, ["add", "-A", "--", ".", ...excluded]);
+  if (!git(ws.root, ["diff", "--cached", "--name-only"]).length) return false;
+  let identity = [];
+  try {
+    git(ws.root, ["config", "user.email"]);
+  } catch {
+    identity = ["-c", "user.name=gate", "-c", "user.email=gate@localhost"];
+  }
+  git(ws.root, [...identity, "commit", "--no-verify", "-q", "-m", `gate: what run ${executionId.slice(0, 8)} left uncommitted when it ended`]);
+  return true;
+}
+function releaseRunWorkspace(ws, executionId) {
+  if (!existsSync8(ws.root)) return null;
+  try {
+    if (git(ws.root, ["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
   } catch {
     return null;
   }
+  let committed;
+  try {
+    committed = commitLeftovers(ws, executionId);
+  } catch (e) {
+    return `worktree ${ws.root} kept: what the run left uncommitted could not be committed onto ${ws.branch} (${e.message})`;
+  }
+  let empty = false;
+  try {
+    empty = !!ws.baseCommit && git(ws.root, ["rev-list", "--count", `${ws.baseCommit}..HEAD`]) === "0";
+  } catch {
+  }
+  try {
+    removeRunWorkspace(ws, { keepBranch: !empty });
+  } catch (e) {
+    return `worktree ${ws.root} could not be removed: ${e.message}`;
+  }
+  if (empty) return `worktree ${ws.root} removed: the run changed nothing, so branch ${ws.branch} went with it`;
+  return `worktree ${ws.root} removed; branch ${ws.branch} keeps the work${committed ? " (what was uncommitted is its last commit)" : ""}`;
+}
+function restoreRunWorkspace(ws) {
+  if (existsSync8(ws.root)) return false;
+  if (!existsSync8(ws.repo)) {
+    throw new WorkflowError("WORKSPACE_ERROR", `the repository this run worked in (${ws.repo}) is gone`);
+  }
+  mkdirSync8(dirname3(ws.root), { recursive: true, mode: 448 });
+  try {
+    git(ws.repo, ["worktree", "prune"]);
+  } catch {
+  }
+  let hasBranch = true;
+  try {
+    git(ws.repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${ws.branch}`]);
+  } catch {
+    hasBranch = false;
+  }
+  if (hasBranch) {
+    git(ws.repo, ["worktree", "add", ws.root, ws.branch]);
+  } else if (ws.baseCommit) {
+    git(ws.repo, ["worktree", "add", "-b", ws.branch, ws.root, ws.baseCommit]);
+  } else {
+    throw new WorkflowError("WORKSPACE_ERROR", `branch ${ws.branch} is gone, and the run recorded no base commit to cut it from again`);
+  }
+  return true;
 }
 function summarizeWorkspace(ws) {
   let changedFiles = [];
@@ -9113,10 +9184,20 @@ function summarizeWorkspace(ws) {
   return { ...ws, changedFiles, commit };
 }
 var MAX_DIFF_BYTES = 4e6;
-function readRunDiff(root, baseCommit) {
-  if (!existsSync8(root)) throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
-  git(root, ["add", "-N", "."]);
-  const diff = git(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
+function readRunDiff(root, baseCommit, ended) {
+  let diff;
+  if (existsSync8(root)) {
+    git(root, ["add", "-N", "."]);
+    diff = git(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
+  } else if (ended && baseCommit && existsSync8(ended.repo)) {
+    try {
+      diff = git(ended.repo, ["diff", baseCommit, `refs/heads/${ended.branch}`]);
+    } catch {
+      throw new WorkflowError("WORKSPACE_ERROR", `this run's worktree is gone, and so is its branch ${ended.branch}`);
+    }
+  } else {
+    throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
+  }
   return diff.length > MAX_DIFF_BYTES ? { diff: diff.slice(0, MAX_DIFF_BYTES), truncated: true } : { diff, truncated: false };
 }
 function removeRunWorkspace(ws, opts = {}) {
@@ -10656,9 +10737,9 @@ async function runLocal(client, opts) {
     workspace: summary2,
     diff
   }).catch((e) => opts.onNotice?.(`could not report the run's outcome: ${e.message}`));
-  if (workspace && state.status === "completed") {
-    const tidied = tidyRunWorkspace(workspace);
-    if (tidied) opts.onNotice?.(tidied);
+  if (workspace) {
+    const released = releaseRunWorkspace(workspace, executionId);
+    if (released) opts.onNotice?.(released);
   }
   return { executionId, state, workspace };
 }
@@ -10822,6 +10903,10 @@ function rememberSubagent(executionId, nodeId2, subagentId) {
 function workspaceOf(execution) {
   return execution.workspace ?? null;
 }
+function reviewCommand(ws) {
+  if (existsSync13(ws.root)) return `git -C ${ws.root} diff${ws.baseCommit ? ` ${ws.baseCommit}` : ""}`;
+  return `git -C ${ws.repo} diff ${ws.baseCommit ?? ws.baseRef}...${ws.branch}`;
+}
 function logPath(pending) {
   return join14(gateHome2(), "runs", `${pending.executionId}-${pending.nodeId}-${pending.visit}.log`);
 }
@@ -10912,6 +10997,7 @@ async function next(ctx, executionId) {
       }
       clearPending(executionId);
       ctx.say(`\u25A0 run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
+      releaseStopped(ctx, executionId, execution);
       return { do: "stopped", executionId, error: stopped };
     }
     const scope = runScope(ctx.team, executionId);
@@ -10920,7 +11006,9 @@ async function next(ctx, executionId) {
     if (position.kind === "failed") {
       clearPending(executionId);
       await settle(ctx, executionId, execution, steps.length, "failed", position.error);
-      ctx.say(`  the worktree and the run's history are kept: \`gate continue ${executionId}\` tries "${position.nodeId}" again`);
+      ctx.say(
+        `  the run's history and its branch are kept: \`gate continue ${executionId}\` brings the worktree back and tries "${position.nodeId}" again`
+      );
       return { do: "failed", executionId, nodeId: position.nodeId, error: position.error };
     }
     if (position.kind === "done") {
@@ -10932,7 +11020,8 @@ async function next(ctx, executionId) {
         executionId,
         status: position.status,
         branch: workspace?.branch ?? null,
-        workspace: workspace?.root ?? null
+        workspace: workspace && existsSync13(workspace.root) ? workspace.root : null,
+        review: workspace ? reviewCommand(workspace) : null
       };
     }
     const node = position.node;
@@ -11189,6 +11278,7 @@ async function step(ctx, executionId, nodeId2, answer, opts = {}) {
   if (stopped) {
     clearPending(executionId);
     ctx.say(`\u25A0 run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
+    releaseStopped(ctx, executionId, execution);
     return { do: "stopped", executionId, error: stopped };
   }
   const scope = runScope(ctx.team, executionId);
@@ -11415,13 +11505,16 @@ async function settle(ctx, executionId, execution, stepCount, status, error) {
     }
   }
   await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary2, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
-  if (status === "completed") {
-    if (workspace) {
-      const tidied = tidyRunWorkspace(workspace);
-      if (tidied) ctx.say(tidied);
-    }
-    forgetRun(executionId);
+  if (workspace) {
+    const released = releaseRunWorkspace(workspace, executionId);
+    if (released) ctx.say(released);
   }
+  if (status === "completed") forgetRun(executionId);
+}
+function releaseStopped(ctx, executionId, execution) {
+  const workspace = workspaceOf(execution);
+  const released = workspace ? releaseRunWorkspace(workspace, executionId) : null;
+  if (released) ctx.say(released);
 }
 async function continueRun(ctx, executionId) {
   const { execution } = await ctx.client.execution(executionId);
@@ -11436,11 +11529,17 @@ async function continueRun(ctx, executionId) {
     throw new WorkflowError("EXECUTION_NOT_RESUMABLE", `this run ${execution.status}; there is nothing to continue`);
   }
   const workspace = workspaceOf(execution);
+  let restored = false;
   if (workspace && !existsSync13(workspace.root)) {
-    throw new WorkflowError(
-      "EXECUTION_NOT_RESUMABLE",
-      `the worktree this run used (${workspace.root}) is gone; start the workflow again instead`
-    );
+    try {
+      restored = restoreRunWorkspace(workspace);
+      borrowDependencies(workspace);
+    } catch (e) {
+      throw new WorkflowError(
+        "EXECUTION_NOT_RESUMABLE",
+        `the worktree this run used (${workspace.root}) is gone and could not be brought back from branch ${workspace.branch}: ${e.message}; start the workflow again instead`
+      );
+    }
   }
   const pending = readPending(executionId);
   if (pending?.worker && alive(pending.worker.pid)) {
@@ -11452,8 +11551,10 @@ async function continueRun(ctx, executionId) {
   clearPending(executionId);
   const reopened = await ctx.client.continueRun(executionId);
   if (!reopened.continued) {
+    if (restored && workspace) releaseRunWorkspace(workspace, executionId);
     throw new WorkflowError("EXECUTION_NOT_RESUMABLE", reopened.reason ?? "this run cannot be continued");
   }
+  if (restored && workspace) ctx.say(`worktree ${workspace.root} brought back from branch ${workspace.branch}`);
   ctx.say(
     reopened.retried?.length ? `\u25B8 continuing ${executionId}: ${reopened.retried.join(", ")} will run again; everything before it stands` : `\u25B8 continuing ${executionId}`
   );
@@ -11501,7 +11602,7 @@ async function listWorkspaces(client) {
     } catch {
     }
     const verdict = status === "running" ? "running" : judgeWorkspace(root, baseCommit);
-    out.push({ executionId: entry.name, root, repo, branch, status, verdict });
+    out.push({ executionId: entry.name, root, repo, branch, baseCommit, status, verdict });
   }
   return out;
 }
@@ -11509,17 +11610,29 @@ function planClean(entries, all) {
   const removed = [];
   const kept = [];
   for (const e of entries) {
-    const goes = e.verdict !== "running" && (all || e.verdict === "pushed" || e.verdict === "empty");
+    const ended = e.status !== "unknown";
+    const goes = e.verdict !== "running" && (all || ended || e.verdict === "pushed" || e.verdict === "empty");
     (goes ? removed : kept).push(e);
   }
   return { removed, kept };
 }
 function applyClean(plan) {
+  const notes = [];
   for (const e of plan.removed) {
-    if (e.repo && e.branch) removeRunWorkspace({ repo: e.repo, root: e.root, branch: e.branch }, { keepBranch: true });
-    else removeRunWorkspace({ repo: e.root, root: e.root, branch: "" }, { keepBranch: true });
-    forgetRun(e.executionId);
+    if (e.repo && e.branch) {
+      const ws = { repo: e.repo, root: e.root, branch: e.branch, baseRef: "", baseCommit: e.baseCommit ?? void 0 };
+      const released = releaseRunWorkspace(ws, e.executionId);
+      if (released === null && existsSync14(e.root)) removeRunWorkspace(ws, { keepBranch: true });
+    } else {
+      removeRunWorkspace({ repo: e.root, root: e.root, branch: "" }, { keepBranch: true });
+    }
+    if (existsSync14(e.root)) {
+      notes.push(`kept ${e.executionId.slice(0, 8)}: its worktree could not be removed, or what it left uncommitted could not be committed`);
+      continue;
+    }
+    if (e.status !== "failed") forgetRun(e.executionId);
   }
+  return notes;
 }
 function describeVerdict(v) {
   switch (v) {
@@ -11530,9 +11643,9 @@ function describeVerdict(v) {
     case "empty":
       return "nothing was produced";
     case "unpushed":
-      return "has commits not on any remote \u2014 kept unless --all";
+      return "has commits not on any remote \u2014 they stay on its branch";
     case "dirty":
-      return "has uncommitted changes \u2014 kept unless --all";
+      return "has uncommitted changes \u2014 committed onto its branch before it goes";
     default:
       return "unknown";
   }
@@ -11540,7 +11653,7 @@ function describeVerdict(v) {
 
 // src/client/live.ts
 import { existsSync as existsSync15, mkdirSync as mkdirSync12, readFileSync as readFileSync11, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname3, join as join16 } from "node:path";
+import { dirname as dirname4, join as join16 } from "node:path";
 function gatewayEnv(gatewayUrl2, key) {
   return {
     ANTHROPIC_BASE_URL: gatewayUrl2,
@@ -11581,7 +11694,7 @@ function applyGatewaySettings(path, env, on) {
   if (Object.keys(next2).length) settings.env = next2;
   else delete settings.env;
   if (JSON.stringify(settings) === before) return false;
-  mkdirSync12(dirname3(path), { recursive: true });
+  mkdirSync12(dirname4(path), { recursive: true });
   writeFileSync10(path, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384 });
   return true;
@@ -11616,7 +11729,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
   gate env                                      the same, as shell exports for one session
   gate repo [<id> <path>]                       point a pinned repository at your clone
-  gate clean [--all] [--dry-run]                remove worktrees of finished runs (branches are kept)
+  gate clean [--all] [--dry-run]                remove worktrees runs left behind (branches keep the work)
   gate reset                                    disconnect this machine and clear what it pulled
   gate status [--limit n]                       your team's recent runs
   gate cancel <execution-id>                    ask a run to stop
@@ -12010,8 +12123,8 @@ async function cmdRun(args) {
   console.log(`${state.status}: ${workflowId} (${executionId})`);
   if (state.error) console.log(`${state.error.code}: ${state.error.message}`);
   if (workspace) {
-    console.log(`branch ${workspace.branch} in ${workspace.root}`);
-    console.log(`review it with: git -C ${workspace.root} diff`);
+    console.log(existsSync16(workspace.root) ? `branch ${workspace.branch} in ${workspace.root}` : `branch ${workspace.branch} in ${workspace.repo}`);
+    console.log(`review it with: ${reviewCommand(workspace)}`);
   }
   console.log(`${client.url}/executions/${executionId}`);
   return state.status === "completed" ? 0 : 1;
@@ -12201,8 +12314,11 @@ async function cmdClean(args) {
     console.log(`${plan.removed.length} of ${entries.length} would be removed; run without --dry-run to do it`);
     return 0;
   }
-  applyClean(plan);
-  console.log(`removed ${plan.removed.length} worktree(s), kept ${plan.kept.length}; every branch is still there`);
+  const notes = applyClean(plan);
+  for (const note of notes) console.log(note);
+  console.log(
+    `removed ${plan.removed.length - notes.length} worktree(s), kept ${plan.kept.length + notes.length}; every branch is still there`
+  );
   return 0;
 }
 async function cmdWork(args) {
