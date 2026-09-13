@@ -30,4 +30,11 @@ if (!g.__gateDaemon) {
 
   setInterval(tick, 10 * 60 * 1000).unref?.();
   void tick();
+
+  // The Telegram bot, when a token is configured: people's questions,
+  // approvals and new runs from their own chat. Loaded lazily so a gate
+  // without one never pulls the remote-session code in at startup.
+  void import("@/telegram/runtime")
+    .then((m) => m.startTelegram())
+    .catch((e) => console.error("[gate] telegram bot did not start:", e));
 }

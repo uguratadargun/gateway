@@ -162,6 +162,38 @@ in their Executions stream as always.
   `GATE_SELF_URL` is where the child reaches this gate when it is not
   `http://127.0.0.1:$PORT`.
 
+## Telegram
+
+A person's remote sessions can also be answered from **Telegram**, and runs
+started from there. The bot is a cockpit in a chat: it follows the person's
+sessions on this server on their own key, sends every question, plan approval
+and permission prompt as a message with buttons, and settles it through the
+same calls the cockpit's panels make. Whichever side answers first wins; the
+other sees the prompt go.
+
+- **Setup:** make a bot with @BotFather and put its token on the Team page
+  (sealed under `GATE_SECRET`), or set `GATE_TELEGRAM_BOT_TOKEN`. The bot polls
+  Telegram (`getUpdates`), so the gate needs no public address.
+- **Linking:** on the Team page, *Create link* for a person makes a one-time
+  `t.me/<bot>?start=<code>` link, valid 15 minutes. Opening it links that
+  chat and mints a key for the person with the `remote` scope, kept sealed
+  because a session runs on it; it shows among their keys. Unlinking — from
+  the Team page or `/unlink` in the chat — revokes it. Only private chats are
+  answered.
+- **Answering:** tap an option; a single question with a single answer is sent
+  at once, several questions are walked one by one and sent with Submit.
+  *Other…* takes a typed answer. Replying to a question's message sends a note
+  instead; replying to a permission prompt denies it with that reason.
+- **Runs:** `/run` asks for a repository, a workflow (or lets the run pick),
+  and the task, then starts a remote session typed `/gate:run <workflow>
+  <task>`; `/run <repo> <workflow> <task…>` does it in one line. `/sessions`
+  lists live sessions with a button to close each, `/pending` sends again
+  whatever is waiting. The chat is also told when the person's runs start and
+  end.
+- **Not covered:** questions from sessions running in a desktop cockpit on the
+  person's own machine are held by that cockpit, not by the server, so they do
+  not reach Telegram.
+
 ## Storage
 
 Usage, traffic, cache, API keys, connected accounts, providers, and the

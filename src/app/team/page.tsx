@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { TelegramPanel } from "@/components/telegram-panel";
 import { encodeConnectionToken } from "@/lib/connect-token";
 import { installLines, PLUGIN_ID, PLUGIN_MARKETPLACE } from "@/lib/protocol";
 
@@ -475,6 +476,8 @@ export default function TeamPage() {
           })}
         </div>
       </Card>
+
+      <TelegramPanel users={users} />
     </div>
   );
 }

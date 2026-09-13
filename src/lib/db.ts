@@ -230,6 +230,19 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE INDEX IF NOT EXISTS users_team ON users(team_id);
 
+-- A Telegram chat linked to a person: the bot answers their questions and
+-- starts their runs from it, on a key minted for the link (sealed, because a
+-- remote session runs on the plaintext). Unlinking revokes that key.
+CREATE TABLE IF NOT EXISTS telegram_links (
+  chat_id TEXT PRIMARY KEY,
+  user_id TEXT,
+  team_id TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  key_sealed TEXT NOT NULL,
+  username TEXT,
+  linked_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS workflow_layouts (
   workflow_id TEXT PRIMARY KEY,
   layout_json TEXT NOT NULL,
