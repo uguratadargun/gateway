@@ -41,7 +41,15 @@ export async function middleware(req: NextRequest) {
       headers: { "Content-Type": "application/json" },
     });
   }
-  const login = new URL("/login", req.url);
+  // Next can build req.url from its loopback listener behind a reverse proxy.
+  // Prefer the proxy-provided public origin so redirects do not leak the
+  // internal bind address (127.0.0.1/localhost) to the browser.
+  const forwardedHost = req.headers.get("x-forwarded-host")?.split(",", 1)[0]?.trim();
+  const forwardedProto = req.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim();
+  const origin = forwardedHost
+    ? `${forwardedProto === "http" ? "http" : "https"}://${forwardedHost}`
+    : req.nextUrl.origin;
+  const login = new URL("/login", origin);
   login.searchParams.set("next", pathname);
   return NextResponse.redirect(login);
 }
