@@ -6,9 +6,9 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
-import { appendFileSync as appendFileSync2, existsSync as existsSync16, mkdirSync as mkdirSync13, readFileSync as readFileSync12, writeFileSync as writeFileSync11 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
+import { execFileSync as execFileSync5 } from "node:child_process";
+import { appendFileSync as appendFileSync2, existsSync as existsSync16, mkdirSync as mkdirSync13, readFileSync as readFileSync13, writeFileSync as writeFileSync11 } from "node:fs";
+import { homedir as homedir8, hostname as hostname4 } from "node:os";
 import { basename as basename2, join as join17, resolve as resolve6 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
@@ -477,9 +477,9 @@ var binaryTag = defineScalarTag("tag:yaml.org,2002:binary", {
 });
 var YAML_DATE_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])$");
 var YAML_TIMESTAMP_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9]?)-([0-9][0-9]?)(?:[Tt]|[ \\t]+)([0-9][0-9]?):([0-9][0-9]):([0-9][0-9])(?:\\.([0-9]*))?(?:[ \\t]*(Z|([-+])([0-9][0-9]?)(?::([0-9][0-9]))?))?$");
-function makeUtcDate(year, month, day, hour = 0, minute = 0, second = 0, fraction = 0) {
-  const date = new Date(Date.UTC(year, month, day, hour, minute, second, fraction));
-  date.setUTCFullYear(year, month, day);
+function makeUtcDate(year, month, day2, hour = 0, minute = 0, second = 0, fraction = 0) {
+  const date = new Date(Date.UTC(year, month, day2, hour, minute, second, fraction));
+  date.setUTCFullYear(year, month, day2);
   return date;
 }
 function resolveYamlTimestamp(source) {
@@ -488,10 +488,10 @@ function resolveYamlTimestamp(source) {
   if (match === null) return NOT_RESOLVED;
   const year = +match[1];
   const month = +match[2] - 1;
-  const day = +match[3];
+  const day2 = +match[3];
   if (!match[4]) {
-    const date2 = makeUtcDate(year, month, day);
-    if (date2.getUTCFullYear() !== year || date2.getUTCMonth() !== month || date2.getUTCDate() !== day) return NOT_RESOLVED;
+    const date2 = makeUtcDate(year, month, day2);
+    if (date2.getUTCFullYear() !== year || date2.getUTCMonth() !== month || date2.getUTCDate() !== day2) return NOT_RESOLVED;
     return date2;
   }
   const hour = +match[4];
@@ -504,8 +504,8 @@ function resolveYamlTimestamp(source) {
     while (value.length < 3) value += "0";
     fraction = +value;
   }
-  const date = makeUtcDate(year, month, day, hour, minute, second, fraction);
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return NOT_RESOLVED;
+  const date = makeUtcDate(year, month, day2, hour, minute, second, fraction);
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day2) return NOT_RESOLVED;
   if (match[9]) {
     const offsetHour = +match[10];
     const offsetMinute = +(match[11] || 0);
@@ -7814,7 +7814,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.35.0";
+var GATE_VERSION = "0.36.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -8867,6 +8867,17 @@ var GateClient = class {
       if (e instanceof GateApiError && e.status === 404) return null;
       throw e;
     }
+  }
+  /** Teaches a finished branch to the team's memory; the run it is kept as. */
+  async teach(req) {
+    return (await this.request("/api/v1/memory/teach", {
+      method: "POST",
+      body: JSON.stringify(req)
+    })).body;
+  }
+  /** What the recorder made of one of this person's runs: the ledger row and the decisions. */
+  async runMemory(executionId) {
+    return (await this.request(`/api/v1/executions/${executionId}/memory`)).body;
   }
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
@@ -11700,6 +11711,271 @@ function applyGatewaySettings(path, env, on) {
   return true;
 }
 
+// src/client/teach.ts
+import { execFileSync as execFileSync4 } from "node:child_process";
+import { readFileSync as readFileSync12 } from "node:fs";
+
+// src/lib/client-api-schemas.ts
+var clientInfo = external_exports.object({
+  host: external_exports.string().max(120).optional(),
+  repo: external_exports.string().max(500).optional(),
+  branch: external_exports.string().max(200).optional(),
+  version: external_exports.string().max(40).optional(),
+  /**
+   * The Claude Code session driving the run, when the plugin's hook could
+   * learn it. The gateway files that session's own model calls under the
+   * same id, which is what lets the nodes the session does itself be
+   * costed against the run.
+   */
+  session: external_exports.string().max(80).optional()
+}).partial();
+var startRunSchema = external_exports.object({
+  workflowId: external_exports.string().min(1).max(64),
+  input: external_exports.record(external_exports.string(), external_exports.unknown()).default({}),
+  client: clientInfo.default({}),
+  /** "session" when a Claude Code session walks the graph a node at a time. */
+  driver: external_exports.enum(["engine", "session"]).default("engine")
+}).strict();
+var usageSchema = external_exports.object({
+  model: external_exports.string().max(120),
+  inputTokens: external_exports.number().int().min(0),
+  outputTokens: external_exports.number().int().min(0),
+  cacheReadTokens: external_exports.number().int().min(0)
+});
+var toolCallSchema = external_exports.object({
+  tool: external_exports.string().max(80),
+  input: external_exports.unknown(),
+  ok: external_exports.boolean(),
+  result: external_exports.string(),
+  startedAt: external_exports.number(),
+  durationMs: external_exports.number()
+});
+var stepSchema = external_exports.object({
+  nodeId: external_exports.string().min(1).max(64),
+  stepIndex: external_exports.number().int().min(0),
+  visit: external_exports.number().int().min(0),
+  status: external_exports.enum(["completed", "failed"]),
+  startedAt: external_exports.number(),
+  finishedAt: external_exports.number(),
+  input: external_exports.unknown().optional(),
+  output: external_exports.unknown().optional(),
+  error: external_exports.object({ code: external_exports.string().max(64), message: external_exports.string().max(4e3) }).optional(),
+  usage: usageSchema.optional(),
+  /** The session did this node itself: cost it from the session's own gateway calls. */
+  costing: external_exports.literal("session").optional(),
+  toolCalls: external_exports.array(toolCallSchema).optional()
+});
+var eventSchema = external_exports.object({
+  type: external_exports.string().min(1).max(40),
+  at: external_exports.number()
+}).passthrough();
+var workspaceSchema2 = external_exports.object({
+  root: external_exports.string().max(1e3),
+  repo: external_exports.string().max(1e3),
+  branch: external_exports.string().max(200),
+  baseRef: external_exports.string().max(200),
+  baseCommit: external_exports.string().max(80).optional()
+});
+var reportSchema = external_exports.object({
+  events: external_exports.array(eventSchema).max(500).default([]),
+  steps: external_exports.array(stepSchema).max(100).default([]),
+  /**
+   * The run's worktree, sent once when it is created. A run driven from a
+   * session reads it back on every step, and the dashboard shows the branch
+   * while the run is going rather than only after it ends.
+   */
+  workspace: workspaceSchema2.nullish()
+}).strict();
+var finishRunSchema = external_exports.object({
+  status: external_exports.enum(["completed", "failed"]),
+  error: external_exports.object({ code: external_exports.string().max(64), message: external_exports.string().max(4e3) }).nullish(),
+  stepCount: external_exports.number().int().min(0).default(0),
+  workspace: external_exports.object({
+    root: external_exports.string().max(1e3),
+    repo: external_exports.string().max(1e3),
+    branch: external_exports.string().max(200),
+    baseRef: external_exports.string().max(200),
+    baseCommit: external_exports.string().max(80).optional(),
+    commit: external_exports.string().max(80).nullable().default(null),
+    changedFiles: external_exports.array(external_exports.string().max(500)).max(200).default([])
+  }).nullish(),
+  /** The unified diff the run left in its worktree; already capped client-side. */
+  diff: external_exports.string().max(4e6).nullish()
+}).strict();
+var teachAccountSchema = external_exports.object({
+  /** What the work was for, as the person who asked for it would put it. */
+  task: external_exports.string().trim().min(1).max(4e3),
+  /** The approach as it was carried out, step by step. */
+  plan: external_exports.string().max(8e3).default(""),
+  /** Each real choice: what was chosen, why, and what was not taken. */
+  decisions: external_exports.string().max(12e3).default(""),
+  /** How it works now: flows, components, states, edge cases. Logic, not code. */
+  implementation: external_exports.string().max(12e3).default(""),
+  verification: external_exports.string().max(4e3).default(""),
+  pitfalls: external_exports.string().max(4e3).default(""),
+  /** Where the account comes from: the commits, a merge request, the person's own answers. */
+  evidence: external_exports.string().max(2e3).default("")
+}).strict();
+var teachCommitSchema = external_exports.object({
+  sha: external_exports.string().min(4).max(80),
+  date: external_exports.string().max(40),
+  author: external_exports.string().max(200).default(""),
+  subject: external_exports.string().max(1e3),
+  body: external_exports.string().max(4e3).default("")
+});
+var teachSchema = external_exports.object({
+  account: teachAccountSchema,
+  commits: external_exports.array(teachCommitSchema).max(500).default([]),
+  workspace: external_exports.object({
+    root: external_exports.string().max(1e3),
+    repo: external_exports.string().max(1e3),
+    branch: external_exports.string().min(1).max(200),
+    baseRef: external_exports.string().max(200),
+    baseCommit: external_exports.string().min(4).max(80),
+    commit: external_exports.string().min(4).max(80),
+    changedFiles: external_exports.array(external_exports.string().max(500)).max(200).default([])
+  }),
+  /** The branch's first commit and its last: when the work began and when it started holding. */
+  startedAt: external_exports.number().int().min(0),
+  finishedAt: external_exports.number().int().min(0),
+  diff: external_exports.string().max(4e6).nullish(),
+  host: external_exports.string().max(120).nullish(),
+  version: external_exports.string().max(40).nullish(),
+  /** Teach it even though a run already recorded this branch. */
+  force: external_exports.boolean().default(false)
+}).strict();
+var epochMs = external_exports.string().transform((v) => /^\d+$/.test(v) ? Number(v) : Date.parse(v)).refine((n) => Number.isFinite(n), "not a time").optional();
+var memorySearchSchema = external_exports.object({
+  query: external_exports.string().max(2e3).optional(),
+  paths: external_exports.array(external_exports.string().max(500)).max(50).default([]),
+  featureId: external_exports.string().max(100).optional(),
+  asOf: epochMs,
+  since: epochMs,
+  limit: external_exports.string().transform((v) => Number(v)).refine((n) => Number.isInteger(n) && n > 0, "not a count").optional()
+}).refine((v) => v.query || v.paths.length || v.featureId, { message: "give q, path, or feature" });
+
+// src/client/teach.ts
+var TeachError = class extends Error {
+};
+var MAX_COMMITS = 500;
+var MAX_FILES = 200;
+var MAX_DIFF_BYTES2 = 4e6;
+function git3(cwd, args) {
+  return execFileSync4("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 }).trimEnd();
+}
+function tryGit(cwd, args) {
+  try {
+    return git3(cwd, args);
+  } catch {
+    return null;
+  }
+}
+function isAncestor(cwd, ancestor, of) {
+  return tryGit(cwd, ["merge-base", "--is-ancestor", ancestor, of]) !== null;
+}
+function defaultBase(repo) {
+  const originHead = tryGit(repo, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (originHead) return originHead;
+  for (const name of ["origin/main", "origin/master", "main", "master"]) {
+    if (tryGit(repo, ["rev-parse", "--verify", "--quiet", `${name}^{commit}`])) return name;
+  }
+  throw new TeachError("cannot tell which branch this work was cut from \u2014 pass --base <branch or commit>");
+}
+function mergeThatBroughtIn(repo, head, baseTip) {
+  const merges = tryGit(repo, ["rev-list", "--first-parent", "--merges", "--ancestry-path", "--reverse", `${head}..${baseTip}`]);
+  for (const merge of (merges ?? "").split("\n").filter(Boolean)) {
+    const firstParent = git3(repo, ["rev-parse", `${merge}^1`]);
+    if (!isAncestor(repo, head, firstParent)) return { merge, base: git3(repo, ["merge-base", firstParent, head]) };
+  }
+  return null;
+}
+function readBranch(cwd, base) {
+  const repo = tryGit(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!repo) throw new TeachError(`${cwd} is not a git repository \u2014 run it from the checkout the work is in`);
+  const head = git3(repo, ["rev-parse", "HEAD"]);
+  const name = git3(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const branch = name === "HEAD" ? `HEAD@${head.slice(0, 12)}` : name;
+  const baseRef = base ?? defaultBase(repo);
+  const baseTip = tryGit(repo, ["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`]);
+  if (!baseTip) throw new TeachError(`no such branch or commit: ${baseRef}`);
+  let baseCommit = isAncestor(repo, baseTip, head) ? baseTip : git3(repo, ["merge-base", baseTip, head]);
+  let mergedBy = null;
+  if (baseCommit === head) {
+    const found = mergeThatBroughtIn(repo, head, baseTip);
+    if (found) {
+      baseCommit = found.base;
+      mergedBy = found.merge;
+    }
+  }
+  if (baseCommit === head) {
+    throw new TeachError(
+      `${branch} is already part of ${baseRef} with no merge commit to tell where it began \u2014 pass --base <the commit the work started from>`
+    );
+  }
+  const log = git3(repo, ["log", "--reverse", "--no-merges", "--format=%H%x1f%aI%x1f%an%x1f%s%x1f%b%x1e", `${baseCommit}..${head}`]);
+  const all = log.split("").map((r) => r.trim()).filter(Boolean).map((r) => {
+    const [sha, date, author, subject, body = ""] = r.split("");
+    return { sha, date, author: author.slice(0, 200), subject: subject.slice(0, 1e3), body: body.trim().slice(0, 4e3) };
+  });
+  if (!all.length) throw new TeachError(`no commits of its own between ${baseCommit.slice(0, 8)} and ${head.slice(0, 8)}, only merges`);
+  const changed = git3(repo, ["diff", "--name-only", baseCommit, head]).split("\n").filter(Boolean);
+  const finishedAt = Date.parse(git3(repo, ["log", "-1", "--format=%cI", head]));
+  return {
+    repo,
+    branch,
+    baseRef,
+    baseCommit,
+    head,
+    mergedBy,
+    commits: all.slice(0, MAX_COMMITS),
+    omittedCommits: Math.max(0, all.length - MAX_COMMITS),
+    changedFiles: changed.slice(0, MAX_FILES),
+    stat: git3(repo, ["diff", "--stat=120", baseCommit, head]),
+    dirty: git3(repo, ["status", "--porcelain"]) !== "",
+    startedAt: Date.parse(all[0].date),
+    finishedAt
+  };
+}
+function readBranchDiff(r) {
+  const diff = git3(r.repo, ["diff", r.baseCommit, r.head]);
+  return diff.length > MAX_DIFF_BYTES2 ? diff.slice(0, MAX_DIFF_BYTES2) : diff;
+}
+var day = (ms) => new Date(ms).toISOString().slice(0, 10);
+function describeBranch(r) {
+  const range = `${r.baseCommit.slice(0, 8)}..${r.head.slice(0, 8)}`;
+  const count = r.commits.length + r.omittedCommits;
+  const lines = [
+    `branch  ${r.branch} (HEAD ${r.head.slice(0, 8)}) in ${r.repo}`,
+    `base    ${r.baseRef} \u2192 ${r.baseCommit.slice(0, 8)}${r.mergedBy ? ` \xB7 merged into ${r.baseRef} by ${r.mergedBy.slice(0, 8)}` : ""}`,
+    `range   ${range} \xB7 ${count} commit${count === 1 ? "" : "s"} \xB7 ${r.changedFiles.length} file${r.changedFiles.length === 1 ? "" : "s"} \xB7 ${day(r.startedAt)} \u2192 ${day(r.finishedAt)}`
+  ];
+  if (r.dirty) lines.push("note    this checkout has uncommitted changes; they are not part of what is taught");
+  lines.push("", "commits, oldest first:");
+  for (const c of r.commits) {
+    lines.push(`  ${c.sha.slice(0, 8)}  ${c.date.slice(0, 10)}  ${c.author}  ${c.subject}`);
+    for (const line of c.body.split("\n").filter(Boolean).slice(0, 8)) lines.push(`      ${line}`);
+  }
+  if (r.omittedCommits) lines.push(`  \u2026 and ${r.omittedCommits} more`);
+  lines.push("", "files:", r.stat, "", `read the work with: git log -p --reverse ${range}   \xB7   git diff ${range} -- <path>`);
+  return lines.join("\n");
+}
+function readAccount(file) {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync12(file, "utf8"));
+  } catch (e) {
+    throw new TeachError(`cannot read ${file} as JSON: ${e.message}`);
+  }
+  const parsed = teachAccountSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new TeachError(
+      `${file} is not an account gate can teach:
+` + parsed.error.issues.map((i) => `  ${i.path.join(".") || "(top)"}: ${i.message}`).join("\n")
+    );
+  }
+  return parsed.data;
+}
+
 // src/client/cli.ts
 var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this machine
 
@@ -11736,9 +12012,29 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate memory search [words\u2026] [--path <prefix>]\u2026 [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]
                                                 what your team's tree decided before: why, how, where, which commits
   gate memory feature <id> [--json]             one feature: how each team built it, and every decision under it
+  gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
+  gate teach --account-file <f> [--base <ref>] [--force] [--no-wait]
+                                                teach it to your team's memory, recorded the way a run is
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set([
+  "url",
+  "key",
+  "token",
+  "input",
+  "limit",
+  "team",
+  "dir",
+  "output-file",
+  "for",
+  "subagent",
+  "path",
+  "feature",
+  "since",
+  "as-of",
+  "base",
+  "account-file"
+]);
 var REPEATABLE_FLAGS = /* @__PURE__ */ new Set(["input", "path"]);
 function parseArgs(argv) {
   const [command = "help", ...rest] = argv;
@@ -11987,7 +12283,7 @@ async function cmdPush(args) {
   for (const item of items) {
     let source;
     try {
-      source = readFileSync12(item.file, "utf8");
+      source = readFileSync13(item.file, "utf8");
     } catch (e) {
       console.error(`${item.file}: ${e.message}`);
       failed++;
@@ -12217,7 +12513,7 @@ function setLive(on, global, gatewayUrl2, key) {
 function keepOutOfGit(cwd) {
   let gitDir;
   try {
-    gitDir = execFileSync4("git", ["rev-parse", "--git-dir"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    gitDir = execFileSync5("git", ["rev-parse", "--git-dir"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
   } catch {
     return;
   }
@@ -12225,7 +12521,7 @@ function keepOutOfGit(cwd) {
   const exclude = join17(info, "exclude");
   const pattern = ".claude/settings.local.json";
   try {
-    const current = existsSync16(exclude) ? readFileSync12(exclude, "utf8") : "";
+    const current = existsSync16(exclude) ? readFileSync13(exclude, "utf8") : "";
     if (current.split("\n").some((l) => l.trim() === pattern)) return;
     mkdirSync13(info, { recursive: true });
     appendFileSync2(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}${pattern}
@@ -12274,7 +12570,7 @@ async function cmdStep(args) {
   if (!file) die("gate step needs --output-file <file>: the node's answer, as the agent declared it");
   let answer;
   try {
-    answer = readFileSync12(file, "utf8");
+    answer = readFileSync13(file, "utf8");
   } catch (e) {
     die(`cannot read ${file}: ${e.message}`);
   }
@@ -12367,6 +12663,77 @@ async function cmdMemory(args) {
   }
   die("usage: gate memory search <words\u2026> | gate memory feature <id>");
 }
+var TEACH_WAIT_MS = 5 * 6e4;
+async function cmdTeach(args) {
+  const base = typeof args.flags.base === "string" ? args.flags.base : void 0;
+  let reading;
+  try {
+    reading = readBranch(process.cwd(), base);
+  } catch (e) {
+    if (e instanceof TeachError) die(e.message);
+    throw e;
+  }
+  const file = typeof args.flags["account-file"] === "string" ? args.flags["account-file"] : "";
+  if (!file) {
+    console.log(describeBranch(reading));
+    return 0;
+  }
+  let account;
+  try {
+    account = readAccount(file);
+  } catch (e) {
+    if (e instanceof TeachError) die(e.message);
+    throw e;
+  }
+  const client = connect();
+  const taught = await client.teach({
+    account,
+    commits: reading.commits,
+    workspace: {
+      root: reading.repo,
+      repo: reading.repo,
+      branch: reading.branch,
+      baseRef: reading.baseRef,
+      baseCommit: reading.baseCommit,
+      commit: reading.head,
+      changedFiles: reading.changedFiles
+    },
+    startedAt: reading.startedAt,
+    finishedAt: reading.finishedAt,
+    diff: readBranchDiff(reading),
+    host: hostname4(),
+    version: CLI_VERSION,
+    force: args.flags.force === true
+  });
+  const url = `${client.url}/executions/${taught.executionId}`;
+  console.log(`${taught.replaced ? "taught again, replacing the earlier teaching" : "taught"}: ${reading.branch} \u2192 ${url}`);
+  if (!taught.recording) {
+    console.log("memory is off on this gate (Settings \u2192 Memory): the branch is kept, and is recorded once it is on");
+    return 0;
+  }
+  if (args.flags["no-wait"] === true) return 0;
+  console.error("# the recorder is reading it\u2026");
+  const until = Date.now() + TEACH_WAIT_MS;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 3e3));
+    const memory = await client.runMemory(taught.executionId);
+    const status = memory.extraction?.status;
+    if (status === "done") {
+      const cost = memory.extraction?.costUsd != null ? ` \xB7 $${memory.extraction.costUsd.toFixed(2)}` : "";
+      const where = memory.feature ? ` under "${memory.feature.name}" (${memory.feature.id})` : "";
+      console.log(`recorded ${memory.decisions.length} decision${memory.decisions.length === 1 ? "" : "s"}${where}${cost}:`);
+      for (const d of memory.decisions) console.log(`  ${d.id}  ${d.title}`);
+      return 0;
+    }
+    if (status === "skipped" || status === "failed" && memory.extraction?.error) {
+      console.log(`the recorder ${status === "skipped" ? "skipped it" : "failed"}: ${memory.extraction?.error ?? "no reason given"}`);
+      if (status === "failed") console.log(`it tries again on its own, up to three times; the run page has "Record again": ${url}`);
+      return 1;
+    }
+  }
+  console.log(`still recording after ${TEACH_WAIT_MS / 6e4} minutes \u2014 its decisions will appear on ${url}`);
+  return 0;
+}
 async function cmdStatus(args) {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -12446,6 +12813,8 @@ async function main(argv) {
         return await cmdStatus(args);
       case "memory":
         return await cmdMemory(args);
+      case "teach":
+        return await cmdTeach(args);
       case "cancel":
         return await cmdCancel(args);
       case "help":

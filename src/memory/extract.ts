@@ -17,7 +17,7 @@ import {
   upsertFeature,
   upsertImplementation,
 } from "./store";
-import type { DecisionOutcome, Extraction, FeatureHit } from "./types";
+import { TEACH_WORKFLOW_ID, type DecisionOutcome, type Extraction, type FeatureHit } from "./types";
 
 /**
  * The recorder: reads what a run's nodes produced and writes what was decided.
@@ -36,6 +36,8 @@ const NODE_ID = "memory-recorder";
 
 /** How much of one step's output the recorder reads; a plan can run to pages. */
 const MAX_STEP_CHARS = 12_000;
+/** A taught branch's account stands in for every agent of a run at once. */
+const MAX_TAUGHT_STEP_CHARS = 50_000;
 /** And of the whole run. */
 const MAX_TOTAL_CHARS = 120_000;
 
@@ -183,8 +185,18 @@ export function recorderPrompt(input: {
   implementationsSoFar: Array<{ featureId: string; summary: string; pitfalls: string }>;
 }): string {
   const { execution, steps } = input;
+  const taught = execution.workflowId === TEACH_WORKFLOW_ID;
+  const stepChars = taught ? MAX_TAUGHT_STEP_CHARS : MAX_STEP_CHARS;
   const parts: string[] = [];
   parts.push(`# The run\n`);
+  if (taught) {
+    parts.push(
+      "This is not a run of a workflow. It is work finished before the team recorded its runs, taught to memory from its branch: " +
+        'the "teach" step is an engineer\'s session\'s account of that branch, read from its commits, its diff and the code, ' +
+        'and "commits" is the branch\'s own history. Record it as you would a run that shipped. Where the account says a reason ' +
+        "was inferred rather than stated, keep that uncertainty in your words; do not invent alternatives it does not name.\n",
+    );
+  }
   parts.push(`Workflow: ${execution.workflowId}`);
   parts.push(`Team: ${execution.teamId}${execution.userId ? ` · run by user ${execution.userId}` : ""}`);
   parts.push(`Ended: ${execution.status}${execution.error ? ` — ${execution.error.code}: ${execution.error.message}` : ""}`);
@@ -197,7 +209,7 @@ export function recorderPrompt(input: {
   parts.push(`\n## What its agents answered, in order\n`);
   let budget = MAX_TOTAL_CHARS;
   for (const s of steps) {
-    const text = truncate(JSON.stringify(s.output, null, 2), MAX_STEP_CHARS);
+    const text = truncate(JSON.stringify(s.output, null, 2), stepChars);
     if (budget <= 0) {
       parts.push(`[${s.nodeId} · visit ${s.visit}: omitted, the run is long]`);
       continue;

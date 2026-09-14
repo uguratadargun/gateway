@@ -122,6 +122,66 @@ export const finishRunSchema = z
   })
   .strict();
 
+/**
+ * What an engineer's session read out of a finished branch — the stand-in for
+ * the answers a run's agents would have given. Strict, because a field the
+ * session named differently would otherwise vanish without a word, and the
+ * recorder can only write what it is shown.
+ */
+export const teachAccountSchema = z
+  .object({
+    /** What the work was for, as the person who asked for it would put it. */
+    task: z.string().trim().min(1).max(4000),
+    /** The approach as it was carried out, step by step. */
+    plan: z.string().max(8000).default(""),
+    /** Each real choice: what was chosen, why, and what was not taken. */
+    decisions: z.string().max(12000).default(""),
+    /** How it works now: flows, components, states, edge cases. Logic, not code. */
+    implementation: z.string().max(12000).default(""),
+    verification: z.string().max(4000).default(""),
+    pitfalls: z.string().max(4000).default(""),
+    /** Where the account comes from: the commits, a merge request, the person's own answers. */
+    evidence: z.string().max(2000).default(""),
+  })
+  .strict();
+
+export const teachCommitSchema = z.object({
+  sha: z.string().min(4).max(80),
+  date: z.string().max(40),
+  author: z.string().max(200).default(""),
+  subject: z.string().max(1000),
+  body: z.string().max(4000).default(""),
+});
+
+/** `POST /api/v1/memory/teach`: a finished branch, to be recorded as a run would be. */
+export const teachSchema = z
+  .object({
+    account: teachAccountSchema,
+    commits: z.array(teachCommitSchema).max(500).default([]),
+    workspace: z.object({
+      root: z.string().max(1000),
+      repo: z.string().max(1000),
+      branch: z.string().min(1).max(200),
+      baseRef: z.string().max(200),
+      baseCommit: z.string().min(4).max(80),
+      commit: z.string().min(4).max(80),
+      changedFiles: z.array(z.string().max(500)).max(200).default([]),
+    }),
+    /** The branch's first commit and its last: when the work began and when it started holding. */
+    startedAt: z.number().int().min(0),
+    finishedAt: z.number().int().min(0),
+    diff: z.string().max(4_000_000).nullish(),
+    host: z.string().max(120).nullish(),
+    version: z.string().max(40).nullish(),
+    /** Teach it even though a run already recorded this branch. */
+    force: z.boolean().default(false),
+  })
+  .strict();
+
+export type TeachAccount = z.infer<typeof teachAccountSchema>;
+export type TeachCommit = z.infer<typeof teachCommitSchema>;
+export type TeachRequest = z.input<typeof teachSchema>;
+
 /** Query-string parameters of `GET /api/v1/memory/search`, as strings. */
 const epochMs = z
   .string()

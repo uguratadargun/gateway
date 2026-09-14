@@ -14,6 +14,14 @@
  *   have been written yet, so a run is recorded once and a failure is retried.
  */
 
+/**
+ * The workflow id a taught branch is kept under: work finished before the team
+ * recorded runs, read back from its branch by `gate teach`. Not a workflow
+ * anyone can define — the colon is outside what a definition id may contain —
+ * so a team's own "teach" pipeline can never be mistaken for one.
+ */
+export const TEACH_WORKFLOW_ID = "gate:teach";
+
 export type TouchKind = "file" | "area";
 
 /** One thing a decision touched: a path in the repository, or a named area. */

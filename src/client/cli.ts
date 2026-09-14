@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
@@ -9,6 +9,7 @@ import type { WorkflowEvent } from "@/events/types";
 import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 
 import { windowLabel } from "@/lib/account-pool";
+import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 import { describeFeature, describeSearch } from "@/memory/cards";
 import { parseSince } from "@/runtime/tools/memory-tools";
@@ -21,6 +22,7 @@ import { runLocal } from "./run";
 import { begin, continueRun, next, noteSession, reviewCommand, step, wait, work, type Instruction, type SessionRunContext } from "./step";
 import { applyGatewaySettings, gatewayEnv, settingsPath } from "./live";
 import { removeSubagents, syncSubagents } from "./subagents";
+import { describeBranch, readAccount, readBranch, readBranchDiff, TeachError, type BranchReading } from "./teach";
 
 /**
  * `gate` — the command a developer runs, and what /gate:run calls.
@@ -66,6 +68,9 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate memory search [words…] [--path <prefix>]… [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]
                                                 what your team's tree decided before: why, how, where, which commits
   gate memory feature <id> [--json]             one feature: how each team built it, and every decision under it
+  gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
+  gate teach --account-file <f> [--base <ref>] [--force] [--no-wait]
+                                                teach it to your team's memory, recorded the way a run is
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
 
@@ -84,7 +89,9 @@ interface Args {
  * is short, and the alternative is a parser that is wrong in exactly the case
  * the tool exists for.
  */
-const VALUE_FLAGS = new Set(["url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of"]);
+const VALUE_FLAGS = new Set([
+  "url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of", "base", "account-file",
+]);
 
 /** Flags that collect when repeated, rather than the last one winning. */
 const REPEATABLE_FLAGS = new Set(["input", "path"]);
@@ -948,6 +955,91 @@ async function cmdMemory(args: Args): Promise<number> {
   die("usage: gate memory search <words…> | gate memory feature <id>");
 }
 
+/** How long `gate teach` waits to show what the recorder wrote. */
+const TEACH_WAIT_MS = 5 * 60_000;
+
+/**
+ * `gate teach`: a finished branch, into the team's memory.
+ *
+ * Without an account it only reads — the range, the commits, the files — which
+ * is what /gate:teach starts from. With one, the branch is sent to be kept as a
+ * finished run and recorded like one, and this waits to print the decisions
+ * the recorder wrote, so the person sees what was learnt where they asked.
+ */
+async function cmdTeach(args: Args): Promise<number> {
+  const base = typeof args.flags.base === "string" ? args.flags.base : undefined;
+  let reading: BranchReading;
+  try {
+    reading = readBranch(process.cwd(), base);
+  } catch (e) {
+    if (e instanceof TeachError) die(e.message);
+    throw e;
+  }
+
+  const file = typeof args.flags["account-file"] === "string" ? args.flags["account-file"] : "";
+  if (!file) {
+    console.log(describeBranch(reading));
+    return 0;
+  }
+  let account: TeachAccount;
+  try {
+    account = readAccount(file);
+  } catch (e) {
+    if (e instanceof TeachError) die(e.message);
+    throw e;
+  }
+
+  const client = connect();
+  const taught = await client.teach({
+    account,
+    commits: reading.commits,
+    workspace: {
+      root: reading.repo,
+      repo: reading.repo,
+      branch: reading.branch,
+      baseRef: reading.baseRef,
+      baseCommit: reading.baseCommit,
+      commit: reading.head,
+      changedFiles: reading.changedFiles,
+    },
+    startedAt: reading.startedAt,
+    finishedAt: reading.finishedAt,
+    diff: readBranchDiff(reading),
+    host: hostname(),
+    version: CLI_VERSION,
+    force: args.flags.force === true,
+  });
+  const url = `${client.url}/executions/${taught.executionId}`;
+  console.log(`${taught.replaced ? "taught again, replacing the earlier teaching" : "taught"}: ${reading.branch} → ${url}`);
+  if (!taught.recording) {
+    console.log("memory is off on this gate (Settings → Memory): the branch is kept, and is recorded once it is on");
+    return 0;
+  }
+  if (args.flags["no-wait"] === true) return 0;
+
+  console.error("# the recorder is reading it…");
+  const until = Date.now() + TEACH_WAIT_MS;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 3_000));
+    const memory = await client.runMemory(taught.executionId);
+    const status = memory.extraction?.status;
+    if (status === "done") {
+      const cost = memory.extraction?.costUsd != null ? ` · $${memory.extraction.costUsd.toFixed(2)}` : "";
+      const where = memory.feature ? ` under "${memory.feature.name}" (${memory.feature.id})` : "";
+      console.log(`recorded ${memory.decisions.length} decision${memory.decisions.length === 1 ? "" : "s"}${where}${cost}:`);
+      for (const d of memory.decisions) console.log(`  ${d.id}  ${d.title}`);
+      return 0;
+    }
+    if (status === "skipped" || (status === "failed" && memory.extraction?.error)) {
+      console.log(`the recorder ${status === "skipped" ? "skipped it" : "failed"}: ${memory.extraction?.error ?? "no reason given"}`);
+      if (status === "failed") console.log(`it tries again on its own, up to three times; the run page has "Record again": ${url}`);
+      return 1;
+    }
+  }
+  console.log(`still recording after ${TEACH_WAIT_MS / 60_000} minutes — its decisions will appear on ${url}`);
+  return 0;
+}
+
 async function cmdStatus(args: Args): Promise<number> {
   const client = connect();
   const limit = Number(args.flags.limit ?? 10);
@@ -1032,6 +1124,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdStatus(args);
       case "memory":
         return await cmdMemory(args);
+      case "teach":
+        return await cmdTeach(args);
       case "cancel":
         return await cmdCancel(args);
       case "help":

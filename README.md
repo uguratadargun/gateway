@@ -937,6 +937,22 @@ failed extraction is retried up to three times and can be re-run from the
 run's page. Its model is `memory.model` in Settings (`sonnet` by default) and
 its cost is on the run.
 
+**Teaching work from before.** Work finished before the team used gate has
+no run, so recall cannot find it. `/gate:teach`, run on the finished task's
+branch, fills that in one task at a time: `gate teach` works out the range —
+the fork point from the default branch, or for merged work the point the
+merge brought it in from (`--base` when history cannot say, e.g. a
+fast-forward) — and Claude Code reads the commits, the diff and the code
+around it, asks the person only what the branch cannot tell, and writes the
+account a run's agents would have left (`task`, `plan`, `decisions`,
+`implementation`, `verification`, `pitfalls`, `evidence`). `gate teach
+--account-file` sends it with the commits and the diff; the server keeps it
+as a finished run of `gate:teach`, dated at the branch's last commit, and
+the same recorder writes it in the same format a run gets. Teaching the same
+branch again replaces the earlier teaching; a branch a run already worked on
+is refused unless `--force`. The command waits and prints the decisions it
+wrote.
+
 **Reading.** The shipped `dev`, `dev-super`, `dev-quick` and `blame` pipelines open with
 a `recall` node that searches memory — words, path prefixes, a time — and
 briefs the planner (or the quick implementer) as `recall.brief`: the same
@@ -1339,4 +1355,4 @@ has the new pipeline at their next `gate` command.
 - `src/lib/teams.ts` / `apikeys.ts` / `tenancy.ts` / `def-root.ts` — people, teams, keys-as-identities, and which directory a team's definitions live in
 - `src/app/api/v1/` — the client API: identity, the definition bundle, run registration, progress and stop, and the pool's remaining quota (`/api/v1/usage`)
 - `src/client/` — the CLI that runs a workflow on a developer's machine: the mirror, the HTTP provider onto the gateway, and the reporter · `scripts/build-cli.mjs` bundles it into the plugin
-- `plugins/gate/` — the Claude Code plugin: `/gate:run`, `/gate:design`, the authoring reference and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
+- `plugins/gate/` — the Claude Code plugin: `/gate:run`, `/gate:design`, `/gate:teach`, the authoring reference and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace

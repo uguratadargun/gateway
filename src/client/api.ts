@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
 
+import type { TeachRequest } from "@/lib/client-api-schemas";
 import { GATE_VERSION, isOlderThan, VERSION_HEADERS } from "@/lib/protocol";
 import type { FeatureDetail, MemorySearchRequest, MemorySearchResult } from "@/memory/cards";
 
@@ -276,6 +277,25 @@ export class GateClient {
       if (e instanceof GateApiError && e.status === 404) return null;
       throw e;
     }
+  }
+
+  /** Teaches a finished branch to the team's memory; the run it is kept as. */
+  async teach(req: TeachRequest): Promise<{ executionId: string; replaced: boolean; recording: boolean }> {
+    return (
+      await this.request<{ executionId: string; replaced: boolean; recording: boolean }>("/api/v1/memory/teach", {
+        method: "POST",
+        body: JSON.stringify(req),
+      })
+    ).body;
+  }
+
+  /** What the recorder made of one of this person's runs: the ledger row and the decisions. */
+  async runMemory(executionId: string): Promise<{
+    extraction: { status: string; error: string | null; decisionCount: number; costUsd: number | null } | null;
+    decisions: Array<{ id: string; title: string; outcome: string }>;
+    feature: { id: string; name: string } | null;
+  }> {
+    return (await this.request<any>(`/api/v1/executions/${executionId}/memory`)).body;
   }
 
   async listRuns(limit = 20): Promise<Array<Record<string, any>>> {

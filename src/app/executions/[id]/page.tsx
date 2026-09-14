@@ -20,6 +20,7 @@ import type { WorkflowEvent } from "@/events/types";
 import { stepFailure } from "@/executions/failure";
 import { formatPoints, quotaShare } from "@/executions/quota";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
+import { TEACH_WORKFLOW_ID } from "@/memory/types";
 
 interface Detail {
   execution: ExecutionRecord;
@@ -267,7 +268,10 @@ export default function ExecutionDetailPage() {
           </Link>
           <div>
             <h1 className="text-lg font-semibold">
-              {ex ? (
+              {ex?.workflowId === TEACH_WORKFLOW_ID ? (
+                // Not a workflow: a branch taught to memory, with nothing to link to.
+                <span title={`taught from ${ex.workspace?.branch ?? "a branch"} with gate teach`}>{ex.workflowId}</span>
+              ) : ex ? (
                 <Link href={`/workflows/${ex.workflowId}`} className="underline-offset-4 hover:underline">
                   {ex.workflowId}
                 </Link>
@@ -323,7 +327,9 @@ export default function ExecutionDetailPage() {
               className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground"
               title={`this run worked on ${ex.client?.host ?? "another machine"}`}
             >
-              gate run {ex.workflowId} — on {ex.client?.host ?? "that machine"}
+              {ex.workflowId === TEACH_WORKFLOW_ID
+                ? `gate teach — ${ex.workspace?.branch ?? "its branch"}, on ${ex.client?.host ?? "that machine"}`
+                : `gate run ${ex.workflowId} — on ${ex.client?.host ?? "that machine"}`}
             </code>
           )}
           {ex && !running && ex.origin !== "local" && (
