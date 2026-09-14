@@ -156,6 +156,26 @@ describe("the recorder", () => {
     expect(good.calls).toHaveLength(1);
   });
 
+  it("says an answer was cut off, rather than blaming its shape", async () => {
+    team();
+    aRun("rec-7", "acme-android");
+    // What a truncated answer looks like: valid JSON up to the cut, then nothing.
+    const cut = new FakeModelProvider(() => ({
+      text: '{"decisions":[{"title":"Queue edits locally","context":"Edits were lo',
+      stopReason: "max_tokens" as const,
+      usage: { inputTokens: 20_000, outputTokens: 48_000, cacheReadTokens: 0 },
+    }));
+    expect(await extractRun("rec-7", cut, { model: "sonnet" })).toMatchObject({ status: "failed", decisionCount: 0 });
+
+    // The reason names the limit. Reporting it as a shape fault sent the person
+    // looking for a fault in their own account, which is where this came from.
+    const row = getExtraction("rec-7")!;
+    expect(row.error).toMatch(/output limit/);
+    expect(row.error).not.toMatch(/shape/);
+    // And it is still charged for and still retryable.
+    expect(row).toMatchObject({ status: "failed", attempts: 1, outputTokens: 48_000 });
+  });
+
   it("drains whatever is waiting, one pass at a time", async () => {
     team();
     aRun("rec-5", "acme-desktop");

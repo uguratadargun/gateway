@@ -40,6 +40,13 @@ const MAX_STEP_CHARS = 12_000;
 const MAX_TAUGHT_STEP_CHARS = 50_000;
 /** And of the whole run. */
 const MAX_TOTAL_CHARS = 120_000;
+/**
+ * The recorder's own answer: a feature, an implementation summary and up to
+ * thirty decisions, each with context, rationale, alternatives and
+ * consequences. At 16k this ran out mid-array on a richly taught branch and
+ * the truncation was reported as a formatting fault, so nothing was recorded.
+ */
+const MAX_RECORDER_OUTPUT_TOKENS = 48_000;
 
 const touchSchema = z.object({ kind: z.enum(["file", "area"]).default("file"), ref: z.string().min(1).max(500) });
 
@@ -282,7 +289,7 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
       model: opts.model,
       system: RECORDER_SYSTEM,
       messages: [{ role: "user", content: prompt }],
-      maxTokens: 16_000,
+      maxTokens: MAX_RECORDER_OUTPUT_TOKENS,
       context: { executionId, nodeId: NODE_ID, workflowId: execution.workflowId },
     });
     const usage = {
@@ -305,6 +312,15 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
         { model: result.model, cacheTtl: loadSettings().promptCache.ttl },
       ),
     };
+
+    // A truncated answer is never valid JSON; say why instead of blaming the
+    // model's formatting, which sent the person looking for a fault in their
+    // own account. Same reading as the agent executor's.
+    if (result.stopReason === "max_tokens") {
+      const error = `the recorder hit its output limit (${MAX_RECORDER_OUTPUT_TOKENS} max tokens) and its answer was cut off — raise MAX_RECORDER_OUTPUT_TOKENS, or teach this branch with fewer decisions`;
+      settleExtraction(executionId, { status: "failed", error, ...usage }, now());
+      return { status: "failed", reason: error, decisionCount: 0 };
+    }
 
     let answer: RecorderAnswer;
     try {

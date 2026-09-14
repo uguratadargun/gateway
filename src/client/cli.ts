@@ -1036,7 +1036,11 @@ async function cmdTeach(args: Args): Promise<number> {
       return 1;
     }
   }
-  console.log(`still recording after ${TEACH_WAIT_MS / 60_000} minutes — its decisions will appear on ${url}`);
+  // Not a promise that it worked: the recorder can still fail after we stop
+  // watching, and the run's own "completed" says nothing about the recording.
+  // Say the outcome is unknown and how to settle it, or the failure is silent.
+  console.log(`still recording after ${TEACH_WAIT_MS / 60_000} minutes — the outcome is not known yet`);
+  console.log(`check it on ${url}, or with \`gate memory search --path <a changed directory>\` once it settles`);
   return 0;
 }
 

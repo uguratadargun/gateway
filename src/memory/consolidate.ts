@@ -25,6 +25,8 @@ import type { Decision, MemoryScope } from "./types";
 const NODE_ID = "memory-consolidator";
 const MAX_DECISION_CHARS = 6_000;
 const MAX_TOTAL_CHARS = 150_000;
+/** Its answer rewrites a feature's whole page; 8k ran out on a long feature. */
+const MAX_CONSOLIDATOR_OUTPUT_TOKENS = 24_000;
 
 const answerSchema = z.object({
   summary: z.string().max(6_000).default(""),
@@ -190,7 +192,7 @@ export async function consolidateImplementation(
       model,
       system: CONSOLIDATOR_SYSTEM,
       messages: [{ role: "user", content: prompt }],
-      maxTokens: 8_000,
+      maxTokens: MAX_CONSOLIDATOR_OUTPUT_TOKENS,
       context: { nodeId: NODE_ID },
     });
     const usage = {
@@ -210,6 +212,14 @@ export async function consolidateImplementation(
         { model: result.model, cacheTtl: loadSettings().promptCache.ttl },
       ),
     };
+    // Cut off mid-JSON reads as a formatting fault unless it is named; see the
+    // same check in the recorder and the agent executor.
+    if (result.stopReason === "max_tokens") {
+      const error = `the consolidator hit its output limit (${MAX_CONSOLIDATOR_OUTPUT_TOKENS} max tokens) and its answer was cut off`;
+      settle({ status: "failed", error, ...usage });
+      return { status: "failed", reason: error, decisionsRead: decisions.length, superseded: 0 };
+    }
+
     let answer: ConsolidationAnswer;
     try {
       answer = parseConsolidatorAnswer(result.text);
