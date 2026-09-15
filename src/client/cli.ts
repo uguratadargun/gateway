@@ -74,7 +74,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
 
-interface Args {
+export interface Args {
   command: string;
   positional: string[];
   flags: Record<string, string | boolean>;
@@ -96,7 +96,7 @@ const VALUE_FLAGS = new Set([
 /** Flags that collect when repeated, rather than the last one winning. */
 const REPEATABLE_FLAGS = new Set(["input", "path"]);
 
-function parseArgs(argv: string[]): Args {
+export function parseArgs(argv: string[]): Args {
   const [command = "help", ...rest] = argv;
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -529,10 +529,14 @@ async function confirmTrust(workflowId: string, sha: string, team: string, assum
   return true;
 }
 
-function parseInputs(flags: Args["flags"], trailing: string[]): Record<string, unknown> {
+export function parseInputs(flags: Args["flags"], trailing: string[]): Record<string, unknown> {
   const input: Record<string, unknown> = {};
   if (typeof flags.input === "string") {
-    for (const pair of flags.input.split(" ")) {
+    // Two shapes arrive here and both are used. `--input a=1 --input b=2`
+    // repeats the flag, and `parseArgs` joins those on NUL; `--input "a=1 b=2"`
+    // groups them into one quoted value separated by spaces. Splitting on only
+    // one of the two silently folds every extra pair into the first value.
+    for (const pair of flags.input.split(/[\u0000 ]+/).filter(Boolean)) {
       const [key, ...rest] = pair.split("=");
       if (!key || !rest.length) die(`--input must be key=value (got "${pair}")`);
       input[key] = rest.join("=");
