@@ -141,6 +141,48 @@ describe("decisions in a scope", () => {
     expect(searchDecisions(android(), { paths: ["sync"], asOf: 6_000 }).map((h) => h.executionId)).toEqual(["run-android-2"]);
   });
 
+  it("will not let one team close another's decision, even inside the family", () => {
+    seed();
+    replaceDecisions(
+      { executionId: "run-android-9", teamId: "android", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 7_000 },
+      [{ title: "Encode envelopes with protobuf", context: "", decision: "protobuf", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "envelope" }] }],
+      7_100,
+    );
+    const [theirs] = decisionsForExecution("run-android-9");
+    replaceDecisions(
+      { executionId: "run-desktop-9", teamId: "desktop", userId: "u1", featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 8_000 },
+      [{ title: "Encode envelopes with JSON", context: "", decision: "json", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "envelope" }], supersedes: theirs.id }],
+      8_100,
+    );
+    // The desktop run reads android's decision — that is what the family scope
+    // is for — but the link is refused and android's decision still holds.
+    expect(decisionsForExecution("run-desktop-9")[0].supersedes).toBeNull();
+    expect(getDecision(theirs.id)!.validTo).toBeNull();
+    // Both still hold: the disagreement is visible to the family rather than
+    // settled by whoever recorded last.
+    expect(searchDecisions(android(), { paths: ["envelope"], asOf: 9_000 }).map((h) => h.executionId).sort()).toEqual([
+      "run-android-9",
+      "run-desktop-9",
+    ]);
+  });
+
+  it("still lets a team supersede its own decision from a later run", () => {
+    seed();
+    replaceDecisions(
+      { executionId: "run-desktop-10", teamId: "desktop", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 7_000 },
+      [{ title: "Poll the desktop inbox", context: "", decision: "poll", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "inbox" }] }],
+      7_100,
+    );
+    const [mine] = decisionsForExecution("run-desktop-10");
+    replaceDecisions(
+      { executionId: "run-desktop-11", teamId: "desktop", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 8_000 },
+      [{ title: "Push to the desktop inbox", context: "", decision: "push", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "inbox" }], supersedes: mine.id }],
+      8_100,
+    );
+    expect(decisionsForExecution("run-desktop-11")[0].supersedes).toBe(mine.id);
+    expect(getDecision(mine.id)!.validTo).toBe(8_000);
+  });
+
   it("rewrites a run's record whole, and a retraction hides it", () => {
     seed();
     replaceDecisions(

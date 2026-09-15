@@ -306,6 +306,24 @@ function writeDecisionIndex(d: Decision): void {
 }
 
 /**
+ * Which decision a run on `teamId` may close by superseding it: one of its
+ * own, and only that.
+ *
+ * The recorder is shown the whole family's decisions so that it can write a
+ * decision that knows about its siblings — which also puts a sibling team's
+ * id within reach of `supersedes`, and closing that row would end another
+ * team's decision with nobody on that team ever seeing it happen. A run may
+ * disagree with a sibling; it says so through the dispute, which is a
+ * proposal that team can read and answer, not a `valid_to` written behind
+ * their back.
+ */
+function supersedableBy(teamId: string, id: string | null | undefined): string | null {
+  if (!id) return null;
+  const target = getDecision(id);
+  return target && target.teamId === teamId ? id : null;
+}
+
+/**
  * Writes a run's decisions, replacing what an earlier extraction of the same
  * run wrote. One transaction: a run's record is whole or absent, never half.
  */
@@ -338,7 +356,7 @@ export function replaceDecisions(
       // unique: two runs may share a prefix, so the tail is random and checked.
       let id = `${run.executionId.slice(0, 8)}-${n + 1}-${randomBytes(4).toString("hex")}`;
       while (getDecision(id)) id = `${run.executionId.slice(0, 8)}-${n + 1}-${randomBytes(4).toString("hex")}`;
-      const supersedes = draft.supersedes && getDecision(draft.supersedes) ? draft.supersedes : null;
+      const supersedes = supersedableBy(run.teamId, draft.supersedes);
       const d: Decision = {
         id,
         executionId: run.executionId,
