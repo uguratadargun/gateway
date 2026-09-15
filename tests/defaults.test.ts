@@ -90,12 +90,13 @@ describe("restoring the shipped definitions", () => {
 });
 
 describe("what the shipped agents declare", () => {
-  it("is a planner, an implementer, a verifier and a reviewer, their super-* twins following skills, and three gates to the person", () => {
+  it("is a planner, an implementer, a verifier and a reviewer, their super-* twins following skills, and four gates to the person", () => {
     ensureDefaultAgents();
     const byId = new Map(listAgents().agents.map((a) => [a.id, a]));
     expect([...byId.keys()].sort()).toEqual([
       "acceptance",
       "clarify",
+      "conflict-review",
       "implementer",
       "investigator",
       "plan-review",
@@ -279,10 +280,24 @@ output:
   type: json
   schema:
     questions: string
+    conflictKey: string
     plan: string
     planFile: string
+    conflicts: "object[]?"
 ---
 Plan {{input.task}} {{inputs.clarify.answers}} {{inputs.plan-review.feedback}} {{inputs.reviewer.feedback}} {{inputs.acceptance.requests}} {{inputs.implementer.summary}}
+`,
+    "conflict-review": `---
+name: Cross-team objection
+inputs: [planner.conflicts, planner.conflictKey, visits.planner]
+output:
+  type: json
+  schema:
+    decision: string
+    resolved: "object[]"
+    note: "string?"
+---
+Ask about {{inputs.planner.conflictKey}} raised on visit {{inputs.visits.planner}}
 `,
     clarify: `---
 name: Clarify
@@ -389,7 +404,34 @@ Try {{inputs.implementer.summary}}
   const VERIFIED = () => JSON.stringify({ verified: true, evidence: "npm test: 12 passed, 0 failed" });
   const APPROVED = () => JSON.stringify({ verdict: "approved", replan: false });
   const APPROVE = () => JSON.stringify({ decision: "approve" });
-  const PLAN = (visit: number) => JSON.stringify({ questions: "", plan: `plan ${visit}`, planFile: "docs/plans/2026-09-08-thing.md" });
+  /** The planner finds another team's decision unworkable and stops there. */
+  const OBJECT_TO = () =>
+    JSON.stringify({
+      questions: "",
+      conflictKey: "pq-kem",
+      plan: "",
+      planFile: "",
+      conflicts: [
+        {
+          conflictKey: "pq-kem",
+          targetTeamId: "desktop",
+          title: "the KEM choice does not fit our handshake",
+          decisionSnapshot: "desktop settled on X25519+Kyber768 in the client",
+          rationale: "our handshake cannot carry the second key share in the first flight",
+          proposal: "move the share to the second flight",
+          revision: "revise the client handshake before shipping",
+          paths: ["src/crypto"],
+        },
+      ],
+    });
+
+  const CONFIRM_OBJECTION = () =>
+    JSON.stringify({ decision: "confirm", resolved: [{ sourceNodeId: "planner", sourceVisit: 1, conflictKey: "pq-kem", decision: "confirm", note: "yes, they have to revise" }] });
+
+  const REJECT_OBJECTION = () =>
+    JSON.stringify({ decision: "reject", resolved: [{ sourceNodeId: "planner", sourceVisit: 1, conflictKey: "pq-kem", decision: "reject", note: "the second flight is fine" }], note: "the second flight is fine" });
+
+  const PLAN = (visit: number) => JSON.stringify({ questions: "", conflictKey: "", plan: `plan ${visit}`, planFile: "docs/plans/2026-09-08-thing.md" });
 
   function fakeTeam(
     reviews: (visit: number) => string,
@@ -398,6 +440,7 @@ Try {{inputs.implementer.summary}}
     planReviews: (visit: number) => string = APPROVE,
     clarifies: (visit: number) => string = () => JSON.stringify({ answers: "A: the blue one." }),
     verifies: (visit: number) => string = VERIFIED,
+    conflictReviews: (visit: number) => string = CONFIRM_OBJECTION,
   ) {
     const visits: Record<string, number> = {};
     return new FakeModelProvider((req) => {
@@ -408,6 +451,8 @@ Try {{inputs.implementer.summary}}
           return plans(visit);
         case "clarify":
           return clarifies(visit);
+        case "conflict-review":
+          return conflictReviews(visit);
         case "plan-review":
           return planReviews(visit);
         case "implementer":
@@ -492,7 +537,7 @@ Try {{inputs.implementer.summary}}
     const provider = fakeTeam(
       (visit) => (visit === 1 ? JSON.stringify({ verdict: "changes-requested", replan: true, feedback: "Wrong seam." }) : APPROVED()),
       SHIP,
-      (visit) => (visit === 2 ? JSON.stringify({ questions: "Q: keep the old API?", plan: "", planFile: "" }) : PLAN(visit)),
+      (visit) => (visit === 2 ? JSON.stringify({ questions: "Q: keep the old API?", conflictKey: "", plan: "", planFile: "" }) : PLAN(visit)),
     );
     const { runCommand } = fakeGit({ staged: true });
 
@@ -671,7 +716,7 @@ Try {{inputs.implementer.summary}}
     const provider = fakeTeam(
       APPROVED,
       SHIP,
-      (visit) => (visit === 1 ? JSON.stringify({ questions: "Q: which button?", plan: "", planFile: "" }) : PLAN(visit)),
+      (visit) => (visit === 1 ? JSON.stringify({ questions: "Q: which button?", conflictKey: "", plan: "", planFile: "" }) : PLAN(visit)),
     );
     const { ran, runCommand } = fakeGit({ staged: true });
 
@@ -716,6 +761,65 @@ Try {{inputs.implementer.summary}}
     expect(provider.callsFor("plan-review")[1].messages[0].content).toContain("plan 2");
   });
 
+  // The case the whole cross-team path exists for: the planner reads a
+  // decision another team already made, finds this change cannot live with
+  // it, and says so instead of planning around it. Nothing is built, and
+  // nothing goes to the other team until the person says the objection holds.
+  it("stops the run when the person confirms the planner's objection to another team's decision", async () => {
+    const workflow = standIn();
+
+    const provider = fakeTeam(APPROVED, SHIP, OBJECT_TO);
+    const { runCommand } = fakeGit({ staged: true });
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.error).toBeNull();
+    expect(terminalOf(events)).toBe("blocked-by-objection");
+    // Not one line of it was built, and the person was never shown a plan:
+    // there is no plan to show until the objection is settled.
+    expect(state.visitCounts.implementer).toBeUndefined();
+    expect(state.visitCounts["plan-review"]).toBeUndefined();
+    // The node that asked got the planner's own visit number, which is what
+    // joins the person's answer to the objection the planner raised.
+    expect(provider.callsFor("conflict-review")[0].messages[0].content).toContain("pq-kem raised on visit 1");
+  });
+
+  it("carries on with the plan when the person says the objection does not hold", async () => {
+    const workflow = standIn();
+
+    // Objects on the first pass; once told the objection is wrong, plans.
+    const provider = fakeTeam(APPROVED, SHIP, (visit) => (visit === 1 ? OBJECT_TO() : PLAN(visit)), APPROVE, undefined, VERIFIED, REJECT_OBJECTION);
+    const { runCommand } = fakeGit({ staged: true });
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.error).toBeNull();
+    expect(terminalOf(events)).toBe("done");
+    // Asked once, answered once: a rejected objection is not put again.
+    expect(state.visitCounts["conflict-review"]).toBe(1);
+    expect(state.visitCounts.implementer).toBe(1);
+  });
+
+  it("holds the objection rather than deciding it when nobody is there to answer", async () => {
+    const workflow = standIn();
+
+    const provider = fakeTeam(APPROVED, SHIP, OBJECT_TO, APPROVE, undefined, VERIFIED, () =>
+      JSON.stringify({ decision: "hold", resolved: [] }),
+    );
+    const { runCommand } = fakeGit({ staged: true });
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    // An unanswered objection is neither confirmed nor waved through: the run
+    // stops with it on the record, and the other team hears nothing.
+    expect(state.status).toBe("completed");
+    expect(terminalOf(events)).toBe("awaiting-objection-answer");
+    expect(state.visitCounts.implementer ?? 0).toBe(0);
+  });
+
   it("ends with the plan written and nothing built when nobody is there to approve it", async () => {
     const workflow = standIn();
 
@@ -737,7 +841,7 @@ Try {{inputs.implementer.summary}}
     const provider = new FakeModelProvider((req) => {
       switch (req.context?.nodeId) {
         case "planner":
-          return JSON.stringify({ questions: "", plan: "plan", planFile: "docs/plans/thing.md" });
+          return JSON.stringify({ questions: "", conflictKey: "", plan: "plan", planFile: "docs/plans/thing.md" });
         case "plan-review":
           return JSON.stringify({ decision: "approve" });
         case "implementer":
@@ -767,6 +871,7 @@ describe("the shipped super pipeline", () => {
     expect(agentsOf(sup)).toEqual([
       ["recall", "recall"],
       ["planner", "super-planner"],
+      ["conflict-review", "conflict-review"],
       ["clarify", "clarify"],
       ["plan-review", "plan-review"],
       ["implementer", "super-implementer"],

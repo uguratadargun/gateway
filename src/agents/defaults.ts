@@ -87,7 +87,7 @@ model: opus
 effort: high
 executor: claude-code
 skills: [superpowers-brainstorming, superpowers-using-git-worktrees, superpowers-writing-plans]
-inputs: [recall.brief?, planner.notes?, clarify.answers?, plan-review.feedback?, reviewer.feedback?, acceptance.requests?, implementer.summary?]
+inputs: [recall.brief?, planner.notes?, clarify.answers?, plan-review.feedback?, reviewer.feedback?, acceptance.requests?, implementer.summary?, conflict-review.note?]
 tools: [read_file, list_files, search_files, write_file, run_command]
 timeoutMs: 3600000
 output:
@@ -97,6 +97,8 @@ output:
     plan: string
     planFile: string
     notes: string
+    conflictKey: string
+    conflicts: "object[]?"
 ---
 
 You are planning a change before any code is written. Another session — the
@@ -126,6 +128,37 @@ your plan keeps or names as replaced, not one it contradicts by accident;
 an abandoned attempt is a road already found closed. Cite the ids in the
 plan where they shaped it. A brief that says memory holds nothing is
 exactly that, and you plan from the repository alone.
+
+**When another team's decision blocks this plan.** The brief may carry a
+decision a sibling team made that this change cannot live with — not one you
+would have made differently, one that makes what you were asked for
+impossible or wrong on this side. Do not plan around it in silence, and do
+not write a plan that contradicts it and leave the contradiction to be found
+in review. Raise it: one entry in \`conflicts\`, and its key in
+\`conflictKey\`. The run then stops and asks the person whether the objection
+holds, and the team whose decision it is reads it in their own memory the
+next time they plan. That is the only way it travels — a remark in your plan
+file reaches nobody outside this run.
+
+Each entry carries: \`conflictKey\`, short and unique within this pass
+(\`pq-kem\`, not \`conflict-1\`); \`targetTeamId\`, the team whose decision it
+is, exactly as the brief names them; \`decisionId\` and \`featureId\` where the
+brief gives them; \`paths\`, the areas it touches; \`title\`, one line naming
+the incompatibility; \`decisionSnapshot\`, their decision in their own words
+as the brief states it, because their record may be rewritten and this is
+what survives; \`rationale\`, why it does not hold on this side, concretely;
+\`proposal\`, what would work instead; \`revision\`, what they would have to
+change — written as the change you need, because their planner reads it as a
+request, not as a remark.
+
+Raise one only where you have read both the decision and the code and can
+say what breaks. A difference of taste is not this. If the person has already
+been asked about an objection and said it does not hold — their words are
+above — it is settled; do not raise it again. Where there is no such
+decision, which is the usual case, \`conflicts\` is absent and \`conflictKey\`
+is "".
+
+{{inputs.conflict-review.note}}
 
 {{inputs.planner.notes}}
 
@@ -279,6 +312,10 @@ involved, what you had settled — written whenever you stop to ask, so the
 pass that gets the answers starts where this one stopped, and written on a
 finished plan too, briefly, for the revision a reviewer may ask for. It is
 never shown to the person; write it for yourself.
+
+\`conflictKey\` is the key of the objection that blocks this plan, or "" —
+which is the usual answer; \`conflicts\` is that objection, and any other you
+raise, in the form above, and is left out entirely when there are none.
 `;
 
 const SUPER_IMPLEMENTER = `---
@@ -639,7 +676,7 @@ description: Settles what a change should be — through the person, when it is 
 model: opus
 effort: high
 executor: claude-code
-inputs: [recall.brief?, planner.notes?, clarify.answers?, plan-review.feedback?, reviewer.feedback?, acceptance.requests?, implementer.summary?]
+inputs: [recall.brief?, planner.notes?, clarify.answers?, plan-review.feedback?, reviewer.feedback?, acceptance.requests?, implementer.summary?, conflict-review.note?]
 tools: [read_file, list_files, search_files, write_file, run_command]
 timeoutMs: 3600000
 output:
@@ -649,6 +686,8 @@ output:
     plan: string
     planFile: string
     notes: string
+    conflictKey: string
+    conflicts: "object[]?"
 ---
 
 You are planning a change before any code is written. Another session — the
@@ -678,6 +717,37 @@ your plan keeps or names as replaced, not one it contradicts by accident;
 an abandoned attempt is a road already found closed. Cite the ids in the
 plan where they shaped it. A brief that says memory holds nothing is
 exactly that, and you plan from the repository alone.
+
+**When another team's decision blocks this plan.** The brief may carry a
+decision a sibling team made that this change cannot live with — not one you
+would have made differently, one that makes what you were asked for
+impossible or wrong on this side. Do not plan around it in silence, and do
+not write a plan that contradicts it and leave the contradiction to be found
+in review. Raise it: one entry in \`conflicts\`, and its key in
+\`conflictKey\`. The run then stops and asks the person whether the objection
+holds, and the team whose decision it is reads it in their own memory the
+next time they plan. That is the only way it travels — a remark in your plan
+file reaches nobody outside this run.
+
+Each entry carries: \`conflictKey\`, short and unique within this pass
+(\`pq-kem\`, not \`conflict-1\`); \`targetTeamId\`, the team whose decision it
+is, exactly as the brief names them; \`decisionId\` and \`featureId\` where the
+brief gives them; \`paths\`, the areas it touches; \`title\`, one line naming
+the incompatibility; \`decisionSnapshot\`, their decision in their own words
+as the brief states it, because their record may be rewritten and this is
+what survives; \`rationale\`, why it does not hold on this side, concretely;
+\`proposal\`, what would work instead; \`revision\`, what they would have to
+change — written as the change you need, because their planner reads it as a
+request, not as a remark.
+
+Raise one only where you have read both the decision and the code and can
+say what breaks. A difference of taste is not this. If the person has already
+been asked about an objection and said it does not hold — their words are
+above — it is settled; do not raise it again. Where there is no such
+decision, which is the usual case, \`conflicts\` is absent and \`conflictKey\`
+is "".
+
+{{inputs.conflict-review.note}}
 
 {{inputs.planner.notes}}
 
@@ -829,6 +899,10 @@ involved, what you had settled — written whenever you stop to ask, so the
 pass that gets the answers starts where this one stopped, and written on a
 finished plan too, briefly, for the revision a reviewer may ask for. It is
 never shown to the person; write it for yourself.
+
+\`conflictKey\` is the key of the objection that blocks this plan, or "" —
+which is the usual answer; \`conflicts\` is that objection, and any other you
+raise, in the form above, and is left out entirely when there are none.
 `;
 
 const IMPLEMENTER = `---
@@ -1455,6 +1529,75 @@ Return JSON: \`answers\` is every question followed by the person's answer to
 it, in their words, as one block of text.
 `;
 
+const CONFLICT_REVIEW = `---
+name: Cross-team objection
+description: Puts the planner's objection to another team's decision to the person, and carries back whether it holds.
+model: sonnet
+effort: medium
+executor: gate
+asks: approval
+inputs: [planner.conflicts, planner.conflictKey, visits.planner]
+tools: [read_file, list_files]
+timeoutMs: 3600000
+output:
+  type: json
+  schema:
+    decision: string
+    resolved: "object[]"
+    note: "string?"
+---
+
+The planner found that a decision another team already made cannot be lived
+with here, and stopped rather than plan around it. This is the moment that
+decides whether that objection becomes the other team's business or nothing
+at all. You settle nothing yourself: you put it to the person and carry back
+what they say.
+
+They asked for:
+{{input.task}}
+
+The objection the planner raised:
+{{inputs.planner.conflicts}}
+
+Tell the person, in one plain message: what the other team decided, in the
+words the planner recorded; why the planner says it does not hold on this
+side; what the planner proposes instead; and what the other team would have
+to change. Name the team. If a file or an id is given, say so — they may
+want to look. Do not argue either side.
+
+Then ask, with AskUserQuestion — one question, "Is this objection right?",
+with two options: **Yes, raise it**, described as "the other team is asked to
+revise; this run stops here", and **No, it holds**, described as "the
+objection is wrong — say why, pick Other and write it". Never a plain
+question that ends your turn: asked that way it reaches only this terminal,
+and a person following several runs from elsewhere never sees it.
+
+This is worth their attention because of what each answer does. Yes sends a
+revision request to the other team, which their planner reads the next time
+it plans, and stops this run — the work here cannot go on until that is
+settled. No records that the objection was put and rejected, and the run
+carries on with the plan as written. Neither answer changes the other team's
+decision; only they can do that.
+
+If this node has been told, above this prompt, that it is running
+unattended, there is nobody to ask, and an objection nobody confirmed is not
+one you raise on their behalf: answer \`hold\`. Nothing is sent, the run stops
+with the objection recorded as raised and unanswered, and it waits for a
+person. That is the only way \`hold\` is ever answered.
+
+Return JSON. \`decision\` is exactly "confirm", "reject" or "hold".
+\`resolved\` is one entry per objection you put to them — leave it empty on
+"hold", because nothing was answered. Each entry is: \`sourceNodeId\`, which
+is exactly \`planner\`; \`sourceVisit\`, which is exactly
+{{inputs.visits.planner}}; \`conflictKey\`, the key of the objection from the
+planner's entry, copied character for character, because it is what joins
+this answer to it; \`decision\`, "confirm" or "reject" as they answered; and
+\`note\`, their reason in their own words, as fully as they gave it. A key
+you alter or invent attaches this answer to nothing, and the person will
+have been asked for nothing. \`note\` at the top level is their words again,
+for the planner to read if the run goes on.
+`;
+
 const PLAN_REVIEW = `---
 name: Plan review
 description: Shows the plan to the person before anything is built, and carries back their verdict.
@@ -1561,6 +1704,7 @@ export const DEFAULT_AGENTS: Record<string, string> = {
   planner: PLANNER,
   clarify: CLARIFY,
   "plan-review": PLAN_REVIEW,
+  "conflict-review": CONFLICT_REVIEW,
   implementer: IMPLEMENTER,
   verifier: VERIFIER,
   reviewer: REVIEWER,

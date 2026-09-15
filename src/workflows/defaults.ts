@@ -127,7 +127,54 @@ nodes:
     type: agent
     agent: planner
     label: Plan
-    next: plan-check
+    next: conflict-check
+
+  # Before anything else the planner produced: did it find that a decision
+  # another team already made cannot be lived with here? That outranks the
+  # questions and the plan, because no amount of either gets past it.
+  #
+  # The test is the key, not the list, and it is written as "no key" rather
+  # than "key is not empty". Two reasons, both of them routing bugs avoided:
+  # the conflicts field is an array, and the condition language compares
+  # strings and numbers, so a comparison against an empty array is not the
+  # test it looks like; and a team whose own planner agent predates all of
+  # this returns no such field at all, where "not the empty string" would be
+  # true and send every ordinary run down this edge. Absent and empty both
+  # have to mean "nothing in the way", which is what negation gives.
+  - id: conflict-check
+    type: condition
+    label: Does another team's decision block this?
+    edges:
+      - when: "!outputs.planner.conflictKey"
+        to: plan-check
+        label: nothing in the way
+      - to: conflict-review
+        label: objects to another team's decision
+
+  # The person decides whether the objection is real. Nothing reaches the
+  # other team until they say so, and their answer is what carries it: a
+  # confirmation here is what the other team's planner reads in its own
+  # memory, next time it plans.
+  - id: conflict-review
+    type: agent
+    agent: conflict-review
+    label: Put the objection to the person
+    next: conflict-decision
+
+  - id: conflict-decision
+    type: condition
+    label: Does the objection hold?
+    edges:
+      - when: outputs.conflict-review.decision == "confirm"
+        to: blocked-by-objection
+        label: confirmed — the other team is asked to revise
+      - when: outputs.conflict-review.decision == "reject"
+        to: plan-check
+        label: the objection does not hold
+      # "hold", and anything else: nobody was there to ask. The objection
+      # stays raised and unanswered rather than being sent on nobody's word.
+      - to: awaiting-objection-answer
+        label: nobody to ask
 
   - id: plan-check
     type: condition
@@ -375,6 +422,20 @@ nodes:
   - id: awaiting-plan-approval
     type: terminal
     label: Plan written, awaiting your approval before anything is built
+    status: completed
+
+  # The run stops here on purpose. The work cannot go on until the other team
+  # revises, and building against a decision this team has formally objected
+  # to would be building something already known not to fit. Their planner
+  # reads the objection the next time it plans.
+  - id: blocked-by-objection
+    type: terminal
+    label: Stopped — another team was asked to revise a decision this change depends on
+    status: completed
+
+  - id: awaiting-objection-answer
+    type: terminal
+    label: Objection raised, awaiting your answer before another team is asked
     status: completed
 
   - id: nothing-changed
