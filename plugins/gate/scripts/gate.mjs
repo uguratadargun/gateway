@@ -6,7 +6,7 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { execFileSync as execFileSync5 } from "node:child_process";
+import { execFileSync as execFileSync6 } from "node:child_process";
 import { appendFileSync as appendFileSync2, existsSync as existsSync16, mkdirSync as mkdirSync13, readFileSync as readFileSync13, writeFileSync as writeFileSync11 } from "node:fs";
 import { homedir as homedir8, hostname as hostname4 } from "node:os";
 import { basename as basename2, join as join17, resolve as resolve6 } from "node:path";
@@ -7850,7 +7850,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.36.2";
+var GATE_VERSION = "0.37.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -8725,6 +8725,281 @@ function decodeConnectionToken(value) {
   return { url: u.replace(/\/+$/, ""), key: k };
 }
 
+// src/repos/detect.ts
+import { existsSync as existsSync6, readFileSync as readFileSync5 } from "node:fs";
+import { join as join7 } from "node:path";
+var LINKED_DIRECTORIES = ["node_modules", "vendor", ".venv"];
+function linkedDirectories(root) {
+  return LINKED_DIRECTORIES.filter((d) => existsSync6(join7(root, d)));
+}
+
+// src/repos/publish.ts
+import { execFileSync } from "node:child_process";
+var PUSH_TIMEOUT_MS = 5 * 6e4;
+function branchAllowed(branch, policy) {
+  const p = policy.trim() === "*" ? "**" : policy.trim();
+  if (!p) return false;
+  const pattern = p.split(/(\*\*|\*)/).map((part) => part === "**" ? "[\\s\\S]*" : part === "*" ? "[^/]*" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("");
+  return new RegExp(`^${pattern}$`).test(branch);
+}
+function git(cwd, args, timeout = 3e4) {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout }).trim();
+}
+function gitMessage(e) {
+  const err = e;
+  return (err.stderr || err.message || "").trim().split("\n").slice(-3).join(" ").slice(0, 400);
+}
+function publishBranch(root, branch, target) {
+  if (!target?.remote.trim()) {
+    return { ok: false, code: "no-target", note: "this repository has no publication remote, so the branch stays local" };
+  }
+  if (!branchAllowed(branch, target.branchPolicy)) {
+    return {
+      ok: false,
+      code: "policy",
+      note: `branch ${branch} is outside what this repository publishes (${target.branchPolicy || "nothing"})`
+    };
+  }
+  const ref = `refs/heads/${branch}`;
+  try {
+    git(root, ["push", target.remote, `HEAD:${ref}`], PUSH_TIMEOUT_MS);
+  } catch (e) {
+    return { ok: false, code: "push-failed", note: `could not publish ${branch} to ${target.remote}: ${gitMessage(e)}` };
+  }
+  let remoteSha = "";
+  try {
+    remoteSha = git(root, ["ls-remote", target.remote, ref]).split(/\s+/)[0] ?? "";
+  } catch (e) {
+    return { ok: false, code: "not-verified", note: `${branch} was pushed to ${target.remote} but could not be read back: ${gitMessage(e)}` };
+  }
+  if (!/^[0-9a-f]{7,40}$/.test(remoteSha)) {
+    return { ok: false, code: "not-verified", note: `${target.remote} does not report holding ${ref} after the push` };
+  }
+  return {
+    ok: true,
+    published: { ref, commit: remoteSha, at: Date.now() },
+    note: `published ${branch} to ${target.remote} at ${remoteSha.slice(0, 8)}`
+  };
+}
+function checkpointWork(root, note, exclude = []) {
+  if (!git(root, ["status", "--porcelain"]).length) return null;
+  git(root, ["add", "-A", "--", ".", ...exclude.map((d) => `:(exclude)${d}`)]);
+  if (!git(root, ["diff", "--cached", "--name-only"]).length) return null;
+  let identity = [];
+  try {
+    git(root, ["config", "user.email"]);
+  } catch {
+    identity = ["-c", "user.name=gate", "-c", "user.email=gate@localhost"];
+  }
+  git(root, [...identity, "commit", "--no-verify", "-q", "-m", `gate checkpoint: ${note}`]);
+  return git(root, ["rev-parse", "HEAD"]);
+}
+
+// src/runtime/workspace.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { existsSync as existsSync7, lstatSync as lstatSync2, mkdirSync as mkdirSync6, rmSync as rmSync4, symlinkSync } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { dirname, join as join8, resolve as resolve3 } from "node:path";
+var MAX_LISTED_FILES = 200;
+function workspacesDir() {
+  return join8(process.env.GATE_HOME || join8(homedir3(), ".gate"), "workspaces");
+}
+function git2(cwd, args) {
+  try {
+    return execFileSync2("git", args, { cwd, encoding: "utf8", maxBuffer: 1e7, stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (e) {
+    const err = e;
+    throw new WorkflowError("WORKSPACE_ERROR", `git ${args[0]} failed: ${(err.stderr || err.message).trim().slice(0, 400)}`);
+  }
+}
+function readRemoteUrl(root) {
+  try {
+    const url = execFileSync2("git", ["remote", "get-url", "origin"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 1e4
+    }).trim();
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+function createRunWorkspace(spec, executionId) {
+  const repo = resolve3(spec.repo.replace(/^~(?=\/|$)/, homedir3()));
+  if (!existsSync7(repo)) {
+    throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" does not exist`);
+  }
+  try {
+    execFileSync2("git", ["rev-parse", "--git-dir"], { cwd: repo, encoding: "utf8", stdio: "pipe" });
+  } catch {
+    throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" is not a git repository`);
+  }
+  const baseRef = spec.baseRef ?? "HEAD";
+  const branch = `${spec.branchPrefix ?? "gate/run"}-${executionId.slice(0, 8)}`;
+  const root = join8(workspacesDir(), executionId);
+  mkdirSync6(workspacesDir(), { recursive: true, mode: 448 });
+  if (existsSync7(root)) rmSync4(root, { recursive: true, force: true });
+  git2(repo, ["worktree", "add", "-b", branch, root, baseRef]);
+  const baseCommit = git2(root, ["rev-parse", "HEAD"]);
+  return { root, repo, branch, baseRef, baseCommit };
+}
+function borrowDependencies(ws) {
+  const linked = [];
+  for (const dir of linkedDirectories(ws.repo)) {
+    const target = join8(ws.root, dir);
+    if (existsSync7(target)) continue;
+    try {
+      symlinkSync(join8(ws.repo, dir), target, "dir");
+      linked.push(dir);
+    } catch (e) {
+      throw new WorkflowError("WORKSPACE_ERROR", `could not link ${dir} into the worktree: ${e.message}`);
+    }
+  }
+  return linked;
+}
+function isFullyPushed(root) {
+  try {
+    if (git2(root, ["status", "--porcelain"]).length) return false;
+    git2(root, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+    return git2(root, ["rev-list", "--count", "@{upstream}..HEAD"]) === "0";
+  } catch {
+    return false;
+  }
+}
+function isSymlink(path) {
+  try {
+    return lstatSync2(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+function isIgnored(root, path) {
+  try {
+    git2(root, ["check-ignore", "-q", "--", path]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function commitLeftovers(ws, executionId) {
+  if (!git2(ws.root, ["status", "--porcelain"]).length) return false;
+  const excluded = LINKED_DIRECTORIES.filter((d) => isSymlink(join8(ws.root, d)) && !isIgnored(ws.root, d)).map((d) => `:(exclude)${d}`);
+  git2(ws.root, ["add", "-A", "--", ".", ...excluded]);
+  if (!git2(ws.root, ["diff", "--cached", "--name-only"]).length) return false;
+  let identity = [];
+  try {
+    git2(ws.root, ["config", "user.email"]);
+  } catch {
+    identity = ["-c", "user.name=gate", "-c", "user.email=gate@localhost"];
+  }
+  git2(ws.root, [...identity, "commit", "--no-verify", "-q", "-m", `gate: what run ${executionId.slice(0, 8)} left uncommitted when it ended`]);
+  return true;
+}
+function releaseRunWorkspace(ws, executionId, opts = {}) {
+  if (!existsSync7(ws.root)) return null;
+  try {
+    if (git2(ws.root, ["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
+  } catch {
+    return null;
+  }
+  let committed;
+  try {
+    committed = commitLeftovers(ws, executionId);
+  } catch (e) {
+    return `worktree ${ws.root} kept: what the run left uncommitted could not be committed onto ${ws.branch} (${e.message})`;
+  }
+  let empty = false;
+  try {
+    empty = !!ws.baseCommit && git2(ws.root, ["rev-list", "--count", `${ws.baseCommit}..HEAD`]) === "0";
+  } catch {
+  }
+  let publishNote = "";
+  if (opts.publish !== void 0 && !empty) {
+    const outcome = publishBranch(ws.root, ws.branch, opts.publish);
+    try {
+      opts.onPublished?.(outcome);
+    } catch {
+    }
+    publishNote = ` (${outcome.note})`;
+  }
+  try {
+    removeRunWorkspace(ws, { keepBranch: !empty });
+  } catch (e) {
+    return `worktree ${ws.root} could not be removed: ${e.message}`;
+  }
+  if (empty) return `worktree ${ws.root} removed: the run changed nothing, so branch ${ws.branch} went with it`;
+  return `worktree ${ws.root} removed; branch ${ws.branch} keeps the work${committed ? " (what was uncommitted is its last commit)" : ""}${publishNote}`;
+}
+function restoreRunWorkspace(ws) {
+  if (existsSync7(ws.root)) return false;
+  if (!existsSync7(ws.repo)) {
+    throw new WorkflowError("WORKSPACE_ERROR", `the repository this run worked in (${ws.repo}) is gone`);
+  }
+  mkdirSync6(dirname(ws.root), { recursive: true, mode: 448 });
+  try {
+    git2(ws.repo, ["worktree", "prune"]);
+  } catch {
+  }
+  let hasBranch = true;
+  try {
+    git2(ws.repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${ws.branch}`]);
+  } catch {
+    hasBranch = false;
+  }
+  if (hasBranch) {
+    git2(ws.repo, ["worktree", "add", ws.root, ws.branch]);
+  } else if (ws.baseCommit) {
+    git2(ws.repo, ["worktree", "add", "-b", ws.branch, ws.root, ws.baseCommit]);
+  } else {
+    throw new WorkflowError("WORKSPACE_ERROR", `branch ${ws.branch} is gone, and the run recorded no base commit to cut it from again`);
+  }
+  return true;
+}
+function summarizeWorkspace(ws) {
+  let changedFiles = [];
+  let commit = null;
+  try {
+    changedFiles = git2(ws.root, ["status", "--porcelain"]).split("\n").filter(Boolean).slice(0, MAX_LISTED_FILES).map((l) => l.trim());
+    commit = git2(ws.root, ["rev-parse", "HEAD"]);
+  } catch {
+  }
+  return { ...ws, changedFiles, commit };
+}
+var MAX_DIFF_BYTES = 4e6;
+function readRunDiff(root, baseCommit, ended) {
+  let diff;
+  if (existsSync7(root)) {
+    git2(root, ["add", "-N", "."]);
+    diff = git2(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
+  } else if (ended && baseCommit && existsSync7(ended.repo)) {
+    try {
+      diff = git2(ended.repo, ["diff", baseCommit, `refs/heads/${ended.branch}`]);
+    } catch {
+      throw new WorkflowError("WORKSPACE_ERROR", `this run's worktree is gone, and so is its branch ${ended.branch}`);
+    }
+  } else {
+    throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
+  }
+  return diff.length > MAX_DIFF_BYTES ? { diff: diff.slice(0, MAX_DIFF_BYTES), truncated: true } : { diff, truncated: false };
+}
+function removeRunWorkspace(ws, opts = {}) {
+  try {
+    git2(ws.repo, ["worktree", "remove", "--force", ws.root]);
+  } catch {
+    rmSync4(ws.root, { recursive: true, force: true });
+    try {
+      git2(ws.repo, ["worktree", "prune"]);
+    } catch {
+    }
+  }
+  if (opts.keepBranch) return;
+  try {
+    git2(ws.repo, ["branch", "-D", ws.branch]);
+  } catch {
+  }
+}
+
 // src/client/api.ts
 import { hostname } from "node:os";
 var CLI_VERSION = GATE_VERSION;
@@ -8832,11 +9107,11 @@ var GateClient = class {
     return res.status === 304 ? null : res.body;
   }
   async startRun(input) {
-    const res = await this.request("/api/v1/executions", {
-      method: "POST",
-      body: JSON.stringify(input)
-    });
-    return res.body.executionId;
+    const res = await this.request(
+      "/api/v1/executions",
+      { method: "POST", body: JSON.stringify(input) }
+    );
+    return { executionId: res.body.executionId, publish: res.body.publish ?? null };
   }
   /**
    * Reopens a session-driven run that failed, so the node it failed on can be
@@ -8882,13 +9157,16 @@ var GateClient = class {
   }
   /** One run and its steps — the memory a session-driven walk replays. */
   async execution(executionId) {
-    return (await this.request(`/api/v1/executions/${executionId}`)).body;
+    return (await this.request(
+      `/api/v1/executions/${executionId}`
+    )).body;
   }
   /** The team's memory: decisions and features matching words, paths, or a time. */
-  async memorySearch(req) {
+  async memorySearch(req, remoteUrl) {
     const params = new URLSearchParams();
     if (req.query) params.set("q", req.query);
     for (const p of req.paths ?? []) params.append("path", p);
+    if (remoteUrl) params.set("remote", remoteUrl);
     if (req.featureId) params.set("feature", req.featureId);
     if (req.asOf != null) params.set("asOf", String(req.asOf));
     if (req.since != null) params.set("since", String(req.since));
@@ -8915,6 +9193,17 @@ var GateClient = class {
   async runMemory(executionId) {
     return (await this.request(`/api/v1/executions/${executionId}/memory`)).body;
   }
+  /**
+   * Asks another team's repository a question, at one fixed commit.
+   *
+   * The unreachable cases come back as an ordinary answer with a status, not
+   * as an error: "that branch was never published" is a true answer to the
+   * question and the person can act on it, which is not what `GateApiError`
+   * would make of it.
+   */
+  async ask(req) {
+    return (await this.request("/api/v1/ask", { method: "POST", body: JSON.stringify(req) })).body;
+  }
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
@@ -8922,25 +9211,25 @@ var GateClient = class {
 };
 
 // src/client/cache.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync7, readFileSync as readFileSync6, readdirSync as readdirSync5, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join8, normalize, relative as relative4, sep as sep2 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync8, readFileSync as readFileSync7, readdirSync as readdirSync5, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { dirname as dirname3, isAbsolute as isAbsolute2, join as join10, normalize, relative as relative4, sep as sep2 } from "node:path";
 
 // src/client/config.ts
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { dirname, join as join7 } from "node:path";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname2, join as join9 } from "node:path";
 function gateHome2() {
-  return process.env.GATE_HOME || join7(homedir3(), ".gate");
+  return process.env.GATE_HOME || join9(homedir4(), ".gate");
 }
 function configPath() {
-  return join7(gateHome2(), "client.json");
+  return join9(gateHome2(), "client.json");
 }
 function readConfig() {
   const url = process.env.GATE_URL;
   const key = process.env.GATE_KEY;
   if (url && key) return { url: url.replace(/\/+$/, ""), key, fromEnv: true };
   try {
-    const raw = JSON.parse(readFileSync5(configPath(), "utf8"));
+    const raw = JSON.parse(readFileSync6(configPath(), "utf8"));
     if (!raw?.url || !raw?.key) return null;
     return { ...raw, url: raw.url.replace(/\/+$/, "") };
   } catch {
@@ -8949,28 +9238,28 @@ function readConfig() {
 }
 function writeConfig(config) {
   const file = configPath();
-  mkdirSync6(dirname(file), { recursive: true, mode: 448 });
+  mkdirSync7(dirname2(file), { recursive: true, mode: 448 });
   writeFileSync5(file, `${JSON.stringify(config, null, 2)}
 `, { mode: 384 });
 }
 function readConfigFile() {
   try {
-    return JSON.parse(readFileSync5(configPath(), "utf8"));
+    return JSON.parse(readFileSync6(configPath(), "utf8"));
   } catch {
     return null;
   }
 }
-function trustWorkflow(id, sha) {
+function trustWorkflow(id, sha2) {
   const onDisk = readConfigFile();
-  const trusted = { ...onDisk?.trusted ?? {}, [id]: sha };
+  const trusted = { ...onDisk?.trusted ?? {}, [id]: sha2 };
   if (onDisk) {
     writeConfig({ ...onDisk, trusted });
     return;
   }
   writeConfig({ url: "", key: "", trusted });
 }
-function isTrusted(id, sha) {
-  return readConfigFile()?.trusted?.[id] === sha;
+function isTrusted(id, sha2) {
+  return readConfigFile()?.trusted?.[id] === sha2;
 }
 function setRepoPath(id, path) {
   const onDisk = readConfigFile();
@@ -8983,47 +9272,47 @@ function repoPaths() {
 
 // src/client/cache.ts
 function cacheDir(team) {
-  return join8(gateHome2(), "cache", team);
+  return join10(gateHome2(), "cache", team);
 }
 function cacheScope(team) {
   return scopeAt(cacheDir(team), team);
 }
 function manifestPath(team) {
-  return join8(cacheDir(team), "manifest.json");
+  return join10(cacheDir(team), "manifest.json");
 }
 function readManifest(team) {
   try {
-    return JSON.parse(readFileSync6(manifestPath(team), "utf8"));
+    return JSON.parse(readFileSync7(manifestPath(team), "utf8"));
   } catch {
     return null;
   }
 }
 function writeSkill(dir, skill) {
-  rmSync4(dir, { recursive: true, force: true });
+  rmSync5(dir, { recursive: true, force: true });
   for (const file of skill.files) {
-    const full = join8(dir, normalize(file.path));
+    const full = join10(dir, normalize(file.path));
     const rel = relative4(dir, full);
     if (!rel || rel.startsWith("..") || isAbsolute2(rel) || rel.split(sep2).includes("..")) continue;
-    mkdirSync7(dirname2(full), { recursive: true, mode: 448 });
+    mkdirSync8(dirname3(full), { recursive: true, mode: 448 });
     writeFileSync6(full, Buffer.from(file.base64, "base64"), { mode: 384 });
   }
 }
 function writeBundle(bundle, from) {
   const root = cacheDir(bundle.team);
-  const agents = join8(root, "agents");
-  const workflows = join8(root, "workflows");
-  const skills = join8(root, "skills");
-  mkdirSync7(agents, { recursive: true, mode: 448 });
-  mkdirSync7(workflows, { recursive: true, mode: 448 });
-  mkdirSync7(skills, { recursive: true, mode: 448 });
+  const agents = join10(root, "agents");
+  const workflows = join10(root, "workflows");
+  const skills = join10(root, "skills");
+  mkdirSync8(agents, { recursive: true, mode: 448 });
+  mkdirSync8(workflows, { recursive: true, mode: 448 });
+  mkdirSync8(skills, { recursive: true, mode: 448 });
   for (const agent of bundle.agents) {
-    writeFileSync6(join8(agents, `${agent.id}.md`), agent.source, { mode: 384 });
+    writeFileSync6(join10(agents, `${agent.id}.md`), agent.source, { mode: 384 });
   }
   for (const workflow of bundle.workflows) {
-    writeFileSync6(join8(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
+    writeFileSync6(join10(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
   }
   for (const skill of bundle.skills ?? []) {
-    writeSkill(join8(skills, skill.id), skill);
+    writeSkill(join10(skills, skill.id), skill);
   }
   prune(agents, new Set(bundle.agents.map((a) => `${a.id}.md`)));
   prune(workflows, new Set(bundle.workflows.map((w) => `${w.id}.yaml`)));
@@ -9041,25 +9330,25 @@ function writeBundle(bundle, from) {
   return manifest;
 }
 function prune(dir, keep) {
-  if (!existsSync6(dir)) return;
+  if (!existsSync8(dir)) return;
   for (const entry of readdirSync5(dir)) {
-    if (!keep.has(entry)) rmSync4(join8(dir, entry), { recursive: true, force: true });
+    if (!keep.has(entry)) rmSync5(join10(dir, entry), { recursive: true, force: true });
   }
 }
 function clearLocalState() {
   const removed = [];
-  const cache4 = join8(gateHome2(), "cache");
-  if (existsSync6(cache4)) {
-    rmSync4(cache4, { recursive: true, force: true });
+  const cache4 = join10(gateHome2(), "cache");
+  if (existsSync8(cache4)) {
+    rmSync5(cache4, { recursive: true, force: true });
     removed.push(`removed the mirrored definitions (${cache4})`);
   }
-  const config = join8(gateHome2(), "client.json");
-  if (existsSync6(config)) {
-    rmSync4(config, { force: true });
+  const config = join10(gateHome2(), "client.json");
+  if (existsSync8(config)) {
+    rmSync5(config, { force: true });
     removed.push(`removed the login and its approvals (${config})`);
   }
-  const workspaces = join8(gateHome2(), "workspaces");
-  if (existsSync6(workspaces)) {
+  const workspaces = join10(gateHome2(), "workspaces");
+  if (existsSync8(workspaces)) {
     const kept = readdirSync5(workspaces).length;
     if (kept) removed.push(`kept ${kept} run worktree(s) in ${workspaces} \u2014 they are branches, not cache`);
   }
@@ -9067,202 +9356,9 @@ function clearLocalState() {
 }
 
 // src/client/clean.ts
-import { execFileSync as execFileSync3 } from "node:child_process";
+import { execFileSync as execFileSync4 } from "node:child_process";
 import { existsSync as existsSync14, readdirSync as readdirSync9 } from "node:fs";
 import { join as join15 } from "node:path";
-
-// src/runtime/workspace.ts
-import { execFileSync } from "node:child_process";
-import { existsSync as existsSync8, lstatSync as lstatSync2, mkdirSync as mkdirSync8, rmSync as rmSync5, symlinkSync } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname3, join as join10, resolve as resolve3 } from "node:path";
-
-// src/repos/detect.ts
-import { existsSync as existsSync7, readFileSync as readFileSync7 } from "node:fs";
-import { join as join9 } from "node:path";
-var LINKED_DIRECTORIES = ["node_modules", "vendor", ".venv"];
-function linkedDirectories(root) {
-  return LINKED_DIRECTORIES.filter((d) => existsSync7(join9(root, d)));
-}
-
-// src/runtime/workspace.ts
-var MAX_LISTED_FILES = 200;
-function workspacesDir() {
-  return join10(process.env.GATE_HOME || join10(homedir4(), ".gate"), "workspaces");
-}
-function git(cwd, args) {
-  try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1e7, stdio: ["ignore", "pipe", "pipe"] }).trim();
-  } catch (e) {
-    const err = e;
-    throw new WorkflowError("WORKSPACE_ERROR", `git ${args[0]} failed: ${(err.stderr || err.message).trim().slice(0, 400)}`);
-  }
-}
-function createRunWorkspace(spec, executionId) {
-  const repo = resolve3(spec.repo.replace(/^~(?=\/|$)/, homedir4()));
-  if (!existsSync8(repo)) {
-    throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" does not exist`);
-  }
-  try {
-    execFileSync("git", ["rev-parse", "--git-dir"], { cwd: repo, encoding: "utf8", stdio: "pipe" });
-  } catch {
-    throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" is not a git repository`);
-  }
-  const baseRef = spec.baseRef ?? "HEAD";
-  const branch = `${spec.branchPrefix ?? "gate/run"}-${executionId.slice(0, 8)}`;
-  const root = join10(workspacesDir(), executionId);
-  mkdirSync8(workspacesDir(), { recursive: true, mode: 448 });
-  if (existsSync8(root)) rmSync5(root, { recursive: true, force: true });
-  git(repo, ["worktree", "add", "-b", branch, root, baseRef]);
-  const baseCommit = git(root, ["rev-parse", "HEAD"]);
-  return { root, repo, branch, baseRef, baseCommit };
-}
-function borrowDependencies(ws) {
-  const linked = [];
-  for (const dir of linkedDirectories(ws.repo)) {
-    const target = join10(ws.root, dir);
-    if (existsSync8(target)) continue;
-    try {
-      symlinkSync(join10(ws.repo, dir), target, "dir");
-      linked.push(dir);
-    } catch (e) {
-      throw new WorkflowError("WORKSPACE_ERROR", `could not link ${dir} into the worktree: ${e.message}`);
-    }
-  }
-  return linked;
-}
-function isFullyPushed(root) {
-  try {
-    if (git(root, ["status", "--porcelain"]).length) return false;
-    git(root, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
-    return git(root, ["rev-list", "--count", "@{upstream}..HEAD"]) === "0";
-  } catch {
-    return false;
-  }
-}
-function isSymlink(path) {
-  try {
-    return lstatSync2(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-function isIgnored(root, path) {
-  try {
-    git(root, ["check-ignore", "-q", "--", path]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function commitLeftovers(ws, executionId) {
-  if (!git(ws.root, ["status", "--porcelain"]).length) return false;
-  const excluded = LINKED_DIRECTORIES.filter((d) => isSymlink(join10(ws.root, d)) && !isIgnored(ws.root, d)).map((d) => `:(exclude)${d}`);
-  git(ws.root, ["add", "-A", "--", ".", ...excluded]);
-  if (!git(ws.root, ["diff", "--cached", "--name-only"]).length) return false;
-  let identity = [];
-  try {
-    git(ws.root, ["config", "user.email"]);
-  } catch {
-    identity = ["-c", "user.name=gate", "-c", "user.email=gate@localhost"];
-  }
-  git(ws.root, [...identity, "commit", "--no-verify", "-q", "-m", `gate: what run ${executionId.slice(0, 8)} left uncommitted when it ended`]);
-  return true;
-}
-function releaseRunWorkspace(ws, executionId) {
-  if (!existsSync8(ws.root)) return null;
-  try {
-    if (git(ws.root, ["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
-  } catch {
-    return null;
-  }
-  let committed;
-  try {
-    committed = commitLeftovers(ws, executionId);
-  } catch (e) {
-    return `worktree ${ws.root} kept: what the run left uncommitted could not be committed onto ${ws.branch} (${e.message})`;
-  }
-  let empty = false;
-  try {
-    empty = !!ws.baseCommit && git(ws.root, ["rev-list", "--count", `${ws.baseCommit}..HEAD`]) === "0";
-  } catch {
-  }
-  try {
-    removeRunWorkspace(ws, { keepBranch: !empty });
-  } catch (e) {
-    return `worktree ${ws.root} could not be removed: ${e.message}`;
-  }
-  if (empty) return `worktree ${ws.root} removed: the run changed nothing, so branch ${ws.branch} went with it`;
-  return `worktree ${ws.root} removed; branch ${ws.branch} keeps the work${committed ? " (what was uncommitted is its last commit)" : ""}`;
-}
-function restoreRunWorkspace(ws) {
-  if (existsSync8(ws.root)) return false;
-  if (!existsSync8(ws.repo)) {
-    throw new WorkflowError("WORKSPACE_ERROR", `the repository this run worked in (${ws.repo}) is gone`);
-  }
-  mkdirSync8(dirname3(ws.root), { recursive: true, mode: 448 });
-  try {
-    git(ws.repo, ["worktree", "prune"]);
-  } catch {
-  }
-  let hasBranch = true;
-  try {
-    git(ws.repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${ws.branch}`]);
-  } catch {
-    hasBranch = false;
-  }
-  if (hasBranch) {
-    git(ws.repo, ["worktree", "add", ws.root, ws.branch]);
-  } else if (ws.baseCommit) {
-    git(ws.repo, ["worktree", "add", "-b", ws.branch, ws.root, ws.baseCommit]);
-  } else {
-    throw new WorkflowError("WORKSPACE_ERROR", `branch ${ws.branch} is gone, and the run recorded no base commit to cut it from again`);
-  }
-  return true;
-}
-function summarizeWorkspace(ws) {
-  let changedFiles = [];
-  let commit = null;
-  try {
-    changedFiles = git(ws.root, ["status", "--porcelain"]).split("\n").filter(Boolean).slice(0, MAX_LISTED_FILES).map((l) => l.trim());
-    commit = git(ws.root, ["rev-parse", "HEAD"]);
-  } catch {
-  }
-  return { ...ws, changedFiles, commit };
-}
-var MAX_DIFF_BYTES = 4e6;
-function readRunDiff(root, baseCommit, ended) {
-  let diff;
-  if (existsSync8(root)) {
-    git(root, ["add", "-N", "."]);
-    diff = git(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
-  } else if (ended && baseCommit && existsSync8(ended.repo)) {
-    try {
-      diff = git(ended.repo, ["diff", baseCommit, `refs/heads/${ended.branch}`]);
-    } catch {
-      throw new WorkflowError("WORKSPACE_ERROR", `this run's worktree is gone, and so is its branch ${ended.branch}`);
-    }
-  } else {
-    throw new WorkflowError("WORKSPACE_ERROR", "this run's worktree is gone");
-  }
-  return diff.length > MAX_DIFF_BYTES ? { diff: diff.slice(0, MAX_DIFF_BYTES), truncated: true } : { diff, truncated: false };
-}
-function removeRunWorkspace(ws, opts = {}) {
-  try {
-    git(ws.repo, ["worktree", "remove", "--force", ws.root]);
-  } catch {
-    rmSync5(ws.root, { recursive: true, force: true });
-    try {
-      git(ws.repo, ["worktree", "prune"]);
-    } catch {
-    }
-  }
-  if (opts.keepBranch) return;
-  try {
-    git(ws.repo, ["branch", "-D", ws.branch]);
-  } catch {
-  }
-}
 
 // src/client/step.ts
 import { spawn as spawn2 } from "node:child_process";
@@ -10046,6 +10142,55 @@ var runCommand = (node, options) => new Promise((resolvePromise, reject) => {
   );
 });
 
+// src/workflows/snapshot.ts
+import { createHash as createHash2 } from "node:crypto";
+var DEFINITION_SNAPSHOT_VERSION = 1;
+function sha(source) {
+  return createHash2("sha256").update(source).digest("hex").slice(0, 16);
+}
+function agentsNamedBy(workflow) {
+  return [...new Set(workflow.nodes.flatMap((n) => n.type === "agent" ? [n.agent] : []))].sort();
+}
+function hashOf(workflowId, workflow, agents, missing) {
+  const lines = [
+    ...Object.entries(agents).map(([id, source]) => `a:${id}:${sha(source)}`),
+    ...missing.map((id) => `a:${id}:missing`)
+  ].sort();
+  return createHash2("sha256").update([`v:${DEFINITION_SNAPSHOT_VERSION}`, `w:${workflowId}:${sha(workflow)}`, ...lines].join("\n")).digest("hex").slice(0, 16);
+}
+function snapshotDefinitions(workflowId, scope) {
+  const workflow = readWorkflowSource(workflowId, scope);
+  const graph = parseWorkflow(workflowId, workflow, {
+    sourcePath: `snapshot:${workflowId}`,
+    updatedAt: 0,
+    agentExists: () => true
+  });
+  const agents = {};
+  const missing = [];
+  for (const id of agentsNamedBy(graph)) {
+    try {
+      agents[id] = readAgentSource(id, scope);
+    } catch {
+      missing.push(id);
+    }
+  }
+  return {
+    version: DEFINITION_SNAPSHOT_VERSION,
+    workflowId,
+    hash: hashOf(workflowId, workflow, agents, missing),
+    workflow,
+    agents,
+    missing
+  };
+}
+function definitionsHash(workflowId, scope) {
+  try {
+    return snapshotDefinitions(workflowId, scope).hash;
+  } catch {
+    return null;
+  }
+}
+
 // src/client/reporter.ts
 var FLUSH_INTERVAL_MS = 1e3;
 var HEARTBEAT_MS = 5e3;
@@ -10269,8 +10414,27 @@ function describeText(text) {
 `;
 }
 
+// src/client/release.ts
+async function releaseAndPublish(client, workspace, executionId, publish, say) {
+  const captured = { outcome: null };
+  const released = releaseRunWorkspace(workspace, executionId, {
+    publish: publish ?? void 0,
+    onPublished: (o) => {
+      captured.outcome = o;
+    }
+  });
+  if (released) say?.(released);
+  const outcome = captured.outcome;
+  if (!outcome) return;
+  await client.report(executionId, {
+    events: [],
+    steps: [],
+    published: outcome.ok ? outcome.published : { error: outcome.note }
+  }).catch((e) => say?.(`the branch was dealt with, but the gate could not be told: ${e.message}`));
+}
+
 // src/client/run.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
+import { execFileSync as execFileSync3 } from "node:child_process";
 import { homedir as homedir7, hostname as hostname2 } from "node:os";
 import { resolve as resolve5 } from "node:path";
 
@@ -10666,12 +10830,20 @@ function truncate2(s) {
 
 // src/client/memory.ts
 var HttpMemoryAccess = class {
-  constructor(client) {
+  /**
+   * `remoteUrl` is the origin of the repository the run works in, sent with
+   * every search so the answer is about this codebase and not the one next to
+   * it with the same file names. Raw, for the server to name — and never
+   * asked of the model, which has no way to know it.
+   */
+  constructor(client, remoteUrl = null) {
     this.client = client;
+    this.remoteUrl = remoteUrl;
   }
   client;
+  remoteUrl;
   search(req) {
-    return this.client.memorySearch(req);
+    return this.client.memorySearch(req, this.remoteUrl);
   }
   feature(id) {
     return this.client.memoryFeature(id);
@@ -10696,7 +10868,7 @@ function resolveRepo(workflow, input, cwd, repos = {}) {
   }
   if (named) return resolve5(named.replace(/^~(?=\/|$)/, homedir7()));
   try {
-    return execFileSync2("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
+    return execFileSync3("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
   } catch {
     throw new WorkflowError(
       "WORKSPACE_ERROR",
@@ -10714,11 +10886,22 @@ async function runLocal(client, opts) {
     repo = resolveRepo(workflow, input, opts.cwd, opts.repos ?? {});
     input.repo = repo;
   }
-  const executionId = await client.startRun({
+  const { executionId, publish } = await client.startRun({
     workflowId: workflow.id,
     input,
-    client: { host: hostname2(), repo: repo ?? void 0, version: CLI_VERSION },
-    taskId: opts.taskId
+    // The raw remote, not a name derived from it: the server does the
+    // normalising, so two clients of different ages cannot mint two
+    // identities for one repository.
+    client: {
+      host: hostname2(),
+      repo: repo ?? void 0,
+      remoteUrl: repo && readRemoteUrl(repo) || void 0,
+      version: CLI_VERSION
+    },
+    taskId: opts.taskId,
+    // What this machine has, so the server can say if it is not what the team
+    // has. Sent from the mirror the run is about to work from.
+    definitionsHash: definitionsHash(workflow.id, scope)
   });
   const controller = new AbortController();
   const reporter = new RunReporter(client, executionId, () => {
@@ -10757,7 +10940,7 @@ async function runLocal(client, opts) {
       // with the same key, so its calls are metered like every other call.
       claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
       // The team's memory, read through the same key.
-      memory: new HttpMemoryAccess(client),
+      memory: new HttpMemoryAccess(client, repo ? readRemoteUrl(repo) : null),
       emit: (event) => {
         reporter.event(event);
         opts.onEvent?.(event);
@@ -10785,10 +10968,7 @@ async function runLocal(client, opts) {
     workspace: summary2,
     diff
   }).catch((e) => opts.onNotice?.(`could not report the run's outcome: ${e.message}`));
-  if (workspace) {
-    const released = releaseRunWorkspace(workspace, executionId);
-    if (released) opts.onNotice?.(released);
-  }
+  if (workspace) await releaseAndPublish(client, workspace, executionId, publish, opts.onNotice);
   return { executionId, state, workspace };
 }
 
@@ -11008,11 +11188,21 @@ async function begin(ctx, workflowId, input, cwd, repos) {
     runInput.repo = repo;
   }
   const session = (process.env[SESSION_ID_ENV] ?? process.env.CLAUDE_CODE_SESSION_ID ?? "").trim() || void 0;
-  const executionId = await ctx.client.startRun({
+  const { executionId } = await ctx.client.startRun({
     workflowId: workflow.id,
     input: runInput,
-    client: { host: hostname3(), repo: repo ?? void 0, version: CLI_VERSION, session },
-    driver: "session"
+    // Raw, for the server to normalise — see runLocal.
+    client: {
+      host: hostname3(),
+      repo: repo ?? void 0,
+      remoteUrl: repo && readRemoteUrl(repo) || void 0,
+      version: CLI_VERSION,
+      session
+    },
+    driver: "session",
+    // From the mirror, which is what `pinDefinitions` freezes a line below:
+    // the hash the server agrees to is the one for the copy this run walks.
+    definitionsHash: definitionsHash(workflow.id, scope)
   });
   pinDefinitions(ctx.team, executionId);
   if (workflow.workspace) {
@@ -11033,7 +11223,7 @@ async function begin(ctx, workflowId, input, cwd, repos) {
 }
 async function next(ctx, executionId) {
   for (; ; ) {
-    const { execution, steps } = await ctx.client.execution(executionId);
+    const { execution, steps, publish } = await ctx.client.execution(executionId);
     const stopped = stoppedOutside(execution);
     if (stopped) {
       const pending = readPending(executionId);
@@ -11045,7 +11235,7 @@ async function next(ctx, executionId) {
       }
       clearPending(executionId);
       ctx.say(`\u25A0 run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
-      releaseStopped(ctx, executionId, execution);
+      await releaseStopped(ctx, executionId, execution, publish);
       return { do: "stopped", executionId, error: stopped };
     }
     const scope = runScope(ctx.team, executionId);
@@ -11053,7 +11243,7 @@ async function next(ctx, executionId) {
     const position = nextInSession(workflow, steps, execution.input);
     if (position.kind === "failed") {
       clearPending(executionId);
-      await settle(ctx, executionId, execution, steps.length, "failed", position.error);
+      await settle(ctx, executionId, execution, steps.length, "failed", position.error, publish);
       ctx.say(
         `  the run's history and its branch are kept: \`gate continue ${executionId}\` brings the worktree back and tries "${position.nodeId}" again`
       );
@@ -11062,7 +11252,7 @@ async function next(ctx, executionId) {
     if (position.kind === "done") {
       clearPending(executionId);
       const workspace = workspaceOf(execution);
-      await settle(ctx, executionId, execution, steps.length, position.status, null);
+      await settle(ctx, executionId, execution, steps.length, position.status, null, publish);
       return {
         do: "done",
         executionId,
@@ -11321,12 +11511,12 @@ async function step(ctx, executionId, nodeId2, answer, opts = {}) {
       `this run is waiting on "${pending.nodeId}", not "${nodeId2}" \u2014 run \`gate next ${executionId}\` to see what it wants`
     );
   }
-  const { execution } = await ctx.client.execution(executionId);
+  const { execution, publish } = await ctx.client.execution(executionId);
   const stopped = stoppedOutside(execution);
   if (stopped) {
     clearPending(executionId);
     ctx.say(`\u25A0 run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
-    releaseStopped(ctx, executionId, execution);
+    await releaseStopped(ctx, executionId, execution, publish);
     return { do: "stopped", executionId, error: stopped };
   }
   const scope = runScope(ctx.team, executionId);
@@ -11540,7 +11730,7 @@ async function record(ctx, executionId, step2, announceStart = true, also = []) 
     throw new WorkflowError("RUN_CANCELLED", "run cancelled");
   }
 }
-async function settle(ctx, executionId, execution, stepCount, status, error) {
+async function settle(ctx, executionId, execution, stepCount, status, error, publish) {
   if (execution.status !== "running") return;
   const workspace = workspaceOf(execution);
   let diff = null;
@@ -11553,16 +11743,12 @@ async function settle(ctx, executionId, execution, stepCount, status, error) {
     }
   }
   await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary2, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
-  if (workspace) {
-    const released = releaseRunWorkspace(workspace, executionId);
-    if (released) ctx.say(released);
-  }
+  if (workspace) await releaseAndPublish(ctx.client, workspace, executionId, publish, ctx.say);
   if (status === "completed") forgetRun(executionId);
 }
-function releaseStopped(ctx, executionId, execution) {
+async function releaseStopped(ctx, executionId, execution, publish) {
   const workspace = workspaceOf(execution);
-  const released = workspace ? releaseRunWorkspace(workspace, executionId) : null;
-  if (released) ctx.say(released);
+  if (workspace) await releaseAndPublish(ctx.client, workspace, executionId, publish, ctx.say);
 }
 async function continueRun(ctx, executionId) {
   const { execution } = await ctx.client.execution(executionId);
@@ -11610,24 +11796,24 @@ async function continueRun(ctx, executionId) {
 }
 
 // src/client/clean.ts
-function git2(cwd, args) {
+function git3(cwd, args) {
   try {
-    return execFileSync3("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return execFileSync4("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   } catch {
     return null;
   }
 }
 function repoOf(root) {
-  const common = git2(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const common = git3(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (!common) return null;
   return common.endsWith("/.git") ? common.slice(0, -5) : common;
 }
 function judgeWorkspace(root, baseCommit) {
-  if (git2(root, ["rev-parse", "--git-dir"]) === null) return "dirty";
-  const dirty = (git2(root, ["status", "--porcelain"]) ?? "x").length > 0;
+  if (git3(root, ["rev-parse", "--git-dir"]) === null) return "dirty";
+  const dirty = (git3(root, ["status", "--porcelain"]) ?? "x").length > 0;
   if (dirty) return "dirty";
   if (isFullyPushed(root)) return "pushed";
-  if (baseCommit && git2(root, ["rev-list", "--count", `${baseCommit}..HEAD`]) === "0") return "empty";
+  if (baseCommit && git3(root, ["rev-list", "--count", `${baseCommit}..HEAD`]) === "0") return "empty";
   return "unpushed";
 }
 async function listWorkspaces(client) {
@@ -11639,7 +11825,7 @@ async function listWorkspaces(client) {
     const root = join15(dir, entry.name);
     let status = "unknown";
     let baseCommit = null;
-    let branch = git2(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    let branch = git3(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
     let repo = repoOf(root);
     try {
       const { execution } = await client.execution(entry.name);
@@ -11749,13 +11935,20 @@ function applyGatewaySettings(path, env, on) {
 }
 
 // src/client/teach.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
+import { execFileSync as execFileSync5 } from "node:child_process";
 import { readFileSync as readFileSync12 } from "node:fs";
 
 // src/lib/client-api-schemas.ts
 var clientInfo = external_exports.object({
   host: external_exports.string().max(120).optional(),
   repo: external_exports.string().max(500).optional(),
+  /**
+   * What `git remote get-url origin` said in the repository this run works
+   * in. The raw remote, not an identity: the server does the normalising,
+   * so an older client cannot mint a second identity for a repository the
+   * newer one already named.
+   */
+  remoteUrl: external_exports.string().max(500).optional(),
   branch: external_exports.string().max(200).optional(),
   version: external_exports.string().max(40).optional(),
   /**
@@ -11778,7 +11971,17 @@ var startRunSchema = external_exports.object({
    * stored, because a run claiming a task it cannot see would group itself
    * into somebody else's work.
    */
-  taskId: external_exports.string().min(1).max(64).optional()
+  taskId: external_exports.string().min(1).max(64).optional(),
+  /**
+   * The digest of the workflow and its agents as this machine has them.
+   *
+   * Absent from an older client, and then the run simply starts against the
+   * server's own snapshot: a client that never claimed to have a particular
+   * version is not refused for failing to match one. When it is sent and
+   * differs, the run does not start — the two sides disagree about what the
+   * graph *is*, and the answer is a pull, not a run walked twice.
+   */
+  definitionsHash: external_exports.string().max(64).nullish()
 }).strict();
 var usageSchema = external_exports.object({
   model: external_exports.string().max(120),
@@ -11852,7 +12055,22 @@ var reportSchema = external_exports.object({
    * session reads it back on every step, and the dashboard shows the branch
    * while the run is going rather than only after it ends.
    */
-  workspace: workspaceSchema2.nullish()
+  workspace: workspaceSchema2.nullish(),
+  /**
+   * What happened when this run's branch was offered to its repository's
+   * publication remote, sent once after the worktree is released — which
+   * is after `finish`, so it cannot travel with it.
+   *
+   * Either shape is valid and neither is a failure of the report: a run
+   * that could not push is a run that succeeded and is not fetchable yet,
+   * and saying so is the whole point.
+   */
+  published: external_exports.object({
+    ref: external_exports.string().max(300).nullish(),
+    commit: external_exports.string().max(80).nullish(),
+    at: external_exports.number().nullish(),
+    error: external_exports.string().max(1e3).nullish()
+  }).nullish()
 }).strict();
 var finishRunSchema = external_exports.object({
   status: external_exports.enum(["completed", "failed"]),
@@ -11897,6 +12115,8 @@ var teachSchema = external_exports.object({
   workspace: external_exports.object({
     root: external_exports.string().max(1e3),
     repo: external_exports.string().max(1e3),
+    /** The raw `origin` of the branch's checkout; the server names it. */
+    remoteUrl: external_exports.string().max(500).nullish(),
     branch: external_exports.string().min(1).max(200),
     baseRef: external_exports.string().max(200),
     baseCommit: external_exports.string().min(4).max(80),
@@ -11916,11 +12136,26 @@ var epochMs = external_exports.string().transform((v) => /^\d+$/.test(v) ? Numbe
 var memorySearchSchema = external_exports.object({
   query: external_exports.string().max(2e3).optional(),
   paths: external_exports.array(external_exports.string().max(500)).max(50).default([]),
+  /**
+   * The raw `origin` of the checkout the question is being asked from. Raw,
+   * like every other remote on the wire: the server names it, so one client
+   * cannot ask under a name another client would never mint.
+   */
+  remoteUrl: external_exports.string().max(500).optional(),
   featureId: external_exports.string().max(100).optional(),
   asOf: epochMs,
   since: epochMs,
   limit: external_exports.string().transform((v) => Number(v)).refine((n) => Number.isInteger(n) && n > 0, "not a count").optional()
 }).refine((v) => v.query || v.paths.length || v.featureId, { message: "give q, path, or feature" });
+var askSchema = external_exports.object({
+  question: external_exports.string().min(1).max(4e3),
+  /** `host/owner/name`, or a connected repository's own id. */
+  repo: external_exports.string().max(300).nullish(),
+  /** A run whose published branch is the thing being asked about. */
+  run: external_exports.string().max(100).nullish(),
+  ref: external_exports.string().max(300).nullish(),
+  commit: external_exports.string().max(64).nullish()
+}).strict();
 
 // src/client/teach.ts
 var TeachError = class extends Error {
@@ -11928,12 +12163,12 @@ var TeachError = class extends Error {
 var MAX_COMMITS = 500;
 var MAX_FILES = 200;
 var MAX_DIFF_BYTES2 = 4e6;
-function git3(cwd, args) {
-  return execFileSync4("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 }).trimEnd();
+function git4(cwd, args) {
+  return execFileSync5("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 }).trimEnd();
 }
 function tryGit(cwd, args) {
   try {
-    return git3(cwd, args);
+    return git4(cwd, args);
   } catch {
     return null;
   }
@@ -11952,21 +12187,21 @@ function defaultBase(repo) {
 function mergeThatBroughtIn(repo, head, baseTip) {
   const merges = tryGit(repo, ["rev-list", "--first-parent", "--merges", "--ancestry-path", "--reverse", `${head}..${baseTip}`]);
   for (const merge of (merges ?? "").split("\n").filter(Boolean)) {
-    const firstParent = git3(repo, ["rev-parse", `${merge}^1`]);
-    if (!isAncestor(repo, head, firstParent)) return { merge, base: git3(repo, ["merge-base", firstParent, head]) };
+    const firstParent = git4(repo, ["rev-parse", `${merge}^1`]);
+    if (!isAncestor(repo, head, firstParent)) return { merge, base: git4(repo, ["merge-base", firstParent, head]) };
   }
   return null;
 }
 function readBranch(cwd, base) {
   const repo = tryGit(cwd, ["rev-parse", "--show-toplevel"]);
   if (!repo) throw new TeachError(`${cwd} is not a git repository \u2014 run it from the checkout the work is in`);
-  const head = git3(repo, ["rev-parse", "HEAD"]);
-  const name = git3(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const head = git4(repo, ["rev-parse", "HEAD"]);
+  const name = git4(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const branch = name === "HEAD" ? `HEAD@${head.slice(0, 12)}` : name;
   const baseRef = base ?? defaultBase(repo);
   const baseTip = tryGit(repo, ["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`]);
   if (!baseTip) throw new TeachError(`no such branch or commit: ${baseRef}`);
-  let baseCommit = isAncestor(repo, baseTip, head) ? baseTip : git3(repo, ["merge-base", baseTip, head]);
+  let baseCommit = isAncestor(repo, baseTip, head) ? baseTip : git4(repo, ["merge-base", baseTip, head]);
   let mergedBy = null;
   if (baseCommit === head) {
     const found = mergeThatBroughtIn(repo, head, baseTip);
@@ -11980,14 +12215,14 @@ function readBranch(cwd, base) {
       `${branch} is already part of ${baseRef} with no merge commit to tell where it began \u2014 pass --base <the commit the work started from>`
     );
   }
-  const log = git3(repo, ["log", "--reverse", "--no-merges", "--format=%H%x1f%aI%x1f%an%x1f%s%x1f%b%x1e", `${baseCommit}..${head}`]);
+  const log = git4(repo, ["log", "--reverse", "--no-merges", "--format=%H%x1f%aI%x1f%an%x1f%s%x1f%b%x1e", `${baseCommit}..${head}`]);
   const all = log.split("").map((r) => r.trim()).filter(Boolean).map((r) => {
-    const [sha, date, author, subject, body = ""] = r.split("");
-    return { sha, date, author: author.slice(0, 200), subject: subject.slice(0, 1e3), body: body.trim().slice(0, 4e3) };
+    const [sha2, date, author, subject, body = ""] = r.split("");
+    return { sha: sha2, date, author: author.slice(0, 200), subject: subject.slice(0, 1e3), body: body.trim().slice(0, 4e3) };
   });
   if (!all.length) throw new TeachError(`no commits of its own between ${baseCommit.slice(0, 8)} and ${head.slice(0, 8)}, only merges`);
-  const changed = git3(repo, ["diff", "--name-only", baseCommit, head]).split("\n").filter(Boolean);
-  const finishedAt = Date.parse(git3(repo, ["log", "-1", "--format=%cI", head]));
+  const changed = git4(repo, ["diff", "--name-only", baseCommit, head]).split("\n").filter(Boolean);
+  const finishedAt = Date.parse(git4(repo, ["log", "-1", "--format=%cI", head]));
   return {
     repo,
     branch,
@@ -11998,14 +12233,14 @@ function readBranch(cwd, base) {
     commits: all.slice(0, MAX_COMMITS),
     omittedCommits: Math.max(0, all.length - MAX_COMMITS),
     changedFiles: changed.slice(0, MAX_FILES),
-    stat: git3(repo, ["diff", "--stat=120", baseCommit, head]),
-    dirty: git3(repo, ["status", "--porcelain"]) !== "",
+    stat: git4(repo, ["diff", "--stat=120", baseCommit, head]),
+    dirty: git4(repo, ["status", "--porcelain"]) !== "",
     startedAt: Date.parse(all[0].date),
     finishedAt
   };
 }
 function readBranchDiff(r) {
-  const diff = git3(r.repo, ["diff", r.baseCommit, r.head]);
+  const diff = git4(r.repo, ["diff", r.baseCommit, r.head]);
   return diff.length > MAX_DIFF_BYTES2 ? diff.slice(0, MAX_DIFF_BYTES2) : diff;
 }
 var day = (ms) => new Date(ms).toISOString().slice(0, 10);
@@ -12081,6 +12316,8 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate memory search [words\u2026] [--path <prefix>]\u2026 [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]
                                                 what your team's tree decided before: why, how, where, which commits
   gate memory feature <id> [--json]             one feature: how each team built it, and every decision under it
+  gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
+       \u2026or --run <id>                           ask another team what their code does; answered from one commit, with files
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
   gate teach --account-file <f> [--base <ref>] [--force] [--no-wait]
                                                 teach it to your team's memory, recorded the way a run is
@@ -12103,7 +12340,12 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "as-of",
   "base",
   "account-file",
-  "task-id"
+  "task-id",
+  // `gate ask`: which repository, and which version of it.
+  "repo",
+  "run",
+  "ref",
+  "commit"
 ]);
 var REPEATABLE_FLAGS = /* @__PURE__ */ new Set(["input", "path"]);
 function parseArgs(argv) {
@@ -12402,10 +12644,10 @@ function describeCapabilities(workflowId, team) {
   }
   return lines;
 }
-async function confirmTrust(workflowId, sha, team, assumeYes) {
-  if (isTrusted(workflowId, sha)) return true;
+async function confirmTrust(workflowId, sha2, team, assumeYes) {
+  if (isTrusted(workflowId, sha2)) return true;
   if (assumeYes) {
-    trustWorkflow(workflowId, sha);
+    trustWorkflow(workflowId, sha2);
     return true;
   }
   const lines = describeCapabilities(workflowId, team);
@@ -12420,7 +12662,7 @@ async function confirmTrust(workflowId, sha, team, assumeYes) {
   const answer = (await rl.question("Run it? [y/N] ")).trim().toLowerCase();
   rl.close();
   if (answer !== "y" && answer !== "yes") return false;
-  trustWorkflow(workflowId, sha);
+  trustWorkflow(workflowId, sha2);
   return true;
 }
 function parseInputs(flags, trailing) {
@@ -12584,7 +12826,7 @@ function setLive(on, global, gatewayUrl2, key) {
 function keepOutOfGit(cwd) {
   let gitDir;
   try {
-    gitDir = execFileSync5("git", ["rev-parse", "--git-dir"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    gitDir = execFileSync6("git", ["rev-parse", "--git-dir"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
   } catch {
     return;
   }
@@ -12688,6 +12930,32 @@ async function cmdClean(args) {
   );
   return 0;
 }
+async function cmdPublish(args) {
+  const [executionId] = args.positional;
+  if (!executionId) die("usage: gate publish <execution-id>");
+  const client = connect();
+  const { execution, publish } = await client.execution(executionId);
+  const ws = execution.workspace;
+  if (!ws?.root || !ws.branch) return die(`run ${executionId.slice(0, 8)} has no worktree on any machine`);
+  if (!existsSync16(ws.root)) {
+    return die(`this run's worktree (${ws.root}) is not on this machine \u2014 publish from the machine that ran it`);
+  }
+  if (!publish) {
+    return die(
+      `the repository this run works in does not publish anywhere \u2014 give it a publication remote on the Repos page first`
+    );
+  }
+  const committed = checkpointWork(ws.root, `work in progress on ${ws.branch}, published on request`, LINKED_DIRECTORIES);
+  if (committed) console.log(`checkpointed what was uncommitted as ${committed.slice(0, 8)}`);
+  const outcome = publishBranch(ws.root, ws.branch, publish);
+  console.log(outcome.ok ? outcome.note : `not published: ${outcome.note}`);
+  await client.report(executionId, {
+    events: [],
+    steps: [],
+    published: outcome.ok ? outcome.published : { error: outcome.note }
+  }).catch((e) => console.log(`the gate could not be told: ${e.message}`));
+  return outcome.ok ? 0 : 1;
+}
 async function cmdWork(args) {
   const [executionId, nodeId2] = args.positional;
   if (!executionId || !nodeId2) die("usage: gate work <execution-id> <node>");
@@ -12763,6 +13031,7 @@ async function cmdTeach(args) {
     workspace: {
       root: reading.repo,
       repo: reading.repo,
+      remoteUrl: readRemoteUrl(reading.repo),
       branch: reading.branch,
       baseRef: reading.baseRef,
       baseCommit: reading.baseCommit,
@@ -12823,6 +13092,70 @@ async function cmdStatus(args) {
   }
   return 0;
 }
+var ASK_WAIT_MS = 20 * 6e4;
+async function cmdAsk(args) {
+  const question = args.positional.join(" ").trim();
+  const one = (v) => typeof v === "string" ? v : void 0;
+  if (!question) {
+    die('usage: gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] | --run <id>');
+  }
+  const client = connect();
+  const json = args.flags.json === true;
+  const asked = await client.ask({
+    question,
+    repo: one(args.flags.repo),
+    run: one(args.flags.run),
+    ref: one(args.flags.ref),
+    commit: one(args.flags.commit)
+  });
+  if (asked.status !== "reviewing") {
+    if (json) {
+      console.log(JSON.stringify(asked, null, 2));
+    } else {
+      console.log(asked.reason);
+      if (asked.status === "source_unavailable" && asked.publish?.ref) {
+        console.log(`whoever has ${asked.publish.ref} can publish it with \`gate publish\`, and then this is answerable`);
+      }
+    }
+    return 1;
+  }
+  const source = asked.source;
+  if (!json) {
+    console.error(`# reading ${source.repo} at ${source.commit.slice(0, 8)} (${source.ref})\u2026`);
+  }
+  if (args.flags["no-wait"] === true) {
+    console.log(json ? JSON.stringify(asked, null, 2) : `${client.url}/executions/${asked.executionId}`);
+    return 0;
+  }
+  const until = Date.now() + ASK_WAIT_MS;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 3e3));
+    const { execution, steps } = await client.execution(asked.executionId);
+    if (execution?.status === "running") continue;
+    const answered = [...steps ?? []].reverse().find((s) => s.nodeId === "source-review");
+    const output = answered?.output ?? null;
+    if (!output?.answer) {
+      const why = execution?.error?.message ?? "the review ended without an answer";
+      console.log(json ? JSON.stringify({ status: "failed", reason: why, source }, null, 2) : why);
+      return 1;
+    }
+    if (json) {
+      console.log(JSON.stringify({ status: "answered", source, ...output }, null, 2));
+      return 0;
+    }
+    console.log(output.answer);
+    console.log("");
+    console.log(`\u2014 ${source.repo} at ${source.commit.slice(0, 12)} (${source.ref})`);
+    if (output.certainty === "absent") {
+      console.log("  nothing at that commit matched; work published since, or on another branch, is not in this answer");
+    } else if (output.certainty === "partial") {
+      console.log("  partial: the answer above says which part it could not settle here");
+    }
+    return output.certainty === "absent" ? 1 : 0;
+  }
+  console.log(`still reading after ${ASK_WAIT_MS / 6e4} minutes: ${client.url}/executions/${asked.executionId}`);
+  return 0;
+}
 async function cmdCancel(args) {
   const [id] = args.positional;
   if (!id) die("usage: gate cancel <execution-id>");
@@ -12857,6 +13190,8 @@ async function main(argv) {
         return await cmdShow(args);
       case "push":
         return await cmdPush(args);
+      case "publish":
+        return await cmdPublish(args);
       case "run":
         return await cmdRun(args);
       case "begin":
@@ -12887,6 +13222,8 @@ async function main(argv) {
         return await cmdMemory(args);
       case "teach":
         return await cmdTeach(args);
+      case "ask":
+        return await cmdAsk(args);
       case "cancel":
         return await cmdCancel(args);
       case "help":
