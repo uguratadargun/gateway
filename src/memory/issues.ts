@@ -35,6 +35,9 @@ export interface DecisionIssue {
   paths: string[];
   repoSource: string | null;
   sourceCommit: string | null;
+  /** The cross-team task the run was serving. A label for grouping, never how
+   * this objection is found: the paths and the feature do that. */
+  taskId: string | null;
   title: string;
   decisionSnapshot: string;
   rationale: string;
@@ -98,6 +101,7 @@ function rowToIssue(r: any): DecisionIssue {
     paths: parsePaths(r.paths_json),
     repoSource: r.repo_source ?? null,
     sourceCommit: r.source_commit ?? null,
+    taskId: r.task_id ?? null,
     title: r.title,
     decisionSnapshot: r.decision_snapshot ?? "",
     rationale: r.rationale ?? "",
@@ -148,6 +152,7 @@ export interface IssueDraft {
   paths?: string[];
   repoSource?: string | null;
   sourceCommit?: string | null;
+  taskId?: string | null;
   title: string;
   decisionSnapshot?: string;
   rationale?: string;
@@ -184,6 +189,7 @@ export function insertIssue(draft: IssueDraft, now = Date.now()): { issue: Decis
     paths: draft.paths ?? [],
     repoSource: draft.repoSource ?? null,
     sourceCommit: draft.sourceCommit ?? null,
+    taskId: draft.taskId ?? null,
     title: draft.title,
     decisionSnapshot: draft.decisionSnapshot ?? "",
     rationale: draft.rationale ?? "",
@@ -199,12 +205,12 @@ export function insertIssue(draft: IssueDraft, now = Date.now()): { issue: Decis
   db.prepare(
     `INSERT INTO decision_issues
        (id, execution_id, step_index, source_node_id, source_visit, conflict_key, from_team_id, target_team_id,
-        decision_id, feature_id, paths_json, repo_source, source_commit, title, decision_snapshot, rationale,
+        decision_id, feature_id, paths_json, repo_source, source_commit, task_id, title, decision_snapshot, rationale,
         proposal, revision, status, opened_by, resolution, resolved_by, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     row.id, row.executionId, row.stepIndex, row.sourceNodeId, row.sourceVisit, row.conflictKey, row.fromTeamId,
-    row.targetTeamId, row.decisionId, row.featureId, JSON.stringify(row.paths), row.repoSource, row.sourceCommit,
+    row.targetTeamId, row.decisionId, row.featureId, JSON.stringify(row.paths), row.repoSource, row.sourceCommit, row.taskId,
     row.title, row.decisionSnapshot, row.rationale, row.proposal, row.revision, row.status, row.openedBy,
     row.resolution, row.resolvedBy, row.createdAt, row.updatedAt,
   );
@@ -225,6 +231,22 @@ export function findIssue(executionId: string, sourceNodeId: string, sourceVisit
 
 export function issuesForExecution(executionId: string): DecisionIssue[] {
   return (getDb().prepare("SELECT * FROM decision_issues WHERE execution_id = ? ORDER BY step_index, conflict_key").all(executionId) as unknown[]).map(rowToIssue);
+}
+
+/**
+ * Every objection raised by a run serving this task — the task's own view of
+ * what is unsettled across the teams working on it.
+ *
+ * This is a grouping, not a lookup. An objection raised by a run started
+ * without a task is not here and is not lost: `liveIssues` finds it by its
+ * paths and its feature, which is how the target team reads it either way.
+ */
+export function issuesForTask(taskId: string, limit = 200): DecisionIssue[] {
+  return (
+    getDb()
+      .prepare("SELECT * FROM decision_issues WHERE task_id = ? ORDER BY status, created_at DESC LIMIT ?")
+      .all(taskId, limit) as unknown[]
+  ).map(rowToIssue);
 }
 
 /**

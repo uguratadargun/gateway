@@ -193,6 +193,8 @@ export function resumeExecution(parentId: string): StartExecutionResult {
   createExecution(executionId, parent.workflowId, lineage.input, Date.now(), parentId, {
     teamId: parent.teamId,
     userId: parent.userId,
+    // Continuing a run does not change what the work was for.
+    taskId: parent.taskId,
   });
   if (workspace) setExecutionWorkspace(executionId, workspaceSummary(workspace)!);
 

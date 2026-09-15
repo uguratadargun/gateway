@@ -40,6 +40,8 @@ export interface LocalRunOptions {
   onNotice?: (message: string) => void;
   /** Connected-repo id → this machine's checkout of it. */
   repos?: Record<string, string>;
+  /** The cross-team task this run serves, when the person named one. */
+  taskId?: string;
 }
 
 export interface LocalRunResult {
@@ -117,6 +119,7 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
     workflowId: workflow.id,
     input,
     client: { host: hostname(), repo: repo ?? undefined, version: CLI_VERSION },
+    taskId: opts.taskId,
   });
 
   const controller = new AbortController();

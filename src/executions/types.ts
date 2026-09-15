@@ -55,6 +55,13 @@ export interface ExecutionRecord {
   pausedAt: number | null;
   /** How long the run has waited on the person so far, pauses now closed. */
   pausedMs: number;
+  /**
+   * The cross-team task this run serves. NULL on a run started without one,
+   * which is most of them: this groups runs that belong together, it is not
+   * how anything is found. A continued run inherits it from the run it
+   * continued — `resumedFrom` is the continuation chain, and stays that.
+   */
+  taskId: string | null;
 }
 
 /** The machine a local run happened on, as the client reported it. */

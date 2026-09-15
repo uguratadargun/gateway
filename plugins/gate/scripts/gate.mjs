@@ -10717,7 +10717,8 @@ async function runLocal(client, opts) {
   const executionId = await client.startRun({
     workflowId: workflow.id,
     input,
-    client: { host: hostname2(), repo: repo ?? void 0, version: CLI_VERSION }
+    client: { host: hostname2(), repo: repo ?? void 0, version: CLI_VERSION },
+    taskId: opts.taskId
   });
   const controller = new AbortController();
   const reporter = new RunReporter(client, executionId, () => {
@@ -11770,7 +11771,14 @@ var startRunSchema = external_exports.object({
   input: external_exports.record(external_exports.string(), external_exports.unknown()).default({}),
   client: clientInfo.default({}),
   /** "session" when a Claude Code session walks the graph a node at a time. */
-  driver: external_exports.enum(["engine", "session"]).default("engine")
+  driver: external_exports.enum(["engine", "session"]).default("engine"),
+  /**
+   * The cross-team task this run serves. Optional, and checked against the
+   * caller's family: an unknown or out-of-family id is refused rather than
+   * stored, because a run claiming a task it cannot see would group itself
+   * into somebody else's work.
+   */
+  taskId: external_exports.string().min(1).max(64).optional()
 }).strict();
 var usageSchema = external_exports.object({
   model: external_exports.string().max(120),
@@ -12054,6 +12062,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
        --input key=value                        (repeat for more than one input)
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
+       --task-id <id>                           file this run under a cross-team task
 
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task\u2026]                 start a run, print the first instruction
@@ -12093,7 +12102,8 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "since",
   "as-of",
   "base",
-  "account-file"
+  "account-file",
+  "task-id"
 ]);
 var REPEATABLE_FLAGS = /* @__PURE__ */ new Set(["input", "path"]);
 function parseArgs(argv) {
@@ -12472,6 +12482,7 @@ async function cmdRun(args) {
     cwd: process.cwd(),
     team,
     repos: repoPaths(),
+    taskId: typeof args.flags["task-id"] === "string" ? args.flags["task-id"] : void 0,
     onEvent: quiet ? void 0 : printEvent,
     onNotice: (message) => console.error(`# ${message}`)
   });

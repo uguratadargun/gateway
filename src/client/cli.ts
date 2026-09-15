@@ -50,6 +50,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
        --input key=value                        (repeat for more than one input)
        --yes                                    skip the first-run approval prompt
        --quiet                                  only print the outcome
+       --task-id <id>                           file this run under a cross-team task
 
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task…]                 start a run, print the first instruction
@@ -90,7 +91,7 @@ export interface Args {
  * the tool exists for.
  */
 const VALUE_FLAGS = new Set([
-  "url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of", "base", "account-file",
+  "url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of", "base", "account-file", "task-id",
 ]);
 
 /** Flags that collect when repeated, rather than the last one winning. */
@@ -608,6 +609,7 @@ async function cmdRun(args: Args): Promise<number> {
     cwd: process.cwd(),
     team,
     repos: repoPaths(),
+    taskId: typeof args.flags["task-id"] === "string" ? (args.flags["task-id"] as string) : undefined,
     onEvent: quiet ? undefined : printEvent,
     onNotice: (message) => console.error(`# ${message}`),
   });

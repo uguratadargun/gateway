@@ -156,6 +156,7 @@ function applyConflicts(
         paths: c.paths,
         repoSource: execution.workspace?.repo ?? null,
         sourceCommit: execution.workspace?.baseCommit ?? null,
+        taskId: execution.taskId,
         title: c.title,
         decisionSnapshot: c.decisionSnapshot,
         rationale: c.rationale,

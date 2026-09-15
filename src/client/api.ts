@@ -189,6 +189,8 @@ export class GateClient {
     client: { host?: string; repo?: string; branch?: string; version?: string; session?: string };
     /** Who walks the graph — see the execution's `driver`. */
     driver?: "engine" | "session";
+    /** The cross-team task the run serves. Refused if the team cannot see it. */
+    taskId?: string;
   }): Promise<string> {
     const res = await this.request<{ executionId: string }>("/api/v1/executions", {
       method: "POST",

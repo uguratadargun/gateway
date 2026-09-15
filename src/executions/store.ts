@@ -66,6 +66,8 @@ export interface ExecutionOrigin {
   userId?: string | null;
   teamId?: string;
   client?: ExecutionClient | null;
+  /** The cross-team task this run serves, when it was started under one. */
+  taskId?: string | null;
 }
 
 export function createExecution(
@@ -82,8 +84,8 @@ export function createExecution(
     .prepare(
       `INSERT INTO workflow_executions
          (id, workflow_id, status, started_at, input_json, resumed_from,
-          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver, client_session)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver, client_session, task_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       id,
@@ -101,6 +103,7 @@ export function createExecution(
       startedAt,
       meta.driver ?? "engine",
       meta.client?.session ?? null,
+      meta.taskId ?? null,
     );
 }
 
@@ -417,6 +420,7 @@ interface ExecutionRow {
   paused_at: number | null;
   paused_ms: number | null;
   client_session: string | null;
+  task_id: string | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -444,6 +448,7 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
     driver: r.driver === "session" ? "session" : "engine",
     pausedAt: r.paused_at ?? null,
     pausedMs: r.paused_ms ?? 0,
+    taskId: r.task_id ?? null,
   };
 }
 

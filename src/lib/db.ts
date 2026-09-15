@@ -381,6 +381,37 @@ CREATE TABLE IF NOT EXISTS memory_consolidations (
 );
 CREATE INDEX IF NOT EXISTS memory_consolidations_impl ON memory_consolidations(feature_id, team_id, started_at);
 
+-- A piece of work several teams have a hand in, outliving every run that
+-- serves it. The runs are per team and per repo and they end; the thing they
+-- are all about does not, so it gets an id of its own rather than being
+-- inferred from whichever run happened to be first.
+--
+-- This is deliberately the smallest version of that record: an id, who owns
+-- it, what it is called, and whether it is still going. The plan's per-team
+-- pages, baselines, plan versions and work items are built on this id later;
+-- they are not a precondition for a run being able to say which task it was
+-- serving.
+--
+-- Nothing requires it. A single-repo run has no task and behaves exactly as
+-- it did, so the column is a label, never a key: an objection is still found
+-- by its paths and its feature, because the run that raised it may well have
+-- been started by somebody who never opened a task.
+CREATE TABLE IF NOT EXISTS change_tasks (
+  id TEXT PRIMARY KEY,
+  -- The team the task belongs to — normally the parent of the teams doing the
+  -- work, which is why it may have no repo of its own.
+  team_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  -- open: still being worked. done/abandoned are ends. A task is not closed by
+  -- a run finishing; somebody says so.
+  status TEXT NOT NULL,
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS change_tasks_team ON change_tasks(team_id, status, updated_at);
+
 -- One run's objection to a sibling team's decision, and the person's answer to
 -- it. Separate from memory_decisions on purpose: a re-extraction deletes a
 -- run's decisions and writes new ids, and an objection that vanished with the
@@ -582,6 +613,13 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // and when: the pass is due again once enough new ones have landed.
   ["memory_feature_impls", "consolidated_count", "consolidated_count INTEGER NOT NULL DEFAULT 0"],
   ["memory_feature_impls", "consolidated_at", "consolidated_at INTEGER"],
+  // Which cross-team task a run was serving, and the same label copied onto
+  // the objections it raised — copied rather than joined, because the run is
+  // what knows, and an objection outlives re-extraction while the join would
+  // have to be re-derived. NULL on every run started without one, which is
+  // most of them.
+  ["workflow_executions", "task_id", "task_id TEXT"],
+  ["decision_issues", "task_id", "task_id TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

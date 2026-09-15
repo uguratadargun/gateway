@@ -33,6 +33,13 @@ export const startRunSchema = z
     client: clientInfo.default({}),
     /** "session" when a Claude Code session walks the graph a node at a time. */
     driver: z.enum(["engine", "session"]).default("engine"),
+    /**
+     * The cross-team task this run serves. Optional, and checked against the
+     * caller's family: an unknown or out-of-family id is refused rather than
+     * stored, because a run claiming a task it cannot see would group itself
+     * into somebody else's work.
+     */
+    taskId: z.string().min(1).max(64).optional(),
   })
   .strict();
 

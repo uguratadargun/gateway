@@ -6,6 +6,7 @@ import { getAgent } from "@/agents/registry";
 import { startRunSchema } from "@/lib/client-api-schemas";
 import { requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { createExecution, listExecutions } from "@/executions/store";
+import { taskVisibleTo } from "@/orchestration/tasks";
 import { WorkflowError } from "@/runtime/errors";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { getWorkflow } from "@/workflows/registry";
@@ -61,9 +62,16 @@ export async function POST(req: Request) {
       );
     }
 
+    // A task the caller cannot see is not a task. Refused here rather than
+    // stored, so a run never groups itself into another family's work.
+    if (parsed.data.taskId && !taskVisibleTo(parsed.data.taskId, auth.teamId)) {
+      return NextResponse.json({ error: "no such task", code: "TASK_NOT_FOUND" }, { status: 400 });
+    }
+
     const executionId = randomUUID();
     createExecution(executionId, workflow.id, parsed.data.input, Date.now(), null, {
       origin: "local",
+      taskId: parsed.data.taskId ?? null,
       driver: parsed.data.driver,
       userId: auth.userId,
       teamId: auth.teamId,
