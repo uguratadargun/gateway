@@ -1,19 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, RefreshCw, Trash2 } from "lucide-react";
+import { BookOpen, MessageSquareWarning, RefreshCw, Trash2 } from "lucide-react";
 
 import { DecisionView } from "@/components/decision-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toDecisionCard } from "@/memory/cards";
+import type { DecisionIssue, IssueApproval } from "@/memory/issues";
 import type { Decision, Extraction, Feature } from "@/memory/types";
 
 interface RunMemoryData {
   extraction: Extraction | null;
   decisions: Decision[];
   feature: Feature | null;
+  /** Objections this run raised against another team, and the answers it took. */
+  issues: DecisionIssue[];
+  approvals: IssueApproval[];
 }
 
 /**
@@ -58,10 +62,14 @@ export function RunMemory({ executionId }: { executionId: string }) {
    * saying the record was forgotten, so *Record earlier runs* passes it by and
    * only *Record again* brings it back.
    */
-  async function forget(count: number) {
+  async function forget(count: number, objections: number) {
     if (
       !confirm(
-        `Forget what this run taught?\n\n${count} decision${count === 1 ? "" : "s"} ${count === 1 ? "is" : "are"} deleted from memory. The run, its steps and its diff stay. This cannot be undone.`,
+        `Forget what this run taught?\n\n${count} decision${count === 1 ? "" : "s"} ${count === 1 ? "is" : "are"} deleted from memory. The run, its steps and its diff stay. This cannot be undone.` +
+          // An objection is another team's business, not this run's record of
+          // itself, so forgetting the record does not withdraw it. Saying so
+          // here is the difference between a clean-up and a silent one.
+          (objections ? `\n\n${objections} cross-team objection${objections === 1 ? "" : "s"} raised by this run stay${objections === 1 ? "s" : ""}: they belong to the team they were raised against. Withdraw them separately.` : ""),
       )
     ) {
       return;
@@ -77,6 +85,8 @@ export function RunMemory({ executionId }: { executionId: string }) {
 
   if (!data) return null;
   const e = data.extraction;
+  const issues = data.issues ?? [];
+  const held = (data.approvals ?? []).filter((a) => a.status === "pending_source");
   const status = e?.status ?? "not queued";
   const variant = status === "done" ? "success" : status === "failed" ? "destructive" : "secondary";
   return (
@@ -111,7 +121,7 @@ export function RunMemory({ executionId }: { executionId: string }) {
             variant="ghost"
             size="sm"
             className={`${e && e.status !== "running" && e.status !== "pending" ? "" : "ml-auto "}text-muted-foreground hover:text-destructive`}
-            onClick={() => void forget(data.decisions.length)}
+            onClick={() => void forget(data.decisions.length, issues.filter((i) => i.status === "proposed" || i.status === "open").length)}
             disabled={busy}
             title="Delete this run's decisions from the team's memory. The run itself stays."
           >
@@ -127,6 +137,37 @@ export function RunMemory({ executionId }: { executionId: string }) {
       {data.decisions.map((d) => (
         <DecisionView key={d.id} decision={toDecisionCard(d)} />
       ))}
+      {(issues.length > 0 || held.length > 0) && (
+        <div className="space-y-1 border-t pt-2">
+          <div className="flex items-center gap-2 px-1">
+            <MessageSquareWarning className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Cross-team objections</span>
+          </div>
+          {issues.map((i) => (
+            <div key={i.id} className="space-y-1 rounded-md border px-2 py-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={i.status === "open" ? "destructive" : i.status === "resolved" ? "success" : "secondary"}>{i.status}</Badge>
+                <span className="font-medium text-foreground">{i.title}</span>
+                <span className="text-muted-foreground">to {i.targetTeamId}</span>
+              </div>
+              {i.revision && <p className="text-muted-foreground">asks: {i.revision}</p>}
+              {i.resolution && <p className="text-muted-foreground">{i.resolvedBy ? `${i.resolvedBy}: ` : ""}{i.resolution}</p>}
+              {i.status === "proposed" && <p className="text-muted-foreground">raised — nobody has answered it yet</p>}
+            </div>
+          ))}
+          {/* The state that must never read as agreement: somebody answered,
+              and the objection the answer was about never reached the server. */}
+          {held.map((a) => (
+            <div key={a.id} className="rounded-md border border-dashed px-2 py-1.5 text-xs">
+              <Badge variant="secondary">answer held</Badge>{" "}
+              <span className="text-muted-foreground">
+                {a.decision === "confirm" ? "confirmed" : "refused"} <code>{a.conflictKey}</code> from {a.nodeId}, but the step that raised it never
+                arrived — nobody on the other team can see this.
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }

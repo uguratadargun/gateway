@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { teamFamily, teamRoot } from "@/lib/teams";
 
 import { deleteEmbedding } from "./embeddings";
+import { approvalsForExecution, issuesForExecution, type DecisionIssue, type IssueApproval } from "./issues";
 
 import type {
   Decision,
@@ -633,9 +634,25 @@ export function releaseStaleExtractions(now = Date.now()): number {
 }
 
 /** Everything recorded for one run, for the run's page. */
-export function memoryOfExecution(executionId: string): { extraction: Extraction | null; decisions: Decision[]; feature: Feature | null } {
+export function memoryOfExecution(executionId: string): {
+  extraction: Extraction | null;
+  decisions: Decision[];
+  feature: Feature | null;
+  issues: DecisionIssue[];
+  approvals: IssueApproval[];
+} {
   const extraction = getExtraction(executionId);
   const decisions = decisionsForExecution(executionId);
   const featureId = decisions.find((d) => d.featureId)?.featureId ?? null;
-  return { extraction, decisions, feature: featureId ? getFeature(featureId) : null };
+  return {
+    extraction,
+    decisions,
+    feature: featureId ? getFeature(featureId) : null,
+    // Not part of what the recorder made of the run — written while it ran,
+    // and deliberately outside the decisions so that recording the run again
+    // cannot lose them. The screen shows them for the same reason it shows
+    // the ledger: this is where a person goes to see what the run left.
+    issues: issuesForExecution(executionId),
+    approvals: approvalsForExecution(executionId),
+  };
 }

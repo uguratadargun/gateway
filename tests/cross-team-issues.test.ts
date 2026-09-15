@@ -15,7 +15,7 @@ import {
 } from "@/memory/issues";
 import { LocalMemoryAccess } from "@/memory/access";
 import { describeSearch } from "@/memory/cards";
-import { memoryScopeFor } from "@/memory/store";
+import { memoryOfExecution, memoryScopeFor, replaceDecisions } from "@/memory/store";
 import type { ExecutionRecord } from "@/executions/types";
 import type { StepRecord } from "@/runtime/state";
 
@@ -322,6 +322,33 @@ describe("what the other team reads", () => {
     const result = await new LocalMemoryAccess("srv").search({ paths: ["src/anything"] });
     expect(result.heldAnswers).toBeGreaterThan(0);
     expect(describeSearch(result)).toContain("not proof nobody objected");
+  });
+
+  it("survives the recorder running over the same run again", async () => {
+    const ex = run("srv");
+    recordReportedSteps(ex, [
+      step({ stepIndex: 0, nodeId: "planner", output: { conflicts: [conflict({ conflictKey: "outlives-recorder", paths: ["src/pq/rekey.ts"] })] } }),
+    ]);
+
+    // The recorder replaces a run's decisions whole, and gives them new ids
+    // each time. That is exactly why an objection is not one of them: a
+    // re-record after a recorder fix would otherwise quietly drop it.
+    replaceDecisions(
+      { executionId: ex.id, teamId: "srv", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "completed", validFrom: 7000 },
+      [{ title: "the run's own decision", context: "", decision: "d", rationale: "", how: "", consequences: "", alternatives: "", touches: [{ kind: "file", ref: "src/pq/rekey.ts" }] }],
+      7000,
+    );
+    replaceDecisions(
+      { executionId: ex.id, teamId: "srv", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "completed", validFrom: 8000 },
+      [{ title: "recorded again, new ids", context: "", decision: "d", rationale: "", how: "", consequences: "", alternatives: "", touches: [{ kind: "file", ref: "src/pq/rekey.ts" }] }],
+      8000,
+    );
+
+    expect(findIssue(ex.id, "planner", 0, "outlives-recorder")!.status).toBe("proposed");
+    const result = await new LocalMemoryAccess("desktop").search({ paths: ["src/pq/rekey.ts"] });
+    expect(result.issues.map((i) => i.id)).toContain(findIssue(ex.id, "planner", 0, "outlives-recorder")!.id);
+    // The run's memory screen shows it next to what the recorder made.
+    expect(memoryOfExecution(ex.id).issues.map((i) => i.conflictKey)).toContain("outlives-recorder");
   });
 
   it("stops showing one once it is dealt with", () => {
