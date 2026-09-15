@@ -7814,7 +7814,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.36.0";
+var GATE_VERSION = "0.36.1";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -12356,7 +12356,7 @@ async function confirmTrust(workflowId, sha, team, assumeYes) {
 function parseInputs(flags, trailing) {
   const input = {};
   if (typeof flags.input === "string") {
-    for (const pair of flags.input.split("\0")) {
+    for (const pair of flags.input.split(" ")) {
       const [key, ...rest] = pair.split("=");
       if (!key || !rest.length) die(`--input must be key=value (got "${pair}")`);
       input[key] = rest.join("=");
@@ -12731,7 +12731,8 @@ async function cmdTeach(args) {
       return 1;
     }
   }
-  console.log(`still recording after ${TEACH_WAIT_MS / 6e4} minutes \u2014 its decisions will appear on ${url}`);
+  console.log(`still recording after ${TEACH_WAIT_MS / 6e4} minutes \u2014 the outcome is not known yet`);
+  console.log(`check it on ${url}, or with \`gate memory search --path <a changed directory>\` once it settles`);
   return 0;
 }
 async function cmdStatus(args) {

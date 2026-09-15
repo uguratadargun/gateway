@@ -532,7 +532,7 @@ async function confirmTrust(workflowId: string, sha: string, team: string, assum
 function parseInputs(flags: Args["flags"], trailing: string[]): Record<string, unknown> {
   const input: Record<string, unknown> = {};
   if (typeof flags.input === "string") {
-    for (const pair of flags.input.split(" ")) {
+    for (const pair of flags.input.split(" ")) {
       const [key, ...rest] = pair.split("=");
       if (!key || !rest.length) die(`--input must be key=value (got "${pair}")`);
       input[key] = rest.join("=");
