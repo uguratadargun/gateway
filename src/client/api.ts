@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 
-import type { TeachRequest } from "@/lib/client-api-schemas";
+import type { AskBody, TeachRequest } from "@/lib/client-api-schemas";
 import { GATE_VERSION, isOlderThan, VERSION_HEADERS } from "@/lib/protocol";
 import type { FeatureDetail, MemorySearchRequest, MemorySearchResult } from "@/memory/cards";
 
@@ -20,6 +20,26 @@ import type { ClientConfig } from "./config";
 /** This build's version. The server's own copy of the same constant is what it
  *  is compared against — see src/lib/protocol.ts. */
 export const CLI_VERSION = GATE_VERSION;
+
+/** The commit an answer is about, named the way the asker can name it again. */
+export interface AskSourceWire {
+  repo: string;
+  repoId: string | null;
+  ref: string;
+  commit: string;
+  via: "run" | "ref" | "commit";
+}
+
+export type AskResponse =
+  | { status: "reviewing"; executionId: string; source: AskSourceWire }
+  | {
+      status: "source_unavailable";
+      reason: string;
+      /** The branch somebody has to publish before this can be answered. */
+      publish?: { repo: string; ref: string | null } | null;
+      source?: AskSourceWire;
+    }
+  | { status: "not_found"; reason: string };
 
 export class GateApiError extends Error {
   constructor(
@@ -323,6 +343,18 @@ export class GateClient {
     feature: { id: string; name: string } | null;
   }> {
     return (await this.request<any>(`/api/v1/executions/${executionId}/memory`)).body;
+  }
+
+  /**
+   * Asks another team's repository a question, at one fixed commit.
+   *
+   * The unreachable cases come back as an ordinary answer with a status, not
+   * as an error: "that branch was never published" is a true answer to the
+   * question and the person can act on it, which is not what `GateApiError`
+   * would make of it.
+   */
+  async ask(req: AskBody): Promise<AskResponse> {
+    return (await this.request<AskResponse>("/api/v1/ask", { method: "POST", body: JSON.stringify(req) })).body;
   }
 
   async listRuns(limit = 20): Promise<Array<Record<string, any>>> {

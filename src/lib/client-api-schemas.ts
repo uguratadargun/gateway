@@ -304,3 +304,26 @@ export const memorySearchSchema = z
       .optional(),
   })
   .refine((v) => v.query || v.paths.length || v.featureId, { message: "give q, path, or feature" });
+
+/**
+ * `POST /api/v1/ask` — one team asking another about their code.
+ *
+ * Three ways to name what to read, and they are not interchangeable: a run
+ * whose branch is the subject, a ref on a repository's publication remote, or
+ * a commit the asker already has. All of them end at one commit before
+ * anything is read; the ref is the only one that could have moved, and it is
+ * resolved once and quoted back.
+ */
+export const askSchema = z
+  .object({
+    question: z.string().min(1).max(4000),
+    /** `host/owner/name`, or a connected repository's own id. */
+    repo: z.string().max(300).nullish(),
+    /** A run whose published branch is the thing being asked about. */
+    run: z.string().max(100).nullish(),
+    ref: z.string().max(300).nullish(),
+    commit: z.string().max(64).nullish(),
+  })
+  .strict();
+
+export type AskBody = z.infer<typeof askSchema>;

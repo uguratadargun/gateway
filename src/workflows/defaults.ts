@@ -746,11 +746,63 @@ nodes:
     status: completed
 `;
 
+/**
+ * The road `gate ask` takes when memory cannot answer: one team's question,
+ * read out of another team's source at one fixed commit.
+ *
+ * Nothing is written and nothing is run. The single agent on it has no
+ * writing tools and no command tool, which is the guarantee — a read-only
+ * review is a tool list, not an instruction. The `base` node is here for the
+ * same reason it is on blame: the answer names the commit it came from, and
+ * this is the run's own record of which one that was.
+ *
+ * Every input this names is supplied by the ask route, `question`, `repo`,
+ * `commit` and `memory` alike — `memory` as an empty string when memory had
+ * nothing near the question, because an unresolved placeholder is an error
+ * and not a blank.
+ */
+const ASK = `name: Ask
+description: Answer another team's question by reading their repository at one fixed commit. Nothing is written, nothing is run, and the answer says which files it came from.
+entry: base
+workspace: {}
+maxWorkflowSteps: 0
+maxVisits: 0
+maxCostUsd: 0
+nodes:
+  - id: base
+    type: command
+    label: Record the commit being read
+    command: [git, log, "-1", --format=format:%H]
+    next: source-review
+
+  - id: source-review
+    type: agent
+    agent: source-review
+    label: Read the source and answer
+    edges:
+      - when: outputs.source-review.certainty == "absent"
+        to: absent
+        label: nothing at this commit matches
+      - to: done
+        label: answered
+
+  - id: done
+    type: terminal
+    label: Answered
+    status: completed
+
+  - id: absent
+    type: terminal
+    label: Not in the commit that was read
+    status: completed
+`;
+
 export const DEFAULT_WORKFLOWS: Record<string, string> = {
   dev: DEV,
   "dev-super": DEV_SUPER,
   "dev-quick": DEV_QUICK,
   blame: BLAME,
+  ask: ASK,
 };
 
 /**

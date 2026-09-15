@@ -72,6 +72,8 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate memory search [words…] [--path <prefix>]… [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]
                                                 what your team's tree decided before: why, how, where, which commits
   gate memory feature <id> [--json]             one feature: how each team built it, and every decision under it
+  gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
+       …or --run <id>                           ask another team what their code does; answered from one commit, with files
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
   gate teach --account-file <f> [--base <ref>] [--force] [--no-wait]
                                                 teach it to your team's memory, recorded the way a run is
@@ -95,6 +97,8 @@ export interface Args {
  */
 const VALUE_FLAGS = new Set([
   "url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of", "base", "account-file", "task-id",
+  // `gate ask`: which repository, and which version of it.
+  "repo", "run", "ref", "commit",
 ]);
 
 /** Flags that collect when repeated, rather than the last one winning. */
@@ -1117,6 +1121,91 @@ async function cmdStatus(args: Args): Promise<number> {
   return 0;
 }
 
+/** How long `gate ask` watches a review before saying where to read the rest. */
+const ASK_WAIT_MS = 20 * 60_000;
+
+/**
+ * `gate ask "…" --repo <host/owner/name>`: what another team's code does.
+ *
+ * The question goes to the server because the server is what can reach the
+ * other team's repository — this machine has one checkout of one project and
+ * no business holding four. What comes back is either an answer with a commit
+ * and files under it, or the reason there is no source to read yet, which is
+ * usually a branch somebody has not published. Neither is a guess, and that is
+ * the whole point of the command.
+ */
+async function cmdAsk(args: Args): Promise<number> {
+  const question = args.positional.join(" ").trim();
+  const one = (v: string | boolean | undefined) => (typeof v === "string" ? v : undefined);
+  if (!question) {
+    die('usage: gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] | --run <id>');
+  }
+  const client = connect();
+  const json = args.flags.json === true;
+  const asked = await client.ask({
+    question,
+    repo: one(args.flags.repo),
+    run: one(args.flags.run),
+    ref: one(args.flags.ref),
+    commit: one(args.flags.commit),
+  });
+
+  if (asked.status !== "reviewing") {
+    if (json) {
+      console.log(JSON.stringify(asked, null, 2));
+    } else {
+      console.log(asked.reason);
+      // Named, not implied: the person reading this has to go and ask someone
+      // to run one command, and it is worth spelling out which branch.
+      if (asked.status === "source_unavailable" && asked.publish?.ref) {
+        console.log(`whoever has ${asked.publish.ref} can publish it with \`gate publish\`, and then this is answerable`);
+      }
+    }
+    return 1;
+  }
+
+  const source = asked.source;
+  if (!json) {
+    console.error(`# reading ${source.repo} at ${source.commit.slice(0, 8)} (${source.ref})…`);
+  }
+  if (args.flags["no-wait"] === true) {
+    console.log(json ? JSON.stringify(asked, null, 2) : `${client.url}/executions/${asked.executionId}`);
+    return 0;
+  }
+
+  const until = Date.now() + ASK_WAIT_MS;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 3_000));
+    const { execution, steps } = await client.execution(asked.executionId);
+    if (execution?.status === "running") continue;
+    const answered = [...(steps ?? [])].reverse().find((s) => s.nodeId === "source-review");
+    const output = (answered?.output ?? null) as { answer?: string; sources?: string[]; certainty?: string } | null;
+    if (!output?.answer) {
+      const why = execution?.error?.message ?? "the review ended without an answer";
+      console.log(json ? JSON.stringify({ status: "failed", reason: why, source }, null, 2) : why);
+      return 1;
+    }
+    if (json) {
+      console.log(JSON.stringify({ status: "answered", source, ...output }, null, 2));
+      return 0;
+    }
+    console.log(output.answer);
+    console.log("");
+    // Always printed, never only when the answer is old: an answer that does
+    // not say which commit it read is one nobody can check, and "is this
+    // current?" is a question only the asker can settle.
+    console.log(`— ${source.repo} at ${source.commit.slice(0, 12)} (${source.ref})`);
+    if (output.certainty === "absent") {
+      console.log("  nothing at that commit matched; work published since, or on another branch, is not in this answer");
+    } else if (output.certainty === "partial") {
+      console.log("  partial: the answer above says which part it could not settle here");
+    }
+    return output.certainty === "absent" ? 1 : 0;
+  }
+  console.log(`still reading after ${ASK_WAIT_MS / 60_000} minutes: ${client.url}/executions/${asked.executionId}`);
+  return 0;
+}
+
 async function cmdCancel(args: Args): Promise<number> {
   const [id] = args.positional;
   if (!id) die("usage: gate cancel <execution-id>");
@@ -1186,6 +1275,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdMemory(args);
       case "teach":
         return await cmdTeach(args);
+      case "ask":
+        return await cmdAsk(args);
       case "cancel":
         return await cmdCancel(args);
       case "help":

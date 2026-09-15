@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { DEFAULT_AGENTS, ensureDefaultAgents, writeMissingDefaultAgents } from "@/agents/defaults";
-import { agentExists, agentsDir, deleteAgent, listAgents, saveAgent } from "@/agents/registry";
+import { agentExists, agentsDir, deleteAgent, getAgent, listAgents, saveAgent } from "@/agents/registry";
 import { teamScope } from "@/lib/def-root";
 import { runWorkflow } from "@/runtime/engine";
 import type { WorkflowEvent } from "@/events/types";
@@ -105,6 +105,7 @@ describe("what the shipped agents declare", () => {
       "quick-reviewer",
       "recall",
       "reviewer",
+      "source-review",
       "super-implementer",
       "super-planner",
       "super-reviewer",
@@ -1217,5 +1218,68 @@ Investigate {{input.task}} from {{inputs.base.stdout}} given {{inputs.recall.bri
     const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "x" }, emit: (e) => events.push(e) });
     expect(state.status).toBe("completed");
     expect(events.find((e) => e.type === "workflow.completed")).toMatchObject({ terminalNodeId: "nothing-related" });
+  });
+});
+
+describe("the shipped ask road", () => {
+  const runCommand = (async (node: { id: string }) => ({
+    ok: true,
+    exitCode: 0,
+    stdout: node.id === "base" ? "c0ffee1" : "",
+    stderr: "",
+  })) as never;
+
+  const ANSWER = {
+    answer: "They queue writes and flush on idle — src/sync/queue.ts:88.",
+    sources: ["src/sync/queue.ts:88"],
+    certainty: "answered",
+  };
+
+  it("reads one commit and answers, with nothing that could change it", () => {
+    ensureDefaultWorkflows();
+    const workflow = getWorkflow("ask");
+    expect(workflow.nodes.map((n) => n.id)).toEqual(["base", "source-review", "done", "absent"]);
+    // The guarantee is the tool list, not the prompt: a reviewer that cannot
+    // write and cannot run a command is read-only however it is asked.
+    const reviewer = getAgent("source-review");
+    expect(reviewer.executor).toBe("gate");
+    for (const tool of ["write_file", "edit_file", "run_command"]) expect(reviewer.tools).not.toContain(tool);
+    expect(reviewer.tools).toContain("read_file");
+    // The only command on the road reads which commit it is on.
+    const commands = workflow.nodes.flatMap((n) => (n.type === "command" ? [n.command] : []));
+    expect(commands).toEqual([["git", "log", "-1", "--format=format:%H"]]);
+  });
+
+  it("ends on absent when the commit holds nothing the question matches", async () => {
+    ensureDefaultWorkflows();
+    const input = { question: "how does sync flush?", repo: "/r", commit: "c0ffee1", memory: "nothing recorded" };
+    const events: WorkflowEvent[] = [];
+    const state = await runWorkflow(getWorkflow("ask"), {
+      provider: new FakeModelProvider(() => JSON.stringify({ ...ANSWER, certainty: "absent" })),
+      runCommand,
+      input,
+      emit: (e) => events.push(e),
+    });
+    expect(state.status).toBe("completed");
+    expect(events.find((e) => e.type === "workflow.completed")).toMatchObject({ terminalNodeId: "absent" });
+  });
+
+  it("ends on done when it answered", async () => {
+    ensureDefaultWorkflows();
+    const state = await runWorkflow(getWorkflow("ask"), {
+      provider: new FakeModelProvider((req) => {
+        if (req.context?.nodeId !== "source-review") return "{}";
+        // The commit and the memory brief both reach the reviewer: an answer
+        // that does not know which commit it read cannot say so.
+        expect(String(req.messages[0].content)).toContain("c0ffee1");
+        expect(String(req.messages[0].content)).toContain("they flush on idle");
+        return JSON.stringify(ANSWER);
+      }),
+      runCommand,
+      input: { question: "how does sync flush?", repo: "/r", commit: "c0ffee1", memory: "d-1: they flush on idle" },
+      emit: () => {},
+    });
+    expect(state.status).toBe("completed");
+    expect(state.outputs["source-review"]).toMatchObject({ certainty: "answered" });
   });
 });
