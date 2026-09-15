@@ -14,7 +14,9 @@ import {
 } from "@/memory/issues";
 import type { StepRecord } from "@/runtime/state";
 
-import { attributeSessionUsage, recordStep } from "./store";
+import { pinnedDefinitions, type PinnedDefinitions } from "@/workflows/snapshot";
+
+import { attributeSessionUsage, getExecutionDefinitions, recordStep } from "./store";
 import type { ExecutionRecord } from "./types";
 
 /**
@@ -67,6 +69,11 @@ export function recordReportedSteps(execution: ExecutionRecord, steps: StepRecor
   if (!steps.length) return emptyOutcome();
   const db = getDb();
   const outcome = emptyOutcome();
+  // Read before the transaction opens: it is the run's own frozen copy of the
+  // graph, and null for a run that started before there were any — which is
+  // checked exactly as it was then, not refused for missing evidence nobody
+  // asked it for.
+  const pinned = pinnedDefinitions(getExecutionDefinitions(execution.id));
   db.exec("BEGIN");
   try {
     for (const step of steps) {
@@ -79,7 +86,7 @@ export function recordReportedSteps(execution: ExecutionRecord, steps: StepRecor
       if (execution.driver === "session" && step.costing === "session" && !step.usage && step.status === "completed") {
         attributeSessionUsage(execution.id, step.stepIndex);
       }
-      applyStepEffects(execution, step, outcome, now);
+      applyStepEffects(execution, step, pinned, outcome, now);
     }
     db.exec("COMMIT");
   } catch (err) {
@@ -104,11 +111,86 @@ function outputOf(step: StepRecord): Record<string, unknown> | null {
  * the run every step it had left to send. The item is skipped and the reason
  * is carried back so somebody can see it happened.
  */
-function applyStepEffects(execution: ExecutionRecord, step: StepRecord, outcome: ReportOutcome, now: number): void {
+function applyStepEffects(
+  execution: ExecutionRecord,
+  step: StepRecord,
+  pinned: PinnedDefinitions | null,
+  outcome: ReportOutcome,
+  now: number,
+): void {
   const output = outputOf(step);
   if (!output) return;
-  if (output.conflicts !== undefined) applyConflicts(execution, step, output.conflicts, outcome, now);
-  if (output.resolved !== undefined) applyResolutions(execution, step, output.resolved, outcome, now);
+  for (const field of ["conflicts", "resolved"] as const) {
+    if (output[field] === undefined) continue;
+    const wrong = undeclared(pinned, step, field);
+    if (wrong) {
+      outcome.skipped.push({ stepIndex: step.stepIndex, field, reason: wrong });
+      continue;
+    }
+    if (field === "conflicts") applyConflicts(execution, step, output.conflicts, outcome, now);
+    else applyResolutions(execution, step, output.resolved, pinned, outcome, now);
+  }
+}
+
+/**
+ * Whether the run's own definitions say this node could have produced this
+ * field — the node's role, and the output it declared.
+ *
+ * Returns the reason it could not, or null when it could. Null is also the
+ * answer whenever the definitions cannot say: a run with no snapshot, or one
+ * whose snapshot recorded that the agent was already missing when it ran.
+ * Silence there is not consent, it is the absence of a claim, and the thin
+ * powers of the objection protocol are what make that safe — an objection
+ * only ever asks another team to look, and a confirmation only ever opens it.
+ *
+ * What this stops is narrower and worth stopping: a report attributing an
+ * objection to a command node, to a node the graph does not contain, or to an
+ * agent whose output never mentioned objections. None of those can have
+ * happened, so none of them is written down as though it had.
+ */
+function undeclared(
+  pinned: PinnedDefinitions | null,
+  step: StepRecord,
+  field: "conflicts" | "resolved",
+): string | null {
+  if (!pinned) return null;
+  const node = pinned.node(step.nodeId);
+  if (!node) return `this run's definitions have no node "${step.nodeId}"`;
+  if (node.type !== "agent") {
+    return `"${step.nodeId}" is a ${node.type} node in this run's definitions, and ${field} comes from an agent`;
+  }
+  const agent = pinned.agent(node.agent);
+  if (!agent) return null;
+  if (agent.output.type !== "json" || !(field in agent.output.schema)) {
+    return `agent "${node.agent}" does not declare ${field} in the output this run pinned`;
+  }
+  return null;
+}
+
+/**
+ * Whether the node carrying an answer is one that ever read the objection.
+ *
+ * A step says "the person confirmed planner's second objection". If the graph
+ * this run followed never let that node see planner's output, the step is
+ * reporting a conversation that could not have taken place — and the shipped
+ * gates say so in their own definitions: conflict-review, the node that puts
+ * an objection to the person, declares `inputs: [planner.conflicts,
+ * planner.conflictKey, visits.planner]`. A node answering its own earlier visit is
+ * allowed: a loop revisiting a planner is an ordinary shape, not a claim
+ * about somebody else's node.
+ */
+function unbound(pinned: PinnedDefinitions | null, step: StepRecord, sourceNodeId: string): string | null {
+  if (!pinned) return null;
+  if (sourceNodeId === step.nodeId) return null;
+  if (!pinned.node(sourceNodeId)) return `this run's definitions have no node "${sourceNodeId}"`;
+  const node = pinned.node(step.nodeId);
+  if (!node || node.type !== "agent") return null;
+  // The node's own declaration wins over the agent's, exactly as it does when
+  // the node runs; neither one present means nothing was declared to check.
+  const inputs = node.inputs ?? pinned.agent(node.agent)?.inputs;
+  if (!inputs?.length) return null;
+  if (inputs.some((path) => path === sourceNodeId || path.startsWith(`${sourceNodeId}.`))) return null;
+  return `"${step.nodeId}" does not read "${sourceNodeId}" in this run's definitions, so it is not the node that carries an answer about it`;
 }
 
 function applyConflicts(
@@ -189,6 +271,7 @@ function applyResolutions(
   execution: ExecutionRecord,
   step: StepRecord,
   raw: unknown,
+  pinned: PinnedDefinitions | null,
   outcome: ReportOutcome,
   now: number,
 ): void {
@@ -198,6 +281,11 @@ function applyResolutions(
     return;
   }
   for (const r of parsed.data) {
+    const wrong = unbound(pinned, step, r.sourceNodeId);
+    if (wrong) {
+      outcome.skipped.push({ stepIndex: step.stepIndex, field: "resolved", key: r.conflictKey, reason: wrong });
+      continue;
+    }
     const { approval, created } = insertApproval(
       {
         executionId: execution.id,

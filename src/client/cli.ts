@@ -13,7 +13,9 @@ import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 import { describeFeature, describeSearch } from "@/memory/cards";
 import { parseSince } from "@/runtime/tools/memory-tools";
-import { readRemoteUrl } from "@/runtime/workspace";
+import { LINKED_DIRECTORIES } from "@/repos/detect";
+import { checkpointWork, publishBranch } from "@/repos/publish";
+import { readRemoteUrl, type RunWorkspace } from "@/runtime/workspace";
 
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
@@ -910,6 +912,50 @@ async function cmdClean(args: Args): Promise<number> {
 }
 
 /**
+ * Publishes a run's branch now, mid-run, instead of waiting for it to end.
+ *
+ * A run that ends publishes on its way out, and for finished work that is
+ * enough. The case this exists for is the other one: another team is asking
+ * about work that is still going — which is when the question is worth
+ * asking at all — and the branch is sitting in a worktree they cannot reach.
+ * So whatever is in the worktree is committed as a checkpoint, said to be a
+ * checkpoint in its own message, and pushed.
+ *
+ * Nothing here is force: a branch that has moved on the remote is a refusal,
+ * printed and left alone. `gate push` is not this — that sends the team's
+ * workflow and agent definitions up.
+ */
+async function cmdPublish(args: Args): Promise<number> {
+  const [executionId] = args.positional;
+  if (!executionId) die("usage: gate publish <execution-id>");
+  const client = connect();
+  const { execution, publish } = await client.execution(executionId);
+  const ws = execution.workspace as RunWorkspace | null;
+  if (!ws?.root || !ws.branch) return die(`run ${executionId.slice(0, 8)} has no worktree on any machine`);
+  if (!existsSync(ws.root)) {
+    return die(`this run's worktree (${ws.root}) is not on this machine — publish from the machine that ran it`);
+  }
+  if (!publish) {
+    return die(
+      `the repository this run works in does not publish anywhere — give it a publication remote on the Repos page first`,
+    );
+  }
+
+  const committed = checkpointWork(ws.root, `work in progress on ${ws.branch}, published on request`, LINKED_DIRECTORIES);
+  if (committed) console.log(`checkpointed what was uncommitted as ${committed.slice(0, 8)}`);
+  const outcome = publishBranch(ws.root, ws.branch, publish);
+  console.log(outcome.ok ? outcome.note : `not published: ${outcome.note}`);
+  await client
+    .report(executionId, {
+      events: [],
+      steps: [],
+      published: outcome.ok ? outcome.published : { error: outcome.note },
+    })
+    .catch((e) => console.log(`the gate could not be told: ${(e as Error).message}`));
+  return outcome.ok ? 0 : 1;
+}
+
+/**
  * The detached worker `gate next` starts for a claude-code node. Not in the
  * usage text: nothing but this CLI runs it, and its stdout is the node's log.
  */
@@ -1108,6 +1154,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdShow(args);
       case "push":
         return await cmdPush(args);
+      case "publish":
+        return await cmdPublish(args);
       case "run":
         return await cmdRun(args);
       case "begin":

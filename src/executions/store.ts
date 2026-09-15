@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { costForUsage, tierOf } from "@/lib/pricing";
 import { queueExtraction } from "@/memory/store";
 import type { StepRecord, WorkflowState } from "@/runtime/state";
+import type { DefinitionSnapshot } from "@/workflows/snapshot";
 
 import type { ToolCallRecord } from "@/runtime/state";
 
@@ -75,6 +76,12 @@ export interface ExecutionOrigin {
    * same thing and a wrong identity merges their memory.
    */
   repoId?: string | null;
+  /**
+   * The workflow and agents this run is held to, as they were at its first
+   * step. Absent leaves the run without one, which is what every run started
+   * before snapshots had — and those are checked the way they always were.
+   */
+  definitions?: DefinitionSnapshot | null;
 }
 
 export function createExecution(
@@ -91,8 +98,8 @@ export function createExecution(
     .prepare(
       `INSERT INTO workflow_executions
          (id, workflow_id, status, started_at, input_json, resumed_from,
-          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver, client_session, task_id, repo_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver, client_session, task_id, repo_id, definitions_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       id,
@@ -112,7 +119,22 @@ export function createExecution(
       meta.client?.session ?? null,
       meta.taskId ?? null,
       meta.repoId ?? null,
+      meta.definitions ? json(meta.definitions) : null,
     );
+}
+
+/**
+ * The definitions a run was started against, or null when it has none.
+ *
+ * Read on its own rather than carried on `ExecutionRecord`: it is the whole
+ * text of a workflow and several agents, every run list would carry it, and
+ * the only thing that reads it is the check on a report.
+ */
+export function getExecutionDefinitions(id: string): DefinitionSnapshot | null {
+  const row = getDb().prepare("SELECT definitions_json FROM workflow_executions WHERE id = ?").get(id) as
+    | { definitions_json: string | null }
+    | undefined;
+  return row?.definitions_json ? parse<DefinitionSnapshot | null>(row.definitions_json, null) : null;
 }
 
 /**
@@ -410,6 +432,31 @@ export function setExecutionRepo(executionId: string, repoId: string): void {
   getDb().prepare("UPDATE workflow_executions SET repo_id = ? WHERE id = ?").run(repoId, executionId);
 }
 
+/**
+ * Records what happened when this run's branch was offered to a remote.
+ *
+ * A success overwrites `published_*` with what the remote itself reported —
+ * the only sha another machine is known to be able to fetch — and clears
+ * `publish_error`. A failure only sets `publish_error`; it leaves the last
+ * verified publication exactly as it was, because a later attempt failing
+ * does not make an earlier one unfetch. Reading both together: the commit is
+ * the last one known to be out there, the error (if any) is about whatever
+ * happened *since*.
+ */
+export function setExecutionPublication(
+  executionId: string,
+  result: { ref: string; commit: string; at: number } | { error: string },
+): void {
+  const db = getDb();
+  if ("commit" in result) {
+    db.prepare(
+      "UPDATE workflow_executions SET published_ref = ?, published_commit = ?, published_at = ?, publish_error = NULL WHERE id = ?",
+    ).run(result.ref, result.commit, result.at, executionId);
+  } else {
+    db.prepare("UPDATE workflow_executions SET publish_error = ? WHERE id = ?").run(result.error, executionId);
+  }
+}
+
 /** Recorded as soon as the worktree exists, so a running job shows its branch. */
 export function setExecutionWorkspace(executionId: string, workspace: ExecutionWorkspace): void {
   getDb().prepare("UPDATE workflow_executions SET workspace_json = ? WHERE id = ?").run(json(workspace), executionId);
@@ -442,6 +489,10 @@ interface ExecutionRow {
   client_session: string | null;
   task_id: string | null;
   repo_id: string | null;
+  published_ref: string | null;
+  published_commit: string | null;
+  published_at: number | null;
+  publish_error: string | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -471,6 +522,10 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
     pausedMs: r.paused_ms ?? 0,
     taskId: r.task_id ?? null,
     repoId: r.repo_id ?? null,
+    publishedRef: r.published_ref ?? null,
+    publishedCommit: r.published_commit ?? null,
+    publishedAt: r.published_at ?? null,
+    publishError: r.publish_error ?? null,
   };
 }
 

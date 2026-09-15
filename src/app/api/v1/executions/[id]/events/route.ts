@@ -10,6 +10,7 @@ import {
   isCancelRequested,
   pauseExecution,
   resumeExecution,
+  setExecutionPublication,
   setExecutionWorkspace,
   touchExecution,
 } from "@/executions/store";
@@ -45,6 +46,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   if (parsed.data.workspace) {
     setExecutionWorkspace(id, { ...parsed.data.workspace, commit: null, changedFiles: [] });
+  }
+  // A publication arrives on a run that has already finished — the branch is
+  // pushed as the worktree is released, which is after the last word on the
+  // run itself. Nothing about it can fail the report.
+  const published = parsed.data.published;
+  if (published?.ref && published.commit) {
+    setExecutionPublication(id, { ref: published.ref, commit: published.commit, at: published.at ?? Date.now() });
+  } else if (published?.error) {
+    setExecutionPublication(id, { error: published.error });
   }
   // One transaction for the batch: a step that raises an objection against
   // another team is written with that objection or not at all. A throw here is

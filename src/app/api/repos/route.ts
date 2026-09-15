@@ -25,6 +25,16 @@ const connectSchema = z
     baseRef: z.string().max(200).optional(),
     setup: argv.optional(),
     prepare: argv.optional(),
+    /** Whose repository this is. Left unset when nobody has said. */
+    teamId: z.string().min(1).max(64).optional(),
+    /**
+     * A git remote name (or URL) this repository's run branches are pushed to,
+     * so another team can fetch what a run did. Unset means it does not
+     * publish, which is every repository until someone says otherwise.
+     */
+    publicationRemote: z.string().max(500).optional(),
+    /** Which branches may be published, as a glob. Unset leaves `gate/*`. */
+    branchPolicy: z.string().max(200).optional(),
     /** Run the setup commands straight away; off when the caller wants to edit first. */
     install: z.boolean().default(true),
   })
@@ -64,6 +74,9 @@ export async function POST(req: Request) {
       remoteUrl,
       setup: body.setup ?? commands.setup,
       prepare: body.prepare ?? commands.prepare,
+      teamId: body.teamId ?? null,
+      publicationRemote: body.publicationRemote?.trim() || null,
+      branchPolicy: body.branchPolicy?.trim() || null,
     });
     const after = body.install ? await runRepoSetup(id) : repo;
     return NextResponse.json({ repo: after, detected: commands }, { status: 201 });

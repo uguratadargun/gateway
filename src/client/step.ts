@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { getAgent } from "@/agents/registry";
 import type { ExecutionStepRecord } from "@/executions/types";
+import type { PublicationTarget } from "@/repos/publish";
 import { scopeAt, type DefinitionScope } from "@/lib/def-root";
 import { parseOutput, prepareAgentNode } from "@/runtime/executors/agent";
 import { runClaudeCodeNode } from "@/runtime/executors/claude-code";
@@ -18,6 +19,8 @@ import {
   createRunWorkspace,
   readRemoteUrl,
   readRunDiff,
+  // Only for undoing a `gate continue` that was refused — a worktree put back
+  // the way it was found is not a publication.
   releaseRunWorkspace,
   restoreRunWorkspace,
   summarizeWorkspace,
@@ -27,6 +30,7 @@ import { unattendedNotice } from "@/skills/inject";
 import { getSkill, resolveSkillDir } from "@/skills/registry";
 import type { SkillDefinition } from "@/skills/types";
 import { getWorkflow } from "@/workflows/registry";
+import { definitionsHash } from "@/workflows/snapshot";
 import type { WorkflowDefinition } from "@/workflows/types";
 
 import type { GateClient } from "./api";
@@ -36,6 +40,7 @@ import { subagentName } from "./subagents";
 import { describeCall, describeText } from "./worker-log";
 import { cacheDir, cacheScope } from "./cache";
 import { gateHome } from "./config";
+import { releaseAndPublish } from "./release";
 import { resolveRepo } from "./run";
 import { nextInSession } from "./walk";
 
@@ -474,7 +479,10 @@ export async function begin(
   // environment: either names the session whose gateway calls cost the nodes
   // it does itself.
   const session = (process.env[SESSION_ID_ENV] ?? process.env.CLAUDE_CODE_SESSION_ID ?? "").trim() || undefined;
-  const executionId = await ctx.client.startRun({
+  // The publication target the gate answers with is ignored here: this run
+  // ends in a later process, and `gate next` asks again then — so a repo
+  // whose publishing changed mid-run is not held to what was true at start.
+  const { executionId } = await ctx.client.startRun({
     workflowId: workflow.id,
     input: runInput,
     // Raw, for the server to normalise — see runLocal.
@@ -486,6 +494,9 @@ export async function begin(
       session,
     },
     driver: "session",
+    // From the mirror, which is what `pinDefinitions` freezes a line below:
+    // the hash the server agrees to is the one for the copy this run walks.
+    definitionsHash: definitionsHash(workflow.id, scope),
   });
 
   // The definitions this run will follow, frozen before anything reads them.
@@ -519,7 +530,7 @@ export async function begin(
  */
 export async function next(ctx: SessionRunContext, executionId: string): Promise<Instruction> {
   for (;;) {
-    const { execution, steps } = await ctx.client.execution(executionId);
+    const { execution, steps, publish } = await ctx.client.execution(executionId);
     // Settled from outside since this session last looked: Stop on the
     // dashboard lands on the row directly for a run a session drives, and a
     // session that was gone for hours is written off there too. Either way
@@ -537,7 +548,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
       }
       clearPending(executionId);
       ctx.say(`■ run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
-      releaseStopped(ctx, executionId, execution);
+      await releaseStopped(ctx, executionId, execution, publish);
       return { do: "stopped", executionId, error: stopped };
     }
     const scope = runScope(ctx.team, executionId);
@@ -546,7 +557,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
 
     if (position.kind === "failed") {
       clearPending(executionId);
-      await settle(ctx, executionId, execution, steps.length, "failed", position.error);
+      await settle(ctx, executionId, execution, steps.length, "failed", position.error, publish);
       ctx.say(
         `  the run's history and its branch are kept: \`gate continue ${executionId}\` brings the worktree back and tries "${position.nodeId}" again`,
       );
@@ -555,7 +566,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
     if (position.kind === "done") {
       clearPending(executionId);
       const workspace = workspaceOf(execution);
-      await settle(ctx, executionId, execution, steps.length, position.status, null);
+      await settle(ctx, executionId, execution, steps.length, position.status, null, publish);
       return {
         do: "done",
         executionId,
@@ -958,14 +969,14 @@ export async function step(
     );
   }
 
-  const { execution } = await ctx.client.execution(executionId);
+  const { execution, publish } = await ctx.client.execution(executionId);
   // Stopped while the answer was being worked out: the answer has nowhere to
   // go, and saying so beats recording a step on a run that has ended.
   const stopped = stoppedOutside(execution);
   if (stopped) {
     clearPending(executionId);
     ctx.say(`■ run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
-    releaseStopped(ctx, executionId, execution);
+    await releaseStopped(ctx, executionId, execution, publish);
     return { do: "stopped", executionId, error: stopped };
   }
   const scope = runScope(ctx.team, executionId);
@@ -1250,6 +1261,8 @@ async function settle(
   stepCount: number,
   status: "completed" | "failed",
   error: { code: string; message: string } | null,
+  /** Where this run's repository publishes, as the gate answered on this poll. */
+  publish?: PublicationTarget | null,
 ): Promise<void> {
   if (execution.status !== "running") return;
   const workspace = workspaceOf(execution);
@@ -1269,20 +1282,21 @@ async function settle(
 
   // Ended either way: the worktree goes and its branch keeps the work — a
   // failed run's `gate continue` checks it out again from there.
-  if (workspace) {
-    const released = releaseRunWorkspace(workspace, executionId);
-    if (released) ctx.say(released);
-  }
+  if (workspace) await releaseAndPublish(ctx.client, workspace, executionId, publish, ctx.say);
   // Over for good: the pinned definitions and the logs have nothing left to
   // serve. A failed run keeps them, because `gate continue` needs them.
   if (status === "completed") forgetRun(executionId);
 }
 
 /** A run stopped from outside ends like any other: its worktree goes, its branch stays. */
-function releaseStopped(ctx: SessionRunContext, executionId: string, execution: { workspace: RunWorkspace | null }): void {
+async function releaseStopped(
+  ctx: SessionRunContext,
+  executionId: string,
+  execution: { workspace: RunWorkspace | null },
+  publish?: PublicationTarget | null,
+): Promise<void> {
   const workspace = workspaceOf(execution);
-  const released = workspace ? releaseRunWorkspace(workspace, executionId) : null;
-  if (released) ctx.say(released);
+  if (workspace) await releaseAndPublish(ctx.client, workspace, executionId, publish, ctx.say);
 }
 
 /**

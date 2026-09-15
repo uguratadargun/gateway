@@ -8,14 +8,16 @@ import type { WorkflowEvent } from "@/events/types";
 import { runWorkflow } from "@/runtime/engine";
 import { WorkflowError } from "@/runtime/errors";
 import type { WorkflowState } from "@/runtime/state";
-import { borrowDependencies, createRunWorkspace, readRemoteUrl, readRunDiff, releaseRunWorkspace, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
+import { borrowDependencies, createRunWorkspace, readRemoteUrl, readRunDiff, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
 import { getWorkflow } from "@/workflows/registry";
+import { definitionsHash } from "@/workflows/snapshot";
 import type { WorkflowDefinition } from "@/workflows/types";
 
 import { CLI_VERSION, type GateClient } from "./api";
 import { cacheScope } from "./cache";
 import { HttpGateProvider } from "./http-provider";
 import { HttpMemoryAccess } from "./memory";
+import { releaseAndPublish } from "./release";
 import { RunReporter } from "./reporter";
 
 /**
@@ -115,7 +117,7 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
     input.repo = repo;
   }
 
-  const executionId = await client.startRun({
+  const { executionId, publish } = await client.startRun({
     workflowId: workflow.id,
     input,
     // The raw remote, not a name derived from it: the server does the
@@ -128,6 +130,9 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
       version: CLI_VERSION,
     },
     taskId: opts.taskId,
+    // What this machine has, so the server can say if it is not what the team
+    // has. Sent from the mirror the run is about to work from.
+    definitionsHash: definitionsHash(workflow.id, scope),
   });
 
   const controller = new AbortController();
@@ -213,10 +218,7 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
 
   // The run is over, whichever way: the worktree goes and its branch keeps
   // the work — a run `gate run` drove is never continued, only started again.
-  if (workspace) {
-    const released = releaseRunWorkspace(workspace, executionId);
-    if (released) opts.onNotice?.(released);
-  }
+  if (workspace) await releaseAndPublish(client, workspace, executionId, publish, opts.onNotice);
 
   return { executionId, state, workspace };
 }

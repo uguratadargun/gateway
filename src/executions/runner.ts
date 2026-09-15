@@ -16,11 +16,12 @@ import {
   type ResolvedWorkspaceSpec,
   type RunWorkspace,
 } from "@/runtime/workspace";
-import { getRepo, type RepoRecord } from "@/repos/store";
+import { getRepo, publicationTarget, type RepoRecord } from "@/repos/store";
 import { isPathLike, prepareWorktree } from "@/repos/setup";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { DEFAULT_TEAM, teamScope, type DefinitionScope } from "@/lib/def-root";
 import { getWorkflow } from "@/workflows/registry";
+import { snapshotDefinitions } from "@/workflows/snapshot";
 import type { WorkflowDefinition, WorkspaceSpec } from "@/workflows/types";
 
 import { assertResumable, planResume } from "./resume";
@@ -28,7 +29,16 @@ import { LocalMemoryAccess } from "@/memory/access";
 import { scheduleExtraction } from "@/memory/queue";
 
 import { recordReportedSteps } from "./record";
-import { createExecution, finishExecution, getExecution, getExecutionLineage, recordStep, setExecutionRepo, setExecutionWorkspace } from "./store";
+import {
+  createExecution,
+  finishExecution,
+  getExecution,
+  getExecutionLineage,
+  recordStep,
+  setExecutionPublication,
+  setExecutionRepo,
+  setExecutionWorkspace,
+} from "./store";
 import type { ExecutionWorkspace } from "./types";
 
 /**
@@ -89,10 +99,18 @@ function resolveWorkspace(
 ): { spec: ResolvedWorkspaceSpec; repo: RepoRecord | null } {
   const given = typeof input.repo === "string" ? input.repo.trim() : "";
   const value = given || spec.repo?.trim() || "";
+  // A run may be pinned to one commit by the caller, the same way it may be
+  // pointed at one repository. `gate ask` is why: an answer about code is
+  // about a fixed commit or it is about a moving branch, and a moving branch
+  // is not a source. Unset — which is every ordinary run — leaves the
+  // workflow's own base, then the repository's, then HEAD.
+  const pinned = typeof input.baseRef === "string" ? input.baseRef.trim() : "";
   if (!value) {
     throw new WorkflowError("WORKSPACE_ERROR", 'this workflow works in a repository; start it with a "repo" run input');
   }
-  if (isPathLike(value)) return { spec: { ...spec, repo: value }, repo: null };
+  if (isPathLike(value)) {
+    return { spec: { ...spec, repo: value, baseRef: pinned || spec.baseRef }, repo: null };
+  }
 
   const connected = getRepo(value);
   if (!connected) {
@@ -108,7 +126,7 @@ function resolveWorkspace(
     );
   }
   return {
-    spec: { ...spec, repo: connected.root, baseRef: spec.baseRef ?? connected.baseRef ?? undefined },
+    spec: { ...spec, repo: connected.root, baseRef: pinned || spec.baseRef || connected.baseRef || undefined },
     repo: connected,
   };
 }
@@ -129,7 +147,10 @@ export function startExecution(
   }
 
   const executionId = randomUUID();
-  createExecution(executionId, workflow.id, input, Date.now(), null, { teamId: scope.teamId });
+  createExecution(executionId, workflow.id, input, Date.now(), null, {
+    teamId: scope.teamId,
+    definitions: snapshotDefinitions(workflow.id, scope),
+  });
 
   // The worktree is created before the first node runs: a workflow that cannot
   // get its workspace fails immediately rather than half-way through a plan.
@@ -201,6 +222,10 @@ export function resumeExecution(parentId: string): StartExecutionResult {
     // repository it was in.
     taskId: parent.taskId,
     repoId: parent.repoId,
+    // The continuation's own snapshot, not the parent's: it walks the graph
+    // that is on disk now — `getWorkflow` above read exactly that — and a run
+    // must be held to the definitions it actually followed.
+    definitions: snapshotDefinitions(parent.workflowId, scope),
   });
   if (workspace) setExecutionWorkspace(executionId, workspaceSummary(workspace)!);
 
@@ -237,10 +262,18 @@ function reuseWorkspace(workspace: ExecutionWorkspace | null): { workspace: RunW
   }
 }
 
-/** The run is over, whichever way: its worktree goes, its branch keeps the work. */
-function releaseWorkspace(workspace: RunWorkspace | null, executionId: string): void {
+/**
+ * The run is over, whichever way: its worktree goes, its branch keeps the work
+ * — and, if the repository publishes, the branch goes to the remote first,
+ * while there is still a worktree to push from.
+ */
+function releaseWorkspace(workspace: RunWorkspace | null, executionId: string, connected?: RepoRecord | null): void {
   if (!workspace) return;
-  const released = releaseRunWorkspace(workspace, executionId);
+  const released = releaseRunWorkspace(workspace, executionId, {
+    publish: publicationTarget(connected),
+    onPublished: (outcome) =>
+      setExecutionPublication(executionId, outcome.ok ? outcome.published : { error: outcome.note }),
+  });
   if (released) console.log(`gate: ${released}`);
 }
 
@@ -299,7 +332,7 @@ async function launch(
     });
     inFlight.delete(executionId);
     finishExecution(state, workspaceSummary(workspace));
-    releaseWorkspace(workspace, executionId);
+    releaseWorkspace(workspace, executionId, connected);
     scheduleExtraction();
     return state;
   } catch (e) {
@@ -311,7 +344,7 @@ async function launch(
     const code = e instanceof WorkflowError ? e.code : "WORKFLOW_ROUTING_ERROR";
     const state = failedState(executionId, workflow.id, input, code, message);
     finishExecution(state, workspaceSummary(workspace));
-    releaseWorkspace(workspace, executionId);
+    releaseWorkspace(workspace, executionId, connected);
     publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: code as never, message });
     scheduleExtraction();
     return state;

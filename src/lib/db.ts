@@ -644,6 +644,38 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["memory_decisions", "repo_id", "repo_id TEXT"],
   ["memory_touches", "repo_id", "repo_id TEXT"],
   ["decision_issues", "repo_id", "repo_id TEXT"],
+  // Which team owns a repository, and where its work is published so another
+  // team can read it. A branch that only exists in a worktree on somebody's
+  // laptop cannot answer a question asked from another repository, and every
+  // cross-team feature here ends in someone needing to read the work rather
+  // than a summary of it.
+  //
+  // `publication_remote` is a remote name (or a URL) and NULL means this
+  // repository does not publish — the default, so nothing starts pushing
+  // because a column appeared. `branch_policy` bounds what may be pushed
+  // when it does; NULL is read as `gate/*`, which is everything gate makes
+  // and nothing a person is working on.
+  ["repos", "team_id", "team_id TEXT"],
+  ["repos", "publication_remote", "publication_remote TEXT"],
+  ["repos", "branch_policy", "branch_policy TEXT"],
+  // The last verified publication of a run's branch: the ref, the commit the
+  // *remote* reported holding afterwards, and when. Separate from the run's
+  // own commit because they answer different questions — "what did this run
+  // build" and "what can another machine fetch" — and because publication is
+  // allowed to fail without the run having failed, which is what
+  // `publish_error` records instead of throwing the result away.
+  ["workflow_executions", "published_ref", "published_ref TEXT"],
+  ["workflow_executions", "published_commit", "published_commit TEXT"],
+  ["workflow_executions", "published_at", "published_at INTEGER"],
+  ["workflow_executions", "publish_error", "publish_error TEXT"],
+  // The definitions this run is held to: the workflow's source and the source
+  // of every agent it names, as they were when it started. A team editing an
+  // agent an hour into a run must not change what that run's reports are
+  // checked against, in either direction — so the check reads this and not
+  // the files on disk. NULL on every run started before it existed, and those
+  // are checked the way they always were rather than refused for lacking
+  // evidence they were never asked for.
+  ["workflow_executions", "definitions_json", "definitions_json TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

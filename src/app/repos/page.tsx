@@ -28,6 +28,11 @@ interface Repo {
   baseRef: string | null;
   setup: string[][];
   prepare: string[][];
+  teamId: string | null;
+  /** Where run branches are pushed so another team can read them; null = nowhere. */
+  publicationRemote: string | null;
+  /** Which branches that covers. Always concrete — the server resolves the default. */
+  branchPolicy: string;
   status: "new" | "installing" | "ready" | "failed";
   lastSetupAt: number | null;
   lastSetupLog: string | null;
@@ -255,6 +260,14 @@ export default function ReposPage() {
               <span>
                 Start a run with <code className="font-mono text-foreground/80">repo: {repo.id}</code>
               </span>
+              {repo.publicationRemote ? (
+                <span>
+                  · publishes <code className="font-mono text-foreground/80">{repo.branchPolicy}</code> to{" "}
+                  <code className="font-mono text-foreground/80">{repo.publicationRemote}</code>
+                </span>
+              ) : (
+                <span>· does not publish: its run branches stay on the machine that made them</span>
+              )}
               {repo.lastSetupLog && (
                 <button
                   className="underline-offset-2 hover:underline"

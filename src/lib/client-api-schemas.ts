@@ -47,6 +47,16 @@ export const startRunSchema = z
      * into somebody else's work.
      */
     taskId: z.string().min(1).max(64).optional(),
+    /**
+     * The digest of the workflow and its agents as this machine has them.
+     *
+     * Absent from an older client, and then the run simply starts against the
+     * server's own snapshot: a client that never claimed to have a particular
+     * version is not refused for failing to match one. When it is sent and
+     * differs, the run does not start — the two sides disagree about what the
+     * graph *is*, and the answer is a pull, not a run walked twice.
+     */
+    definitionsHash: z.string().max(64).nullish(),
   })
   .strict();
 
@@ -164,6 +174,23 @@ export const reportSchema = z
      * while the run is going rather than only after it ends.
      */
     workspace: workspaceSchema.nullish(),
+    /**
+     * What happened when this run's branch was offered to its repository's
+     * publication remote, sent once after the worktree is released — which
+     * is after `finish`, so it cannot travel with it.
+     *
+     * Either shape is valid and neither is a failure of the report: a run
+     * that could not push is a run that succeeded and is not fetchable yet,
+     * and saying so is the whole point.
+     */
+    published: z
+      .object({
+        ref: z.string().max(300).nullish(),
+        commit: z.string().max(80).nullish(),
+        at: z.number().nullish(),
+        error: z.string().max(1000).nullish(),
+      })
+      .nullish(),
   })
   .strict();
 

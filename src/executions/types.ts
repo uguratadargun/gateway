@@ -69,6 +69,18 @@ export interface ExecutionRecord {
    * only meaningful next to this.
    */
   repoId: string | null;
+  /**
+   * The last verified publication of this run's branch — the remote reported
+   * holding `publishedCommit` at `publishedRef` when this was checked, which
+   * is not the same claim as "the run's branch has this commit": the branch
+   * may have moved past it since (a checkpoint mid-run, then more work).
+   * `publishError` holds the reason when a publication attempt failed; the
+   * run's own result is unaffected either way.
+   */
+  publishedRef: string | null;
+  publishedCommit: string | null;
+  publishedAt: number | null;
+  publishError: string | null;
 }
 
 /** The machine a local run happened on, as the client reported it. */

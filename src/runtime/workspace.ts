@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { LINKED_DIRECTORIES, linkedDirectories } from "@/repos/detect";
+import { publishBranch, type PublicationTarget, type PublishOutcome } from "@/repos/publish";
 
 import { WorkflowError } from "./errors";
 import type { WorkspaceSpec } from "@/workflows/types";
@@ -208,8 +209,25 @@ function commitLeftovers(ws: Pick<RunWorkspace, "root" | "branch">, executionId:
  * worktree when a run is continued. A branch with nothing on it past its
  * base goes too. If the leftovers cannot be committed, the worktree stays
  * exactly as it is. Returns what happened, for the person to read; never throws.
+ *
+ * When the run's repository publishes, the branch is pushed here and nowhere
+ * else: this is the last moment it exists as a worktree, and it is the first
+ * moment it holds everything the run did. A publication that fails is said so
+ * in the returned line and changes nothing else — the run's result does not
+ * depend on a network.
  */
-export function releaseRunWorkspace(ws: RunWorkspace, executionId: string): string | null {
+export interface ReleaseOptions {
+  /**
+   * Where this run's branch goes so another machine can fetch it. Left out
+   * entirely by callers that are only tidying up (`gate clean`): passing a
+   * target is what asks for a push, so cleaning never starts one.
+   */
+  publish?: PublicationTarget | null;
+  /** Told what the publication did, worked or not, so it can be recorded. */
+  onPublished?: (outcome: PublishOutcome) => void;
+}
+
+export function releaseRunWorkspace(ws: RunWorkspace, executionId: string, opts: ReleaseOptions = {}): string | null {
   if (!existsSync(ws.root)) return null;
   try {
     // Not a worktree git knows — nothing here to judge, so nothing is removed.
@@ -229,13 +247,26 @@ export function releaseRunWorkspace(ws: RunWorkspace, executionId: string): stri
   } catch {
     // Unknown is not empty: keep the branch.
   }
+  // Before the worktree goes, while HEAD still names what the branch holds —
+  // and not at all for an empty run, which has nothing to offer another team.
+  let publishNote = "";
+  if (opts.publish !== undefined && !empty) {
+    const outcome = publishBranch(ws.root, ws.branch, opts.publish);
+    try {
+      opts.onPublished?.(outcome);
+    } catch {
+      // Recording what the push did is not worth failing a release over: the
+      // worktree still has to go, and this function never throws.
+    }
+    publishNote = ` (${outcome.note})`;
+  }
   try {
     removeRunWorkspace(ws, { keepBranch: !empty });
   } catch (e) {
     return `worktree ${ws.root} could not be removed: ${(e as Error).message}`;
   }
   if (empty) return `worktree ${ws.root} removed: the run changed nothing, so branch ${ws.branch} went with it`;
-  return `worktree ${ws.root} removed; branch ${ws.branch} keeps the work${committed ? " (what was uncommitted is its last commit)" : ""}`;
+  return `worktree ${ws.root} removed; branch ${ws.branch} keeps the work${committed ? " (what was uncommitted is its last commit)" : ""}${publishNote}`;
 }
 
 /**

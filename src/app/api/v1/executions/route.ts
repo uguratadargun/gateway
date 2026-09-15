@@ -8,9 +8,11 @@ import { requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { createExecution, listExecutions } from "@/executions/store";
 import { taskVisibleTo } from "@/orchestration/tasks";
 import { canonicalRepoId } from "@/repos/identity";
+import { publicationTarget, repoByIdentity } from "@/repos/store";
 import { WorkflowError } from "@/runtime/errors";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { getWorkflow } from "@/workflows/registry";
+import { snapshotDefinitions } from "@/workflows/snapshot";
 
 export const runtime = "nodejs";
 
@@ -69,8 +71,31 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "no such task", code: "TASK_NOT_FOUND" }, { status: 400 });
     }
 
+    // Taken before the run exists, so what it is held to is fixed by the time
+    // anything can report against it.
+    const definitions = snapshotDefinitions(workflow.id, scope);
+    const claimed = parsed.data.definitionsHash?.trim();
+    if (claimed && claimed !== definitions.hash) {
+      // Not 400: nothing about the request is malformed, and the client is not
+      // wrong — it is out of date, which is a thing it can fix in one command.
+      // Refused rather than run against either side's copy, because a run that
+      // reports steps for nodes the server's graph does not have would have to
+      // be judged by a graph nobody ran.
+      return NextResponse.json(
+        {
+          error: `this machine's definitions for "${workflow.id}" are not the team's current ones — run \`gate pull\` and start again`,
+          code: "DEFINITIONS_STALE",
+          expected: definitions.hash,
+          got: claimed,
+        },
+        { status: 409 },
+      );
+    }
+
     const executionId = randomUUID();
+    const repoId = parsed.data.client.remoteUrl ? canonicalRepoId(parsed.data.client.remoteUrl) : null;
     createExecution(executionId, workflow.id, parsed.data.input, Date.now(), null, {
+      definitions,
       origin: "local",
       taskId: parsed.data.taskId ?? null,
       driver: parsed.data.driver,
@@ -79,7 +104,7 @@ export async function POST(req: Request) {
       // The identity is derived here, from the remote the client reported, so
       // every run names a repository the same way however old the client is.
       // An unparseable or absent remote leaves it null, never guessed.
-      repoId: parsed.data.client.remoteUrl ? canonicalRepoId(parsed.data.client.remoteUrl) : null,
+      repoId,
       client: {
         host: parsed.data.client.host ?? null,
         repo: parsed.data.client.repo ?? null,
@@ -88,7 +113,13 @@ export async function POST(req: Request) {
         session: parsed.data.client.session ?? null,
       },
     });
-    return NextResponse.json({ executionId }, { status: 201 });
+    // Told back to the client so it can publish its own branch at the end of
+    // the run — a client has no `RepoRecord` and cannot look this up itself,
+    // and asking here means an old client that never heard of publishing
+    // simply ignores the field.
+    const publish = repoId ? publicationTarget(repoByIdentity(repoId)) ?? null : null;
+    // The hash the two sides agreed on, for the client to keep beside its pin.
+    return NextResponse.json({ executionId, publish, definitionsHash: definitions.hash }, { status: 201 });
   } catch (e) {
     if (e instanceof WorkflowError) return NextResponse.json({ error: e.message, code: e.code }, { status: 400 });
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });

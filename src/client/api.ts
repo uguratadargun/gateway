@@ -191,12 +191,31 @@ export class GateClient {
     driver?: "engine" | "session";
     /** The cross-team task the run serves. Refused if the team cannot see it. */
     taskId?: string;
-  }): Promise<string> {
-    const res = await this.request<{ executionId: string }>("/api/v1/executions", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-    return res.body.executionId;
+    /**
+     * The digest of this machine's copy of the workflow and its agents. The
+     * server refuses the run when it does not match its own, because the two
+     * sides then disagree about what the graph is — and a `gate pull` settles
+     * it. Null when this machine could not work one out; the run then starts
+     * against the server's, which is what an older client does anyway.
+     */
+    definitionsHash?: string | null;
+  }): Promise<{
+    executionId: string;
+    /**
+     * Where to push this run's branch when it ends, as the server sees the
+     * repository — a client has no `RepoRecord` of its own to ask. Null means
+     * the repository does not publish, or the server did not know the
+     * repository at all; either way nothing gets pushed.
+     */
+    publish: { remote: string; branchPolicy: string } | null;
+  }> {
+    const res = await this.request<{ executionId: string; publish: { remote: string; branchPolicy: string } | null }>(
+      "/api/v1/executions",
+      { method: "POST", body: JSON.stringify(input) },
+    );
+    // An older server answers with no `publish` field at all: absent is read
+    // the same as null, not as a crash on a client newer than it talks to.
+    return { executionId: res.body.executionId, publish: res.body.publish ?? null };
   }
 
   /**
@@ -215,7 +234,7 @@ export class GateClient {
   /** Reports progress; the reply says whether someone asked the run to stop. */
   async report(
     executionId: string,
-    payload: { events: unknown[]; steps: unknown[]; workspace?: unknown },
+    payload: { events: unknown[]; steps: unknown[]; workspace?: unknown; published?: unknown },
   ): Promise<{ cancelRequested: boolean }> {
     const res = await this.request<{ cancelRequested: boolean }>(`/api/v1/executions/${executionId}/events`, {
       method: "POST",
@@ -255,8 +274,12 @@ export class GateClient {
   }
 
   /** One run and its steps — the memory a session-driven walk replays. */
-  async execution(executionId: string): Promise<{ execution: any; steps: any[] }> {
-    return (await this.request<{ execution: any; steps: any[] }>(`/api/v1/executions/${executionId}`)).body;
+  async execution(
+    executionId: string,
+  ): Promise<{ execution: any; steps: any[]; publish?: { remote: string; branchPolicy: string } | null }> {
+    return (await this.request<{ execution: any; steps: any[]; publish?: { remote: string; branchPolicy: string } | null }>(
+      `/api/v1/executions/${executionId}`,
+    )).body;
   }
 
   /** The team's memory: decisions and features matching words, paths, or a time. */
