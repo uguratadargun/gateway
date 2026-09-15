@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getExecution } from "@/executions/store";
+import { forgetRunMemory } from "@/memory/forget";
 import { scheduleExtraction } from "@/memory/queue";
 import { memoryOfExecution, requeueExtraction } from "@/memory/store";
 
@@ -24,4 +25,16 @@ export async function POST(_req: Request, { params }: Params) {
   const requeued = requeueExtraction(id);
   if (requeued) scheduleExtraction();
   return NextResponse.json({ requeued, ...memoryOfExecution(id) });
+}
+
+/**
+ * Forgets what this run taught the team. The run stays whole — its steps, its
+ * diff, its cost; only the record goes, and the ledger is left saying so, so
+ * that recording the run again is something a person asks for.
+ */
+export async function DELETE(_req: Request, { params }: Params) {
+  const { id } = await params;
+  if (!getExecution(id)) return NextResponse.json({ error: "execution not found" }, { status: 404 });
+  const forgotten = forgetRunMemory(id);
+  return NextResponse.json({ forgotten, ...memoryOfExecution(id) });
 }

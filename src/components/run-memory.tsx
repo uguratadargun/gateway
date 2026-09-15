@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, RefreshCw } from "lucide-react";
+import { BookOpen, RefreshCw, Trash2 } from "lucide-react";
 
 import { DecisionView } from "@/components/decision-view";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +53,28 @@ export function RunMemory({ executionId }: { executionId: string }) {
     }
   }
 
+  /**
+   * Deletes what this run taught the team. The run stays; the ledger is left
+   * saying the record was forgotten, so *Record earlier runs* passes it by and
+   * only *Record again* brings it back.
+   */
+  async function forget(count: number) {
+    if (
+      !confirm(
+        `Forget what this run taught?\n\n${count} decision${count === 1 ? "" : "s"} ${count === 1 ? "is" : "are"} deleted from memory. The run, its steps and its diff stay. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/executions/${executionId}/memory`, { method: "DELETE" });
+      if (r.ok) setData(await r.json());
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!data) return null;
   const e = data.extraction;
   const status = e?.status ?? "not queued";
@@ -82,6 +104,18 @@ export function RunMemory({ executionId }: { executionId: string }) {
         {e && e.status !== "running" && e.status !== "pending" && (
           <Button variant="ghost" size="sm" className="ml-auto" onClick={() => void retry()} disabled={busy}>
             <RefreshCw className={busy ? "animate-spin" : ""} /> Record again
+          </Button>
+        )}
+        {data.decisions.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`${e && e.status !== "running" && e.status !== "pending" ? "" : "ml-auto "}text-muted-foreground hover:text-destructive`}
+            onClick={() => void forget(data.decisions.length)}
+            disabled={busy}
+            title="Delete this run's decisions from the team's memory. The run itself stays."
+          >
+            <Trash2 /> Forget
           </Button>
         )}
       </div>

@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import { Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { DecisionCard } from "@/memory/cards";
 
-/** One decision as a person reads it: the record, its provenance, what it touched. */
-export function DecisionView({ decision: d }: { decision: DecisionCard }) {
+/**
+ * One decision as a person reads it: the record, its provenance, what it
+ * touched. Read-only unless the page passes `onForget` — so the button to
+ * delete a record appears only where somebody may.
+ */
+export function DecisionView({ decision: d, onForget }: { decision: DecisionCard; onForget?: () => void }) {
   return (
     <div className="rounded-md border p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -20,6 +26,19 @@ export function DecisionView({ decision: d }: { decision: DecisionCard }) {
         <Link href={`/executions/${d.executionId}`} className="ml-auto font-mono text-xs text-muted-foreground hover:underline">
           run {d.executionId.slice(0, 8)}
         </Link>
+        {onForget && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="size-6 p-0 text-muted-foreground hover:text-destructive"
+            title="Forget this decision: the record and everything that pointed at it."
+            onClick={() => {
+              if (confirm(`Forget "${d.title}"?\n\nThe decision is deleted from memory — searches, paths and the feature's count. The run it came from stays. This cannot be undone.`)) onForget();
+            }}
+          >
+            <Trash2 />
+          </Button>
+        )}
       </div>
       {d.decision && <p className="mt-2 whitespace-pre-wrap">{d.decision}</p>}
       {d.rationale && (

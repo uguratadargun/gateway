@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { BookOpen, Search } from "lucide-react";
+import { BookOpen, Search, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ export default function MemoryPage() {
   const [detail, setDetail] = useState<FeatureDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [backfill, setBackfill] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const loadFeatures = useCallback(async () => {
     const r = await fetch(withTeam("/api/memory/features", team));
@@ -65,13 +65,13 @@ export default function MemoryPage() {
 
   /** Runs that ended before memory existed are recorded on request, not quietly: each is a model call. */
   async function recordEarlierRuns() {
-    setBackfill(null);
+    setNote(null);
     setError(null);
     try {
       const r = await fetch(withTeam("/api/memory/backfill", team), { method: "POST" });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error ?? "could not queue");
-      setBackfill(data.queued ? `${data.queued} run${data.queued === 1 ? "" : "s"} queued; each run's page shows what was recorded.` : "Every finished run in this tree already has a record.");
+      setNote(data.queued ? `${data.queued} run${data.queued === 1 ? "" : "s"} queued; each run's page shows what was recorded.` : "Every finished run in this tree already has a record.");
     } catch (e) {
       setError((e as Error).message);
     }
@@ -91,6 +91,45 @@ export default function MemoryPage() {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** Forgets one decision, then reloads whatever is open so it is gone from the page too. */
+  async function forgetDecision(id: string) {
+    setError(null);
+    try {
+      const r = await fetch(withTeam(`/api/memory/decisions/${encodeURIComponent(id)}`, team), { method: "DELETE" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "could not forget it");
+      setResult((prev) => (prev ? { ...prev, decisions: prev.decisions.filter((d) => d.id !== id) } : prev));
+      if (detail) await openFeature(detail.feature.id);
+      await loadFeatures();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  /** Forgets a catalogue entry and everything filed under it. */
+  async function forgetFeature(id: string, name: string) {
+    if (
+      !confirm(
+        `Forget "${name}"?\n\nThe catalogue entry goes, with every team's page on it, its consolidation history, and every decision filed under it. The runs stay. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    try {
+      const r = await fetch(withTeam(`/api/memory/features/${encodeURIComponent(id)}`, team), { method: "DELETE" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "could not forget it");
+      const gone = data.forgotten?.decisions ?? 0;
+      setNote(`Forgot "${name}" and ${gone} decision${gone === 1 ? "" : "s"} under it.`);
+      setDetail(null);
+      setResult(null);
+      await loadFeatures();
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
 
@@ -141,7 +180,7 @@ export default function MemoryPage() {
             Record earlier runs
           </Button>
         </div>
-        {backfill && <p className="text-xs text-muted-foreground">{backfill}</p>}
+        {note && <p className="text-xs text-muted-foreground">{note}</p>}
         {result && (
           <p className="text-xs text-muted-foreground">
             Searched {result.scope.teams.join(", ")} · own team {result.scope.own} first
@@ -166,7 +205,7 @@ export default function MemoryPage() {
             </div>
             {result.decisions.length === 0 && <p className="text-sm text-muted-foreground">Nothing in memory matches.</p>}
             {result.decisions.map((d) => (
-              <DecisionView key={d.id} decision={d} />
+              <DecisionView key={d.id} decision={d} onForget={() => void forgetDecision(d.id)} />
             ))}
           </Card>
         </div>
@@ -178,7 +217,16 @@ export default function MemoryPage() {
             <BookOpen className="size-4 text-muted-foreground" />
             <span className="font-medium">{detail.feature.name}</span>
             <code className="text-xs text-muted-foreground">{detail.feature.id}</code>
-            <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setDetail(null)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto text-muted-foreground hover:text-destructive"
+              onClick={() => void forgetFeature(detail.feature.id, detail.feature.name)}
+              title="Forget this feature, every team's page on it, and every decision filed under it."
+            >
+              <Trash2 /> Forget
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setDetail(null)}>
               Close
             </Button>
           </div>
@@ -236,7 +284,7 @@ export default function MemoryPage() {
             <div className="space-y-3">
               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Decisions</div>
               {detail.decisions.map((d) => (
-                <DecisionView key={d.id} decision={d} />
+                <DecisionView key={d.id} decision={d} onForget={() => void forgetDecision(d.id)} />
               ))}
             </div>
           )}

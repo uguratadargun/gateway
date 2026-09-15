@@ -953,6 +953,22 @@ branch again replaces the earlier teaching; a branch a run already worked on
 is refused unless `--force`. The command waits and prints the decisions it
 wrote.
 
+**Forgetting.** A record that should never have been written — the recorder
+misread a run, a taught branch turned out to be two tasks, a catalogue entry
+was a mistake — is deleted from `/memory`, and the delete takes everything
+that pointed at it: the full-text row, the touched paths, the vector, the
+team's decision count, another decision's `supersedes` pointer, and the
+`valid_to` it had closed (so the decision it replaced holds again). Three
+units: one decision, one run's whole record (the *Forget* button in the
+Memory panel on a run's page), and a feature — which takes every team's page
+on it, its consolidation history and the decisions filed under it. A run is
+never touched by this: its steps, its diff and its cost stay, and its ledger
+row is left saying `skipped — forgotten on request`, so *Record earlier runs*
+passes it by and only *Record again* brings it back. Deleting is a person's
+act alone: the client API has no delete, so no agent, run or CLI can forget
+anything. A decision that merely stopped being true is not this — that is a
+retraction, and the row stays for "what held on date D".
+
 **Reading.** The shipped `dev`, `dev-super`, `dev-quick` and `blame` pipelines open with
 a `recall` node that searches memory — words, path prefixes, a time — and
 briefs the planner (or the quick implementer) as `recall.brief`: the same
