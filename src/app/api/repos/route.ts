@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { detectRepoCommands } from "@/repos/detect";
+import { canonicalRepoId } from "@/repos/identity";
 import { connectRepo, isPathLike, runRepoSetup, slugFor } from "@/repos/setup";
 import { createRepo, getRepo, listRepos } from "@/repos/store";
 import { WorkflowError } from "@/runtime/errors";
@@ -49,7 +50,7 @@ export async function POST(req: Request) {
   if (getRepo(id)) return NextResponse.json({ error: `a repository "${id}" is already connected` }, { status: 409 });
 
   try {
-    const { root, cloned, commands } = connectRepo(body.source, id);
+    const { root, cloned, commands, remoteUrl } = connectRepo(body.source, id);
     const repo = createRepo({
       id,
       name: body.name?.trim() || id,
@@ -57,6 +58,10 @@ export async function POST(req: Request) {
       root,
       cloned,
       baseRef: body.baseRef?.trim() || null,
+      // The identity is read off the checkout, not off what was typed: a path
+      // was registered by somebody who knew where it was, and the remote is
+      // the only part of that another machine can use.
+      remoteUrl,
       setup: body.setup ?? commands.setup,
       prepare: body.prepare ?? commands.prepare,
     });
@@ -89,8 +94,8 @@ export async function PUT(req: Request) {
     );
   }
   try {
-    const { root, cloned } = connectRepo(source, slugFor(source));
-    return NextResponse.json({ root, cloned, detected: detectRepoCommands(root) });
+    const { root, cloned, remoteUrl } = connectRepo(source, slugFor(source));
+    return NextResponse.json({ root, cloned, remoteUrl, repoId: remoteUrl ? canonicalRepoId(remoteUrl) : null, detected: detectRepoCommands(root) });
   } catch (e) {
     if (e instanceof WorkflowError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;

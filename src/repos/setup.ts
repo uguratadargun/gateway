@@ -6,7 +6,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { WorkflowError } from "@/runtime/errors";
 
 import { detectRepoCommands, linkedDirectories, type RepoCommands } from "./detect";
-import { getRepo, setRepoStatus, type RepoRecord } from "./store";
+import { getRepo, listRepos, setRepoRemote, setRepoStatus, type RepoRecord } from "./store";
 
 /**
  * Connecting a repository, and getting it into a state a run can work in.
@@ -44,6 +44,31 @@ export interface ConnectResult {
   root: string;
   cloned: boolean;
   commands: RepoCommands;
+  /** What the checkout's origin says, or null when it has none. */
+  remoteUrl: string | null;
+}
+
+/**
+ * What this checkout calls the place it came from.
+ *
+ * Only `origin`, and only as git itself resolves it — `remote.<name>.pushurl`
+ * and `url.<base>.insteadOf` rewrites included, since the rewritten form is
+ * the one that names the real host. A checkout with no remote answers null,
+ * which is an honest answer: it is a repository, just not one another machine
+ * has been told how to reach.
+ */
+export function readRemoteUrl(root: string): string | null {
+  try {
+    const url = execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: "pipe",
+      timeout: 10_000,
+    }).trim();
+    return url || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -70,7 +95,7 @@ export function connectRepo(source: string, id: string): ConnectResult {
       const err = e as Error & { stderr?: string };
       throw new WorkflowError("WORKSPACE_ERROR", `clone failed: ${(err.stderr || err.message).trim().slice(0, 400)}`);
     }
-    return { root, cloned: true, commands: detectRepoCommands(root) };
+    return { root, cloned: true, commands: detectRepoCommands(root), remoteUrl: readRemoteUrl(root) ?? trimmed };
   }
 
   const root = resolve(trimmed.replace(/^~(?=\/|$)/, homedir()));
@@ -80,7 +105,34 @@ export function connectRepo(source: string, id: string): ConnectResult {
   } catch {
     throw new WorkflowError("WORKSPACE_ERROR", `"${trimmed}" is not a git repository`);
   }
-  return { root, cloned: false, commands: detectRepoCommands(root) };
+  return { root, cloned: false, commands: detectRepoCommands(root), remoteUrl: readRemoteUrl(root) };
+}
+
+/**
+ * Reads the identity of every repository registered before there was one.
+ *
+ * Not a guess and not a migration that can be wrong: it asks each checkout
+ * what its own origin is, exactly as connecting would today. A repo with no
+ * remote, or one whose checkout has since been moved away, simply stays
+ * unknown — which is the correct answer for it, and stays correct until
+ * somebody points it at a remote.
+ *
+ * Runs once at startup, and only looks at repos that have no identity yet, so
+ * a gate with a hundred repositories pays for it once.
+ */
+export function backfillRepoIdentities(): { named: number; unknown: number; disagreed: string[] } {
+  let named = 0;
+  let unknown = 0;
+  const disagreed: string[] = [];
+  for (const repo of listRepos()) {
+    if (repo.repoId) continue;
+    const url = existsSync(repo.root) ? readRemoteUrl(repo.root) : null;
+    const result = setRepoRemote(repo.id, url);
+    if (!result.ok) disagreed.push(`${repo.id}: ${result.was} vs ${result.now}`);
+    else if (result.repo?.repoId) named++;
+    else unknown++;
+  }
+  return { named, unknown, disagreed };
 }
 
 /**

@@ -620,6 +620,14 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // most of them.
   ["workflow_executions", "task_id", "task_id TEXT"],
   ["decision_issues", "task_id", "task_id TEXT"],
+  // What makes two checkouts the same repository. `remote_url` is what the
+  // checkout's origin actually said; `repo_id` is that normalised to
+  // host/owner/name, and is NULL wherever the remote did not say — a local
+  // clone, an ssh alias, a repo registered by path. Never guessed from the
+  // path or the slug: two teams' repositories are routinely called the same
+  // thing, and a shared identity merges their memory silently.
+  ["repos", "remote_url", "remote_url TEXT"],
+  ["repos", "repo_id", "repo_id TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

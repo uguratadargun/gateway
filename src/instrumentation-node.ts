@@ -43,6 +43,18 @@ if (!g.__gateDaemon) {
     })
     .catch((e) => console.error("[gate] could not settle held answers:", e));
 
+  // Repositories registered before identity existed carry none. Each checkout
+  // is asked what its own origin is — the same question connecting asks — so
+  // nothing here is inferred from a path or a name. One that cannot answer
+  // stays unknown, which for it is the true answer.
+  void import("@/repos/setup")
+    .then((m) => {
+      const { named, unknown, disagreed } = m.backfillRepoIdentities();
+      if (named || unknown) console.log(`gate: ${named} repo(s) named by their remote, ${unknown} without one`);
+      for (const d of disagreed) console.error(`[gate] repo identity disagrees with its remote — ${d}`);
+    })
+    .catch((e) => console.error("[gate] could not read repo identities:", e));
+
   // The Telegram bot, when a token is configured: people's questions,
   // approvals and new runs from their own chat. Loaded lazily so a gate
   // without one never pulls the remote-session code in at startup.
