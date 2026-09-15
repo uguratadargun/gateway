@@ -47,7 +47,7 @@ export interface ConsolidationOutcome {
   duplicateOf?: string | null;
 }
 
-export const CONSOLIDATOR_SYSTEM = `You maintain one team's page on one feature in an engineering team's memory. You are given the feature, the team's current summary of how it built it, and every decision the team's runs recorded under it — in the order they were made, each with its outcome (shipped, unshipped, abandoned) and whether it still holds.
+export const CONSOLIDATOR_SYSTEM = `You maintain one team's page on one feature in an engineering team's memory. You are given the feature, the team's current summary of how it built it, and every decision the team's runs recorded under it — in the order they were made, each with its outcome and whether it still holds. The outcomes say how far the work got: "deployed" and "merged" are live, "shipped" is an older record of the same, "pr-open" means a merge request was opened and nobody has confirmed it landed, "completed" means the run finished but its pipeline never offered the work for merge, "unshipped" means the branch never got that far, and "abandoned" means the run failed or was stopped. Do not write up a "pr-open" or "completed" decision as though it is live.
 
 Write the page again, whole, from all of them:
 - "summary": how this team's implementation works now, at the level of logic — the flow, the components and their responsibilities, the invariants, the edge cases handled. What a sibling team needs to build the same thing on another platform. Later decisions win over earlier ones where they conflict; abandoned attempts are not the implementation, but what they learned may belong in pitfalls.

@@ -6,6 +6,7 @@ import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { DecisionCard } from "@/memory/cards";
+import { SHIPPED_OUTCOMES } from "@/memory/types";
 
 /**
  * One decision as a person reads it: the record, its provenance, what it
@@ -18,7 +19,9 @@ export function DecisionView({ decision: d, onForget }: { decision: DecisionCard
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{d.title}</span>
         <Badge variant="secondary">{d.team}</Badge>
-        <Badge variant={d.outcome === "shipped" ? "success" : d.outcome === "abandoned" ? "destructive" : "secondary"}>{d.outcome}</Badge>
+        <Badge variant={SHIPPED_OUTCOMES.includes(d.outcome) ? "success" : d.outcome === "abandoned" ? "destructive" : "secondary"}>
+          {d.outcome}
+        </Badge>
         <span className="text-xs text-muted-foreground">
           {d.validFrom.slice(0, 10)}
           {d.validTo ? ` → ${d.validTo.slice(0, 10)} (no longer holds)` : ""}

@@ -136,11 +136,28 @@ export function readableSteps(steps: ExecutionStepRecord[]): ExecutionStepRecord
   );
 }
 
-function outcomeOf(execution: ExecutionRecord, steps: ExecutionStepRecord[]): DecisionOutcome {
+/**
+ * How far this run's work got, said only as far as the run's own steps prove
+ * it.
+ *
+ * The merge-request node pushes the branch and opens the request; nothing in
+ * gate watches whether anyone merged it, and nothing watches a deploy. So the
+ * best this can honestly return is `pr-open`, and a pipeline with no merge
+ * node at all — a review, an investigation, a run whose whole job was to read
+ * — only proves it `completed`. Both used to be recorded as `shipped`, which
+ * a planner on a sibling team reads as "this is live, build on it".
+ */
+export function outcomeOf(execution: ExecutionRecord, steps: ExecutionStepRecord[]): DecisionOutcome {
   if (execution.status !== "completed") return "abandoned";
-  const opened = steps.some((s) => s.nodeId === "merge-request" && s.status === "completed" && (s.output as { ok?: boolean } | null)?.ok === true);
-  const hasMergeNode = steps.some((s) => s.nodeId === "merge-request");
-  return opened || !hasMergeNode ? "shipped" : "unshipped";
+  // A taught branch is the one case where a person is asserting the work
+  // landed — that is what teaching it to memory means — so it keeps the word
+  // that has always meant "we believe this is live". It is their claim and
+  // not gate's observation, which is why it is `shipped` and not `merged`.
+  if (execution.workflowId === TEACH_WORKFLOW_ID) return "shipped";
+  const merge = steps.filter((s) => s.nodeId === "merge-request");
+  if (!merge.length) return "completed";
+  const opened = merge.some((s) => s.status === "completed" && (s.output as { ok?: boolean } | null)?.ok === true);
+  return opened ? "pr-open" : "unshipped";
 }
 
 export const RECORDER_SYSTEM = `You are the recorder of an engineering team's memory. A run of an agent workflow has just ended; you are given what it was asked to do, what each of its agents answered, how it ended, and what it touched. You write the record the team keeps of it: what was decided, why, and how — at the level of logic, never code.

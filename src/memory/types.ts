@@ -31,11 +31,32 @@ export interface Touch {
 }
 
 /**
- * How the run that made the decision ended. An abandoned decision is still a
+ * How far the decision actually got. An abandoned decision is still a
  * decision — "we tried X and the reviewer refused it because Y" is exactly
  * what the next planner should know.
+ *
+ * The four that follow a branch are separate on purpose. A merge request is
+ * an *offer* to ship, and a planner on a sibling team reading "shipped" takes
+ * it as settled and builds on it — which is the whole reason the word has to
+ * mean what it says. `pr-open` is as far as gate can see today; `merged` and
+ * `deployed` are written by evidence gate does not collect yet, and nothing
+ * assigns them on its own.
+ *
+ * `shipped` is the value rows carried before the distinction existed. It is
+ * not re-derived: a row recorded as shipped stays shipped, because the
+ * evidence that would say which of the three it really was is not there.
  */
-export type DecisionOutcome = "shipped" | "unshipped" | "abandoned";
+export type DecisionOutcome =
+  | "shipped"
+  | "deployed"
+  | "merged"
+  | "pr-open"
+  | "completed"
+  | "unshipped"
+  | "abandoned";
+
+/** Outcomes that mean the work reached users. Not `pr-open`: that is an offer. */
+export const SHIPPED_OUTCOMES: readonly DecisionOutcome[] = ["shipped", "deployed", "merged"];
 
 /** The fields the recorder produces for one decision. */
 export interface DecisionDraft {

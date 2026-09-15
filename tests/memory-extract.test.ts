@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { createExecution, finishExecution, recordStep, stopSessionExecution } from "@/executions/store";
 import { createTeam, getTeam } from "@/lib/teams";
-import { extractRun, parseRecorderAnswer, pathsInDiff, readableSteps } from "@/memory/extract";
+import { extractRun, outcomeOf, parseRecorderAnswer, pathsInDiff, readableSteps } from "@/memory/extract";
+import { TEACH_WORKFLOW_ID } from "@/memory/types";
+import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 import { drainExtractions } from "@/memory/queue";
 import {
   decisionsForExecution,
@@ -95,7 +97,10 @@ describe("the recorder", () => {
     expect(provider.calls[0].context).toMatchObject({ executionId: "rec-1", nodeId: "memory-recorder" });
 
     const [decision] = decisionsForExecution("rec-1");
-    expect(decision).toMatchObject({ teamId: "acme-android", userId: "u-1", outcome: "shipped", baseCommit: "abc123", headCommit: "def456", validFrom: 2_000 });
+    // No merge-request node in this pipeline, so the run proves it finished
+    // and nothing more. "shipped" would tell a sibling team's planner this is
+    // already live.
+    expect(decision).toMatchObject({ teamId: "acme-android", userId: "u-1", outcome: "completed", baseCommit: "abc123", headCommit: "def456", validFrom: 2_000 });
     expect(decision.featureId).toBe("offline-sync");
     expect(getFeature("offline-sync")).toMatchObject({ orgId: "acme", aliases: ["background sync"], summary: "Edits made offline reach the server later." });
     expect(implementationsOf(memoryScopeFor("acme-desktop"), "offline-sync")[0]).toMatchObject({ teamId: "acme-android", decisionCount: 1, pitfalls: "Ordering is per entity." });
@@ -213,5 +218,32 @@ describe("runs from before memory existed", () => {
     expect(getExtraction("old-2")).toMatchObject({ status: "pending" });
     expect(queueUnrecordedExecutions(memoryScopeFor("acme-desktop").teams)).toBe(0);
     expect(requeueExtraction("never-ran")).toBe(false);
+  });
+});
+
+describe("how far the work got", () => {
+  const exec = (status: "completed" | "failed", workflowId = "dev") =>
+    ({ status, workflowId } as ExecutionRecord);
+  const mergeStep = (ok: boolean, status: "completed" | "failed" = "completed") =>
+    ({ nodeId: "merge-request", status, output: { ok } } as unknown as ExecutionStepRecord);
+  const plannerStep = () => ({ nodeId: "planner", status: "completed", output: {} } as unknown as ExecutionStepRecord);
+
+  it("calls an opened merge request an offer, not a shipment", () => {
+    expect(outcomeOf(exec("completed"), [plannerStep(), mergeStep(true)])).toBe("pr-open");
+  });
+
+  it("separates a pipeline that never offered the work from one whose push failed", () => {
+    // No merge node at all — a review, an investigation, a read-only run.
+    expect(outcomeOf(exec("completed"), [plannerStep()])).toBe("completed");
+    expect(outcomeOf(exec("completed"), [plannerStep(), mergeStep(false)])).toBe("unshipped");
+    expect(outcomeOf(exec("completed"), [plannerStep(), mergeStep(true, "failed")])).toBe("unshipped");
+  });
+
+  it("keeps a run that did not finish abandoned, merge node or not", () => {
+    expect(outcomeOf(exec("failed"), [plannerStep(), mergeStep(true)])).toBe("abandoned");
+  });
+
+  it("takes a taught branch at the person's word", () => {
+    expect(outcomeOf(exec("completed", TEACH_WORKFLOW_ID), [])).toBe("shipped");
   });
 });
