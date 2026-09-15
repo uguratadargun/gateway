@@ -106,6 +106,13 @@ export function teachBranch(who: { teamId: string; userId: string | null }, body
 
   // Two steps, as a run's agents would have left them: the account first,
   // then the branch's own history for the recorder to check it against.
+  //
+  // Written with `recordStep` rather than `recordReportedSteps`, so no
+  // objection is raised from either one. That is deliberate: these steps are
+  // a person's account of work already finished, not a planner saying it
+  // cannot live with another team's decision. An objection is a claim about
+  // what should happen next, and a branch that has already landed makes none.
+  // Teaching a branch must never post to another team in that team's absence.
   recordStep(executionId, {
     nodeId: "teach",
     stepIndex: 0,

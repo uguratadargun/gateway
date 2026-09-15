@@ -275,8 +275,16 @@ async function launch(
       // engine-side run is not a second, quieter path into the same tables.
       onStep: (step) => {
         const record = getExecution(executionId);
-        if (record) recordReportedSteps(record, [step]);
-        else recordStep(executionId, step);
+        if (record) {
+          recordReportedSteps(record, [step]);
+          return;
+        }
+        // The row a running execution was started from cannot normally be
+        // gone. If it is, the step is still worth keeping, but an objection
+        // in it has no team to be raised against and is dropped — which is
+        // the kind of silence that makes a lost objection look like agreement.
+        console.log(`gate: execution ${executionId} has no row — step ${step.nodeId} kept, its cross-team fields dropped`);
+        recordStep(executionId, step);
       },
       signal: controller.signal,
       resume,
