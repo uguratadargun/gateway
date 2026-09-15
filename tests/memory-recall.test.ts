@@ -40,7 +40,7 @@ function seed() {
   createTeam("Elsewhere", "rc-other");
   const f = upsertFeature({ orgId: "rc-ulak", name: "Offline sync", aliases: ["background sync"], summary: "Local queue, flushed when online." });
   replaceDecisions(
-    { executionId: "rc-run-1", teamId: "rc-android", userId: null, featureId: f.id, baseCommit: "a1", headCommit: "b2", outcome: "shipped", validFrom: Date.now() - 86_400_000 },
+    { executionId: "rc-run-1", teamId: "rc-android", userId: null, featureId: f.id, repoId: null, baseCommit: "a1", headCommit: "b2", outcome: "shipped", validFrom: Date.now() - 86_400_000 },
     [
       {
         title: "Queue edits in a local table",
@@ -56,7 +56,7 @@ function seed() {
   );
   upsertImplementation({ featureId: f.id, teamId: "rc-android", summary: "Room queue + WorkManager.", pitfalls: "Ordering is per entity." });
   replaceDecisions(
-    { executionId: "rc-run-2", teamId: "rc-other", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+    { executionId: "rc-run-2", teamId: "rc-other", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
     [{ title: "Offline sync with CRDTs", context: "", decision: "CRDT merge.", rationale: "", alternatives: "", how: "", consequences: "", touches: [] }],
   );
 }

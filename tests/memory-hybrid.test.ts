@@ -44,11 +44,11 @@ function seed() {
   upsertFeature({ orgId: "hy-org", name: "Push notifications", aliases: [], summary: "Server-sent notifications delivered to the device." });
   upsertFeature({ orgId: "hy-org", name: "Dark mode", aliases: ["night theme"], summary: "A dark colour scheme." });
   replaceDecisions(
-    { executionId: "hy-1", teamId: "hy-org", userId: null, featureId: "push-notifications", baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+    { executionId: "hy-1", teamId: "hy-org", userId: null, featureId: "push-notifications", repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
     [{ title: "Deliver notifications through the platform push service", context: "", decision: "Use the platform push channel; the app never polls.", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "push" }] }],
   );
   replaceDecisions(
-    { executionId: "hy-2", teamId: "hy-org", userId: null, featureId: "dark-mode", baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+    { executionId: "hy-2", teamId: "hy-org", userId: null, featureId: "dark-mode", repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
     [{ title: "Follow the system colour scheme", context: "", decision: "Dark mode follows the OS setting.", rationale: "", alternatives: "", how: "", consequences: "", touches: [] }],
   );
 }

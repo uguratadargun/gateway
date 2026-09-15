@@ -8,7 +8,7 @@ import type { WorkflowEvent } from "@/events/types";
 import { runWorkflow } from "@/runtime/engine";
 import { WorkflowError } from "@/runtime/errors";
 import type { WorkflowState } from "@/runtime/state";
-import { borrowDependencies, createRunWorkspace, readRunDiff, releaseRunWorkspace, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
+import { borrowDependencies, createRunWorkspace, readRemoteUrl, readRunDiff, releaseRunWorkspace, summarizeWorkspace, type RunWorkspace } from "@/runtime/workspace";
 import { getWorkflow } from "@/workflows/registry";
 import type { WorkflowDefinition } from "@/workflows/types";
 
@@ -118,7 +118,15 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
   const executionId = await client.startRun({
     workflowId: workflow.id,
     input,
-    client: { host: hostname(), repo: repo ?? undefined, version: CLI_VERSION },
+    // The raw remote, not a name derived from it: the server does the
+    // normalising, so two clients of different ages cannot mint two
+    // identities for one repository.
+    client: {
+      host: hostname(),
+      repo: repo ?? undefined,
+      remoteUrl: (repo && readRemoteUrl(repo)) || undefined,
+      version: CLI_VERSION,
+    },
     taskId: opts.taskId,
   });
 
@@ -164,7 +172,7 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
       // with the same key, so its calls are metered like every other call.
       claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
       // The team's memory, read through the same key.
-      memory: new HttpMemoryAccess(client),
+      memory: new HttpMemoryAccess(client, repo ? readRemoteUrl(repo) : null),
       emit: (event) => {
         reporter.event(event);
         opts.onEvent?.(event);

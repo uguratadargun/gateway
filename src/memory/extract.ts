@@ -375,6 +375,9 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
         teamId: execution.teamId,
         userId: execution.userId,
         featureId,
+        // Whatever repository the run named itself; never inferred from the
+        // team, which may own several.
+        repoId: execution.repoId,
         baseCommit: execution.workspace?.baseCommit ?? null,
         headCommit: execution.workspace?.commit ?? null,
         outcome: outcomeOf(execution, steps),

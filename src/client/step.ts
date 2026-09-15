@@ -16,6 +16,7 @@ import { conditionContext } from "@/runtime/state";
 import {
   borrowDependencies,
   createRunWorkspace,
+  readRemoteUrl,
   readRunDiff,
   releaseRunWorkspace,
   restoreRunWorkspace,
@@ -476,7 +477,14 @@ export async function begin(
   const executionId = await ctx.client.startRun({
     workflowId: workflow.id,
     input: runInput,
-    client: { host: hostname(), repo: repo ?? undefined, version: CLI_VERSION, session },
+    // Raw, for the server to normalise — see runLocal.
+    client: {
+      host: hostname(),
+      repo: repo ?? undefined,
+      remoteUrl: (repo && readRemoteUrl(repo)) || undefined,
+      version: CLI_VERSION,
+      session,
+    },
     driver: "session",
   });
 

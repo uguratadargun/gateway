@@ -186,7 +186,7 @@ export class GateClient {
   async startRun(input: {
     workflowId: string;
     input: Record<string, unknown>;
-    client: { host?: string; repo?: string; branch?: string; version?: string; session?: string };
+    client: { host?: string; repo?: string; remoteUrl?: string; branch?: string; version?: string; session?: string };
     /** Who walks the graph — see the execution's `driver`. */
     driver?: "engine" | "session";
     /** The cross-team task the run serves. Refused if the team cannot see it. */
@@ -260,10 +260,12 @@ export class GateClient {
   }
 
   /** The team's memory: decisions and features matching words, paths, or a time. */
-  async memorySearch(req: MemorySearchRequest): Promise<MemorySearchResult> {
+  async memorySearch(req: MemorySearchRequest, remoteUrl?: string | null): Promise<MemorySearchResult> {
     const params = new URLSearchParams();
     if (req.query) params.set("q", req.query);
     for (const p of req.paths ?? []) params.append("path", p);
+    // The remote as git gives it; the server is what turns it into a name.
+    if (remoteUrl) params.set("remote", remoteUrl);
     if (req.featureId) params.set("feature", req.featureId);
     if (req.asOf != null) params.set("asOf", String(req.asOf));
     if (req.since != null) params.set("since", String(req.since));

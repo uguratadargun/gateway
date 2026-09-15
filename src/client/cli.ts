@@ -13,6 +13,7 @@ import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 import { describeFeature, describeSearch } from "@/memory/cards";
 import { parseSince } from "@/runtime/tools/memory-tools";
+import { readRemoteUrl } from "@/runtime/workspace";
 
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
@@ -1002,6 +1003,7 @@ async function cmdTeach(args: Args): Promise<number> {
     workspace: {
       root: reading.repo,
       repo: reading.repo,
+      remoteUrl: readRemoteUrl(reading.repo),
       branch: reading.branch,
       baseRef: reading.baseRef,
       baseCommit: reading.baseCommit,

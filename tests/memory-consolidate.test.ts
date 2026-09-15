@@ -18,7 +18,7 @@ function seed() {
   createTeam("Consolidate android", "co-android", "co-org");
   createTeam("Consolidate other", "co-other");
   upsertFeature({ orgId: "co-org", name: "Offline sync", aliases: [], summary: "Edits survive losing the network." });
-  const base = { teamId: "co-android", userId: null, featureId: "offline-sync", baseCommit: null, headCommit: null, outcome: "shipped" as const };
+  const base = { teamId: "co-android", userId: null, featureId: "offline-sync", repoId: null, baseCommit: null, headCommit: null, outcome: "shipped" as const };
   replaceDecisions({ ...base, executionId: "co-1", validFrom: 1_000 }, [
     { title: "Flush the queue on connectivity only", context: "", decision: "The worker runs when the network comes back.", rationale: "", alternatives: "", how: "", consequences: "", touches: [] },
   ]);
@@ -71,7 +71,7 @@ describe("the consolidation pass", () => {
 
   it("is due once enough new decisions land, and skips what the scope cannot see", async () => {
     seed();
-    replaceDecisions({ teamId: "co-android", userId: null, featureId: "offline-sync", baseCommit: null, headCommit: null, outcome: "shipped", executionId: "co-4", validFrom: 4_000 }, [
+    replaceDecisions({ teamId: "co-android", userId: null, featureId: "offline-sync", repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", executionId: "co-4", validFrom: 4_000 }, [
       { title: "Retry with backoff", context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", touches: [] },
     ]);
     upsertImplementation({ featureId: "offline-sync", teamId: "co-android", summary: "s", pitfalls: "" });

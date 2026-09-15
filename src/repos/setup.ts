@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { WorkflowError } from "@/runtime/errors";
+import { readRemoteUrl } from "@/runtime/workspace";
 
 import { detectRepoCommands, linkedDirectories, type RepoCommands } from "./detect";
 import { getRepo, listRepos, setRepoRemote, setRepoStatus, type RepoRecord } from "./store";
@@ -46,29 +47,6 @@ export interface ConnectResult {
   commands: RepoCommands;
   /** What the checkout's origin says, or null when it has none. */
   remoteUrl: string | null;
-}
-
-/**
- * What this checkout calls the place it came from.
- *
- * Only `origin`, and only as git itself resolves it — `remote.<name>.pushurl`
- * and `url.<base>.insteadOf` rewrites included, since the rewritten form is
- * the one that names the real host. A checkout with no remote answers null,
- * which is an honest answer: it is a repository, just not one another machine
- * has been told how to reach.
- */
-export function readRemoteUrl(root: string): string | null {
-  try {
-    const url = execFileSync("git", ["remote", "get-url", "origin"], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: "pipe",
-      timeout: 10_000,
-    }).trim();
-    return url || null;
-  } catch {
-    return null;
-  }
 }
 
 /**

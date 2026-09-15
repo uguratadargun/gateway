@@ -65,7 +65,7 @@ describe("forgetting one decision", () => {
     const scope = memoryScopeFor("forget-android");
     const feature = upsertFeature({ orgId: "forgetco", name: "Push notifications", summary: "Delivers alerts." });
     const [keep, drop] = replaceDecisions(
-      { executionId: aRun("forget-run-1"), teamId: "forget-android", userId: "u1", featureId: feature.id, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: aRun("forget-run-1"), teamId: "forget-android", userId: "u1", featureId: feature.id, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [draft("Batch alerts per device", ["src/push/batch.ts"]), draft("Retry a failed push twice", ["src/push/retry.ts"])],
       1_100,
     );
@@ -90,12 +90,12 @@ describe("forgetting one decision", () => {
     tree();
     const scope = memoryScopeFor("forget-android");
     const [old] = replaceDecisions(
-      { executionId: aRun("forget-run-2"), teamId: "forget-android", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: aRun("forget-run-2"), teamId: "forget-android", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [draft("Poll the inbox every minute", ["src/inbox/poll.ts"])],
       1_100,
     );
     const [newer] = replaceDecisions(
-      { executionId: aRun("forget-run-3"), teamId: "forget-android", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 5_000 },
+      { executionId: aRun("forget-run-3"), teamId: "forget-android", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 5_000 },
       [{ ...draft("Push instead of polling the inbox", ["src/inbox/push.ts"]), supersedes: old.id }],
       5_100,
     );
@@ -115,7 +115,7 @@ describe("forgetting what a run taught", () => {
     const scope = memoryScopeFor("forget-android");
     const id = aRun("forget-run-4");
     replaceDecisions(
-      { executionId: id, teamId: "forget-android", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: id, teamId: "forget-android", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [draft("Cache the avatar bitmaps", ["src/ui/avatar.ts"]), draft("Evict the avatar cache on logout", ["src/ui/avatar.ts"])],
       1_100,
     );
@@ -140,7 +140,7 @@ describe("forgetting what a run taught", () => {
     tree();
     const id = aRun("forget-run-5");
     replaceDecisions(
-      { executionId: id, teamId: "forget-android", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: id, teamId: "forget-android", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [draft("Sign uploads with a short-lived token", ["src/upload/sign.ts"])],
       1_100,
     );
@@ -157,7 +157,7 @@ describe("forgetting what a run taught", () => {
     tree();
     const id = aRun("forget-run-9");
     replaceDecisions(
-      { executionId: id, teamId: "forget-android", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: id, teamId: "forget-android", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [draft("Resize photos before upload", ["src/upload/resize.ts"])],
       1_100,
     );
@@ -184,12 +184,12 @@ describe("forgetting a feature", () => {
     const other = upsertFeature({ orgId: "forgetco", name: "Search bar", summary: "Finds a chat by name." });
     const run = aRun("forget-run-6");
     replaceDecisions(
-      { executionId: run, teamId: "forget-android", userId: null, featureId: feature.id, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: run, teamId: "forget-android", userId: null, featureId: feature.id, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [draft("Store drafts in SQLite", ["src/drafts/store.ts"]), draft("Drop a draft once it sends", ["src/drafts/send.ts"])],
       1_100,
     );
     const kept = replaceDecisions(
-      { executionId: aRun("forget-run-7"), teamId: "forget-android", userId: null, featureId: other.id, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: aRun("forget-run-7"), teamId: "forget-android", userId: null, featureId: other.id, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [draft("Rank chats by last message", ["src/search/rank.ts"])],
       1_100,
     )[0];
@@ -217,7 +217,7 @@ describe("the boundary a forget may not cross", () => {
     tree();
     const feature = upsertFeature({ orgId: "forgetco", name: "Two-factor login", summary: "TOTP at sign-in." });
     const [decision] = replaceDecisions(
-      { executionId: aRun("forget-run-8"), teamId: "forget-android", userId: null, featureId: feature.id, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: aRun("forget-run-8"), teamId: "forget-android", userId: null, featureId: feature.id, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [draft("Verify TOTP server-side", ["src/auth/totp.ts"])],
       1_100,
     );

@@ -7,6 +7,7 @@ import { startRunSchema } from "@/lib/client-api-schemas";
 import { requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { createExecution, listExecutions } from "@/executions/store";
 import { taskVisibleTo } from "@/orchestration/tasks";
+import { canonicalRepoId } from "@/repos/identity";
 import { WorkflowError } from "@/runtime/errors";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { getWorkflow } from "@/workflows/registry";
@@ -75,6 +76,10 @@ export async function POST(req: Request) {
       driver: parsed.data.driver,
       userId: auth.userId,
       teamId: auth.teamId,
+      // The identity is derived here, from the remote the client reported, so
+      // every run names a repository the same way however old the client is.
+      // An unparseable or absent remote leaves it null, never guessed.
+      repoId: parsed.data.client.remoteUrl ? canonicalRepoId(parsed.data.client.remoteUrl) : null,
       client: {
         host: parsed.data.client.host ?? null,
         repo: parsed.data.client.repo ?? null,

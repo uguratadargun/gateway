@@ -334,12 +334,12 @@ describe("what the other team reads", () => {
     // each time. That is exactly why an objection is not one of them: a
     // re-record after a recorder fix would otherwise quietly drop it.
     replaceDecisions(
-      { executionId: ex.id, teamId: "srv", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "completed", validFrom: 7000 },
+      { executionId: ex.id, teamId: "srv", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "completed", validFrom: 7000 },
       [{ title: "the run's own decision", context: "", decision: "d", rationale: "", how: "", consequences: "", alternatives: "", touches: [{ kind: "file", ref: "src/pq/rekey.ts" }] }],
       7000,
     );
     replaceDecisions(
-      { executionId: ex.id, teamId: "srv", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "completed", validFrom: 8000 },
+      { executionId: ex.id, teamId: "srv", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "completed", validFrom: 8000 },
       [{ title: "recorded again, new ids", context: "", decision: "d", rationale: "", how: "", consequences: "", alternatives: "", touches: [{ kind: "file", ref: "src/pq/rekey.ts" }] }],
       8000,
     );

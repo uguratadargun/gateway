@@ -68,7 +68,7 @@ describe.skipIf(!process.env.GATE_BENCH)("memory at scale", () => {
           const name = `${pick(rng, 2).join(" ")} ${t}-${f}`;
           const feature = upsertFeature({ orgId: "bench-org", name, aliases: pick(rng, 1), summary: pick(rng, 12).join(" ") });
           replaceDecisions(
-            { executionId: `bench-${t}-${f}`, teamId: team, userId: null, featureId: feature.id, baseCommit: "a", headCommit: "b", outcome: "shipped", validFrom: 1_000 + f },
+            { executionId: `bench-${t}-${f}`, teamId: team, userId: null, featureId: feature.id, repoId: null, baseCommit: "a", headCommit: "b", outcome: "shipped", validFrom: 1_000 + f },
             Array.from({ length: DECISIONS_PER_FEATURE }, (_, d) => ({
               title: `${pick(rng, 3).join(" ")} ${d}`,
               context: pick(rng, 20).join(" "),
@@ -105,7 +105,7 @@ describe.skipIf(!process.env.GATE_BENCH)("memory at scale", () => {
       if (i % 20 === 0) {
         const [, wms] = timed(() =>
           replaceDecisions(
-            { executionId: `bench-live-${i}`, teamId: "bench-3", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 5_000 },
+            { executionId: `bench-live-${i}`, teamId: "bench-3", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 5_000 },
             Array.from({ length: 3 }, (_, d) => ({ title: `live ${i} ${d}`, context: pick(rng, 20).join(" "), decision: pick(rng, 25).join(" "), rationale: "", alternatives: "", how: pick(rng, 60).join(" "), consequences: "", touches: [] })),
           ),
         );

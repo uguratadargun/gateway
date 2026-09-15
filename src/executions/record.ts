@@ -154,6 +154,7 @@ function applyConflicts(
         decisionId: c.decisionId ?? null,
         featureId: c.featureId ?? null,
         paths: c.paths,
+        repoId: execution.repoId,
         repoSource: execution.workspace?.repo ?? null,
         sourceCommit: execution.workspace?.baseCommit ?? null,
         taskId: execution.taskId,

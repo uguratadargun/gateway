@@ -62,6 +62,33 @@ function git(cwd: string, args: string[]): string {
   }
 }
 
+/**
+ * What this checkout calls the place it came from.
+ *
+ * Only `origin`, and only as git itself resolves it — `remote.<name>.pushurl`
+ * and `url.<base>.insteadOf` rewrites included, since the rewritten form is
+ * the one that names the real host. A checkout with no remote answers null,
+ * which is an honest answer: it is a repository, just not one another machine
+ * has been told how to reach.
+ *
+ * Lives here rather than beside the repo records because the CLI needs it
+ * too, and nothing in a client should have to open the server's database to
+ * ask a checkout where it came from.
+ */
+export function readRemoteUrl(root: string): string | null {
+  try {
+    const url = execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+    }).trim();
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Creates the run's worktree. Throws before any node runs if it cannot. */
 export function createRunWorkspace(spec: ResolvedWorkspaceSpec, executionId: string): RunWorkspace {
   const repo = resolve(spec.repo.replace(/^~(?=\/|$)/, homedir()));

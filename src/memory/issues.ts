@@ -33,6 +33,13 @@ export interface DecisionIssue {
   decisionId: string | null;
   featureId: string | null;
   paths: string[];
+  /**
+   * The repository the objecting run worked in — `host/owner/name`, the same
+   * identity a decision carries. `repoSource` beside it is where that
+   * checkout happened to be on one machine, which is a breadcrumb for a
+   * person and never a key.
+   */
+  repoId: string | null;
   repoSource: string | null;
   sourceCommit: string | null;
   /** The cross-team task the run was serving. A label for grouping, never how
@@ -99,6 +106,7 @@ function rowToIssue(r: any): DecisionIssue {
     decisionId: r.decision_id ?? null,
     featureId: r.feature_id ?? null,
     paths: parsePaths(r.paths_json),
+    repoId: r.repo_id ?? null,
     repoSource: r.repo_source ?? null,
     sourceCommit: r.source_commit ?? null,
     taskId: r.task_id ?? null,
@@ -150,6 +158,7 @@ export interface IssueDraft {
   decisionId?: string | null;
   featureId?: string | null;
   paths?: string[];
+  repoId?: string | null;
   repoSource?: string | null;
   sourceCommit?: string | null;
   taskId?: string | null;
@@ -187,6 +196,7 @@ export function insertIssue(draft: IssueDraft, now = Date.now()): { issue: Decis
     decisionId: draft.decisionId ?? null,
     featureId: draft.featureId ?? null,
     paths: draft.paths ?? [],
+    repoId: draft.repoId ?? null,
     repoSource: draft.repoSource ?? null,
     sourceCommit: draft.sourceCommit ?? null,
     taskId: draft.taskId ?? null,
@@ -205,12 +215,12 @@ export function insertIssue(draft: IssueDraft, now = Date.now()): { issue: Decis
   db.prepare(
     `INSERT INTO decision_issues
        (id, execution_id, step_index, source_node_id, source_visit, conflict_key, from_team_id, target_team_id,
-        decision_id, feature_id, paths_json, repo_source, source_commit, task_id, title, decision_snapshot, rationale,
+        decision_id, feature_id, paths_json, repo_id, repo_source, source_commit, task_id, title, decision_snapshot, rationale,
         proposal, revision, status, opened_by, resolution, resolved_by, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     row.id, row.executionId, row.stepIndex, row.sourceNodeId, row.sourceVisit, row.conflictKey, row.fromTeamId,
-    row.targetTeamId, row.decisionId, row.featureId, JSON.stringify(row.paths), row.repoSource, row.sourceCommit, row.taskId,
+    row.targetTeamId, row.decisionId, row.featureId, JSON.stringify(row.paths), row.repoId, row.repoSource, row.sourceCommit, row.taskId,
     row.title, row.decisionSnapshot, row.rationale, row.proposal, row.revision, row.status, row.openedBy,
     row.resolution, row.resolvedBy, row.createdAt, row.updatedAt,
   );
@@ -440,6 +450,12 @@ export function settleApproval(
 export interface IssueSearch {
   /** Path prefixes the objection touches, as the decision search uses them. */
   paths?: string[];
+  /**
+   * The repository the caller is asking from — see `DecisionSearch.repoId`.
+   * Applied outside the path/feature/decision disjunction: a repository is
+   * not one more way to match, it is a limit on every way.
+   */
+  repoId?: string | null;
   featureId?: string | null;
   decisionIds?: string[];
   limit?: number;
@@ -481,6 +497,12 @@ export function liveIssues(scope: MemoryScope, search: IssueSearch = {}): Decisi
     args.push(...decisionIds);
   }
   if (any.length) where.push(`(${any.join(" OR ")})`);
+  // Outer AND, deliberately: inside the OR above it would let an objection
+  // from another repository in through its feature id, which is org-wide.
+  if (search.repoId) {
+    where.push("(repo_id IS NULL OR repo_id = ?)");
+    args.push(search.repoId);
+  }
 
   const limit = Math.min(Math.max(search.limit ?? 20, 1), 100);
   args.push(limit);

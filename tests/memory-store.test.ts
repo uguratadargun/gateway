@@ -77,7 +77,7 @@ describe("decisions in a scope", () => {
     if (decisionsForExecution("run-android-1").length) return;
     const feature = upsertFeature({ orgId: "ulak", name: "Offline sync", aliases: ["background sync"], summary: "Keeps local edits and pushes them when online." });
     replaceDecisions(
-      { executionId: "run-android-1", teamId: "android", userId: "u1", featureId: feature.id, baseCommit: "aaa", headCommit: "bbb", outcome: "shipped", validFrom: 1_000 },
+      { executionId: "run-android-1", teamId: "android", userId: "u1", featureId: feature.id, repoId: null, baseCommit: "aaa", headCommit: "bbb", outcome: "shipped", validFrom: 1_000 },
       [
         {
           title: "Queue edits in Room, flush on connectivity",
@@ -97,7 +97,7 @@ describe("decisions in a scope", () => {
     );
     upsertImplementation({ featureId: feature.id, teamId: "android", summary: "Room queue + WorkManager flush.", pitfalls: "Per-entity ordering only." });
     replaceDecisions(
-      { executionId: "run-other-1", teamId: "otherco", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
+      { executionId: "run-other-1", teamId: "otherco", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 1_000 },
       [{ title: "Offline sync via CRDT", context: "", decision: "CRDT merge", rationale: "", alternatives: "", how: "", consequences: "", touches: [] }],
       1_100,
     );
@@ -132,7 +132,7 @@ describe("decisions in a scope", () => {
     seed();
     const [old] = decisionsForExecution("run-android-1");
     replaceDecisions(
-      { executionId: "run-android-2", teamId: "android", userId: "u1", featureId: old.featureId, baseCommit: "bbb", headCommit: "ccc", outcome: "shipped", validFrom: 5_000 },
+      { executionId: "run-android-2", teamId: "android", userId: "u1", featureId: old.featureId, repoId: null, baseCommit: "bbb", headCommit: "ccc", outcome: "shipped", validFrom: 5_000 },
       [{ title: "Flush the sync queue on a timer too", context: "", decision: "Timer + connectivity", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "sync" }], supersedes: old.id }],
       5_100,
     );
@@ -144,13 +144,13 @@ describe("decisions in a scope", () => {
   it("will not let one team close another's decision, even inside the family", () => {
     seed();
     replaceDecisions(
-      { executionId: "run-android-9", teamId: "android", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 7_000 },
+      { executionId: "run-android-9", teamId: "android", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 7_000 },
       [{ title: "Encode envelopes with protobuf", context: "", decision: "protobuf", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "envelope" }] }],
       7_100,
     );
     const [theirs] = decisionsForExecution("run-android-9");
     replaceDecisions(
-      { executionId: "run-desktop-9", teamId: "desktop", userId: "u1", featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 8_000 },
+      { executionId: "run-desktop-9", teamId: "desktop", userId: "u1", featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 8_000 },
       [{ title: "Encode envelopes with JSON", context: "", decision: "json", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "envelope" }], supersedes: theirs.id }],
       8_100,
     );
@@ -169,13 +169,13 @@ describe("decisions in a scope", () => {
   it("still lets a team supersede its own decision from a later run", () => {
     seed();
     replaceDecisions(
-      { executionId: "run-desktop-10", teamId: "desktop", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 7_000 },
+      { executionId: "run-desktop-10", teamId: "desktop", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 7_000 },
       [{ title: "Poll the desktop inbox", context: "", decision: "poll", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "inbox" }] }],
       7_100,
     );
     const [mine] = decisionsForExecution("run-desktop-10");
     replaceDecisions(
-      { executionId: "run-desktop-11", teamId: "desktop", userId: null, featureId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 8_000 },
+      { executionId: "run-desktop-11", teamId: "desktop", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped", validFrom: 8_000 },
       [{ title: "Push to the desktop inbox", context: "", decision: "push", rationale: "", alternatives: "", how: "", consequences: "", touches: [{ kind: "area", ref: "inbox" }], supersedes: mine.id }],
       8_100,
     );
@@ -186,7 +186,7 @@ describe("decisions in a scope", () => {
   it("rewrites a run's record whole, and a retraction hides it", () => {
     seed();
     replaceDecisions(
-      { executionId: "run-android-2", teamId: "android", userId: "u1", featureId: null, baseCommit: null, headCommit: null, outcome: "abandoned", validFrom: 5_000 },
+      { executionId: "run-android-2", teamId: "android", userId: "u1", featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "abandoned", validFrom: 5_000 },
       [
         { title: "Alpha retry policy", context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", touches: [] },
         { title: "Bravo retry policy", context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", touches: [] },

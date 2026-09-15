@@ -252,6 +252,7 @@ function rowToDecision(r: any): Decision {
     teamId: r.team_id,
     userId: r.user_id ?? null,
     featureId: r.feature_id ?? null,
+    repoId: r.repo_id ?? null,
     title: r.title,
     context: r.context ?? "",
     decision: r.decision ?? "",
@@ -302,8 +303,10 @@ function writeDecisionIndex(d: Decision): void {
     "INSERT INTO memory_decisions_fts (id, title, context, decision, rationale, how, consequences, touches) VALUES (?,?,?,?,?,?,?,?)",
   ).run(d.id, d.title, d.context, d.decision, d.rationale, d.how, d.consequences, d.touches.map((t) => t.ref).join(" "));
   db.prepare("DELETE FROM memory_touches WHERE decision_id = ?").run(d.id);
-  const ins = db.prepare("INSERT OR IGNORE INTO memory_touches (decision_id, kind, ref) VALUES (?,?,?)");
-  for (const t of d.touches) ins.run(d.id, t.kind, t.ref);
+  // The identity travels down to the touch rather than being joined for:
+  // a path lookup is the hot query and has to filter inside the index.
+  const ins = db.prepare("INSERT OR IGNORE INTO memory_touches (decision_id, kind, ref, repo_id) VALUES (?,?,?,?)");
+  for (const t of d.touches) ins.run(d.id, t.kind, t.ref, d.repoId);
 }
 
 /**
@@ -318,10 +321,17 @@ function writeDecisionIndex(d: Decision): void {
  * proposal that team can read and answer, not a `valid_to` written behind
  * their back.
  */
-function supersedableBy(teamId: string, id: string | null | undefined): string | null {
+function supersedableBy(run: { teamId: string; repoId: string | null }, id: string | null | undefined): string | null {
   if (!id) return null;
   const target = getDecision(id);
-  return target && target.teamId === teamId ? id : null;
+  if (!target || target.teamId !== run.teamId) return null;
+  // And only one about the same codebase. A team with two repositories has
+  // two sets of decisions in reach at once, and "we switched to X" in one of
+  // them is not a reason to close the other one's — the paths and the
+  // constraints are different, and the closed row would be closed silently.
+  // Either side being unknown is not evidence of difference, so it passes.
+  if (target.repoId && run.repoId && target.repoId !== run.repoId) return null;
+  return id;
 }
 
 /**
@@ -334,6 +344,8 @@ export function replaceDecisions(
     teamId: string;
     userId: string | null;
     featureId: string | null;
+    /** The repository the run worked in, or null when it is not known. */
+    repoId: string | null;
     baseCommit: string | null;
     headCommit: string | null;
     outcome: DecisionOutcome;
@@ -357,13 +369,14 @@ export function replaceDecisions(
       // unique: two runs may share a prefix, so the tail is random and checked.
       let id = `${run.executionId.slice(0, 8)}-${n + 1}-${randomBytes(4).toString("hex")}`;
       while (getDecision(id)) id = `${run.executionId.slice(0, 8)}-${n + 1}-${randomBytes(4).toString("hex")}`;
-      const supersedes = supersedableBy(run.teamId, draft.supersedes);
+      const supersedes = supersedableBy(run, draft.supersedes);
       const d: Decision = {
         id,
         executionId: run.executionId,
         teamId: run.teamId,
         userId: run.userId,
         featureId: run.featureId,
+        repoId: run.repoId,
         title: draft.title.trim(),
         context: draft.context?.trim() ?? "",
         decision: draft.decision?.trim() ?? "",
@@ -383,11 +396,11 @@ export function replaceDecisions(
       };
       db.prepare(
         `INSERT INTO memory_decisions
-           (id, execution_id, team_id, user_id, feature_id, title, context, decision, rationale, alternatives, how,
+           (id, execution_id, team_id, user_id, feature_id, repo_id, title, context, decision, rationale, alternatives, how,
             consequences, touches_json, base_commit, head_commit, outcome, supersedes, valid_from, valid_to, recorded_at, retracted_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
-        d.id, d.executionId, d.teamId, d.userId, d.featureId, d.title, d.context, d.decision, d.rationale, d.alternatives,
+        d.id, d.executionId, d.teamId, d.userId, d.featureId, d.repoId, d.title, d.context, d.decision, d.rationale, d.alternatives,
         d.how, d.consequences, JSON.stringify(d.touches), d.baseCommit, d.headCommit, d.outcome, d.supersedes,
         d.validFrom, d.validTo, d.recordedAt, d.retractedAt,
       );
@@ -426,6 +439,12 @@ export function searchDecisions(scope: MemoryScope, search: DecisionSearch): Dec
   const where: string[] = [`d.team_id IN (${placeholders(scope.teams.length)})`];
   const params: unknown[] = [...scope.teams];
   if (!search.includeRetracted) where.push("d.retracted_at IS NULL");
+  if (search.repoId) {
+    // On the decision, not on the touch: the FTS branch reaches touches
+    // through the `touches` text column, which no join can filter.
+    where.push("(d.repo_id IS NULL OR d.repo_id = ?)");
+    params.push(search.repoId);
+  }
   if (search.featureId) {
     where.push("d.feature_id = ?");
     params.push(search.featureId);
@@ -445,10 +464,20 @@ export function searchDecisions(scope: MemoryScope, search: DecisionSearch): Dec
     // As an IN over the touches index rather than a correlated EXISTS: the
     // planner then walks the few touched rows first and probes decisions by
     // key, instead of asking the question once per decision in the scope.
+    // The repository is repeated on the touch so the wrong repo's paths are
+    // dropped inside the index range rather than by the decision filter
+    // afterwards — src/index.ts is touched in all four repos, and this is the
+    // query that would otherwise walk all four to return one.
+    const sameRepo = search.repoId ? " AND (t.repo_id IS NULL OR t.repo_id = ?)" : "";
     where.push(
-      `d.id IN (SELECT t.decision_id FROM memory_touches t WHERE ${paths.map(() => "(t.ref >= ? AND t.ref < ?)").join(" OR ")})`,
+      `d.id IN (SELECT t.decision_id FROM memory_touches t WHERE ${paths
+        .map(() => `(t.ref >= ? AND t.ref < ?${sameRepo})`)
+        .join(" OR ")})`,
     );
-    for (const p of paths) params.push(p, `${p}\uffff`);
+    for (const p of paths) {
+      params.push(p, `${p}\uffff`);
+      if (search.repoId) params.push(search.repoId);
+    }
   }
 
   const match = search.query ? toMatchQuery(search.query) : null;

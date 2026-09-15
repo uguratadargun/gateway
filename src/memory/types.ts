@@ -83,6 +83,12 @@ export interface Decision extends DecisionDraft {
   teamId: string;
   userId: string | null;
   featureId: string | null;
+  /**
+   * The repository the run worked in — `host/owner/name`, or null when it is
+   * not known. The paths in `touches` are relative to it and mean nothing
+   * without it: `src/index.ts` is a different file in each of four repos.
+   */
+  repoId: string | null;
   baseCommit: string | null;
   headCommit: string | null;
   outcome: DecisionOutcome;
@@ -161,6 +167,15 @@ export interface DecisionSearch {
   query?: string;
   /** Path prefixes; a decision matches when it touched anything under one. */
   paths?: string[];
+  /**
+   * The repository the caller is asking from. Decisions belonging to a
+   * *different* named repository are hidden; ones whose repository is unknown
+   * are kept, because unknown is not evidence of difference and everything
+   * recorded before identity existed is unknown. Absent means no filter at
+   * all — a caller that does not know its own repository is in no position to
+   * rule anything out.
+   */
+  repoId?: string | null;
   featureId?: string;
   /** Only decisions that held at this moment. */
   asOf?: number;

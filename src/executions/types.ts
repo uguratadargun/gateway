@@ -62,6 +62,13 @@ export interface ExecutionRecord {
    * continued — `resumedFrom` is the continuation chain, and stays that.
    */
   taskId: string | null;
+  /**
+   * The repository the work happened in, as `host/owner/name` — the name
+   * every clone of it agrees on. Null when nothing could say, which is what
+   * every run recorded before identity existed carries. A relative path is
+   * only meaningful next to this.
+   */
+  repoId: string | null;
 }
 
 /** The machine a local run happened on, as the client reported it. */

@@ -28,7 +28,7 @@ import { LocalMemoryAccess } from "@/memory/access";
 import { scheduleExtraction } from "@/memory/queue";
 
 import { recordReportedSteps } from "./record";
-import { createExecution, finishExecution, getExecution, getExecutionLineage, recordStep, setExecutionWorkspace } from "./store";
+import { createExecution, finishExecution, getExecution, getExecutionLineage, recordStep, setExecutionRepo, setExecutionWorkspace } from "./store";
 import type { ExecutionWorkspace } from "./types";
 
 /**
@@ -139,6 +139,10 @@ export function startExecution(
     try {
       const resolved = resolveWorkspace(workflow.workspace, input);
       connected = resolved.repo;
+      // Recorded once the repo is resolved rather than at createExecution,
+      // which runs before the workspace is known. A run in a repository gate
+      // has no record of stays unnamed — the path it works in is not one.
+      if (connected?.repoId) setExecutionRepo(executionId, connected.repoId);
       workspace = createRunWorkspace(resolved.spec, executionId);
       setExecutionWorkspace(executionId, { ...workspace, commit: null, changedFiles: [] });
     } catch (e) {
@@ -193,8 +197,10 @@ export function resumeExecution(parentId: string): StartExecutionResult {
   createExecution(executionId, parent.workflowId, lineage.input, Date.now(), parentId, {
     teamId: parent.teamId,
     userId: parent.userId,
-    // Continuing a run does not change what the work was for.
+    // Continuing a run does not change what the work was for, nor which
+    // repository it was in.
     taskId: parent.taskId,
+    repoId: parent.repoId,
   });
   if (workspace) setExecutionWorkspace(executionId, workspaceSummary(workspace)!);
 
@@ -267,8 +273,10 @@ async function launch(
       workspace,
       loadAgent: (id) => getAgent(id, scope),
       loadSkill: (id) => getSkill(id, scope),
-      // Memory answers as the run's team: its own tree, nothing else.
-      memory: new LocalMemoryAccess(scope.teamId ?? DEFAULT_TEAM),
+      // Memory answers as the run's team: its own tree, nothing else — and
+      // about the repository this run is actually in, which the run knows and
+      // the model does not have to be asked for.
+      memory: new LocalMemoryAccess(scope.teamId ?? DEFAULT_TEAM, connected?.repoId ?? null),
       emit: publishWorkflowEvent,
       // Through the same door a reported step comes in by, so a node that
       // raises an objection has it written with the step here too — the

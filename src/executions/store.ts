@@ -68,6 +68,13 @@ export interface ExecutionOrigin {
   client?: ExecutionClient | null;
   /** The cross-team task this run serves, when it was started under one. */
   taskId?: string | null;
+  /**
+   * `host/owner/name` for the repository the work happened in. Null wherever
+   * the remote did not say, which is honest and common; it is never inferred
+   * from the path, because two teams' repositories are routinely called the
+   * same thing and a wrong identity merges their memory.
+   */
+  repoId?: string | null;
 }
 
 export function createExecution(
@@ -84,8 +91,8 @@ export function createExecution(
     .prepare(
       `INSERT INTO workflow_executions
          (id, workflow_id, status, started_at, input_json, resumed_from,
-          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver, client_session, task_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          origin, user_id, team_id, client_host, client_repo, client_branch, last_seen_at, driver, client_session, task_id, repo_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       id,
@@ -104,6 +111,7 @@ export function createExecution(
       meta.driver ?? "engine",
       meta.client?.session ?? null,
       meta.taskId ?? null,
+      meta.repoId ?? null,
     );
 }
 
@@ -390,6 +398,18 @@ export function stopSessionExecution(id: string, at = Date.now()): boolean {
   return stopped;
 }
 
+/**
+ * Names the repository a server-started run turned out to work in.
+ *
+ * Which repository that is only becomes known once the run input has been
+ * resolved to a connected repo, which happens after the row exists. Written
+ * once and never moved: everything recorded under this run — decisions,
+ * touches, objections — is filed against this identity.
+ */
+export function setExecutionRepo(executionId: string, repoId: string): void {
+  getDb().prepare("UPDATE workflow_executions SET repo_id = ? WHERE id = ?").run(repoId, executionId);
+}
+
 /** Recorded as soon as the worktree exists, so a running job shows its branch. */
 export function setExecutionWorkspace(executionId: string, workspace: ExecutionWorkspace): void {
   getDb().prepare("UPDATE workflow_executions SET workspace_json = ? WHERE id = ?").run(json(workspace), executionId);
@@ -421,6 +441,7 @@ interface ExecutionRow {
   paused_ms: number | null;
   client_session: string | null;
   task_id: string | null;
+  repo_id: string | null;
 }
 
 function toExecution(r: ExecutionRow): ExecutionRecord {
@@ -449,6 +470,7 @@ function toExecution(r: ExecutionRow): ExecutionRecord {
     pausedAt: r.paused_at ?? null,
     pausedMs: r.paused_ms ?? 0,
     taskId: r.task_id ?? null,
+    repoId: r.repo_id ?? null,
   };
 }
 

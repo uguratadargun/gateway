@@ -12,16 +12,24 @@ export * from "./cards";
  * one implementation that does.
  */
 export class LocalMemoryAccess implements MemoryAccess {
-  constructor(private readonly teamId: string) {}
+  /**
+   * `repoId` is the repository the caller is working in, when there is one.
+   * A run's own is passed in by the runner rather than asked of the model:
+   * the model has no way to know the canonical name, and a wrong one here
+   * hides the decision that would have stopped it.
+   */
+  constructor(private readonly teamId: string, private readonly repoId: string | null = null) {}
 
   async search(req: MemorySearchRequest): Promise<MemorySearchResult> {
     const scope = memoryScopeFor(this.teamId);
+    const repoId = this.repoId ?? req.repoId ?? null;
     const limit = Math.min(Math.max(req.limit ?? 10, 1), 50);
     const features = req.query ? (await hybridSearchFeatures(scope, req.query, 5)).map((f) => toFeatureCard(f)) : [];
     const decisions = (
       await hybridSearchDecisions(scope, {
         query: req.query,
         paths: req.paths,
+        repoId,
         featureId: req.featureId,
         asOf: req.asOf,
         since: req.since,
@@ -34,6 +42,7 @@ export class LocalMemoryAccess implements MemoryAccess {
     // answer, or it will plan against a decision somebody has already refused.
     const issues = liveIssues(scope, {
       paths: req.paths,
+      repoId,
       featureId: req.featureId,
       decisionIds: decisions.map((d) => d.id),
       limit,

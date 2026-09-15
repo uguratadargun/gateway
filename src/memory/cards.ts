@@ -18,6 +18,13 @@ import type { Decision, DecisionHit, Feature, FeatureHit, FeatureImplementation 
 export interface MemorySearchRequest {
   query?: string;
   paths?: string[];
+  /**
+   * The repository the question is about. Never asked of a model: a run
+   * already works in exactly one repository and the access object carries it
+   * — see LocalMemoryAccess. This is for callers outside a run, which say so
+   * for themselves.
+   */
+  repoId?: string | null;
   featureId?: string;
   /** Milliseconds since the epoch; only decisions that held then. */
   asOf?: number;

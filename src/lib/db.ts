@@ -628,6 +628,22 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // thing, and a shared identity merges their memory silently.
   ["repos", "remote_url", "remote_url TEXT"],
   ["repos", "repo_id", "repo_id TEXT"],
+  // The same identity carried down the chain that a path travels: the run
+  // that did the work, the decision it produced, and each file that decision
+  // touched. A relative path is only meaningful next to the repository it is
+  // relative to, and `memory_touches.ref` had nothing beside it — so
+  // src/index.ts in the desktop app and src/index.ts on the server were one
+  // key. Denormalised onto the touch rather than joined through the decision
+  // because the path lookup is the hot one and has to filter in the index.
+  //
+  // NULL is unknown, and unknown is not evidence of difference: a query that
+  // knows its repository hides decisions belonging to a *different* named
+  // repository, and keeps the unnamed ones. Anything else would drop every
+  // record made before identity existed.
+  ["workflow_executions", "repo_id", "repo_id TEXT"],
+  ["memory_decisions", "repo_id", "repo_id TEXT"],
+  ["memory_touches", "repo_id", "repo_id TEXT"],
+  ["decision_issues", "repo_id", "repo_id TEXT"],
 ];
 
 let db: SqlDatabase | null = null;
@@ -646,6 +662,10 @@ export function getDb(): SqlDatabase {
     if (!cols.includes(column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
   }
   d.exec("CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id)");
+  // A path lookup now asks two questions at once — which file, and whose —
+  // so the repository travels in the index rather than as a filter applied
+  // to everything the path alone matched.
+  d.exec("CREATE INDEX IF NOT EXISTS memory_touches_ref_repo ON memory_touches(ref, repo_id)");
   ensureFtsTokenizer(d);
   db = d;
   importLegacyFiles(d);

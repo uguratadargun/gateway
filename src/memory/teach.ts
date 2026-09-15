@@ -4,6 +4,7 @@ import type { z } from "zod";
 import { createExecution, finishExecution, recordStep, setExecutionDiff } from "@/executions/store";
 import type { teachSchema } from "@/lib/client-api-schemas";
 import { getDb } from "@/lib/db";
+import { canonicalRepoId } from "@/repos/identity";
 import { createState } from "@/runtime/state";
 
 import { getExtraction, memoryScopeFor, requeueExtraction } from "./store";
@@ -79,6 +80,10 @@ export function teachBranch(who: { teamId: string; userId: string | null }, body
   const input = { task: account.task };
   const client = { host: body.host ?? null, repo: workspace.repo, branch: workspace.branch, version: body.version ?? null };
   const existing = taughtBefore(who.teamId, workspace.branch, workspace.baseCommit);
+  // Taught work belongs to a repository as much as a run's does: without it
+  // the paths in the account are bare, and `src/index.ts` taught from the
+  // desktop app would answer a question about the server's.
+  const repoId = workspace.remoteUrl ? canonicalRepoId(workspace.remoteUrl) : null;
   const db = getDb();
 
   let executionId: string;
@@ -91,9 +96,9 @@ export function teachBranch(who: { teamId: string; userId: string | null }, body
     db.prepare(
       `UPDATE workflow_executions
           SET status = 'running', started_at = ?, input_json = ?, user_id = ?, client_host = ?, client_repo = ?, client_branch = ?,
-              error_code = NULL, error_message = NULL
+              repo_id = COALESCE(?, repo_id), error_code = NULL, error_message = NULL
         WHERE id = ?`,
-    ).run(body.startedAt, JSON.stringify(input), who.userId, client.host, client.repo, client.branch, executionId);
+    ).run(body.startedAt, JSON.stringify(input), who.userId, client.host, client.repo, client.branch, repoId, executionId);
   } else {
     executionId = randomUUID();
     createExecution(executionId, TEACH_WORKFLOW_ID, input, body.startedAt, null, {
@@ -101,6 +106,7 @@ export function teachBranch(who: { teamId: string; userId: string | null }, body
       userId: who.userId,
       teamId: who.teamId,
       client,
+      repoId,
     });
   }
 

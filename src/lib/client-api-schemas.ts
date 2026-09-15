@@ -14,6 +14,13 @@ const clientInfo = z
   .object({
     host: z.string().max(120).optional(),
     repo: z.string().max(500).optional(),
+    /**
+     * What `git remote get-url origin` said in the repository this run works
+     * in. The raw remote, not an identity: the server does the normalising,
+     * so an older client cannot mint a second identity for a repository the
+     * newer one already named.
+     */
+    remoteUrl: z.string().max(500).optional(),
     branch: z.string().max(200).optional(),
     version: z.string().max(40).optional(),
     /**
@@ -220,6 +227,8 @@ export const teachSchema = z
     workspace: z.object({
       root: z.string().max(1000),
       repo: z.string().max(1000),
+      /** The raw `origin` of the branch's checkout; the server names it. */
+      remoteUrl: z.string().max(500).nullish(),
       branch: z.string().min(1).max(200),
       baseRef: z.string().max(200),
       baseCommit: z.string().min(4).max(80),
@@ -252,6 +261,12 @@ export const memorySearchSchema = z
   .object({
     query: z.string().max(2000).optional(),
     paths: z.array(z.string().max(500)).max(50).default([]),
+    /**
+     * The raw `origin` of the checkout the question is being asked from. Raw,
+     * like every other remote on the wire: the server names it, so one client
+     * cannot ask under a name another client would never mint.
+     */
+    remoteUrl: z.string().max(500).optional(),
     featureId: z.string().max(100).optional(),
     asOf: epochMs,
     since: epochMs,
