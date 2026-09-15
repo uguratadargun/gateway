@@ -52,6 +52,58 @@ const toolCallSchema = z.object({
   durationMs: z.number(),
 });
 
+/**
+ * The cross-team objection protocol, version 1.
+ *
+ * A node's output is otherwise whatever its workflow said it was, and
+ * `buildOutputSchema` deliberately passes extra keys through — models add
+ * commentary fields all the time. These two keys are the exception: they are
+ * the only part of an output that changes anything outside its own run, so
+ * they get a fixed shape the server owns, not one a team's agent definition
+ * can widen.
+ *
+ * They are read out of the step's output rather than added to `stepSchema`,
+ * and a malformed one is skipped instead of failing the report. The reason is
+ * `RunReporter`: it re-queues a rejected batch whole and gives up after four
+ * tries, so a single model that answered `conflicts: "none"` would cost the
+ * run every step it had left to send.
+ */
+export const CONFLICT_PROTOCOL_VERSION = 1;
+
+export const conflictSchema = z
+  .object({
+    /** Unique within the step. The approval names this, so it needs no server round-trip. */
+    conflictKey: z.string().min(1).max(120),
+    /** Whose decision is being disagreed with. Checked against the caller's family. */
+    targetTeamId: z.string().min(1).max(64),
+    decisionId: z.string().max(100).nullish(),
+    featureId: z.string().max(100).nullish(),
+    paths: z.array(z.string().max(500)).max(50).default([]),
+    title: z.string().min(1).max(200),
+    /** What the other team decided, copied here so the objection survives a re-extraction. */
+    decisionSnapshot: z.string().max(4000).default(""),
+    rationale: z.string().max(4000).default(""),
+    proposal: z.string().max(4000).default(""),
+    revision: z.string().max(4000).default(""),
+  })
+  .strict();
+
+export const resolvedSchema = z
+  .object({
+    sourceNodeId: z.string().min(1).max(64),
+    sourceVisit: z.number().int().min(0),
+    conflictKey: z.string().min(1).max(120),
+    decision: z.enum(["confirm", "reject"]),
+    note: z.string().max(4000).default(""),
+  })
+  .strict();
+
+export const conflictsFieldSchema = z.array(conflictSchema).max(20);
+export const resolvedFieldSchema = z.array(resolvedSchema).max(20);
+
+export type ReportedConflict = z.infer<typeof conflictSchema>;
+export type ReportedResolution = z.infer<typeof resolvedSchema>;
+
 export const stepSchema = z.object({
   nodeId: z.string().min(1).max(64),
   stepIndex: z.number().int().min(0),

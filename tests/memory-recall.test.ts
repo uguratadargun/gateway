@@ -68,7 +68,7 @@ describe("the recall node", () => {
       if (i === 0) return { toolUses: [toolUse("memory_search", { query: "offline sync for desktop edits" }, "tu_1")] };
       if (i === 1) return { toolUses: [toolUse("memory_feature", { id: "offline-sync" }, "tu_2")] };
       if (i === 2) return { toolUses: [toolUse("memory_search", { paths: ["app/sync"], since: "30d" }, "tu_3")] };
-      return JSON.stringify({ brief: "Same feature elsewhere: rc-android built Offline sync (offline-sync).", sources: ["offline-sync"] });
+      return JSON.stringify({ brief: "Same feature elsewhere: rc-android built Offline sync (offline-sync).", sources: ["offline-sync"], objections: [] });
     });
     const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), {
       provider,
@@ -78,7 +78,7 @@ describe("the recall node", () => {
     });
     expect(state.error).toBeNull();
     expect(state.status).toBe("completed");
-    expect(state.outputs.recall).toMatchObject({ sources: ["offline-sync"] });
+    expect(state.outputs.recall).toMatchObject({ sources: ["offline-sync"], objections: [] });
 
     // The engine appends to one message list, so the last call holds every
     // tool result; read them by the id each tool use was given.
@@ -110,7 +110,7 @@ describe("the recall node", () => {
     seed();
     const provider = new FakeModelProvider((_req, i) => {
       if (i === 0) return { toolUses: [toolUse("memory_search", { query: "anything" }, "tu_1")] };
-      return JSON.stringify({ brief: "Nothing found.", sources: [] });
+      return JSON.stringify({ brief: "Nothing found.", sources: [], objections: [] });
     });
     const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent, input: { task: "x" } });
     expect(state.status).toBe("completed");

@@ -31,6 +31,18 @@ if (!g.__gateDaemon) {
   setInterval(tick, 10 * 60 * 1000).unref?.();
   void tick();
 
+  // An answer a person gave can outlive the process that took it: it is kept
+  // the moment it arrives, even when the objection it settles has not been
+  // reported yet. If that objection landed in a later batch — or in one this
+  // process is only now reading — nobody else would ever go back and match
+  // them up, so the sweep runs once at startup.
+  void import("@/executions/record")
+    .then((m) => {
+      const { settled, waiting } = m.reconcilePendingApprovals();
+      if (settled || waiting) console.log(`gate: ${settled} held answer(s) matched to their objection, ${waiting} still waiting`);
+    })
+    .catch((e) => console.error("[gate] could not settle held answers:", e));
+
   // The Telegram bot, when a token is configured: people's questions,
   // approvals and new runs from their own chat. Loaded lazily so a gate
   // without one never pulls the remote-session code in at startup.

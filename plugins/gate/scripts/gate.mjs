@@ -7333,11 +7333,46 @@ function describeSearch(result) {
   }
   if (!result.decisions.length) {
     out.push(result.features.length ? "No decisions matched the text or paths; use memory_feature on a feature above for its decisions." : "Nothing in memory matches. The team has no recorded decision about this.");
-    return out.join("\n");
+  } else {
+    out.push(`${result.decisions.length} decision${result.decisions.length === 1 ? "" : "s"} (searched teams: ${result.scope.teams.join(", ")}; own team ${result.scope.own} first):`);
+    for (const d of result.decisions) out.push(describeDecision(d));
   }
-  out.push(`${result.decisions.length} decision${result.decisions.length === 1 ? "" : "s"} (searched teams: ${result.scope.teams.join(", ")}; own team ${result.scope.own} first):`);
-  for (const d of result.decisions) out.push(describeDecision(d));
-  return out.join("\n");
+  out.push(describeIssues(result.issues, result.scope.own, result.heldAnswers));
+  return out.filter(Boolean).join("\n");
+}
+function describeIssues(issues, own, heldAnswers = 0) {
+  const lines = [];
+  if (issues.length) {
+    const against = issues.filter((i) => i.target === own);
+    lines.push(`
+\u26A0 ${issues.length} open cross-team objection${issues.length === 1 ? "" : "s"}${against.length ? ` \u2014 ${against.length} against this team's own decisions` : ""}.`);
+    for (const i of issues) {
+      const side = i.target === own ? `${i.from} objects to our decision` : `we objected to ${i.target}`;
+      lines.push(`
+### ${i.title}`);
+      lines.push(
+        `id: ${i.id} \xB7 ${side} \xB7 ${i.status === "open" ? "confirmed by a person" : "raised, nobody has answered yet"} \xB7 raised ${i.raisedAt.slice(0, 10)}${i.decisionId ? ` \xB7 about decision ${i.decisionId}` : ""}${i.featureId ? ` \xB7 feature: ${i.featureId}` : ""}`
+      );
+      if (i.theirDecision) lines.push(`the decision objected to: ${clip(i.theirDecision, 600)}`);
+      if (i.why) lines.push(`why it does not work: ${clip(i.why, 800)}`);
+      if (i.proposal) lines.push(`proposed instead: ${clip(i.proposal, 800)}`);
+      if (i.revision) lines.push(`asked of ${i.target}: ${clip(i.revision, 800)}`);
+      if (i.paths.length) lines.push(`touches: ${i.paths.slice(0, 20).join(", ")}`);
+    }
+    if (against.length) {
+      lines.push(
+        `
+An objection against this team's own decision is a revision request, not a note: plan for it, or say in the plan why the objection does not hold. It does not make the decision invalid \u2014 only the team that made it can do that.`
+      );
+    }
+  }
+  if (heldAnswers) {
+    lines.push(
+      `
+Note: ${heldAnswers} answer${heldAnswers === 1 ? " was" : "s were"} recorded for objection${heldAnswers === 1 ? "" : "s"} whose own step never reached the server, so ${heldAnswers === 1 ? "it is" : "they are"} not shown above. An empty list is not proof nobody objected.`
+    );
+  }
+  return lines.join("\n");
 }
 function describeDecision(d) {
   const lines = [
@@ -7378,6 +7413,7 @@ function describeFeature(detail) {
 Decisions (${detail.decisions.length}):`);
     for (const d of detail.decisions) out.push(describeDecision(d));
   }
+  if (detail.issues.length) out.push(describeIssues(detail.issues, detail.own));
   return out.filter((l) => l !== "").join("\n");
 }
 
@@ -7401,7 +7437,7 @@ function parseSince(v, now = Date.now()) {
 }
 var memorySearch = {
   name: "memory_search",
-  description: "Search the team's memory of past runs: what was decided, why and how, and which files or areas each decision touched. Reads the whole team tree (sibling teams included), own team first. Give a query in words, path prefixes, or both; narrow with a time. Every hit names the run and the commits it came from.",
+  description: "Search the team's memory of past runs: what was decided, why and how, and which files or areas each decision touched. Reads the whole team tree (sibling teams included), own team first. Give a query in words, path prefixes, or both; narrow with a time. Every hit names the run and the commits it came from. The answer also carries any open cross-team objection touching what you asked about \u2014 another team finding one of these decisions unworkable on their side. An objection against this team's own decision is a revision request to plan for, not a note.",
   mutates: false,
   workspaceFree: true,
   inputSchema: {
@@ -7814,7 +7850,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.36.1";
+var GATE_VERSION = "0.36.2";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -11750,6 +11786,30 @@ var toolCallSchema = external_exports.object({
   startedAt: external_exports.number(),
   durationMs: external_exports.number()
 });
+var conflictSchema = external_exports.object({
+  /** Unique within the step. The approval names this, so it needs no server round-trip. */
+  conflictKey: external_exports.string().min(1).max(120),
+  /** Whose decision is being disagreed with. Checked against the caller's family. */
+  targetTeamId: external_exports.string().min(1).max(64),
+  decisionId: external_exports.string().max(100).nullish(),
+  featureId: external_exports.string().max(100).nullish(),
+  paths: external_exports.array(external_exports.string().max(500)).max(50).default([]),
+  title: external_exports.string().min(1).max(200),
+  /** What the other team decided, copied here so the objection survives a re-extraction. */
+  decisionSnapshot: external_exports.string().max(4e3).default(""),
+  rationale: external_exports.string().max(4e3).default(""),
+  proposal: external_exports.string().max(4e3).default(""),
+  revision: external_exports.string().max(4e3).default("")
+}).strict();
+var resolvedSchema = external_exports.object({
+  sourceNodeId: external_exports.string().min(1).max(64),
+  sourceVisit: external_exports.number().int().min(0),
+  conflictKey: external_exports.string().min(1).max(120),
+  decision: external_exports.enum(["confirm", "reject"]),
+  note: external_exports.string().max(4e3).default("")
+}).strict();
+var conflictsFieldSchema = external_exports.array(conflictSchema).max(20);
+var resolvedFieldSchema = external_exports.array(resolvedSchema).max(20);
 var stepSchema = external_exports.object({
   nodeId: external_exports.string().min(1).max(64),
   stepIndex: external_exports.number().int().min(0),
@@ -12356,7 +12416,7 @@ async function confirmTrust(workflowId, sha, team, assumeYes) {
 function parseInputs(flags, trailing) {
   const input = {};
   if (typeof flags.input === "string") {
-    for (const pair of flags.input.split(" ")) {
+    for (const pair of flags.input.split(/[\u0000 ]+/).filter(Boolean)) {
       const [key, ...rest] = pair.split("=");
       if (!key || !rest.length) die(`--input must be key=value (got "${pair}")`);
       input[key] = rest.join("=");

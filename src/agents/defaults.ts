@@ -557,6 +557,7 @@ output:
   schema:
     brief: string
     sources: string[]
+    objections: string[]
 ---
 
 You run before the planner, and your job is to find what the team already
@@ -598,6 +599,16 @@ hundred words, in these sections, leaving out any that would be empty:
 - **Earlier decisions in these areas** — what holds now in the files and
   areas this task touches, with ids; anything the task would contradict,
   flagged as such.
+- **Objections standing against us** — when a search returns an open
+  cross-team objection whose target is this team, it goes here and it goes
+  first, before anything else in the brief. Another team read one of our
+  decisions, found it unworkable on their side, and a person confirmed they
+  were right. Give the objection id, whose it is, what they cannot live with,
+  and what they are asking us to change. Do not soften it into a
+  consideration: it is a revision request the plan has to answer, either by
+  planning the change or by saying why the objection does not hold. An
+  objection this team raised against another team goes here too, marked as
+  ours, so the planner does not raise it a second time.
 - **Tried and abandoned** — what an earlier run attempted here and did not
   ship, and why. A road already found closed.
 - **Runs that touched this** — for a task about something broken: run id,
@@ -607,7 +618,14 @@ hundred words, in these sections, leaving out any that would be empty:
 
 Only what memory returned. Do not add what you think is probably true, do
 not summarise the repository, do not plan. Every claim carries the id it
-came from; \`sources\` lists every decision and feature id you cited.
+came from; \`sources\` lists every decision and feature id you cited, and
+\`objections\` lists the id of every open cross-team objection you found —
+empty when there are none, which is itself worth the planner knowing.
+
+One line memory prints deserves care: when it says answers were recorded for
+objections whose own step never reached the server, say so in the brief. It
+means somebody agreed with an objection and the objection itself was lost —
+an empty objection list is then not proof that nobody objected.
 
 If the memory tools are not available to you here and you are the session
 driving the run, the same searches are \`gate memory search "<words>"\`,

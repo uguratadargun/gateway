@@ -14,7 +14,7 @@ import { deleteWorkflow, getWorkflow, listWorkflows, workflowsDir } from "@/work
 import { FakeModelProvider } from "./fakes/fake-model-provider";
 
 /** What the recall node answers when memory holds nothing: the shipped agent's honest shape. */
-const RECALLED = JSON.stringify({ brief: "Nothing found — memory holds nothing about this.", sources: [] });
+const RECALLED = JSON.stringify({ brief: "Nothing found — memory holds nothing about this.", sources: [], objections: [] });
 
 /**
  * The shipped defaults are validated by the same loaders the UI uses, so a
@@ -224,7 +224,7 @@ describe("what the shipped agents declare", () => {
     expect(recall.tools).toContain("memory_feature");
     expect(recall.tools).not.toContain("write_file");
     expect(recall.tools).not.toContain("edit_file");
-    expect(recall.output.type === "json" ? Object.keys(recall.output.schema) : []).toEqual(["brief", "sources"]);
+    expect(recall.output.type === "json" ? Object.keys(recall.output.schema) : []).toEqual(["brief", "sources", "objections"]);
     for (const id of ["planner", "super-planner", "quick-implementer"]) {
       expect(byId.get(id)!.inputs).toContain("recall.brief?");
       expect(DEFAULT_AGENTS[id]).toContain("{{inputs.recall.brief}}");
@@ -1085,7 +1085,7 @@ Investigate {{input.task}} from {{inputs.base.stdout}} given {{inputs.recall.bri
     const provider = new FakeModelProvider((req) => {
       switch (req.context?.nodeId) {
         case "recall":
-          return JSON.stringify({ brief: "Runs that touched this: run-9 (commits a..b) changed the flush rule.", sources: ["run-9-1-x"] });
+          return JSON.stringify({ brief: "Runs that touched this: run-9 (commits a..b) changed the flush rule.", sources: ["run-9-1-x"], objections: [] });
         case "investigator":
           expect(String(req.messages[0].content)).toContain("changed the flush rule");
           return JSON.stringify({ certainty: "suspected", related: "run-9", suspected: "the flush rule", confirmed: "", fix: "restore the timer", verified: false, report: "…" });

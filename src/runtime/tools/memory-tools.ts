@@ -28,7 +28,9 @@ const memorySearch: AgentTool = {
   description:
     "Search the team's memory of past runs: what was decided, why and how, and which files or areas each decision touched. " +
     "Reads the whole team tree (sibling teams included), own team first. Give a query in words, path prefixes, or both; " +
-    "narrow with a time. Every hit names the run and the commits it came from.",
+    "narrow with a time. Every hit names the run and the commits it came from. " +
+    "The answer also carries any open cross-team objection touching what you asked about — another team finding one of these " +
+    "decisions unworkable on their side. An objection against this team's own decision is a revision request to plan for, not a note.",
   mutates: false,
   workspaceFree: true,
   inputSchema: {

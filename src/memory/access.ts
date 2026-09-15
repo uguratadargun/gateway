@@ -1,7 +1,8 @@
 import { hybridSearchDecisions, hybridSearchFeatures } from "./hybrid";
+import { heldAnswerCount, liveIssues } from "./issues";
 import { getFeature, implementationsOf, memoryScopeFor, searchDecisions } from "./store";
 
-import { implementationLine, toDecisionCard, toFeatureCard, type FeatureDetail, type MemoryAccess, type MemorySearchRequest, type MemorySearchResult } from "./cards";
+import { implementationLine, toDecisionCard, toFeatureCard, toIssueCard, type FeatureDetail, type MemoryAccess, type MemorySearchRequest, type MemorySearchResult } from "./cards";
 
 export * from "./cards";
 
@@ -27,7 +28,23 @@ export class LocalMemoryAccess implements MemoryAccess {
         limit,
       })
     ).map(toDecisionCard);
-    return { scope: { own: scope.own, teams: scope.teams }, features, decisions };
+    // Objections are looked up by the same paths and feature the decisions
+    // were, plus the decisions actually found: a planner that reaches a
+    // decision must reach the disagreement standing against it in the same
+    // answer, or it will plan against a decision somebody has already refused.
+    const issues = liveIssues(scope, {
+      paths: req.paths,
+      featureId: req.featureId,
+      decisionIds: decisions.map((d) => d.id),
+      limit,
+    }).map(toIssueCard);
+    return {
+      scope: { own: scope.own, teams: scope.teams },
+      features,
+      decisions,
+      issues,
+      heldAnswers: heldAnswerCount(scope),
+    };
   }
 
   async feature(id: string): Promise<FeatureDetail | null> {
@@ -37,9 +54,11 @@ export class LocalMemoryAccess implements MemoryAccess {
     const implementations = implementationsOf(scope, id);
     const decisions = searchDecisions(scope, { featureId: id, limit: 50 }).map(toDecisionCard);
     return {
+      own: scope.own,
       feature: toFeatureCard(feature, implementations.map((i) => i.teamId)),
       implementations: implementations.map(implementationLine),
       decisions,
+      issues: liveIssues(scope, { featureId: id, decisionIds: decisions.map((d) => d.id), limit: 50 }).map(toIssueCard),
     };
   }
 }

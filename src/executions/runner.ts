@@ -27,6 +27,7 @@ import { assertResumable, planResume } from "./resume";
 import { LocalMemoryAccess } from "@/memory/access";
 import { scheduleExtraction } from "@/memory/queue";
 
+import { recordReportedSteps } from "./record";
 import { createExecution, finishExecution, getExecution, getExecutionLineage, recordStep, setExecutionWorkspace } from "./store";
 import type { ExecutionWorkspace } from "./types";
 
@@ -267,7 +268,14 @@ async function launch(
       // Memory answers as the run's team: its own tree, nothing else.
       memory: new LocalMemoryAccess(scope.teamId ?? DEFAULT_TEAM),
       emit: publishWorkflowEvent,
-      onStep: (step) => recordStep(executionId, step),
+      // Through the same door a reported step comes in by, so a node that
+      // raises an objection has it written with the step here too — the
+      // engine-side run is not a second, quieter path into the same tables.
+      onStep: (step) => {
+        const record = getExecution(executionId);
+        if (record) recordReportedSteps(record, [step]);
+        else recordStep(executionId, step);
+      },
       signal: controller.signal,
       resume,
     });

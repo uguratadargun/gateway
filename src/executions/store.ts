@@ -253,8 +253,17 @@ export function getExecutionDiff(id: string): string | null {
   return (row?.diff_text as string | undefined) ?? null;
 }
 
-export function recordStep(executionId: string, step: StepRecord): void {
-  getDb()
+/**
+ * Keeps a step, and says whether this call is the one that kept it.
+ *
+ * A client re-sends a batch whenever a report fails, so the same step arrives
+ * more than once as a matter of course; the conflict clause has always made
+ * that harmless here. The return value is for the callers that have a side
+ * effect to run *once* per step — an objection must be raised the first time
+ * its step lands and never again on a resend.
+ */
+export function recordStep(executionId: string, step: StepRecord): { inserted: boolean } {
+  const result = getDb()
     .prepare(
       `INSERT INTO workflow_execution_steps
          (execution_id, step_index, node_id, visit, status, started_at, finished_at, input_json, output_json,
@@ -280,6 +289,7 @@ export function recordStep(executionId: string, step: StepRecord): void {
       step.usage?.cacheReadTokens ?? 0,
       step.toolCalls?.length ? json(step.toolCalls) : null,
     );
+  return { inserted: Number(result.changes) > 0 };
 }
 
 export function finishExecution(state: WorkflowState, workspace: ExecutionWorkspace | null = null, finishedAt = Date.now()): void {

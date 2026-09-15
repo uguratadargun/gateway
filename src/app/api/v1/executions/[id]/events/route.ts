@@ -4,12 +4,11 @@ import { publishWorkflowEvent } from "@/events/bus";
 import type { WorkflowEvent } from "@/events/types";
 import { reportSchema } from "@/lib/client-api-schemas";
 import { ownsExecution, requireClient } from "@/lib/tenancy";
+import { recordReportedSteps } from "@/executions/record";
 import {
-  attributeSessionUsage,
   getExecution,
   isCancelRequested,
   pauseExecution,
-  recordStep,
   resumeExecution,
   setExecutionWorkspace,
   touchExecution,
@@ -47,15 +46,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (parsed.data.workspace) {
     setExecutionWorkspace(id, { ...parsed.data.workspace, commit: null, changedFiles: [] });
   }
-  for (const step of parsed.data.steps) {
-    recordStep(id, step as StepRecord);
-    // A step the session did itself arrives without usage: its model calls
-    // went through the person's own Claude Code. What that session spent in
-    // the step's minutes is the nearest true figure, and it is marked as one.
-    if (execution.driver === "session" && step.costing === "session" && !step.usage && step.status === "completed") {
-      attributeSessionUsage(id, step.stepIndex);
-    }
-  }
+  // One transaction for the batch: a step that raises an objection against
+  // another team is written with that objection or not at all. A throw here is
+  // a 500 the client will retry with the same batch, which is safe — every
+  // write in it is keyed so the retry finds its own work already done.
+  const report = recordReportedSteps(execution, parsed.data.steps as StepRecord[]);
+
   for (const event of parsed.data.events) {
     // The person's turn is state, not just a line in the stream: the list
     // page and the clock read it from the row, long after the bus forgot.
@@ -66,5 +62,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   touchExecution(id);
 
-  return NextResponse.json({ cancelRequested: isCancelRequested(id) });
+  // `skipped` is the part of a step's output the server would not act on. It
+  // rides back rather than becoming a 400 for the reason the protocol schemas
+  // give: a refused report is re-sent whole and then dropped, so a model's
+  // stray `conflicts: "none"` would cost the run every step it had left. The
+  // client prints these; the run goes on.
+  return NextResponse.json({
+    cancelRequested: isCancelRequested(id),
+    ...(report.skipped.length ? { skipped: report.skipped } : {}),
+  });
 }

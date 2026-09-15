@@ -298,10 +298,14 @@ CREATE TABLE IF NOT EXISTS memory_decisions (
   touches_json TEXT NOT NULL DEFAULT '[]',
   base_commit TEXT,
   head_commit TEXT,
-  -- shipped: the run ended at a completed terminal; unshipped: the branch
-  -- exists but did not reach its merge request; abandoned: the run failed or
-  -- was stopped. An abandoned decision is still a decision — "we tried X and
-  -- the reviewer refused it because Y" is worth keeping.
+  -- How far the work got, and no further than the run proves: deployed and
+  -- merged are live, pr-open means a merge request was opened and nobody
+  -- watched it land, completed means the run finished but never offered the
+  -- work for merge, unshipped means the branch never reached its merge
+  -- request, abandoned means the run failed or was stopped. An abandoned
+  -- decision is still a decision — "we tried X and the reviewer refused it
+  -- because Y" is worth keeping. 'shipped' is what rows carried before the
+  -- distinction existed and is left alone; nothing re-derives it.
   outcome TEXT NOT NULL DEFAULT 'shipped',
   supersedes TEXT,
   -- Bi-temporal: when the decision held in the world, and when this row was
@@ -376,6 +380,94 @@ CREATE TABLE IF NOT EXISTS memory_consolidations (
   error TEXT
 );
 CREATE INDEX IF NOT EXISTS memory_consolidations_impl ON memory_consolidations(feature_id, team_id, started_at);
+
+-- One run's objection to a sibling team's decision, and the person's answer to
+-- it. Separate from memory_decisions on purpose: a re-extraction deletes a
+-- run's decisions and writes new ids, and an objection that vanished with the
+-- id it pointed at would take the whole point with it. The card id here is a
+-- convenience link; the snapshot, the paths and the feature are what find it.
+--
+-- An objection is a *proposal*. It never writes valid_to on the decision it
+-- disagrees with — one team closing another's record behind their back is the
+-- thing this exists to replace.
+CREATE TABLE IF NOT EXISTS decision_issues (
+  id TEXT PRIMARY KEY,
+  -- Where it was raised: the run, the step, and the node visit inside it.
+  execution_id TEXT NOT NULL,
+  step_index INTEGER NOT NULL,
+  source_node_id TEXT NOT NULL,
+  source_visit INTEGER NOT NULL,
+  -- Unique within the step, given by the node that raised it. This is what an
+  -- approval names, so it never has to wait for a server-generated id.
+  conflict_key TEXT NOT NULL,
+  from_team_id TEXT NOT NULL,
+  target_team_id TEXT NOT NULL,
+  -- What it is about. decision_id is the helper link; it may go stale.
+  decision_id TEXT,
+  feature_id TEXT,
+  paths_json TEXT NOT NULL DEFAULT '[]',
+  -- The run's own workspace, kept as an open description until package 2 can
+  -- resolve it to a canonical repo with evidence. Never guessed.
+  repo_source TEXT,
+  source_commit TEXT,
+  title TEXT NOT NULL,
+  decision_snapshot TEXT NOT NULL DEFAULT '',
+  rationale TEXT NOT NULL DEFAULT '',
+  proposal TEXT NOT NULL DEFAULT '',
+  revision TEXT NOT NULL DEFAULT '',
+  -- proposed: raised, nobody has confirmed it. open: a person's answer was
+  -- reported, so the target team is asked to look. resolved/withdrawn/rejected
+  -- are ends. Only "open" and "proposed" reach the target team's recall.
+  status TEXT NOT NULL,
+  opened_by TEXT,
+  resolution TEXT,
+  resolved_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+-- Twice-reported steps must not make a second objection, and one (node, visit)
+-- must mean one thing: an approval that could match two rows is refused rather
+-- than guessed at.
+CREATE UNIQUE INDEX IF NOT EXISTS decision_issues_step ON decision_issues(execution_id, step_index, conflict_key);
+CREATE UNIQUE INDEX IF NOT EXISTS decision_issues_source ON decision_issues(execution_id, source_node_id, source_visit, conflict_key);
+CREATE INDEX IF NOT EXISTS decision_issues_target ON decision_issues(target_team_id, status);
+CREATE INDEX IF NOT EXISTS decision_issues_decision ON decision_issues(decision_id);
+CREATE INDEX IF NOT EXISTS decision_issues_feature ON decision_issues(feature_id);
+
+-- The person's answer, kept whether or not the step it is about has arrived.
+--
+-- The client reports steps in batches and a batch can reach the server in any
+-- order after a retry; rejecting the report until the source step turns up
+-- would make RunReporter re-queue the whole batch, be refused again, and give
+-- up — losing the very confirmation this table exists to keep. So the answer
+-- is stored as pending_source and reconciled when the source arrives.
+CREATE TABLE IF NOT EXISTS decision_issue_approvals (
+  id TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL,
+  step_index INTEGER NOT NULL,
+  node_id TEXT NOT NULL,
+  visit INTEGER NOT NULL,
+  source_node_id TEXT NOT NULL,
+  source_visit INTEGER NOT NULL,
+  conflict_key TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  -- pending_source: kept, waiting for the step it is about. applied: it moved
+  -- an objection. rejected: it could not, and the reason column says why. Nothing here
+  -- is ever deleted for having waited too long.
+  status TEXT NOT NULL,
+  reason TEXT,
+  issue_id TEXT,
+  -- Another answer already settled this objection, differently. Marked rather
+  -- than overwritten: last write does not win a disagreement.
+  conflicted INTEGER NOT NULL DEFAULT 0,
+  reported_at INTEGER NOT NULL,
+  settled_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS decision_issue_approvals_key
+  ON decision_issue_approvals(execution_id, step_index, source_node_id, source_visit, conflict_key);
+CREATE INDEX IF NOT EXISTS decision_issue_approvals_pending
+  ON decision_issue_approvals(status, execution_id, source_node_id, source_visit);
 
 -- Full-text indexes. Kept by the store, not by triggers, so the text a query
 -- matches is exactly the text the store wrote.
