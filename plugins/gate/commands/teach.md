@@ -76,15 +76,26 @@ with exactly these fields (strings; empty string where there is genuinely nothin
 
 ```json
 {
-  "task": "What the work was for, as the person who asked for it would put it. Required.",
-  "plan": "The approach as it was carried out, in order.",
-  "decisions": "Each real choice, one paragraph each: what was chosen, why, and what was not taken and why. Say when a reason is inferred rather than stated.",
-  "implementation": "How it works now: the flow, the components and what each is responsible for, the states and invariants, the edge cases handled and the ones deliberately not.",
-  "verification": "How it was checked: the tests added or run, manual checks the history shows.",
-  "pitfalls": "Limits, known bugs, follow-ups, what the next change here must not break.",
-  "evidence": "What this account is read from: the commit range, files read, a merge request, the user's answers."
+  "task": "What the work was for, as the person who asked for it would put it. Required. (max 4000 characters)",
+  "plan": "The approach as it was carried out, in order. (max 8000)",
+  "decisions": "Each real choice, one paragraph each: what was chosen, why, and what was not taken and why. Say when a reason is inferred rather than stated. (max 12000)",
+  "implementation": "How it works now: the flow, the components and what each is responsible for, the states and invariants, the edge cases handled and the ones deliberately not. (max 12000)",
+  "verification": "How it was checked: the tests added or run, manual checks the history shows. (max 4000)",
+  "pitfalls": "Limits, known bugs, follow-ups, what the next change here must not break. (max 4000)",
+  "evidence": "What this account is read from: the commit range, files read, a merge request, the user's answers. (max 2000)"
 }
 ```
+
+The limits are what `gate teach` accepts — a field over its limit means the file is refused, with the
+field named. They are not a target: most accounts come nowhere near them, and padding to fill one is
+worse than leaving it short. Write the account as it should read, then check the long fields.
+
+If something has to give, cut in this order and no other: **evidence** first (it is provenance, and
+the commits travel with the account anyway, so the range and a merge request number are enough),
+then **verification** (a list of what was checked, not a narrative of checking it). Never compress
+`decisions` or `implementation` to make room — they are the account, and they have the space of the
+other five together. If a real choice still does not fit in `decisions`, the range is probably more
+than one task; go back to step 1.
 
 The same rules the recorder writes by:
 
