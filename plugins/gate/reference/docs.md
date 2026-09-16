@@ -186,6 +186,35 @@ the product, not which file moved.
   commit, the commit body to the record, and the record to the decision that
   made it so.
 
+## The repository's `CLAUDE.md`
+
+The pipeline's agents carry the convention in their prompts. A person using
+Claude Code in the repository without the pipeline does not, unless the
+repository says it: put this table in the repository's `CLAUDE.md`, where
+every Claude Code session reads it, and `/gate:design` proposes it for a
+repository that has none.
+
+```markdown
+## The record — what goes where, and when it is required
+
+Read `docs/ARCHITECTURE.md` first, then the design doc of the feature you
+are changing under `docs/design/`. Forms: <link to this reference>.
+
+| You did | You must |
+| --- | --- |
+| Changed behaviour a design doc describes | Rewrite the sentence in `docs/design/<feature>.md` so it is true now. Never add "what changed". |
+| Built something no design doc covers | Create `docs/design/<feature>.md`: Summary, How it works, Key files, Pitfalls, Decisions. |
+| Made a real choice, or reversed an earlier one | Write `docs/decisions/NNNN-<slug>.md`, next free number, all eight sections. Logic, not code. |
+| Reversed a recorded decision | Add `Status: superseded by NNNN` to the old record. Change nothing else in it. |
+| Finished a task | Write `docs/specs/YYYY-MM-DD-<topic>.md`: Status, Branch, Decisions, Design, then what was asked and what counted as done. |
+| Changed what the product does | One line under `## Unreleased` in `CHANGELOG.md`. |
+
+Not required: a decision record for a bug fix that follows the existing
+design, a design doc for a refactor that changed no behaviour. `docs/plans/`
+is gitignored scratch space. A commit that touched the record names the
+files in its body: `Documents: docs/decisions/0007-x.md, docs/design/sync.md`.
+```
+
 ## What not to do
 
 - Do not write into a design doc what used to be true. That is a decision

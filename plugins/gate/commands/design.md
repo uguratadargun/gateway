@@ -90,6 +90,10 @@ Do not design against assumptions. Establish, from the files:
   that layout; a repository with its own layout says so in the task or in a
   command node, and a repository with none gets one line in the proposal
   note saying so and pointing at the reference. Never a documentation agent.
+  Look at the repository's `CLAUDE.md` too: if it does not carry the
+  record's table from `reference/docs.md`, the proposal note includes that
+  table for the person to add, so a Claude Code session in this repository
+  without the pipeline keeps the record as well.
 
 What you learn becomes `command` nodes, in three places:
 
