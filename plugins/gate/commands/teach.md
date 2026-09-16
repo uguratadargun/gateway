@@ -47,7 +47,8 @@ Read what the command printed above.
 ## 2. Read the work
 
 The account is only as good as your reading, and nobody will check it against the diff later —
-the recorder does not see the diff, it sees your words. Read the way a reviewer would:
+the recorder sees the decision records and design docs in the diff, and your words; it does not
+read code. Read the way a reviewer would:
 
 - Every commit, with its message: `git log -p --reverse <base>..<head>` (for a large range, per
   file with `git diff <base>..<head> -- <path>`).

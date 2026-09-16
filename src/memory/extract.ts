@@ -40,6 +40,12 @@ const MAX_STEP_CHARS = 12_000;
 const MAX_TAUGHT_STEP_CHARS = 50_000;
 /** And of the whole run. */
 const MAX_TOTAL_CHARS = 120_000;
+/** One decision record or design doc is read whole; a page of prose is plenty, code pasted into it is not the record. */
+const MAX_DOC_CHARS = 6_000;
+/** The documents are the team's own account and come first, but half the room stays for what the agents said. */
+const MAX_DOCS_CHARS = MAX_TOTAL_CHARS / 2;
+/** The files the repository keeps as its record: one decision, or one feature as it stands. Nothing else in docs/ is one. */
+const DOC_PATH = /^docs\/(decisions|design)\/[^/]+\.md$/;
 /**
  * The recorder's own answer: a feature, an implementation summary and up to
  * thirty decisions, each with context, rationale, alternatives and
@@ -114,6 +120,37 @@ export function pathsInDiff(diff: string | null): string[] {
   return [...out].slice(0, 200);
 }
 
+/**
+ * The decision records and design docs a run wrote, read out of its diff.
+ *
+ * Only the added lines: a deleted record is not a decision this run made, and
+ * for an edited design doc the new lines are what changed, which is what the
+ * recorder is told they are. A rename or mode change with no added lines
+ * carries nothing to read and is left out.
+ */
+export function docsInDiff(diff: string | null): Array<{ path: string; text: string }> {
+  if (!diff) return [];
+  const out: Array<{ path: string; text: string }> = [];
+  for (const block of diff.split(/^(?=diff --git )/m)) {
+    const header = block.match(/^diff --git a\/(.+?) b\/(.+)$/m);
+    if (!header) continue;
+    const path = header[2];
+    if (!DOC_PATH.test(path)) continue;
+    if (/^\+\+\+ \/dev\/null$/m.test(block)) continue;
+    const hunk = block.indexOf("\n@@");
+    if (hunk < 0) continue;
+    const added = block
+      .slice(hunk + 1)
+      .split("\n")
+      .filter((line) => line.startsWith("+"))
+      .map((line) => line.slice(1));
+    if (!added.length) continue;
+    out.push({ path, text: added.join("\n") });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n… [truncated at ${max} characters]` : s;
 }
@@ -170,8 +207,10 @@ Rules:
 - A run that failed or was stopped still made decisions: record what was tried and why it did not ship, with the reviewer's or verifier's reason in "consequences". That is often the most useful record of all.
 - An investigation (a "blame" run) that established a cause is a decision too: title it "Cause of <symptom>", put the cause in "decision" with its certainty stated in the first words (suspected / confirmed / verified), the evidence in "rationale", the proposed fix in "how", and name the decision it found at fault in "supersedes" only when the cause was confirmed. An investigation that found nothing related has no decisions.
 - "how" is the part that lets someone rebuild it elsewhere: the sequence, the components and what each is responsible for, the edge cases handled and how, the ones deliberately not handled.
-- "touches" lists the files and areas the decision lives in, as paths relative to the repository root and short area names (e.g. "sync", "auth"). Take the paths from the run's changed files where they apply.
+- "touches" lists the files and areas the decision lives in, as paths relative to the repository root and short area names (e.g. "sync", "auth"). Take the paths from the run's changed files where they apply, and from the record's Touches section.
 - "supersedes" names an earlier decision id, only when this run replaced one of the earlier decisions you are shown and you are sure.
+- When the run wrote a decision record (a file under docs/decisions/ in "Documents the run wrote"), that record is the decision: produce exactly one decision for it and take title, context, decision, rationale, alternatives, how and consequences from its sections of the same names, close to verbatim — tighten to fit the field limits, do not rewrite, do not add choices the record does not make. Put the record's own path in "touches" as a file touch, alongside the paths its Touches section lists. Its Supersedes line becomes "supersedes" only when it names one of the earlier decision ids shown; otherwise null. Other real choices the run made that no record covers are still separate decisions.
+- When the run wrote a design doc (docs/design/), take the feature's summary from its Summary and How it works sections and its pitfalls from its Pitfalls section, updated with what this run changed; the doc is the team's own statement and outranks your reading of the steps.
 - The feature: pick the catalogue entry this work belongs to, by id, when one of the candidates is the same feature under any name; otherwise name a new one — short, product-level ("Offline sync", "Login with SSO"), not a task title — or null when the run was housekeeping that belongs to no feature. Give it a one-sentence, platform-free description of what the feature is for the catalogue. Then write this team's implementation summary as it stands after this run: a few sentences that would let a sibling team plan the same feature, and its pitfalls as a separate field. If a previous summary is shown, update it rather than restarting.
 
 Answer with one JSON object and nothing else — no prose before or after, no code fence:
@@ -204,6 +243,7 @@ export function recorderPrompt(input: {
   execution: ExecutionRecord;
   steps: ExecutionStepRecord[];
   changedFiles: string[];
+  docs: Array<{ path: string; text: string }>;
   candidates: FeatureHit[];
   previous: Array<{ id: string; title: string; decision: string; teamId: string }>;
   implementationsSoFar: Array<{ featureId: string; summary: string; pitfalls: string }>;
@@ -230,8 +270,30 @@ export function recorderPrompt(input: {
   parts.push(`\n## What it was asked\n`);
   for (const [k, v] of Object.entries(execution.input)) parts.push(`${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
 
-  parts.push(`\n## What its agents answered, in order\n`);
+  // The documents take their room first: they are the team's own record of
+  // the work, and a long run must not crowd them out.
   let budget = MAX_TOTAL_CHARS;
+  if (input.docs.length) {
+    parts.push(`\n## Documents the run wrote\n`);
+    parts.push(
+      "These are the team's own record of this work, written in the same branch as the code. A file under docs/decisions is one decision; " +
+        "a file under docs/design describes the feature as it now stands. A few added lines mean an edit to an existing document, not a new record.\n",
+    );
+    let docsBudget = MAX_DOCS_CHARS;
+    for (const doc of input.docs) {
+      const text = truncate(doc.text, MAX_DOC_CHARS);
+      if (docsBudget <= 0) {
+        parts.push(`### ${doc.path}\n[omitted, the run wrote many documents]\n`);
+        continue;
+      }
+      const shown = text.length > docsBudget ? truncate(text, docsBudget) : text;
+      docsBudget -= shown.length;
+      budget -= shown.length;
+      parts.push(`### ${doc.path}\n${shown}\n`);
+    }
+  }
+
+  parts.push(`\n## What its agents answered, in order\n`);
   for (const s of steps) {
     const text = truncate(JSON.stringify(s.output, null, 2), stepChars);
     if (budget <= 0) {
@@ -286,7 +348,9 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
     }
 
     const scope = memoryScopeFor(execution.teamId);
-    const changedFiles = execution.workspace?.changedFiles?.length ? execution.workspace.changedFiles : pathsInDiff(getExecutionDiff(executionId));
+    const diff = getExecutionDiff(executionId);
+    const changedFiles = execution.workspace?.changedFiles?.length ? execution.workspace.changedFiles : pathsInDiff(diff);
+    const docs = docsInDiff(diff);
     const task = Object.values(execution.input).filter((v): v is string => typeof v === "string").join(" ");
     const candidates = await hybridSearchFeatures(scope, task, 8);
     const previous = [
@@ -301,7 +365,7 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
       .filter((x): x is NonNullable<typeof x> => !!x)
       .map((impl) => ({ featureId: impl.featureId, summary: impl.summary, pitfalls: impl.pitfalls }));
 
-    const prompt = recorderPrompt({ execution, steps, changedFiles, candidates, previous, implementationsSoFar });
+    const prompt = recorderPrompt({ execution, steps, changedFiles, docs, candidates, previous, implementationsSoFar });
     const result = await provider.execute({
       model: opts.model,
       system: RECORDER_SYSTEM,

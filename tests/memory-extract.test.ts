@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { createExecution, finishExecution, recordStep, stopSessionExecution } from "@/executions/store";
+import { createExecution, finishExecution, recordStep, setExecutionDiff, stopSessionExecution } from "@/executions/store";
 import { createTeam, getTeam } from "@/lib/teams";
-import { extractRun, outcomeOf, parseRecorderAnswer, pathsInDiff, readableSteps } from "@/memory/extract";
+import { docsInDiff, extractRun, outcomeOf, parseRecorderAnswer, pathsInDiff, readableSteps, recorderPrompt } from "@/memory/extract";
 import { TEACH_WORKFLOW_ID } from "@/memory/types";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 import { drainExtractions } from "@/memory/queue";
@@ -77,6 +77,21 @@ const ANSWER = {
   ],
   feature: { match: null, name: "Offline sync", aliases: ["background sync"], description: "Edits made offline reach the server later.", summary: "Queue + worker.", pitfalls: "Ordering is per entity." },
 };
+
+/** A decision record as the implementer writes it, added whole in one hunk. */
+const ADR_TITLE = "# 0003. Queue edits in an outbox";
+const ADR_DIFF =
+  "diff --git a/docs/decisions/0003-outbox.md b/docs/decisions/0003-outbox.md\n" +
+  "new file mode 100644\n" +
+  "--- /dev/null\n" +
+  "+++ b/docs/decisions/0003-outbox.md\n" +
+  "@@ -0,0 +1,6 @@\n" +
+  `+${ADR_TITLE}\n` +
+  "+\n" +
+  "+## Decision\n" +
+  "+Every edit goes through a local outbox table.\n" +
+  "+## Touches\n" +
+  "+- `app/sync/Queue.kt`\n";
 
 describe("the recorder", () => {
   it("queues a run when it finishes, and writes its decisions once", async () => {
@@ -181,6 +196,20 @@ describe("the recorder", () => {
     expect(row).toMatchObject({ status: "failed", attempts: 1, outputTokens: 48_000 });
   });
 
+  it("shows the recorder the decision record the run wrote, out of its diff", async () => {
+    team();
+    aRun("rec-8", "acme-android");
+    setExecutionDiff("rec-8", `diff --git a/app/sync/Queue.kt b/app/sync/Queue.kt\n--- a/app/sync/Queue.kt\n+++ b/app/sync/Queue.kt\n@@ -1 +1 @@\n-old\n+new\n${ADR_DIFF}`);
+    const provider = new FakeModelProvider(() => JSON.stringify(ANSWER));
+    expect(await extractRun("rec-8", provider, { model: "sonnet" })).toEqual({ status: "done", decisionCount: 1 });
+    const prompt = String(provider.callsFor("memory-recorder")[0].messages[0].content);
+    expect(prompt).toContain("## Documents the run wrote");
+    expect(prompt).toContain("### docs/decisions/0003-outbox.md");
+    expect(prompt).toContain(ADR_TITLE);
+    // The code's own lines stay out: the recorder reads records, not diffs.
+    expect(prompt).not.toContain("+new");
+  });
+
   it("drains whatever is waiting, one pass at a time", async () => {
     team();
     aRun("rec-5", "acme-desktop");
@@ -201,6 +230,86 @@ describe("reading a run", () => {
     expect(() => parseRecorderAnswer("nope")).toThrow(/shape/);
     expect(pathsInDiff("diff --git a/src/a.ts b/src/a.ts\n--- a\n+++ b\ndiff --git a/README.md b/README.md\n")).toEqual(["src/a.ts", "README.md"]);
     expect(readableSteps([{ output: { stdout: "x" } } as never, { output: { plan: "p" } } as never, { output: null } as never])).toHaveLength(1);
+  });
+
+  it("takes the decision records and design docs out of a diff, and only those", () => {
+    const diff = [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1 +1 @@",
+      "-const a = 1;",
+      "+const a = 2;",
+      "diff --git a/docs/decisions/0003-outbox.md b/docs/decisions/0003-outbox.md",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/docs/decisions/0003-outbox.md",
+      "@@ -0,0 +1,4 @@",
+      "+# 0003. Queue edits in an outbox",
+      "+",
+      "+## Decision",
+      "+Every edit goes through a local outbox table.",
+      " unchanged line",
+      "-a line that went away",
+      "diff --git a/docs/design/queue.md b/docs/design/sync.md",
+      "similarity index 90%",
+      "rename from docs/design/queue.md",
+      "rename to docs/design/sync.md",
+      "--- a/docs/design/queue.md",
+      "+++ b/docs/design/sync.md",
+      "@@ -1 +1 @@",
+      "-# Queue",
+      "+# Sync",
+      "diff --git a/docs/decisions/0001-old.md b/docs/decisions/0001-old.md",
+      "deleted file mode 100644",
+      "--- a/docs/decisions/0001-old.md",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-# 0001. Old",
+      "diff --git a/docs/design/notes.txt b/docs/design/notes.txt",
+      "--- a/docs/design/notes.txt",
+      "+++ b/docs/design/notes.txt",
+      "@@ -1 +1 @@",
+      "-x",
+      "+y",
+      "",
+    ].join("\n");
+    expect(docsInDiff(diff)).toEqual([
+      { path: "docs/decisions/0003-outbox.md", text: "# 0003. Queue edits in an outbox\n\n## Decision\nEvery edit goes through a local outbox table." },
+      { path: "docs/design/sync.md", text: "# Sync" },
+    ]);
+    for (const doc of docsInDiff(diff)) {
+      expect(doc.text).not.toContain("+++");
+      expect(doc.text).not.toContain("---");
+    }
+    expect(docsInDiff(null)).toEqual([]);
+  });
+
+  describe("what the recorder is shown of the documents", () => {
+    const execution = { workflowId: "dev", teamId: "acme", status: "completed", input: { task: "Add an outbox" }, workspace: null } as unknown as ExecutionRecord;
+    const step = (summary: string) => ({ nodeId: "implementer", visit: 1, status: "completed", output: { summary } }) as unknown as ExecutionStepRecord;
+    const show = (docs: Array<{ path: string; text: string }>, steps = [step("Added the outbox.")]) =>
+      recorderPrompt({ execution, steps, changedFiles: [], docs, candidates: [], previous: [], implementationsSoFar: [] });
+
+    it("puts them before the agents' answers, and leaves the section out when there are none", () => {
+      const prompt = show([{ path: "docs/decisions/0003-outbox.md", text: "# 0003. Queue edits in an outbox" }]);
+      expect(prompt).toContain("## Documents the run wrote");
+      expect(prompt).toContain("### docs/decisions/0003-outbox.md");
+      expect(prompt.indexOf("## Documents the run wrote")).toBeLessThan(prompt.indexOf("## What its agents answered"));
+      expect(show([])).not.toContain("## Documents the run wrote");
+    });
+
+    it("cuts a document that runs to pages, and keeps a whole one ahead of a long step", () => {
+      const long = show([{ path: "docs/design/sync.md", text: "x".repeat(20_000) }]);
+      expect(long).toContain("… [truncated at 6000 characters]");
+      expect(long).not.toContain("x".repeat(6_001));
+
+      const doc = "d".repeat(2_000);
+      const prompt = show([{ path: "docs/design/sync.md", text: doc }], [step("s".repeat(130_000))]);
+      expect(prompt).toContain(doc);
+      expect(prompt).not.toContain("s".repeat(130_000));
+      expect(prompt).toContain("… [truncated at 12000 characters]");
+    });
   });
 });
 

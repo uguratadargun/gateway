@@ -127,7 +127,16 @@ function body(over: Record<string, unknown> = {}) {
     },
     startedAt: Date.parse("2026-02-01T10:00:00Z"),
     finishedAt: Date.parse("2026-02-03T10:00:00Z"),
-    diff: "diff --git a/app/sync/Queue.kt b/app/sync/Queue.kt\n",
+    diff:
+      "diff --git a/app/sync/Queue.kt b/app/sync/Queue.kt\n" +
+      "diff --git a/docs/decisions/0001-sqlite-queue.md b/docs/decisions/0001-sqlite-queue.md\n" +
+      "new file mode 100644\n" +
+      "--- /dev/null\n" +
+      "+++ b/docs/decisions/0001-sqlite-queue.md\n" +
+      "@@ -0,0 +1,3 @@\n" +
+      "+# 0001. Queue offline edits in SQLite\n" +
+      "+## Decision\n" +
+      "+Every edit goes through a persistent local queue.\n",
     host: "ann-mac",
     ...over,
   };
@@ -186,6 +195,9 @@ describe("teaching a branch", () => {
     expect(prompt).toContain("taught to memory from its branch");
     expect(prompt).toContain(ACCOUNT.implementation);
     expect(prompt).toContain("Flush the queue when online");
+    // The decision record in the branch's diff is read too; the code is not.
+    expect(prompt).toContain("### docs/decisions/0001-sqlite-queue.md");
+    expect(prompt).toContain("# 0001. Queue offline edits in SQLite");
     const [decision] = decisionsForExecution(executionId);
     expect(decision).toMatchObject({ outcome: "shipped", baseCommit: "a0a0a0a0", headCommit: "b2b2b2b2", validFrom: Date.parse("2026-02-03T10:00:00Z") });
 
