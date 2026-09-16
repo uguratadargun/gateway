@@ -197,4 +197,5 @@ and `next` (one unconditional edge) or `edges` (up to 20: `to`, optional
 
 ## Decisions
 
+- [0009 — A run is judged by the definitions it started with](../decisions/0009-a-run-is-judged-by-the-definitions-it-started-with.md)
 - [0001 — The engine routes, never a model](../decisions/0001-the-engine-routes-never-a-model.md)

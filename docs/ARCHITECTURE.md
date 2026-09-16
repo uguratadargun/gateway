@@ -54,17 +54,25 @@ and traffic logging. → `design/gateway-pipeline.md`
   written by hand. → `design/agents-and-skills.md`
 - **Workflows and the engine.** A workflow is a YAML graph of nodes and
   edges; the engine walks it. → `design/workflows-engine.md`
+- **Repositories.** A repository has one name every clone of it agrees on,
+  a setup gate can run, and somewhere its finished work is published to.
+  → `design/repositories.md`
 - **Workspaces.** A run on a repository gets its own worktree and the tools
   to work in it. → `design/workspaces.md`
 - **Executions.** Every run is recorded step by step, with what it cost and
   which account's window it used. → `design/executions.md`
 - **Memory.** What a run decided is recorded when it finishes, and read by
   the next run before it plans. → `design/memory.md`
+- **Cross-team collaboration.** One team asks another what its code does at a
+  named commit, objects to a decision it cannot live with, and files both
+  under a task that outlives the runs. → `design/cross-team.md`
 - **The dev workflow.** The shipped pipeline: recall, plan, approve,
   implement, verify, review, try, merge request — run on the developer's own
   machine from Claude Code. → `design/dev-workflow.md`
 - **Remote sessions** and **Telegram** are two more places a run can be
   driven from. → `design/remote-sessions.md`, `design/telegram.md`
+- **The dashboard.** The browser surface all of this is administered from,
+  behind an admin session. → `design/dashboard.md`
 
 Every model call a workflow makes goes through `executeMessages` in-process,
 so routing, effort, prompt caching, budget, throttling and traffic logging
@@ -90,6 +98,7 @@ talks to, takes the same keys and is never open: it hands out a team's
 definitions and accepts run reports. A revoked key, or a disabled person's
 key, stops resolving at once. Management write endpoints validate bodies with
 zod.
+→ `decisions/0011-three-auth-surfaces-three-rules.md`
 
 **Secrets are sealed, never returned.** OAuth tokens and provider API keys
 are AES-256-GCM blobs under `GATE_SECRET` in their rows; the API reports

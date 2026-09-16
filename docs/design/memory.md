@@ -346,5 +346,7 @@ no agent, run or CLI can forget anything.
 
 ## Decisions
 
+- [0010 — Forgetting is a person's, and only from the dashboard](../decisions/0010-forgetting-is-a-persons-and-only-from-the-dashboard.md)
+- [0007 — A repository is named by its remote, and unknown is never guessed](../decisions/0007-a-repository-is-named-by-its-remote.md)
 - [0003 — Ask answers from one commit](../decisions/0003-ask-answers-from-one-commit.md)
 - [0002 — Objection record instead of messaging](../decisions/0002-objection-record-instead-of-messaging.md)

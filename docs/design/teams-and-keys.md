@@ -129,4 +129,4 @@ loading are named.
 
 ## Decisions
 
-- none recorded yet
+- [0011 — Three auth surfaces, three rules](../decisions/0011-three-auth-surfaces-three-rules.md)

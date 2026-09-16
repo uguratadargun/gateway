@@ -202,4 +202,4 @@ to read.
 
 ## Decisions
 
-- none recorded yet
+- [0009 — A run is judged by the definitions it started with](../decisions/0009-a-run-is-judged-by-the-definitions-it-started-with.md)
