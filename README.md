@@ -31,6 +31,11 @@ through your gate; `/gate:design` designs one for that repository
 /plugin install gate@gateway
 ```
 
+A repository new to gate starts with `/gate:init`: it reads the code, writes
+the map, a design doc per key part and the decisions the history shows, adds
+`CLAUDE.md` and the rest of the skeleton, and can teach all of it to your
+team's memory, so the first run plans knowing what was built before it.
+
 ## Setup
 
 ```bash

@@ -185,13 +185,21 @@ the product, not which file moved.
 - The **investigator**, when something broke, follows `git blame` to the
   commit, the commit body to the record, and the record to the decision that
   made it so.
+- `/gate:init` writes the record for the first time, for a repository that
+  has none: it reads the code, writes the map, a design doc per key part and
+  the decisions the code and the history show, adds `CLAUDE.md` and the
+  skeleton, and — with the person's word — commits each feature and teaches
+  it, so memory holds what was built before gate. It writes no specs: a spec
+  is what one run set out to do, and the first run writes the first one.
 
 ## The repository's `CLAUDE.md`
 
 The pipeline's agents carry the convention in their prompts. A person using
 Claude Code in the repository without the pipeline does not, unless the
 repository says it: put this table in the repository's `CLAUDE.md`, where
-every Claude Code session reads it, and `/gate:design` proposes it for a
+every Claude Code session reads it. `/gate:init` writes it into a repository
+that has no `CLAUDE.md`, and appends this section to one that has, and
+`/gate:design` proposes it for a
 repository that has none.
 
 ```markdown

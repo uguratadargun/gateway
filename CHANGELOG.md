@@ -6,6 +6,7 @@
 - A `record` node after the verifier checks that the run wrote its spec, in dev and dev-quick, and sends the implementer back with what to write when it did not.
 - A quick change writes a short spec of its own: the task as given and what was done.
 - `npm run changelog:release` moves what is under Unreleased into a heading for the version being released, and the CLI build warns when the version has no entry.
+- `/gate:init` sets a repository up: it reads the code, writes the architecture, a design doc per key part and the decisions the code and the history show, adds CLAUDE.md and the skeleton, and teaches each feature to the team's memory, one commit and one teach apiece.
 
 ## 0.37.0 — 2026-09-15
 

@@ -258,6 +258,23 @@ repository if `/gate:design` built one, else `dev`; it says which and why,
 asks once when the task is on the line, and when a quick run ends "not
 small" it starts the long road with the same brief.
 
+### The first time a repository meets gate
+
+`/gate:init` runs once, before anything else, on a repository that has no
+record: it reads the code, shows the key parts it found and lets the person
+choose which to write, then writes `docs/ARCHITECTURE.md`, a design doc per
+part, the decision records the code and the history actually show — marked
+as inferred where the reason was never stated — `CLAUDE.md`, the changelog
+and `docs/plans/.gitignore`. It never overwrites a document that is already
+there, so running it again only fills gaps, and it commits nothing on its
+own. Asked, it then puts the work on a `gate-init` branch and teaches it:
+one commit and one `gate teach --base HEAD~1` per feature, because a teach
+records one feature and a single teach of everything would file the whole
+repository under one card (see
+[0006](../decisions/0006-init-teaches-one-feature-at-a-time.md)). After it,
+recall answers about work that was finished long before gate. `/gate:design`
+comes next, and the first `/gate:run` writes the first spec.
+
 ### An example, across teams
 
 1. The **android** team runs "add offline sync". Recall finds nothing; the

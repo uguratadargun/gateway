@@ -147,5 +147,5 @@ upgrade.
 - `src/lib/teams.ts` / `apikeys.ts` / `tenancy.ts` / `def-root.ts` — people, teams, keys-as-identities, and which directory a team's definitions live in
 - `src/app/api/v1/` — the client API: identity, the definition bundle, run registration, progress and stop, memory, teach, ask, and the pool's remaining quota
 - `src/client/` — the CLI that runs a workflow on a developer's machine: the mirror, the HTTP provider onto the gateway, and the reporter · `scripts/build-cli.mjs` bundles it into the plugin
-- `plugins/gate/` — the Claude Code plugin: `/gate:run`, `/gate:design`, `/gate:teach`, `/gate:ask`, the authoring and documentation references, and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
+- `plugins/gate/` — the Claude Code plugin: `/gate:init`, `/gate:run`, `/gate:design`, `/gate:teach`, `/gate:ask`, the authoring and documentation references, and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
 - `docs/` — this map, `design/`, `decisions/`, `specs/`; `plans/` is the pipeline's gitignored working directory
