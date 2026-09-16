@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { routeModel } from "@/lib/router";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { resetRoutingCache, routeModel } from "@/lib/router";
 
 const user = (content: string) => [{ role: "user", content }];
 
@@ -82,5 +86,44 @@ describe("routeModel", () => {
     const r = routeModel("auto", { messages: user("word ".repeat(1200)) });
     expect(r.tier).toBe("sonnet");
     expect(r.reason).toBe("default");
+  });
+});
+
+describe("overrideExplicit", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gate-routing-"));
+  const file = join(dir, "routing.json");
+  const before = process.env.GATE_ROUTING_FILE;
+
+  function withConfig(cfg: Record<string, unknown>) {
+    writeFileSync(file, JSON.stringify(cfg));
+    process.env.GATE_ROUTING_FILE = file;
+    resetRoutingCache();
+  }
+
+  afterEach(() => {
+    if (before === undefined) delete process.env.GATE_ROUTING_FILE;
+    else process.env.GATE_ROUTING_FILE = before;
+    resetRoutingCache();
+  });
+
+  it("false sends a named claude model through the heuristics", () => {
+    withConfig({ overrideExplicit: false, tiers: { sonnet: "provider:zai/glm-4.6" } });
+    const r = routeModel("claude-sonnet-5[1m]", { tools: [{ name: "Bash" }], messages: user("fix the build") });
+    expect(r.model).toBe("provider:zai/glm-4.6");
+    expect(r.category).toBe("agentic");
+  });
+
+  it("false still lets an alias name a provider model outright", () => {
+    withConfig({ overrideExplicit: false, aliases: { "claude-sonnet-5": "provider:zai/glm-4.6" } });
+    const r = routeModel("claude-sonnet-5", { messages: user("hi") });
+    expect(r.model).toBe("provider:zai/glm-4.6");
+    expect(r.reason).toBe("alias:claude-sonnet-5");
+  });
+
+  it("true leaves the same request on the model it named", () => {
+    withConfig({ overrideExplicit: true, tiers: { sonnet: "provider:zai/glm-4.6" } });
+    const r = routeModel("claude-sonnet-5[1m]", { tools: [{ name: "Bash" }], messages: user("fix the build") });
+    expect(r.model).toBe("claude-sonnet-5");
+    expect(r.reason).toBe("explicit model");
   });
 });

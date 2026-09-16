@@ -21,6 +21,7 @@ export function KeysPanel() {
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [name, setName] = useState("");
   const [newKey, setNewKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
     const r = await fetch("/api/keys");
@@ -31,18 +32,26 @@ export function KeysPanel() {
   }, []);
 
   async function create() {
+    setError(null);
     const r = await fetch("/api/keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
     const data = await r.json();
+    if (!r.ok) {
+      setError(data.error ?? `gate answered ${r.status}`);
+      return;
+    }
     setNewKey(data.plaintext);
     setName("");
     await load();
   }
 
-  async function remove(id: string) {
+  async function remove(id: string, name: string) {
+    // The key is gone for good and whatever holds it stops working, so it is
+    // confirmed the way disconnecting an account and deleting a provider are.
+    if (!confirm(`Delete key "${name}"? Anything using it stops working.`)) return;
     await fetch(`/api/keys/${id}`, { method: "DELETE" });
     await load();
   }
@@ -50,7 +59,7 @@ export function KeysPanel() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle className="flex items-center gap-2 text-base">
           <KeyRound className="size-4" /> Gateway API keys
         </CardTitle>
         <CardDescription>
@@ -64,6 +73,8 @@ export function KeysPanel() {
             <Plus /> Create
           </Button>
         </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
         {newKey && (
           <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
@@ -96,7 +107,7 @@ export function KeysPanel() {
                 <span className="ml-auto text-xs text-muted-foreground">
                   {k.lastUsedAt ? `used ${new Date(k.lastUsedAt).toLocaleDateString()}` : "never used"}
                 </span>
-                <Button variant="ghost" size="icon" onClick={() => remove(k.id)} aria-label="Delete">
+                <Button variant="ghost" size="icon" onClick={() => remove(k.id, k.name)} aria-label="Delete">
                   <Trash2 className="size-4" />
                 </Button>
               </div>

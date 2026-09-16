@@ -1,13 +1,14 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useState } from "react";
-import { BookOpen, Coins, Gauge, Layers, Puzzle, Route, Save } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { BookOpen, Coins, Gauge, Layers, Puzzle, Route } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { SaveRow } from "@/components/save-row";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
 interface Settings {
@@ -52,78 +53,129 @@ function Group({
   icon: Icon,
   title,
   description,
+  dirty,
+  busy,
+  error,
+  onSave,
   children,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   description: string;
+  dirty: boolean;
+  busy: boolean;
+  error: string | null | undefined;
+  onSave: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <Card>
+    <Card className="flex flex-col">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle className="flex items-center gap-2 text-sm">
           <Icon className="size-4" /> {title}
         </CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
-      <CardContent className="divide-y pt-0">{children}</CardContent>
+      <CardContent className="flex-1 divide-y pt-0">{children}</CardContent>
+      <SaveRow dirty={dirty} busy={busy} error={error} onSave={onSave} />
     </Card>
   );
 }
 
-const selectCls = "h-8 rounded-md border border-input bg-transparent px-2 text-sm";
+/**
+ * What each card owns. A card PUTs these keys alone — `saveSettings` merges
+ * group by group — so saving one card cannot write back a stale copy of
+ * another's, nor of `accountPool`, which the accounts panel writes.
+ */
+const OWNS = {
+  caching: ["promptCache", "cache", "compression"],
+  quota: ["throttle", "budget"],
+  reliability: ["concurrency", "retry", "fallback"],
+  memory: ["memory"],
+  precision: ["routingPrecision", "reasoning"],
+  plugin: ["plugin"],
+} as const satisfies Record<string, readonly (keyof Settings)[]>;
+
+type GroupKey = keyof typeof OWNS;
+
+/** The card's own keys, with memory normalised the way the server expects. */
+function sliceOf(s: Settings, keys: readonly (keyof Settings)[]) {
+  return Object.fromEntries(keys.map((k) => [k, k === "memory" ? memoryOf(s) : s[k]]));
+}
 
 /**
- * Everything here writes one settings document, so it saves once — but the
- * knobs answer four unrelated questions (what is cached, what happens as the
- * quota fills, what happens when upstream fails, how precise routing is), and
- * stacking them in a single column made the answer to any one of them hard to
- * find. One card per question; the save stays with the section.
+ * The knobs here answer six unrelated questions (what is cached, what happens
+ * as the quota fills, what happens when upstream fails, what memory records,
+ * how precise routing is, where the plugin comes from), so there is one card
+ * per question and each saves the keys it shows. They share one settings
+ * document, but the server merges group by group, so a narrow write is the
+ * safe one.
  */
 export function SettingsPanel() {
   const [s, setS] = useState<Settings | null>(null);
+  /** Settings as last loaded or saved: what `dirty` is measured against. */
+  const [base, setBase] = useState<Settings | null>(null);
   /** The configured providers, for the embeddings picker. */
   const [providers, setProviders] = useState<Array<{ name: string; label: string; kind: string }>>([]);
-  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState<GroupKey | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<GroupKey, string | null>>>({});
 
   useEffect(() => {
     fetch("/api/providers")
       .then((r) => r.json())
       .then((d) => setProviders((d.providers ?? []).filter((p: { kind: string }) => p.kind === "openai-compat")))
       .catch(() => {});
-    fetch("/api/settings").then((r) => r.json()).then(setS);
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d: Settings) => {
+        setS(d);
+        setBase(d);
+      });
   }, []);
 
-  async function save() {
-    if (!s) return;
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(s),
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-  }
+  const save = useCallback(
+    async (card: GroupKey) => {
+      if (!s) return;
+      setBusy(card);
+      setErrors((e) => ({ ...e, [card]: null }));
+      try {
+        const res = await fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sliceOf(s, OWNS[card])),
+        });
+        if (!res.ok) throw new Error(`gate answered ${res.status}`);
+        setBase(await res.json());
+      } catch (error) {
+        setErrors((e) => ({ ...e, [card]: error instanceof Error ? error.message : String(error) }));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [s],
+  );
+
+  const dirty = useMemo(() => {
+    const out = {} as Record<GroupKey, boolean>;
+    for (const card of Object.keys(OWNS) as GroupKey[]) {
+      out[card] =
+        !!s && !!base && JSON.stringify(sliceOf(s, OWNS[card])) !== JSON.stringify(sliceOf(base, OWNS[card]));
+    }
+    return out;
+  }, [s, base]);
 
   if (!s) return null;
 
-  return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold">Gateway settings</h2>
-          <p className="text-sm text-muted-foreground">
-            Quota protection, caching, budget, fallback, and reasoning.
-          </p>
-        </div>
-        <Button onClick={save} size="sm">
-          <Save /> {saved ? "Saved" : "Save settings"}
-        </Button>
-      </div>
+  const groupProps = (card: GroupKey) => ({
+    dirty: dirty[card],
+    busy: busy === card,
+    error: errors[card],
+    onSave: () => save(card),
+  });
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <Group icon={Layers} title="Caching" description="What gets reused instead of re-sent.">
+  return (
+    <div className="grid gap-6 md:grid-cols-2">
+        <Group icon={Layers} title="Caching" description="What gets reused instead of re-sent." {...groupProps("caching")}>
           <div className="pb-2">
             <Row>
               <Head label="Prompt caching" hint="Auto cache_control breakpoints — cached reads bill at 10%." />
@@ -135,15 +187,14 @@ export function SettingsPanel() {
             {s.promptCache.enabled && (
               <Row>
                 <Label className="text-xs text-muted-foreground">Cache TTL</Label>
-                <select
+                <Select
                   value={s.promptCache.ttl}
                   onChange={(e) => setS({ ...s, promptCache: { ...s.promptCache, ttl: e.target.value as "5m" | "1h" } })}
-                  className={selectCls}
                   title="5m: writes 1.25×, refreshed free while active. 1h: writes 2×, for sessions with long pauses."
                 >
                   <option value="5m">5 min (active sessions)</option>
                   <option value="1h">1 hour (long pauses)</option>
-                </select>
+                </Select>
               </Row>
             )}
           </div>
@@ -177,7 +228,7 @@ export function SettingsPanel() {
           </div>
         </Group>
 
-        <Group icon={Gauge} title="Quota protection" description="What happens as the window and the budget fill.">
+        <Group icon={Gauge} title="Quota protection" description="What happens as the window and the budget fill." {...groupProps("quota")}>
           <div className="pb-2">
             <Row>
               <Head label="Rate-limit throttle" hint="Downgrade tier, then block, as the 5h window fills." />
@@ -233,21 +284,20 @@ export function SettingsPanel() {
                 </Row>
                 <Row>
                   <Label className="text-xs text-muted-foreground">When exceeded</Label>
-                  <select
+                  <Select
                     value={s.budget.mode}
                     onChange={(e) => setS({ ...s, budget: { ...s.budget, mode: e.target.value as "warn" | "block" } })}
-                    className={selectCls}
                   >
                     <option value="warn">Warn</option>
                     <option value="block">Block</option>
-                  </select>
+                  </Select>
                 </Row>
               </>
             )}
           </div>
         </Group>
 
-        <Group icon={Coins} title="Reliability" description="How much is in flight, and what happens when upstream refuses.">
+        <Group icon={Coins} title="Reliability" description="How much is in flight, and what happens when upstream refuses." {...groupProps("reliability")}>
           <div className="pb-2">
             <Row>
               <Head label="Concurrency limit" hint="Max simultaneous upstream requests; the rest queue." />
@@ -281,7 +331,7 @@ export function SettingsPanel() {
           </div>
         </Group>
 
-        <Group icon={BookOpen} title="Memory" description="After a run, the recorder writes what it decided — why, how, where — for the runs after it.">
+        <Group icon={BookOpen} title="Memory" description="After a run, the recorder writes what it decided — why, how, where — for the runs after it." {...groupProps("memory")}>
           <div className="pb-2">
             <Row>
               <Head label="Record runs" hint="Off, runs still finish; nothing is written to memory and the recall node finds nothing new." />
@@ -305,10 +355,9 @@ export function SettingsPanel() {
                 hint="Semantic search, from a configured OpenAI-compatible provider that serves an embedding model (Ollama, vLLM, OpenAI). Empty means words alone."
               />
               <div className="flex gap-2">
-                <select
+                <Select
                   value={s.memory?.embeddings?.provider ?? ""}
                   onChange={(e) => setS({ ...s, memory: { ...memoryOf(s), embeddings: { ...memoryOf(s).embeddings, provider: e.target.value } } })}
-                  className={selectCls}
                 >
                   <option value="">off</option>
                   {providers.map((p) => (
@@ -316,7 +365,7 @@ export function SettingsPanel() {
                       {p.label}
                     </option>
                   ))}
-                </select>
+                </Select>
                 <Input
                   className="w-48"
                   placeholder="embedding model"
@@ -339,7 +388,7 @@ export function SettingsPanel() {
           </div>
         </Group>
 
-        <Group icon={Route} title="Routing precision" description="How carefully a request is sized and how hard it thinks.">
+        <Group icon={Route} title="Routing precision" description="How carefully a request is sized and how hard it thinks." {...groupProps("precision")}>
           <div className="pb-2">
             <Row>
               <Head label="Exact token routing" hint="Use count_tokens for thresholds (one extra call)." />
@@ -352,12 +401,11 @@ export function SettingsPanel() {
           <div className="pt-2">
             <Row>
               <Head label="Fallback reasoning effort" hint="Used when routing rules don't set one." />
-              <select
+              <Select
                 value={s.reasoning.defaultEffort}
                 onChange={(e) =>
                   setS({ ...s, reasoning: { defaultEffort: e.target.value as Settings["reasoning"]["defaultEffort"] } })
                 }
-                className={selectCls}
               >
                 <option value="default">API default (high)</option>
                 <option value="low">Low</option>
@@ -365,12 +413,12 @@ export function SettingsPanel() {
                 <option value="high">High</option>
                 <option value="xhigh">xhigh</option>
                 <option value="max">Max</option>
-              </select>
+              </Select>
             </Row>
           </div>
         </Group>
 
-        <Group icon={Puzzle} title="Plugin" description="Where a new machine fetches the gate plugin from.">
+        <Group icon={Puzzle} title="Plugin" description="Where a new machine fetches the gate plugin from." {...groupProps("plugin")}>
           <div className="pb-2">
             <Row>
               <Head
@@ -386,8 +434,7 @@ export function SettingsPanel() {
               />
             </Row>
           </div>
-        </Group>
-      </div>
-    </section>
+      </Group>
+    </div>
   );
 }

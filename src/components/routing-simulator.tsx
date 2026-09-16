@@ -6,7 +6,9 @@ import { Wand2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 interface RouteResult {
   model: string;
@@ -47,28 +49,24 @@ export function RoutingSimulator() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Routing simulator</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Wand2 className="size-4" /> Routing simulator
+        </CardTitle>
         <CardDescription>See which model a prompt would be routed to.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="space-y-1.5">
           <Label htmlFor="sim-model">Requested model</Label>
-          <input
-            id="sim-model"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          />
+          <Input id="sim-model" value={model} onChange={(e) => setModel(e.target.value)} spellCheck={false} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="sim-prompt">Prompt</Label>
-          <textarea
+          <Textarea
             id="sim-prompt"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             rows={3}
             placeholder="e.g. Generate a title for this conversation"
-            className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </div>
         <Button onClick={simulate} disabled={busy} size="sm">

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { BarChart3, Download, RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Stat } from "@/components/ui/stat";
 
 interface UsageEvent {
   ts: number;
@@ -43,16 +44,6 @@ function fmtUsd(n: number): string {
   return `$${n.toFixed(n < 1 ? 4 : 2)}`;
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="rounded-lg border bg-muted/40 p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-0.5 text-lg font-semibold">{value}</div>
-      {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
-    </div>
-  );
-}
-
 export function UsagePanel() {
   const [usage, setUsage] = useState<Usage | null>(null);
 
@@ -73,7 +64,9 @@ export function UsagePanel() {
     <Card>
       <CardHeader className="flex-row items-start justify-between space-y-0">
         <div className="space-y-1.5">
-          <CardTitle>Usage</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <BarChart3 className="size-4" /> Usage
+          </CardTitle>
           <CardDescription>{usage?.total ?? 0} requests routed through gate.</CardDescription>
         </div>
         <div className="flex items-center gap-1">

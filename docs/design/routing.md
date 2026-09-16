@@ -46,6 +46,14 @@ tier. Only `auto`, or a name nothing matches, falls through to the heuristics.
 A trailing `[1m]`, which Claude Code appends to mark a 1M window, is not part
 of the id and is stripped first.
 
+`overrideExplicit` is therefore the switch that decides whether the difficulty
+table applies to a client that names its model at all — and Claude Code is such
+a client. The dashboard carries it as **Route named models too**, worded the
+way a person thinks about it: on, a named `claude-sonnet-5` is graded and sent
+to whatever the tier below resolves to, a provider model included; off — the
+default — that name is served as asked. The stored flag is the inverse of the
+switch, because `overrideExplicit: true` means "an explicit id wins".
+
 The heuristics classify the request into one **difficulty category** from its
 shape — the estimated prompt tokens (about four characters each), whether
 tools are present, `max_tokens`, and keyword lists checked against the last
@@ -124,11 +132,13 @@ in-process cache; a hand edit takes effect on restart.
 - `src/lib/models.ts` — the model catalogue behind `/v1/models`, live from Anthropic with a known-list fallback
 - `src/lib/gateway-core.ts` — `dispatch` applies routing, the grader, stickiness and effort in that order, and sets the `x-gate-*` headers
 - `src/lib/usage.ts` — `getSessionRoute` / `setSessionRoute`, the sticky baseline per session
+- `src/components/routing-rules-panel.tsx` — the dashboard form: the preset, the six categories, the model behind each tier, and the three switches
 - `src/app/api/gateway/v1/messages/route.ts`, `.../chat/completions/route.ts`, `.../responses/route.ts`, `.../models/route.ts` — the endpoints that read `x-gate-effort` and hand the body to `dispatch`
 
 ## Pitfalls
 
 - Leaving effort unset is not neutral: the API default is `high`. A category whose effort is `default` sends nothing and pays for high.
+- A client that names a concrete `claude-*` model is not routed at all by default: it never reaches the categories, so editing the difficulty table changes nothing for Claude Code until **Route named models too** is on.
 - A client that sets its own `thinking` or `output_config.effort` is never overridden — `x-gate-effort` and the category effort are ignored for it. Claude Code is such a client.
 - Keyword detection reads the last user message and only a system prompt of 2000 characters or less; a heavy keyword buried in a long agent system prompt does nothing.
 - A sticky session never goes down. One heavy request early in a conversation keeps the rest of it on that tier until the session ends; only `background` and `heavy` categories escape.

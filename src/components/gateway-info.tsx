@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { Check, Copy, Link2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,7 +25,9 @@ export function GatewayInfo() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Gateway endpoint</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Link2 className="size-4" /> Gateway endpoint
+        </CardTitle>
         <CardDescription>
           Point any Anthropic-compatible client at this base URL.
         </CardDescription>

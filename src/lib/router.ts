@@ -48,7 +48,14 @@ export interface RoutingConfig {
   categories: Record<RouteCategory, Tier>;
   /** Reasoning effort per difficulty category (see reasoning.ts). */
   effort: Record<RouteCategory, RouteEffort>;
-  /** When false, an explicit concrete `claude-*` model is always passed through. */
+  /**
+   * When true — the default — an explicit concrete `claude-*` model is passed
+   * through untouched, and no tier mapping applies to it. Set it false to route
+   * those requests like any other: a client that names its model, Claude Code
+   * among them, then goes through the aliases and the difficulty heuristics.
+   * The name reads backwards; it is kept because live `routing.json` files
+   * carry the key.
+   */
   overrideExplicit: boolean;
 }
 

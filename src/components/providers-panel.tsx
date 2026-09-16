@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
 type Dialect = "openai-compat" | "anthropic-compat";
@@ -151,8 +152,8 @@ export function ProvidersPanel() {
     <Card>
       <CardHeader className="flex-row items-start justify-between space-y-0">
         <div className="space-y-1.5">
-          <CardTitle className="flex items-center gap-2">
-            <HardDrive /> Providers
+          <CardTitle className="flex items-center gap-2 text-base">
+            <HardDrive className="size-4" /> Providers
           </CardTitle>
           <CardDescription>
             Models that are not one of the connected Claude accounts — Ollama, vLLM, LM Studio or
@@ -319,18 +320,18 @@ export function ProvidersPanel() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="p-kind">Dialect</Label>
-                <select
+                <Select
                   id="p-kind"
                   value={form.kind}
                   onChange={(e) => setForm({ ...form, kind: e.target.value as Dialect })}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="h-9 w-full"
                 >
                   {DIALECTS.map((d) => (
                     <option key={d.value} value={d.value}>
                       {d.label}
                     </option>
                   ))}
-                </select>
+                </Select>
                 <p className="text-[11px] text-muted-foreground">
                   {DIALECTS.find((d) => d.value === form.kind)?.hint}
                 </p>

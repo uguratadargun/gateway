@@ -22,7 +22,8 @@ export function ClientsPanel() {
   const [clients, setClients] = useState<ClientInfo[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
+  /** What the last apply/revert answered, and whether it worked. */
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
   async function load() {
@@ -41,7 +42,7 @@ export function ClientsPanel() {
       body: JSON.stringify({ client: "claude-code", action, apiKey: apiKey || undefined }),
     });
     const d = await r.json();
-    setMsg(r.ok ? (d.backup ? `Done — backup at ${d.backup}` : "Done") : d.error ?? "Failed");
+    setMsg({ text: r.ok ? (d.backup ? `Done — backup at ${d.backup}` : "Done") : d.error ?? "Failed", ok: r.ok });
     await load();
   }
 
@@ -54,7 +55,7 @@ export function ClientsPanel() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle className="flex items-center gap-2 text-base">
           <Plug2 className="size-4" /> Connect clients
         </CardTitle>
         <CardDescription>Point your tools at gate. Claude Code can be configured in one click.</CardDescription>
@@ -82,7 +83,7 @@ export function ClientsPanel() {
                         </Button>
                       )}
                     </div>
-                    {msg && <p className="text-muted-foreground">{msg}</p>}
+                    {msg && <p className={msg.ok ? "text-muted-foreground" : "text-destructive"}>{msg.text}</p>}
                     <p className="text-muted-foreground">Writes <code>{c.configPath}</code> (backup kept). Restart Claude Code afterwards.</p>
                   </div>
                 )}

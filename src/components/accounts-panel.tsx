@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, CheckCircle2, ExternalLink, Plug, Timer, Trash2, Users } from "lucide-react";
 
+import { SaveRow } from "@/components/save-row";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
 type Strategy = "fill-first" | "round-robin" | "least-used" | "p2c" | "random";
@@ -57,8 +59,6 @@ const STRATEGIES: { v: Strategy; label: string; hint: string }[] = [
   { v: "random", label: "Random", hint: "Uniformly random among available accounts." },
 ];
 
-const selectCls = "h-8 rounded-md border border-input bg-transparent px-2 text-sm";
-
 function relative(ms: number | null): string {
   if (!ms) return "never";
   const delta = Math.round((ms - Date.now()) / 1000);
@@ -86,6 +86,10 @@ function barColor(remaining: number): string {
 export function AccountsPanel() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [pool, setPool] = useState<PoolConfig | null>(null);
+  /** Rotation as last loaded or saved: what the Save under it is measured against. */
+  const [poolBase, setPoolBase] = useState<PoolConfig | null>(null);
+  const [poolBusy, setPoolBusy] = useState(false);
+  const [poolError, setPoolError] = useState<string | null>(null);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [label, setLabel] = useState("");
@@ -97,6 +101,7 @@ export function AccountsPanel() {
     const data = await res.json();
     setAccounts(data.accounts ?? []);
     setPool(data.strategy ?? null);
+    setPoolBase(data.strategy ?? null);
   }, []);
 
   useEffect(() => {
@@ -164,15 +169,29 @@ export function AccountsPanel() {
     await patch(b.id, { priority: a.priority });
   }
 
-  async function savePool(next: Partial<PoolConfig>) {
+  /** Edit rotation locally; it is written by the Save under the card. */
+  function editPool(next: Partial<PoolConfig>) {
     if (!pool) return;
-    const merged = { ...pool, ...next };
-    setPool(merged);
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accountPool: merged }),
-    });
+    setPool({ ...pool, ...next });
+  }
+
+  async function savePool() {
+    if (!pool) return;
+    setPoolBusy(true);
+    setPoolError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountPool: pool }),
+      });
+      if (!res.ok) throw new Error(`gate answered ${res.status}`);
+      setPoolBase(pool);
+    } catch (error) {
+      setPoolError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPoolBusy(false);
+    }
   }
 
   if (!accounts) return null;
@@ -221,8 +240,8 @@ export function AccountsPanel() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plug /> Connect your Claude account
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Plug className="size-4" /> Connect your Claude account
           </CardTitle>
           <CardDescription>
             Uses the same Claude Code OAuth login (PKCE). Open the page, approve, then paste the code
@@ -236,10 +255,10 @@ export function AccountsPanel() {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-start justify-between space-y-0">
+      <CardHeader>
         <div className="space-y-1.5">
-          <CardTitle className="flex items-center gap-2">
-            {accounts.length > 1 ? <Users className="text-emerald-500" /> : <CheckCircle2 className="text-emerald-500" />}
+          <CardTitle className="flex items-center gap-2 text-base">
+            {accounts.length > 1 ? <Users className="size-4 text-emerald-500" /> : <CheckCircle2 className="size-4 text-emerald-500" />}
             {accounts.length === 1 ? "Account connected" : `${accounts.length} accounts connected`}
           </CardTitle>
           <CardDescription>
@@ -342,17 +361,17 @@ export function AccountsPanel() {
                   {STRATEGIES.find((s) => s.v === pool.strategy)?.hint}
                 </div>
               </div>
-              <select
+              <Select
                 value={pool.strategy}
-                onChange={(e) => savePool({ strategy: e.target.value as Strategy })}
-                className={`${selectCls} w-36`}
+                onChange={(e) => editPool({ strategy: e.target.value as Strategy })}
+                className="w-36"
               >
                 {STRATEGIES.map((s) => (
                   <option key={s.v} value={s.v}>
                     {s.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               {pool.strategy === "round-robin" && (
@@ -363,7 +382,7 @@ export function AccountsPanel() {
                     min={1}
                     className="mt-1 h-8"
                     value={pool.stickyRoundRobinLimit}
-                    onChange={(e) => savePool({ stickyRoundRobinLimit: Math.max(1, Number(e.target.value)) })}
+                    onChange={(e) => editPool({ stickyRoundRobinLimit: Math.max(1, Number(e.target.value)) })}
                   />
                 </div>
               )}
@@ -376,11 +395,18 @@ export function AccountsPanel() {
                   className="mt-1 h-8"
                   value={pool.quotaMinRemainingPercent}
                   onChange={(e) =>
-                    savePool({ quotaMinRemainingPercent: Math.min(99, Math.max(0, Number(e.target.value))) })
+                    editPool({ quotaMinRemainingPercent: Math.min(99, Math.max(0, Number(e.target.value))) })
                   }
                 />
               </div>
             </div>
+            <SaveRow
+              className="p-0 pt-3"
+              dirty={JSON.stringify(pool) !== JSON.stringify(poolBase)}
+              busy={poolBusy}
+              error={poolError}
+              onSave={savePool}
+            />
           </div>
         )}
 

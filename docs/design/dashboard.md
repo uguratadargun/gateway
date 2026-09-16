@@ -34,6 +34,22 @@ control fixed in the corner so it does not move between pages. Light, dark and
 follow-the-system are three buttons, and the choice is applied before the first
 paint, so no load flashes the wrong theme.
 
+### A panel's shape, and where its Save is
+
+Every panel is a card, and every card has the same head: an icon, a title, a
+line saying what it is for. The headings that group them belong to the page, so
+a panel never carries one of its own and every heading on a surface is the same
+shape.
+
+A card that can be edited owns a named set of keys and ends in a Save of its
+own — in its own footer, under the controls it writes, disabled until something
+differs from what was loaded. It PUTs those keys alone; the routing and settings
+endpoints both merge a patch key by key, so a card never writes a field it does
+not render, and one panel cannot put back a stale copy of another's. A write
+that fails says so next to the button rather than flashing "Saved" regardless.
+The home page carries three such cards for routing, six for settings, and one
+for account rotation.
+
 ### Where a panel's rules live
 
 A panel here is a view onto a feature, and the rules belong to the feature, not
@@ -82,6 +98,7 @@ here: no key, agent or run can delete one.
 - `src/events/bus.ts` — run events with their per-execution replay buffer
 - `src/app/executions/[id]/page.tsx` — the live run: stream, graph, steps, stop
 - `src/components/workflow-graph.tsx` — the canvas, shared by the definition and execution views; it renders, never routes
+- `src/components/save-row.tsx` — the footer an editable card ends in: the dirty-aware Save and the error a failed write returned
 - `src/components/ui/` — the shared primitives everything is built from; colours come from CSS variables, both schemes
 
 ## Pitfalls
@@ -91,8 +108,10 @@ here: no key, agent or run can delete one.
 - A stream is opened only for a run that is running. A run that settles while the page is open stops updating by design, not by failure.
 - Editors pass a half-finished definition through on purpose: the file is re-parsed on save, so the error shown is the real one and an invalid edit is refused at the server, not in the form.
 - A key or connect token not copied from the panel that issued it cannot be recovered — issue another one.
+- A control added to a card whose key is not in that card's owned set will appear to save and not persist: the card PUTs its declared keys, nothing more.
 
 ## Decisions
 
+- [0013 — A card saves what it shows](../decisions/0013-a-card-saves-what-it-shows.md)
 - [0011 — Three auth surfaces, three rules](../decisions/0011-three-auth-surfaces-three-rules.md)
 - [0010 — Forgetting is a person's, and only from the dashboard](../decisions/0010-forgetting-is-a-persons-and-only-from-the-dashboard.md)
