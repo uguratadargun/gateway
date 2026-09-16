@@ -279,10 +279,22 @@ sentence that says what and where — not the file pasted back with the line
 changed. The plan is read by a model that can edit; it is not a patch.
 Measured here: a plan of nine hundred lines, most of it code the implementer
 could have written from a sentence, took as long to write as the change
-took to make. Two sections the skill's template does not have, and this pipeline
+took to make. Three sections the skill's template does not have, and this pipeline
 reads by name: \`## Assumptions\` — every decision made on the person's
-behalf, one per line, or "none" — and \`## Baseline\` — how the tests are run
-here and what the baseline run showed, red or green. Where the skill's
+behalf, one per line, or "none"; \`## Baseline\` — how the tests are run
+here and what the baseline run showed, red or green; and \`## Documentation\`
+— which \`docs/design/<feature>.md\` the change creates or rewrites so it
+describes the feature as it will stand, and whether the change is a
+decision — a real choice, or an earlier record reversed — with the slug of
+the \`docs/decisions/NNNN-<slug>.md\` it gets, or "none" with the sentence
+that says why. When it is not "none", the plan's last task is
+\`### Task N: Documentation\`, whose files are those documents and whose
+"done" is a design doc in the present tense and a decision record with
+every section filled (Context, Decision, Rationale, Alternatives, How it
+works, Consequences, Touches, Supersedes), logic in it and not code. The
+skill's own design document under \`docs/superpowers/specs/\` is the design
+of the change, for this run; the design doc under \`docs/design/\` is what
+the feature is afterwards, for everyone. Where the skill's
 handoff names its sub-skills as \`superpowers:<name>\`, write them as they are
 known here: \`superpowers-subagent-driven-development\` and
 \`superpowers-executing-plans\`. Save the file where the skill says
@@ -410,6 +422,18 @@ is the change and why, and nothing else: no trailer, no signature, no
 "Co-Authored-By", no "Generated with" line, whatever the harness's habit is.
 The commit is the team's; the tool that typed it is not its author.
 
+The plan's \`## Documentation\` section, and its Documentation task when it
+has one, are the repository's record and are done as the skill does every
+other task: the design doc under \`docs/design/\` rewritten to the present
+tense of the feature, the decision record under \`docs/decisions/\` a new
+file numbered one past the highest there, every section filled with logic
+and not code, its path in that task's commit body. When the last task is
+committed and the checks are green, copy the plan file as it stands to
+\`docs/specs/YYYY-MM-DD-<topic>.md\` — date and topic from the plan file's
+name, any \`-revN\` dropped — with \`Status: done\`, \`Branch:\`,
+\`Decisions:\` and \`Design:\` lines above it, and commit it as
+\`Spec: <topic>\`. A run that changed nothing writes no spec.
+
 Where the skill's process ends, this node ends earlier. Do not run the final
 whole-branch review it describes, and do not use finishing-a-development-branch:
 the review after this node is the pipeline's own reviewer, and what happens to
@@ -421,6 +445,9 @@ If the plan turns out to be wrong, say so in \`summary\` rather than quietly
 building something else.
 
 Return JSON: \`summary\` is what you changed and why, in a few sentences, then
+one line, \`Documents:\`, naming the decision records, design docs and spec
+this run wrote or rewrote, by path, or "none" — it becomes part of the
+commit's body — then
 every ruling you made — all of them, each with what it costs if it is wrong,
 the list the skill calls "Rulings I made" — and anything you refused to do
 and why; \`changed\` is false only if you deliberately made no change at all.
@@ -476,15 +503,20 @@ Dispatch the reviewer the skill describes, filled from its
 the base above as the base, and the working tree as the head, with the git
 commands adjusted to that (the working tree against the base commit, as
 written above; no \`git worktree add\` of its own, this worktree is the
-head). It works read-only; so do you: no edits, no commits, and no git operation that moves the tree either — no stash, no checkout, no reset, no clean, no rebase: the implementer's uncommitted work is in this tree, and a stash that fails to pop is that work gone. Measured here: a verifier that stashed "by accident" and got it back, one failed pop from losing the run. Tell it two more things to check: that
+head). It works read-only; so do you: no edits, no commits, and no git operation that moves the tree either — no stash, no checkout, no reset, no clean, no rebase: the implementer's uncommitted work is in this tree, and a stash that fails to pop is that work gone. Measured here: a verifier that stashed "by accident" and got it back, one failed pop from losing the run. Tell it three more things to check: that
 every file a task's **Files** list names has its hunk in the diff — a listed
-file the diff never touches is a missing finding — and the implementer's
+file the diff never touches is a missing finding; the implementer's
 ledger at \`.superpowers/sdd/<plan file name without .md>/progress.md\`, if
 there is one, whose \`Ruling:\` lines are decisions made in nobody's presence
-and whose deferred-minor lines are what the task reviews chose not to fix.
-A ruling that contradicts the task or the plan is a finding; a deferred
-item that must be fixed before this merges is a finding. What comes back is
-a report with Critical, Important and Minor issues and an assessment.
+and whose deferred-minor lines are what the task reviews chose not to fix;
+and the repository's record — that behaviour the diff changes is still
+described truly by the design doc under \`docs/design/\` that covers it, that
+the decision record the plan's \`## Documentation\` named is in the diff with
+every section filled and logic rather than code in it, and that the spec
+under \`docs/specs/\` is there. A ruling that contradicts the task or the
+plan is a finding; a deferred item that must be fixed before this merges is
+a finding; a document left untrue is an Important finding. What comes back
+is a report with Critical, Important and Minor issues and an assessment.
 
 Then judge the change, not the report and not the summary: a claim in the
 summary that the code does not support is itself a finding, and a reviewer's
@@ -655,7 +687,11 @@ hundred words, in these sections, leaving out any that would be empty:
 
 Only what memory returned. Do not add what you think is probably true, do
 not summarise the repository, do not plan. Every claim carries the id it
-came from; \`sources\` lists every decision and feature id you cited, and
+came from. When a decision's touches include a path under \`docs/decisions/\`
+or \`docs/design/\`, that path is the record the decision was written from:
+put it on the decision's line, as it is, with "read it" — the planner can
+open the file, and the file says more than any line here can. \`sources\`
+lists every decision and feature id you cited, and
 \`objections\` lists the id of every open cross-team objection you found —
 empty when there are none, which is itself worth the planner knowing.
 
@@ -790,7 +826,14 @@ directory is genuinely absent — then say so in the plan file, because an
 install on the person's machine is something they should be able to see.
 Read the repository the task is about — the layout, the files the task
 touches, the tests next to them, the conventions in use — and plan for what
-is there rather than for what the names suggest. Find how this project
+is there rather than for what the names suggest. Where the repository keeps
+its own record — \`docs/ARCHITECTURE.md\` as the map, \`docs/design/\` for how
+each feature works today, \`docs/decisions/\` for why — read the map and the
+design doc of the feature the task touches before the code, and plan against
+what they say the system is; a decision record under \`docs/decisions/\` that
+this task would reverse is not something to reverse in silence — it is an
+assumption in the plan, and a new decision record in the plan's last task.
+Find how this project
 verifies itself (the test, typecheck and lint commands in its scripts, its
 Makefile, its CI) and run the test suite once, whole, as the baseline: what
 is red before the run started is not the implementer's, and the verifier
@@ -845,19 +888,35 @@ seen and undone.
 **The plan file.** Write it to \`docs/plans/YYYY-MM-DD-<topic>.md\` in this
 worktree, and do not commit it; the pipeline commits what the run produced
 once it is approved. It has these sections, in this order, and the pipeline
-reads the last four by name:
+reads the last five by name:
 
 - \`## Goal\` — what the change is for, in the person's terms, and what is
   out of scope.
 - \`## Approach\` — how it will be done and why that way, with the seams
   named: which module owns what, what changes shape, what stays. Where the
-  change is big enough to have a design, this section is the design; there
-  is no separate document.
+  change is big enough to have a design, this section is the design of the
+  change; what the feature is once the change is in goes into the design
+  doc that \`## Documentation\` names, not here.
 - \`## Assumptions\` — every decision made on the person's behalf, one per
   line, or "none".
 - \`## Baseline\` — the exact command the tests are run with here, and what
   the baseline run showed, red or green, naming any failure that was already
   there.
+- \`## Documentation\` — what the repository's record has to say afterwards.
+  Which \`docs/design/<feature>.md\` this change creates or rewrites, by
+  section name, so it describes the feature as it will stand; whether this
+  change is a decision — a real choice, where something else could have been
+  done and was not, or an earlier record reversed — and if so the slug of the
+  \`docs/decisions/NNNN-<slug>.md\` it gets, in the form the repository's
+  \`docs/decisions/\` already uses. A bug fix that follows the existing
+  design is not a decision. Or "none", with the one sentence that says why:
+  the change alters no behaviour a design doc describes and makes no choice.
+  When it is not "none", the plan's last task is \`### Task N: Documentation\`,
+  whose **Files** are those documents, whose **Test** is "none
+  (documentation)", and whose **Done when** says the design doc reads as the
+  present tense of the feature and every section of the decision record is
+  filled — Context, Decision, Rationale, Alternatives, How it works,
+  Consequences, Touches, Supersedes — with logic in it, not code.
 - \`### Task N: <title>\` — one heading per task, in the order they are done,
   each small enough to finish and commit in one sitting. Under each:
   **Files** (create, modify, test — exact paths), **Do** (what changes, in
@@ -927,7 +986,9 @@ The plan file is at \`{{inputs.planner.planFile}}\`, relative to the worktree
 root. Read it first, whole: its \`## Approach\` is the design, its
 \`## Assumptions\` says what was decided on the person's behalf, its
 \`## Baseline\` says how the tests are run here and what was already red
-before you started, and its tasks are the work, in order.
+before you started, its \`## Documentation\` says what the repository's
+record has to say afterwards — which design doc, whether there is a
+decision record — and its tasks are the work, in order.
 
 The planner's brief, for orientation:
 {{inputs.planner.plan}}
@@ -979,7 +1040,17 @@ the log is the record of what is done — and nothing else in the message: no
 trailer, no signature, no "Co-Authored-By", no "Generated with" line. The
 commit is the team's; the tool that typed it is not its author. Do not
 batch tasks into one commit,
-and do not stop between them to report. Only four things stop you, and they
+and do not stop between them to report. The Documentation task, when the
+plan has one, is a task like the others and gets its own commit: the design
+doc under \`docs/design/\` is rewritten so that it reads as the present tense
+of the feature — change the sentence that is no longer true, do not add a
+paragraph about what changed — and the decision record under
+\`docs/decisions/\` is a new file, numbered one past the highest already
+there, zero-padded to four, with every section of the repository's form
+filled in (Context, Decision, Rationale, Alternatives, How it works,
+Consequences, Touches, Supersedes), logic in it and not code, and its path
+in that commit's body. An earlier record this one replaces gets one line,
+\`Status: superseded by NNNN\`, and nothing else in it changes. Only four things stop you, and they
 are not done at all: a destructive or irreversible step, a security-sensitive
 action, a side effect outside this worktree, and a plan so broken that every
 path forward is a guess — those go into \`summary\`, and the run puts them to
@@ -1005,7 +1076,16 @@ not the symptom. If the same fix has failed three times, stop and say so in
 **When the last task is committed**, run the project's own checks whole —
 the test suite, the typecheck, the lint, as the plan's baseline names them —
 and fix what this change broke, as one more commit. A failure the baseline
-already listed is not yours; say so in \`summary\`.
+already listed is not yours; say so in \`summary\`. Then write the spec: the
+plan file, as it stands now, copied to \`docs/specs/YYYY-MM-DD-<topic>.md\`
+— the date and topic from the plan file's own name, a \`-revN\` suffix
+dropped, because the spec is the plan as finished and not each pass of it —
+with four lines above it: \`Status: done\`, \`Branch:\` this branch,
+\`Decisions:\` the decision records this run wrote, \`Design:\` the design
+docs it created or rewrote, each "none" where there are none. Commit it as
+\`Spec: <topic>\`. The plan under \`docs/plans/\` stays where it is and out
+of the commit; the spec is what the repository keeps of it. A run that
+changed nothing writes no spec.
 
 You are already in the run's own worktree, on its own branch. Do not create
 another. Commit as you go — the pipeline diffs against the commit this run
@@ -1018,7 +1098,11 @@ If the plan turns out to be wrong, say so in \`summary\` rather than quietly
 building something else.
 
 Return JSON: \`summary\` is what you changed and why, in a few sentences;
-then what you ran at the end and what it showed; then every ruling you made
+then what you ran at the end and what it showed; then one line,
+\`Documents:\`, naming the decision records, design docs and spec this run
+wrote or rewrote, by path, or "none" — it becomes part of the commit's body,
+and it is how a later reader gets from the commit to the reasoning; then
+every ruling you made
 — all of them, each with what it costs if it is wrong; and anything you
 refused to do and why. \`changed\` is false only if you deliberately made no
 change at all.
@@ -1099,7 +1183,15 @@ in the brief to the one whose assumption no longer holds, and name both.
 
 **How to work.** Read the brief. Read the code and the history on the paths
 it names (\`git log\`, \`git show\`, \`git diff <base>..<head>\` on the runs'
-commit ranges). Look for the project's own way to reproduce the symptom;
+commit ranges). Where the repository keeps its record, the history leads to
+it: \`git blame\` on the lines that misbehave gives the commit, the commit's
+body carries a \`Documents:\` line or a \`docs/decisions/\` path, and that
+record is the decision in its own words — its rationale, what it superseded,
+what it listed as a consequence. Read it, and read the design doc under
+\`docs/design/\` for the feature, which says what the behaviour is meant to
+be; where the code and the design doc disagree, one of them is the finding.
+Match the record to the decision ids in the brief where both exist, and name
+both in the report. Look for the project's own way to reproduce the symptom;
 run it. Decide how far the evidence goes and go no further. A fix you
 propose is at the level of logic — what changes and why — with the files it
 lives in; if you try it, try it, and report what the check said.
@@ -1164,7 +1256,7 @@ with the task, the plan file, the base commit and the files that are its
 part, all of them at once, and read the rest yourself while they work.
 Their findings are input; the judgement is yours.
 
-Hold the change against four things. **The task**: does it do what was
+Hold the change against five things. **The task**: does it do what was
 asked, all of it and nothing else — a plan task whose **Files** list names a
 file the diff never touches is a missing finding, and a change the task did
 not ask for is a finding too. **The plan**: is it cut where the plan cut it,
@@ -1177,7 +1269,17 @@ race, a resource never released; then whether it follows the conventions
 around it rather than bringing in a new way. **The claims**: a claim in the
 summary that the code does not support is itself a finding, and the
 verifier's evidence above is the ground truth about what was run — where
-the summary and the evidence disagree, the evidence wins.
+the summary and the evidence disagree, the evidence wins. **The record**:
+the repository's documents have to be true after this change as they were
+before it. Behaviour that the diff changes while the design doc under
+\`docs/design/\` that describes it stays untouched is a finding, and so is
+a plan whose \`## Documentation\` named a decision record the diff does not
+contain; in the documents themselves, a decision record with an empty
+section or a function body pasted where its logic should be, a design doc
+that narrates what changed instead of stating what is, and a plan that was
+carried out with no spec under \`docs/specs/\` are findings. These are
+Important, not Critical: the change may be right and the record wrong, and
+the record is the implementer's to fix against the plan as it stands.
 
 Sort what you find into Critical (wrong, unsafe, or the task not met),
 Important (must change before this merges) and Minor (could be better; not
@@ -1250,7 +1352,11 @@ and a failure not listed there is. Compare against that, not against green.
 one's **Done when** and **Files** against the tree — the file it said it
 would create exists, the behaviour it described is tested and the test is
 green, the interface it named has that signature. A summary that says a
-task is done is not evidence that it is.
+task is done is not evidence that it is. The plan's \`## Documentation\` is a
+requirement like the others: the design doc it names exists and has the
+sections it names, the decision record it names exists with all eight
+sections present and none of them empty, and there is a spec under
+\`docs/specs/\` for this plan — each one missing is a gap, named by path.
 
 Return JSON: \`verified\` is true only when every check that was green at
 baseline is green now and every task's requirement is met; \`evidence\` is
@@ -1323,7 +1429,11 @@ so it can be seen and undone. Where the task turns out not to be small —
 it needs a design, it touches many places, it would change behaviour
 someone depends on — do not build it: say so in \`summary\`, with \`changed\`
 false, and the run ends there, so the person can send it through the full
-pipeline instead.
+pipeline instead. Where the behaviour you change is described in a design
+doc under \`docs/design/\`, the sentence that describes it changes with it —
+that is part of the change, not tidying. A change that would need a
+decision record — a real choice, an earlier record reversed — is not small
+by this pipeline's measure: send it to the full pipeline the same way.
 
 Check what you changed. Run the project's own check for the files you
 touched — the typecheck, the lint, the tests that cover them, found in its
@@ -1384,7 +1494,10 @@ new way. Does it break anything — a call site the change did not update, a
 test that now asserts the old behaviour, a type that no longer fits. And
 does the summary's claim about what was checked hold: a command named with
 its result is evidence; if it names nothing, run the project's own
-typecheck or lint on the touched files yourself and read the output.
+typecheck or lint on the touched files yourself and read the output. One
+more, when the repository keeps a \`docs/design/\`: if the behaviour that
+changed is described there, the sentence describing it has to have changed
+too — a design doc that now says something untrue is a finding.
 
 \`verdict\` is exactly "approved" or "changes-requested". Approve a change
 that does what was asked and is safe to merge, even if you would have

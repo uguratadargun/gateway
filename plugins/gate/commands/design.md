@@ -16,6 +16,11 @@ How the two file formats work, and what a save will reject:
 
 @${CLAUDE_PLUGIN_ROOT}/reference/authoring.md
 
+What a repository keeps written down, and where — the shipped planner,
+implementer and reviewer already read and write these:
+
+@${CLAUDE_PLUGIN_ROOT}/reference/docs.md
+
 The user wants a pipeline for: $ARGUMENTS
 
 If that is empty there is no brief, which is fine: the shipped pipeline already
@@ -77,7 +82,14 @@ Do not design against assumptions. Establish, from the files:
 - how changes reach it: the remote's host, the default branch, whether
   `gh`/`glab` is used, what CI runs on a merge request;
 - what a change here normally has to satisfy: test conventions, a review
-  checklist in `CONTRIBUTING`, generated files, migrations.
+  checklist in `CONTRIBUTING`, generated files, migrations;
+- where this repository keeps its record — `docs/design/`, `docs/decisions/`,
+  `docs/specs/` as `reference/docs.md` describes, or a layout of its own —
+  and which documents a change in behaviour has to update. The shipped
+  planner, implementer and reviewer already write and hold a change against
+  that layout; a repository with its own layout says so in the task or in a
+  command node, and a repository with none gets one line in the proposal
+  note saying so and pointing at the reference. Never a documentation agent.
 
 What you learn becomes `command` nodes, in three places:
 

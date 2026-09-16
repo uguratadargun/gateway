@@ -131,6 +131,22 @@ describe("what the shipped agents declare", () => {
     // nothing else, in a place of its own.
     expect(DEFAULT_AGENTS.planner).toContain("You write a plan, and nothing else.");
     expect(DEFAULT_AGENTS.planner).toContain("docs/plans/");
+    // The repository's record travels with the run: the planner names the
+    // documents, the implementer writes them and the spec, the reviewer and
+    // verifier hold the change against them, and the quick pair keeps the
+    // design doc true without ever writing a decision record.
+    expect(DEFAULT_AGENTS.planner).toContain("## Documentation");
+    expect(DEFAULT_AGENTS["super-planner"]).toContain("## Documentation");
+    expect(DEFAULT_AGENTS.implementer).toContain("docs/specs/");
+    expect(DEFAULT_AGENTS["super-implementer"]).toContain("docs/specs/");
+    expect(DEFAULT_AGENTS.reviewer).toContain("docs/design/");
+    expect(DEFAULT_AGENTS["super-reviewer"]).toContain("docs/design/");
+    expect(DEFAULT_AGENTS.verifier).toContain("## Documentation");
+    expect(DEFAULT_AGENTS["quick-implementer"]).toContain("docs/design/");
+    expect(DEFAULT_AGENTS["quick-implementer"]).not.toContain("docs/specs/");
+    expect(DEFAULT_AGENTS["quick-reviewer"]).toContain("docs/design/");
+    expect(DEFAULT_AGENTS.recall).toContain("docs/decisions/");
+    expect(DEFAULT_AGENTS.investigator).toContain("docs/decisions/");
     expect(DEFAULT_AGENTS.planner).not.toContain("superpowers");
     expect(DEFAULT_AGENTS.implementer).not.toContain("superpowers");
     expect(DEFAULT_AGENTS.reviewer).not.toContain("superpowers");
