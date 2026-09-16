@@ -342,7 +342,7 @@ skills:
   - superpowers-subagent-driven-development
   - superpowers-receiving-code-review
   - superpowers-systematic-debugging
-inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?]
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?, record.stdout?]
 tools: [read_file, write_file, edit_file, list_files, search_files, run_command]
 timeoutMs: 5400000
 output:
@@ -369,8 +369,13 @@ The planner's brief, for orientation:
 
 {{inputs.acceptance.requests}}
 
+{{inputs.record.stdout}}
+
 If there is anything above, this is not the first pass and the worktree
-still holds the previous attempt, commits included. **Review feedback** is
+still holds the previous attempt, commits included. **A note that the spec
+is missing** is the pipeline's own check, after the verifier: the tasks are
+done and the ledger says so; write the spec as the note says, commit it,
+and nothing else. **Review feedback** is
 the reviewer sending the change back. It reaches you one of two ways, and
 the plan file's name tells you which: a plan file with a new pass in its name
 (\`…-rev2.md\`) means the planner rewrote the plan around the feedback, and
@@ -970,7 +975,7 @@ description: Carries out the plan file in the run's worktree, task by task and t
 model: opus
 effort: high
 executor: claude-code
-inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?]
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?, record.stdout?]
 tools: [read_file, write_file, edit_file, list_files, search_files, run_command]
 timeoutMs: 5400000
 output:
@@ -999,10 +1004,15 @@ The planner's brief, for orientation:
 
 {{inputs.acceptance.requests}}
 
+{{inputs.record.stdout}}
+
 If there is anything above, this is not the first pass and the worktree
 still holds the previous attempt, commits included: this branch was made
 for the run, so \`git log\` on it is the run's own history, one commit per
-task, each named after the task it completed. **Review feedback** is the
+task, each named after the task it completed. **A note that the spec is
+missing** is the pipeline's own check, after the verifier: the tasks are
+done and the log says so; write the spec as the note says and commit it,
+and nothing else. **Review feedback** is the
 reviewer sending the change back. It reaches you one of two ways, and the
 plan file's name tells you which: a plan file with a new pass in its name
 (\`…-rev2.md\`) means the planner rewrote the plan around the feedback, for
@@ -1373,7 +1383,7 @@ description: Makes a small, bounded change straight in the worktree — no plan 
 model: opus
 effort: medium
 executor: claude-code
-inputs: [recall.brief?, reviewer.feedback?, acceptance.requests?]
+inputs: [recall.brief?, reviewer.feedback?, acceptance.requests?, record.stdout?]
 tools: [read_file, write_file, edit_file, list_files, search_files, run_command]
 timeoutMs: 1800000
 output:
@@ -1405,13 +1415,17 @@ rather than doing it. A brief that says memory holds nothing is exactly that.
 
 {{inputs.acceptance.requests}}
 
+{{inputs.record.stdout}}
+
 If there is feedback or a request above, this is not the first pass and the worktree
 still holds the previous attempt. **Review feedback** is the reviewer
 sending the change back: it says precisely what to change, naming files.
 Check it against the code before acting on it — where it is wrong, say so
 in \`summary\` with the reason rather than doing it anyway. **Requests**
 mean the person tried the change and wants something different: those are
-the brief now, on top of the task. Both are empty on the first pass.
+the brief now, on top of the task. **A note that the spec is missing** is
+the pipeline's own check: the change is made; write the spec as the note
+says and nothing else. All are empty on the first pass.
 
 Read before you change. Find the file the task is about — by its name, by
 the text it shows, by the route or command it answers to — and read enough
@@ -1443,15 +1457,25 @@ it; a change without a test does not need a new test to ship through this
 pipeline, but a test that fails does not ship. If a check fails for a
 reason that was already there before you touched anything, say so.
 
+Then write the spec, the repository's record that this change was made:
+\`docs/specs/YYYY-MM-DD-<slug>.md\`, today's date and a short slug from the
+task, with four lines above — \`Status: done\`, \`Branch:\` this branch,
+\`Decisions: none\`, \`Design:\` the design doc you changed or "none" — then
+a \`## Task\` section holding the task as it was given and a \`## Done\`
+section saying what changed, in which files, and what was run. Half a
+page at most; it is the entry in the list of everything that was built,
+not a plan. A change you did not make gets no spec.
+
 You are already in the run's own worktree, on its own branch. Do not create
-another. Leave the change on disk, uncommitted: the pipeline diffs against
-the commit this run started from, and commits once it is reviewed. Never
-push, and never open a merge request.
+another. Leave the change on disk, uncommitted, the spec with it: the
+pipeline diffs against the commit this run started from, and commits once
+it is reviewed. Never push, and never open a merge request.
 
 Return JSON: \`summary\` is what you changed and why, in a few sentences,
-then what you ran to check it and what it showed, then every assumption you
-made and anything you refused to do and why; \`changed\` is false only if
-you deliberately made no change at all.
+then what you ran to check it and what it showed, then one line,
+\`Documents:\`, naming the spec and the design doc you touched, then every
+assumption you made and anything you refused to do and why; \`changed\` is
+false only if you deliberately made no change at all.
 `;
 
 const QUICK_REVIEWER = `---
@@ -1488,7 +1512,10 @@ no edits, no commits.
 
 Judge four things. Does it do what was asked, all of it and nothing else —
 a task that named one button and a diff that touches three is a finding,
-and so is a task the diff only half meets. Does it follow the conventions
+and so is a task the diff only half meets; the one file in the diff the
+task never named and is not a finding is the spec under \`docs/specs/\`,
+which the pipeline requires of every change, and a spec that describes a
+change other than the one in the diff is. Does it follow the conventions
 around it — the way this project sets that kind of value elsewhere, not a
 new way. Does it break anything — a call site the change did not update, a
 test that now asserts the old behaviour, a type that no longer fits. And

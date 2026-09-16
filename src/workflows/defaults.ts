@@ -240,7 +240,7 @@ nodes:
     label: Verify
     edges:
       - when: outputs.verifier.verified == true
-        to: stage
+        to: record
         label: checks green, plan met
       # Counted in verifications: three rounds of the implementer answering
       # the same gaps is a change that is not converging, and the branch is
@@ -250,6 +250,40 @@ nodes:
         label: still failing after 3 checks
       - to: implementer
         label: gaps to fix
+
+  # The one fact about the repository's record that does not need a model to
+  # judge it: a run that changed something wrote its spec. The implementer
+  # copies the finished plan to docs/specs/ as its last commit; the reviewer
+  # reads the rest of the record — the design doc, the decision — because
+  # whether those are true is a judgement. When the spec is not there the
+  # command says what to do, the implementer reads that as record.stdout and
+  # writes it, and after three asks the run ends on a terminal that says so:
+  # a spec never written is a change to be looked at, not a ceiling met.
+  - id: record
+    type: command
+    label: Is the spec there?
+    # add -N first so a spec left uncommitted is visible to the diff, as
+    # stage does for everything below; the pathspec fails harmlessly when
+    # docs/specs/ does not exist, which is the case the check is for.
+    command:
+      - sh
+      - -c
+      - >-
+        git add -N -- docs/specs 2>/dev/null;
+        if git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/specs | grep -q .;
+        then :;
+        else echo 'No spec under docs/specs/. Copy the plan file, as it stands, to docs/specs/YYYY-MM-DD-<topic>.md — date and topic from the plan file name, any -revN dropped — with Status: done, Branch:, Decisions: and Design: lines above it, and commit it as "Spec: <topic>".';
+        exit 1;
+        fi
+    edges:
+      - when: outputs.record.ok == true
+        to: stage
+        label: spec written
+      - when: visits.record >= 3
+        to: no-spec
+        label: still no spec after 3 asks
+      - to: implementer
+        label: spec missing
 
   - id: stage
     type: command
@@ -453,6 +487,11 @@ nodes:
     label: Verification never passed
     status: failed
 
+  - id: no-spec
+    type: terminal
+    label: The run wrote no spec under docs/specs
+    status: failed
+
   - id: not-shipped
     type: terminal
     label: Reviewed, but not shipped
@@ -551,8 +590,34 @@ nodes:
       - when: outputs.implementer.changed == false
         to: nothing-changed
         label: deliberately changed nothing
-      - to: stage
+      - to: record
         label: changed
+
+  # As in dev: a change that shipped left a spec. Here there is no plan to
+  # copy, so the quick implementer writes a short one — the task and what
+  # was done — and this is the check that it did.
+  - id: record
+    type: command
+    label: Is the spec there?
+    command:
+      - sh
+      - -c
+      - >-
+        git add -N -- docs/specs 2>/dev/null;
+        if git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/specs | grep -q .;
+        then :;
+        else echo 'No spec under docs/specs/. Write docs/specs/YYYY-MM-DD-<slug>.md — today, a slug from the task — with Status: done, Branch:, Decisions: none and Design: lines above a "## Task" section holding the task as given and a "## Done" section saying what changed and what was run. Leave it uncommitted with the rest.';
+        exit 1;
+        fi
+    edges:
+      - when: outputs.record.ok == true
+        to: stage
+        label: spec written
+      - when: visits.record >= 3
+        to: no-spec
+        label: still no spec after 3 asks
+      - to: implementer
+        label: spec missing
 
   - id: stage
     type: command
@@ -683,6 +748,11 @@ nodes:
   - id: review-stuck
     type: terminal
     label: Review never approved
+    status: failed
+
+  - id: no-spec
+    type: terminal
+    label: The run wrote no spec under docs/specs
     status: failed
 
   - id: not-shipped

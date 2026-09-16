@@ -102,7 +102,7 @@ What you learn becomes `command` nodes, in three places:
   git, it has to be a node. `base` stays the entry: it records the commit the
   run started from, and everything the run does — the planner's spec included
   — is diffed against it.
-- **Between the `verifier` and `stage`** — this project's real verification:
+- **Between the `verifier` and `record`** — this project's real verification:
   its test command, its typecheck, its linter, as one deterministic node each.
   The shipped verifier already finds and runs what the repository defines and
   routes its gaps back to the implementer; a command node here is the gate
@@ -110,8 +110,10 @@ What you learn becomes `command` nodes, in three places:
   whether the change reaches a reviewer at all. Route a failure back to the
   implementer with a labelled edge, and give that loop its own terminal so a
   test that never goes green ends with a reason rather than a ceiling. It goes
-  before `stage` and `diff`, so the diff the reviewers see is of a change
-  that passed.
+  before `record`, `stage` and `diff`, so the diff the reviewers see is of a
+  change that passed. `record` is the shipped check of the same kind for the
+  repository's record — that the run wrote its spec — and stays where it is;
+  your nodes lead into it, and it leads into `stage`.
 - **At the end, after `acceptance`** — the merge request. The person's
   approval stays where it is, between the commit and the push: nothing you
   add goes around it. The shipped node uses `glab` when it is installed and

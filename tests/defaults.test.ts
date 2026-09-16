@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { DEFAULT_AGENTS, ensureDefaultAgents, writeMissingDefaultAgents } from "@/agents/defaults";
+import { parseAgent } from "@/agents/loader";
 import { agentExists, agentsDir, deleteAgent, getAgent, listAgents, saveAgent } from "@/agents/registry";
 import { teamScope } from "@/lib/def-root";
 import { runWorkflow } from "@/runtime/engine";
@@ -143,8 +144,14 @@ describe("what the shipped agents declare", () => {
     expect(DEFAULT_AGENTS["super-reviewer"]).toContain("docs/design/");
     expect(DEFAULT_AGENTS.verifier).toContain("## Documentation");
     expect(DEFAULT_AGENTS["quick-implementer"]).toContain("docs/design/");
-    expect(DEFAULT_AGENTS["quick-implementer"]).not.toContain("docs/specs/");
+    expect(DEFAULT_AGENTS["quick-implementer"]).toContain("docs/specs/");
+    expect(DEFAULT_AGENTS["quick-implementer"]).not.toContain("docs/decisions/");
     expect(DEFAULT_AGENTS["quick-reviewer"]).toContain("docs/design/");
+    // The spec check is a command node, and the implementers read what it
+    // printed when it sends them back.
+    for (const id of ["implementer", "super-implementer", "quick-implementer"]) {
+      expect(parseAgent(id, DEFAULT_AGENTS[id], { sourcePath: id, updatedAt: 0 }).inputs).toContain("record.stdout?");
+    }
     expect(DEFAULT_AGENTS.recall).toContain("docs/decisions/");
     expect(DEFAULT_AGENTS.investigator).toContain("docs/decisions/");
     expect(DEFAULT_AGENTS.planner).not.toContain("superpowers");
@@ -339,14 +346,14 @@ Show {{inputs.planner.plan}} at {{inputs.planner.planFile}}
 `,
     implementer: `---
 name: Implementer
-inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?]
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, acceptance.requests?, record.stdout?]
 output:
   type: json
   schema:
     summary: string
     changed: boolean
 ---
-Do {{inputs.planner.planFile}} {{inputs.reviewer.feedback}} {{inputs.verifier.gaps}} {{inputs.acceptance.requests}}
+Do {{inputs.planner.planFile}} {{inputs.reviewer.feedback}} {{inputs.verifier.gaps}} {{inputs.acceptance.requests}} {{inputs.record.stdout}}
 `,
     verifier: `---
 name: Verifier
@@ -395,13 +402,21 @@ Try {{inputs.implementer.summary}}
   }
 
   /** The git nodes, answered rather than run: no worktree in a test. */
-  function fakeGit(opts: { staged: boolean; changed?: boolean }) {
+  function fakeGit(opts: { staged: boolean; changed?: boolean; spec?: (visit: number) => boolean }) {
     const ran: string[][] = [];
+    let specChecks = 0;
     const runCommand = async (node: { id: string; command: string[] }) => {
       ran.push(node.command);
       switch (node.id) {
         case "base":
           return { ok: true, exitCode: 0, stdout: BASE, stderr: "" };
+        case "record":
+          // The spec is there unless the test says otherwise; when it is not,
+          // the command prints what to do and fails, as the real one does.
+          specChecks += 1;
+          return (opts.spec?.(specChecks) ?? true)
+            ? { ok: true, exitCode: 0, stdout: "", stderr: "" }
+            : { ok: false, exitCode: 1, stdout: "No spec under docs/specs/. Copy the plan file", stderr: "" };
         case "diff":
           // A diff with content, or the run stops at "nothing changed".
           return { ok: true, exitCode: 0, stdout: opts.changed === false ? "" : "--- a.ts\n+++ a.ts\n", stderr: "" };
@@ -712,6 +727,36 @@ Try {{inputs.implementer.summary}}
     expect(stuck.visitCounts.reviewer ?? 0).toBe(0);
   });
 
+  it("sends the implementer back for the spec it did not write, and gives up after three", async () => {
+    const workflow = standIn();
+
+    // The verifier passed; the spec check did not. The implementer hears what
+    // the command printed, writes the spec, and the run goes on to review
+    // without verifying again.
+    const once = fakeTeam(APPROVED, SHIP, PLAN, APPROVE);
+    const { runCommand } = fakeGit({ staged: true, spec: (visit) => visit > 1 });
+    const state = await runWorkflow(workflow, { provider: once, runCommand, input: { task: "Add a thing" } });
+    expect(state.status).toBe("completed");
+    expect(state.visitCounts.record).toBe(2);
+    expect(state.visitCounts.implementer).toBe(2);
+    expect(state.visitCounts.verifier).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(1);
+    expect(once.callsFor("implementer")[1].messages[0].content).toContain("No spec under docs/specs/");
+
+    const never = fakeTeam(APPROVED, SHIP, PLAN, APPROVE);
+    const events: WorkflowEvent[] = [];
+    const stuck = await runWorkflow(workflow, {
+      provider: never,
+      runCommand: fakeGit({ staged: true, spec: () => false }).runCommand,
+      input: { task: "Add a thing" },
+      emit: (e) => events.push(e),
+    });
+    expect(stuck.status).toBe("failed");
+    expect(terminalOf(events)).toBe("no-spec");
+    expect(stuck.visitCounts.record).toBe(3);
+    expect(stuck.visitCounts.reviewer ?? 0).toBe(0);
+  });
+
   it("gives up on a review that never approves, keeping the branch", async () => {
     const workflow = standIn();
 
@@ -923,14 +968,14 @@ describe("the shipped quick pipeline", () => {
   const STANDINS: Record<string, string> = {
     "quick-implementer": `---
 name: Quick implementer
-inputs: [reviewer.feedback?, acceptance.requests?]
+inputs: [reviewer.feedback?, acceptance.requests?, record.stdout?]
 output:
   type: json
   schema:
     summary: string
     changed: boolean
 ---
-Change {{input.task}} {{inputs.reviewer.feedback}} {{inputs.acceptance.requests}}
+Change {{input.task}} {{inputs.reviewer.feedback}} {{inputs.acceptance.requests}} {{inputs.record.stdout}}
 `,
     "quick-reviewer": `---
 name: Quick reviewer
@@ -964,13 +1009,19 @@ Try {{inputs.implementer.summary}}
     return done && "terminalNodeId" in done ? done.terminalNodeId : undefined;
   }
 
-  function fakeGit(opts: { changed?: boolean } = {}) {
+  function fakeGit(opts: { changed?: boolean; spec?: (visit: number) => boolean } = {}) {
     const ran: string[][] = [];
+    let specChecks = 0;
     const runCommand = async (node: { id: string; command: string[] }) => {
       ran.push(node.command);
       switch (node.id) {
         case "base":
           return { ok: true, exitCode: 0, stdout: BASE, stderr: "" };
+        case "record":
+          specChecks += 1;
+          return (opts.spec?.(specChecks) ?? true)
+            ? { ok: true, exitCode: 0, stdout: "", stderr: "" }
+            : { ok: false, exitCode: 1, stdout: "No spec under docs/specs/. Write docs/specs/", stderr: "" };
         case "diff":
           return { ok: true, exitCode: 0, stdout: opts.changed === false ? "" : "--- a.tsx\n+++ a.tsx\n", stderr: "" };
         case "staged":
@@ -1050,6 +1101,19 @@ Try {{inputs.implementer.summary}}
     expect(mr.at(-1)).toBe("Make the save button blue");
     expect(mr[2]).toContain("glab auth status");
     expect(ran.indexOf(commit)).toBeLessThan(ran.indexOf(mr));
+  });
+
+  it("sends the quick implementer back for the spec it did not write", async () => {
+    const workflow = quick();
+    const provider = fakeTeam();
+    const { runCommand } = fakeGit({ spec: (visit) => visit > 1 });
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Make the save button blue" } });
+    expect(state.status).toBe("completed");
+    expect(state.visitCounts.record).toBe(2);
+    expect(state.visitCounts.implementer).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(1);
+    expect(provider.callsFor("implementer")[1].messages[0].content).toContain("No spec under docs/specs/");
   });
 
   it("sends a rejected review straight back to the implementer, and gives up after three", async () => {

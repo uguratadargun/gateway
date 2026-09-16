@@ -455,7 +455,10 @@ the worktree, so the plan stays on disk for the implementer, the verifier
 and the reviewer and out of the commit and the merge request; the reasoning
 it carried travels in the implementer's summary, which is the commit's body,
 and the plan itself, as finished, is copied by the implementer to
-`docs/specs/` as the run's last commit. The plan's `## Documentation`
+`docs/specs/` as the run's last commit — which `record`, a command node
+between the verifier and `stage`, checks for, sending the implementer back
+with what to write when it is not there and ending on `no-spec` after
+three asks. The plan's `## Documentation`
 section names the design doc and the decision record the change has to
 leave true under `docs/design/` and `docs/decisions/`, the implementer writes
 them as the plan's last task, and the verifier and reviewer hold the change

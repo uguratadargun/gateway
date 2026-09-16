@@ -54,14 +54,23 @@ Before the plan is shown, the planner may report that another team's
 decision cannot be lived with here; the objection is put to the person
 and, if confirmed, the run stops at `blocked-by-objection` (see
 `memory.md`). There are no engine ceilings: loops end on the workflow's
-own give-up edges — `review-stuck`, `not-verified`, `not-shipped`,
-`nothing-changed` — which say what is stuck. The starting commit is
-recorded first and every diff is taken against it, because the implementer
-commits as it goes and a plain `git diff` would show a finished run as
-empty. The plan file stays under `docs/plans/`, ignored by a `.gitignore`
-of `*`; its reasoning travels in the implementer's summary, the commit's
-body. The merge request is opened with `glab` when signed in, else with
-GitLab push options. There is no `npm ci` and no `npm test` in the graph:
+own give-up edges — `review-stuck`, `not-verified`, `no-spec`,
+`not-shipped`, `nothing-changed` — which say what is stuck. The starting
+commit is recorded first and every diff is taken against it, because the
+implementer commits as it goes and a plain `git diff` would show a finished
+run as empty. The plan file stays under `docs/plans/`, ignored by a
+`.gitignore` of `*`; its reasoning travels in the implementer's summary,
+the commit's body, and the plan itself, as finished, is copied by the
+implementer to `docs/specs/` as the run's last commit. Between the verifier
+and the diff, the `record` command node checks that the spec is there —
+the one fact about the repository's record that needs no model to judge —
+and sends the implementer back with what to write when it is not, three
+times, before the run ends on `no-spec`. The plan's `## Documentation`
+section names the design doc and the decision record the change has to
+leave true under `docs/design/` and `docs/decisions/`; the implementer
+writes them as the plan's last task, and the verifier and reviewer hold
+the change against them. The merge request is opened with `glab` when
+signed in, else with GitLab push options. There is no `npm ci` and no `npm test` in the graph:
 those are facts about one project, for `/gate:design` to add.
 
 ### The shipped pipelines
@@ -74,10 +83,14 @@ spec document, a ledger, a subagent per task, a dispatched reviewer); it is
 the only shipped pipeline that needs skills imported. **`dev-quick`** is the
 short road for a change that needs no plan — a colour, a label, a default,
 a small fix: no planner, no verifier, no skills. The quick implementer
-makes the change and runs the project's own check for the files it
-touched, the quick reviewer reads the diff itself, and the person is in it
-once, at acceptance; a task that turns out not to be small ends at
-`nothing-changed` with the reason, so it can go through `dev` instead.
+makes the change, runs the project's own check for the files it touched,
+keeps the design doc's sentence true when the behaviour it describes
+changed, and writes a short spec under `docs/specs/` — the task as given
+and what was done — which the same `record` node checks for; the quick
+reviewer reads the diff itself, and the person is in it once, at
+acceptance. A task that turns out not to be small, or that would need a
+decision record, ends at `nothing-changed` with the reason, so it can go
+through `dev` instead.
 Both roads read memory first. Two more roads build nothing. **`blame`** is
 for something that used to work: recall lists the runs, commits and
 decisions that touched the area, the investigator reads the code and the

@@ -139,13 +139,27 @@ dropped, because the spec is the plan as finished, not each pass of it. The
 directory is the list of everything that was built, in the order it was
 built, each with what "done" meant at the time.
 
+A quick change (`dev-quick`) has no plan to copy, so its spec is short: the
+same four lines, `Decisions: none`, then a `## Task` section with the task
+as it was given and a `## Done` section saying what changed and what was
+run. Half a page at most; it is the entry in the list, not a plan.
+
+Whether the spec is there is the one thing about the record the pipeline
+checks without a model: a `record` command node after the verifier looks
+for a new file under `docs/specs/` and, when there is none, sends the
+implementer back with what to write, three times, before the run ends on
+`no-spec`. Whether the design doc and the decision record are *true* is a
+judgement, and the reviewer's.
+
 ## `CHANGELOG.md` — what shipped when
 
 [Keep a Changelog](https://keepachangelog.com) form: a `## Unreleased`
 section at the top, then one `## <version> — <date>` per release, each with
 the changes under it as one line each. A release commit moves `Unreleased`
-under the new version. The line says what changed for the person using the
-product, not which file moved.
+under the new version; in gate's own repository `npm run changelog:release`
+does that from `GATE_VERSION`, and the CLI build warns when the version
+being built has no entry. The line says what changed for the person using
+the product, not which file moved.
 
 ## What the pipeline does with these
 
@@ -158,6 +172,8 @@ product, not which file moved.
   name with the record's path in the body, and, when the last task is
   committed, copies the plan to `docs/specs/` as one more commit. Its summary
   names the documents it wrote, and that line becomes part of the commit body.
+- The **record** node, a command after the verifier, checks that the spec
+  is there and sends the implementer back with what to write when it is not.
 - The **reviewer** holds the change against the documents: behaviour that
   changed while the design doc describing it did not is a finding, and so is
   a decision record with an empty section or code pasted into it.
