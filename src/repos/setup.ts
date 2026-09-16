@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -7,6 +7,7 @@ import { WorkflowError } from "@/runtime/errors";
 import { readRemoteUrl } from "@/runtime/workspace";
 
 import { detectRepoCommands, linkedDirectories, type RepoCommands } from "./detect";
+import { canonicalRepoId } from "./identity";
 import { getRepo, listRepos, setRepoRemote, setRepoStatus, type RepoRecord } from "./store";
 
 /**
@@ -64,7 +65,7 @@ export function connectRepo(source: string, id: string): ConnectResult {
   if (looksLikeUrl(trimmed)) {
     const root = join(reposDir(), id);
     if (existsSync(root)) {
-      throw new WorkflowError("WORKSPACE_ERROR", `${root} already exists; pick another id or remove it first`);
+      return { root, cloned: true, commands: detectRepoCommands(root), remoteUrl: adoptCheckout(root, trimmed) };
     }
     mkdirSync(reposDir(), { recursive: true, mode: 0o700 });
     try {
@@ -84,6 +85,119 @@ export function connectRepo(source: string, id: string): ConnectResult {
     throw new WorkflowError("WORKSPACE_ERROR", `"${trimmed}" is not a git repository`);
   }
   return { root, cloned: false, commands: detectRepoCommands(root), remoteUrl: readRemoteUrl(root) };
+}
+
+/**
+ * Take over a checkout that is already standing where this one would be cloned.
+ *
+ * Forgetting a repository now removes the checkout gate cloned, so a directory
+ * still here is one something is holding open, or one an older gate left
+ * behind — and in both cases cloning the same URL again would only reproduce
+ * the commits already in it. Refusing instead made the id unusable forever:
+ * the same repository, connected and forgotten, could never be connected back.
+ *
+ * It is taken over only when it *is* the repository being asked for, decided
+ * by its origin and not by its directory name. A directory holding anything
+ * else is still refused, because cloning into it would land this repository on
+ * top of somebody else's work. The checkout is adopted at whatever commit it
+ * stands on; the first pull moves it.
+ */
+function adoptCheckout(root: string, source: string): string | null {
+  const url = readRemoteUrl(root);
+  const here = url ? canonicalRepoId(url) : null;
+  const wanted = canonicalRepoId(source);
+  if (!here || !wanted || here !== wanted) {
+    throw new WorkflowError(
+      "WORKSPACE_ERROR",
+      `${root} already holds ${here ?? "something that is not a checkout of it"}; pick another id or remove it first`,
+    );
+  }
+  return url;
+}
+
+/**
+ * Whether two paths name the same directory, symlinks resolved.
+ *
+ * `resolve` is not enough: git answers in real paths, so on a machine where
+ * `/var` is a link to `/private/var` a checkout's own worktree did not match
+ * its root, every checkout looked held open, and nothing was ever removed.
+ * A path that does not exist cannot be resolved and is compared as written.
+ */
+function samePath(a: string, b: string): boolean {
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  return real(a) === real(b);
+}
+
+/**
+ * The worktrees a checkout is still holding open, its own excluded.
+ *
+ * A run's worktree is a real `git worktree` of the checkout, so the checkout's
+ * `.git` is the only copy of that worktree's history: remove it and the run
+ * cannot commit, publish or even say what it changed. This is what the
+ * checkout is asked before anything deletes it.
+ */
+export function heldWorktrees(root: string): string[] {
+  try {
+    const out = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+    });
+    return out
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => line.slice("worktree ".length).trim())
+      .filter((path) => path && !samePath(path, root));
+  } catch {
+    // Not a git checkout, or git cannot read it. It holds no worktree either
+    // way, and whether it may be removed is the caller's question, not this
+    // one's.
+    return [];
+  }
+}
+
+export interface CheckoutRemoval {
+  removed: boolean;
+  root: string;
+  /** Why it is still there, when it is. */
+  kept?: string;
+}
+
+/**
+ * Remove the checkout gate cloned for a repository.
+ *
+ * Only ever gate's own: a repository connected by path is somebody's working
+ * copy, and "remove from the list" is not permission to delete it. A checkout
+ * gate did clone is gate's to remove, and leaving it behind meant reconnecting
+ * the same repository failed on a directory nothing claimed any more.
+ *
+ * A checkout that still has worktrees branched from it is kept and says so.
+ * Those runs are what the `.git` is for, and `gate clean` is what ends them.
+ */
+export function removeRepoCheckout(repo: RepoRecord): CheckoutRemoval {
+  const root = repo.root;
+  if (!repo.cloned || !samePath(root, join(reposDir(), repo.id))) {
+    return { removed: false, root, kept: "gate did not clone this checkout" };
+  }
+  if (!existsSync(root)) return { removed: true, root };
+
+  const held = heldWorktrees(root);
+  if (held.length) {
+    return { removed: false, root, kept: `worktrees still branch from it: ${held.slice(0, 5).join(", ")}` };
+  }
+  try {
+    rmSync(root, { recursive: true, force: true });
+  } catch (e) {
+    return { removed: false, root, kept: (e as Error).message };
+  }
+  return { removed: true, root };
 }
 
 /**

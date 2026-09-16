@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Forgetting a repository removes the checkout gate cloned for it, so connecting the same repository again works instead of failing on a directory nothing claimed; a checkout you pointed a path at is never touched, and one a run's worktree still branches from is kept, with the worktrees holding it named.
+- A repository says whose it is on the Repos page — at connect time and on the record afterwards — which is what decides whose `gate:ask` may read it; an owner naming no team is refused instead of stored.
+
 ## 0.38.0 — 2026-09-16
 
 - Every repository keeps its design, decisions and specs as markdown under docs/, the pipeline writes and reviews them, and the recorder reads them from the run's diff.

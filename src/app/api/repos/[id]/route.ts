@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { getTeam } from "@/lib/teams";
+import { removeRepoCheckout } from "@/repos/setup";
 import { deleteRepo, getRepo, updateRepo } from "@/repos/store";
 
 export const runtime = "nodejs";
@@ -30,19 +32,34 @@ export async function GET(_req: Request, { params }: Params) {
 export async function PATCH(req: Request, { params }: Params) {
   const parsed = patchSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid patch", issues: parsed.error.issues }, { status: 400 });
+  // Null hands the repository back to nobody, which is a value. A team id that
+  // names no team is not: it would put the repository outside every asker's
+  // family, and read on the page as though it had an owner.
+  if (parsed.data.teamId && !getTeam(parsed.data.teamId)) {
+    return NextResponse.json({ error: `no team "${parsed.data.teamId}"` }, { status: 400 });
+  }
   const repo = updateRepo((await params).id, parsed.data);
   return repo ? NextResponse.json({ repo }) : NextResponse.json({ error: "not found" }, { status: 404 });
 }
 
 /**
- * Forget a repository. The checkout is left on disk even when gate cloned it:
- * a run's worktree may still be branched from it, and deleting a working tree
- * from under one is not something a "remove from the list" button should do.
+ * Forget a repository, and remove the checkout if it was gate's to remove.
+ *
+ * A checkout gate cloned goes with the record: leaving it behind made the id
+ * unusable, since reconnecting the same repository landed on a directory
+ * nothing claimed any more. A checkout somebody else's path pointed at is
+ * never touched, and neither is one a run's worktree still branches from —
+ * both cases say so rather than deleting quietly or failing.
  */
 export async function DELETE(_req: Request, { params }: Params) {
   const { id } = await params;
   const repo = getRepo(id);
   if (!repo) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const checkout = removeRepoCheckout(repo);
   deleteRepo(id);
-  return NextResponse.json({ deleted: true, checkoutLeftAt: repo.root });
+  return NextResponse.json({
+    deleted: true,
+    checkoutRemoved: checkout.removed,
+    ...(checkout.removed ? {} : { checkoutLeftAt: checkout.root, keptBecause: checkout.kept }),
+  });
 }

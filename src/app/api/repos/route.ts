@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { getTeam } from "@/lib/teams";
 import { detectRepoCommands } from "@/repos/detect";
 import { canonicalRepoId } from "@/repos/identity";
 import { connectRepo, isPathLike, runRepoSetup, slugFor } from "@/repos/setup";
@@ -58,6 +59,12 @@ export async function POST(req: Request) {
   const body = parsed.data;
   const id = body.id ?? slugFor(body.source);
   if (getRepo(id)) return NextResponse.json({ error: `a repository "${id}" is already connected` }, { status: 409 });
+  // A team nobody has is not a narrower owner, it is an unreachable one: the
+  // repository would be outside every asker's family, and nothing downstream
+  // would say why.
+  if (body.teamId && !getTeam(body.teamId)) {
+    return NextResponse.json({ error: `no team "${body.teamId}"` }, { status: 400 });
+  }
 
   try {
     const { root, cloned, commands, remoteUrl } = connectRepo(body.source, id);
