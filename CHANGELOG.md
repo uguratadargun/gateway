@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.38.0 — 2026-09-16
+
 - Every repository keeps its design, decisions and specs as markdown under docs/, the pipeline writes and reviews them, and the recorder reads them from the run's diff.
 - A `record` node after the verifier checks that the run wrote its spec, in dev and dev-quick, and sends the implementer back with what to write when it did not.
 - A quick change writes a short spec of its own: the task as given and what was done.
