@@ -67,6 +67,22 @@ try {
   // No git, a shallow clone, or a fresh repo: the check is a courtesy.
 }
 
+/**
+ * Warns when the changelog has no entry for the version being built. The
+ * release commit is meant to carry it — `npm run changelog:release` moves
+ * what is under Unreleased into a heading for GATE_VERSION — and a version
+ * that ships without one is a release nobody can read about. Advisory:
+ * mid-feature the number has moved and the entry is still being written.
+ */
+try {
+  const changelog = readFileSync(resolve(root, "CHANGELOG.md"), "utf8");
+  if (!new RegExp(`^## ${distinct[0].replace(/\./g, "\\.")}(\\s|$)`, "m").test(changelog)) {
+    console.warn(`\n⚠ CHANGELOG.md has no entry for ${distinct[0]}; \`npm run changelog:release\` moves Unreleased under it.\n`);
+  }
+} catch {
+  // No changelog: nothing to check against.
+}
+
 await build({
   entryPoints: [resolve(root, "src/client/entry.ts")],
   outfile: resolve(root, "plugins/gate/scripts/gate.mjs"),

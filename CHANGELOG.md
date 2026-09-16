@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Every repository keeps its design, decisions and specs as markdown under docs/, the pipeline writes and reviews them, and the recorder reads them from the run's diff.
+- A `record` node after the verifier checks that the run wrote its spec, in dev and dev-quick, and sends the implementer back with what to write when it did not.
+- A quick change writes a short spec of its own: the task as given and what was done.
+- `npm run changelog:release` moves what is under Unreleased into a heading for the version being released, and the CLI build warns when the version has no entry.
 
 ## 0.37.0 — 2026-09-15
 

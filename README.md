@@ -104,7 +104,10 @@ do anything.
 - *The CLI* is `/gate:update`, per machine. **Anything shipped under
   `plugins/` or `src/client/` needs a version bump** — installs are cached by
   version, and `npm run build:cli` refuses to build when `plugin.json`, the
-  marketplace entry and `GATE_VERSION` disagree. Every `/api/v1` response
+  marketplace entry and `GATE_VERSION` disagree, and warns when
+  `CHANGELOG.md` has no entry for the version being built:
+  `npm run changelog:release` moves what is under `Unreleased` into one.
+  Every `/api/v1` response
   carries the server's version and the oldest client it will serve; a client
   below the minimum is refused with the command that fixes it.
 

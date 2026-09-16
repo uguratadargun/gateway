@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "defaults:restore": "node scripts/restore-defaults.mjs",
+    "changelog:release": "node scripts/changelog-release.mjs",
     "skills:check": "node scripts/check-skills.mjs"
   },
   "dependencies": {
