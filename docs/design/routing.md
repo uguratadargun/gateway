@@ -2,21 +2,20 @@
 
 ## Summary
 
-Any Anthropic-compatible tool pointed at gate asks for a model by name, or for
-`auto`, and gate decides which Claude tier answers — Haiku, Sonnet, Opus or
-Fable — and how hard it should think, from the shape of the request. The
-decision is reported back in response headers, so a person can see why a call
-went where it went, and the whole mapping can be overridden from the dashboard
-or a file. The point is cost: most traffic is utility work that a small model
-at low effort answers as well as a large one at high, and the gateway should
-be the thing that knows that, not every client.
+Any Anthropic-compatible tool pointed at gate names the model it wants — a
+Claude model, a tier alias, or a model one of your providers serves — and gate
+serves that model. It does not pick one for you: the tool, the agent file or
+the person at the keyboard already made that choice, and gate is not better
+placed to overrule it. What gate decides is everything around the model: which
+connected account serves the call, how hard it thinks when the client did not
+say, and where to go when the answer is a rate limit.
 
 ## How it works
 
 A client is pointed at the gateway base URL and otherwise left alone:
 
 ```bash
-# Claude Code
+# Claude Code — pick your model with /model as usual
 ANTHROPIC_BASE_URL=http://localhost:4141/api/gateway claude
 
 # Anthropic SDK
@@ -25,127 +24,92 @@ new Anthropic({ baseURL: "http://localhost:4141/api/gateway", apiKey: "unused" }
 
 OpenAI SDK clients work too — point them at the same base URL and call
 `/v1/chat/completions` (translated to and from Anthropic, streaming included),
-or `/v1/responses` for Codex CLI and the newer SDKs. `/v1/models` lists what
-the connected account can actually use, fetched live from Anthropic and
-falling back to a known list when the fetch fails.
+or `/v1/responses` for Codex CLI and the newer SDKs. `/v1/models` lists the
+four tier aliases, then what the connected account can actually use, then every
+provider model — fetched live from Anthropic and falling back to a known list
+when the fetch fails.
 
-Requests to `model: "auto"` are routed by context. Every response carries
-`x-gate-model`, `x-gate-tier` and `x-gate-route-reason`; `x-gate-tokens-est`
-gives the prompt size the decision was based on, `x-gate-fallback` appears as
-`opus->sonnet` when a tier dropped after the decision, `x-gate-throttled` when
-the account's window forced a cheaper tier, and `x-gate-account` /
-`x-gate-provider` name what served the call.
+A name is resolved by trying four things in order and stopping at the first
+that answers:
 
-The route is resolved in a fixed order. An explicit `provider:<name>/<model>`
-reference always wins — the caller named an endpoint, and there is no ladder
-to second-guess it with. An explicit `claude-*` id passes through unchanged
-while `overrideExplicit` is true. An alias (`haiku`, `sonnet`, `opus`,
-`fable`, and the OpenAI-style names — `gpt-4o-mini` → haiku, `gpt-4o` →
-sonnet, `o3` → fable, and so on; keys are case-insensitive) maps straight to a
-tier. Only `auto`, or a name nothing matches, falls through to the heuristics.
-A trailing `[1m]`, which Claude Code appends to mark a 1M window, is not part
-of the id and is stripped first.
+1. An explicit `provider:<name>/<model>` reference wins outright — the caller
+   named an endpoint, and there is no ladder to second-guess it with.
+2. A concrete `claude-*` id passes through untouched. A trailing `[1m]`, which
+   Claude Code appends to mark a 1M window, is not part of the id and is
+   stripped first.
+3. An alias resolves through a name table: the four tier names, plus
+   OpenAI-style names so OpenAI clients work (`gpt-4o-mini` → haiku, `gpt-4o` →
+   sonnet, `o3` → fable, and so on; keys are case-insensitive). A tier resolves
+   to whatever concrete model that tier is pointed at, a provider model
+   included.
+4. Anything left over is a **400** that names the three forms that work.
 
-`overrideExplicit` is therefore the switch that decides whether the difficulty
-table applies to a client that names its model at all — and Claude Code is such
-a client. The dashboard carries it as **Route named models too**, worded the
-way a person thinks about it: on, a named `claude-sonnet-5` is graded and sent
-to whatever the tier below resolves to, a provider model included; off — the
-default — that name is served as asked. The stored flag is the inverse of the
-switch, because `overrideExplicit: true` means "an explicit id wins".
+There is no fifth step. `auto` is not a model, and a name gate cannot resolve
+is an error rather than an invitation to guess — a silent default would put a
+conversation on a model nobody chose, and the person would find out from the
+bill. A machine connected before 0.39 still carries `ANTHROPIC_MODEL=auto`;
+the 400 says to re-run `/gate:login`, which strips it.
 
-The heuristics classify the request into one **difficulty category** from its
-shape — the estimated prompt tokens (about four characters each), whether
-tools are present, `max_tokens`, and keyword lists checked against the last
-user message and against a *short* system prompt only (2000 characters or
-less: a title job has a small system prompt, an agent's 30K-token one mentions
-everything):
+Every response carries `x-gate-model`, `x-gate-tier` and `x-gate-route-reason`;
+`x-gate-tokens-est` reports the prompt size, `x-gate-fallback` appears as
+`opus->sonnet` when a failure moved the call to another tier, and
+`x-gate-account` / `x-gate-provider` name what served it.
 
-| Category | Fires when |
-| --- | --- |
-| `background` | no tools and `max_tokens` under 50, or a background keyword |
-| `heavy` | a heavy-intent keyword in the user's request |
-| `largeContext` | at or above `thresholds.largeContext` (180K) tokens |
-| `trivial` | no tools and at or below `thresholds.trivial` (500) tokens |
-| `agentic` | tools present |
-| `default` | everything else |
-
-Each category maps to a tier and an **effort** level. Effort is the primary
-cost lever — the API default is `high`, so *not* setting it is the expensive
-choice — and the `balanced` preset follows Anthropic's Sept-2026 guidance:
-Haiku at `low` for background and trivial traffic, Sonnet at `medium` as the
-daily driver for agentic, default and large-context work, Fable at `high` only
-for explicit heavy intent. `economy` keeps everything on Sonnet or below at
-`low`; `quality` moves the daily driver up and effort to `high`. Sonnet 5 has
-a 1M window at standard pricing, so large context stays on Sonnet; Haiku's
-window is 200K, so a prompt over `thresholds.haikuContextMax` (150K) that
-would land on Haiku is moved to Sonnet by a hard guard, and a "prompt too
-long" 400 from Haiku is retried on Sonnet by the fallback chain.
-
-The ambiguous `default` category gets a second opinion. When the classifier
-is enabled and the prompt is at least `classifier.minTokens` (300), one tiny
-Haiku call grades the last user message 1–5 on a fixed rubric — RouteLLM's
-"LLM judge", with zero training data. Only the query text is sent, clipped
-to 4000 characters, and the grade is cached by content hash for a day. The
-grade maps 1 → Haiku low, 2 → Haiku medium, 3 → Sonnet medium, 4 → Opus high,
-5 → Fable high, shifted one step easier by `economy` and one step harder by
-`quality`. The route reason then reads `graded 3/5`.
+**Effort** is the one cost lever gate still turns, and it is the right one: it
+sits ahead of model choice in Anthropic's measured order, and unlike a model
+swap it does not move a conversation into a different prompt-cache namespace.
+The precedence is the `x-gate-effort` request header, then
+`reasoning.defaultEffort` in settings — and never over a client's own setting:
+a body that already carries `thinking` or `output_config.effort` is left
+exactly as sent, because Claude Code sends its own and changing it
+mid-conversation would break its prompt cache. When gate raises effort to
+`high` or above it also lifts a small `max_tokens` to 8192, since thinking
+counts against the ceiling.
 
 Effort is applied capability-aware. Adaptive-thinking models (Fable, Opus 5,
 Sonnet 5, and the 4.6–4.8 line) take `output_config.effort`; extended-only
-models (Haiku 4.5, Sonnet 4.5) take a `thinking` budget instead, and reject
-the effort parameter outright. The precedence is the `x-gate-effort` request
-header, then the routed category's effort (or the sticky session's), then
-`reasoning.defaultEffort` in settings — and never over a client's own
-setting: a body that already carries `thinking` or `output_config.effort`
-is left exactly as sent, because Claude Code sends its own and changing it
-mid-conversation would also break its prompt cache. When gate raises effort
-to `high` or above it also lifts a small `max_tokens` to 8192, since thinking
-counts against the ceiling. Whatever the client sent is then translated to
-what the *target* model accepts — a `thinking: adaptive` block is dropped for
-Haiku, a `budget_tokens` block becomes an effort for Claude 5 — so a model
-swapped under a client does not answer 400.
+models (Haiku 4.5, Sonnet 4.5) take a `thinking` budget instead, and reject the
+effort parameter outright. Whatever the client sent is translated to what the
+*target* model accepts — a `thinking: adaptive` block is dropped for Haiku, a
+`budget_tokens` block becomes an effort for Claude 5 — so a model reached
+through a fallback does not answer 400.
 
-**Sticky sessions** keep a conversation where it is. Prompt caches are
-per-model and an effort change invalidates them, so within one session gate
-never moves *down* a tier and holds the effort it started with; an upgrade
-becomes the new baseline. The session is the `x-gate-session` or
-`x-claude-code-session-id` header, or a fingerprint of the stable prefix
-(system prompt and first user message), combined with a hash of the system
-prompt and tool names — so a Claude Code subagent, which shares the session
-header but not the system prompt or tools, gets its own baseline rather than
-inheriting its parent's tier. Background and heavy traffic are exempt, as is
-anything under `sticky.minTokens`.
+Two things still change the model after it is resolved, and both are rescues
+from a hard failure rather than choices: the tier fallback chain on a 429 or
+529, and the retry that splices Sonnet in when Haiku refuses an oversized
+prompt. Both cross a cache boundary, and a model that cannot read the previous
+turn's thinking block has it dropped silently — accepted, because the
+alternative is a failed request rather than a cheaper one.
 
-Everything above is `~/.gate/routing.json`, merged key by key over the
-defaults: `tiers` (the concrete id behind each tier), `aliases`,
-`thresholds`, `preset`, `classifier`, `sticky`, `heavyKeywords`,
-`backgroundKeywords`, `default`, `categories`, `effort` and
-`overrideExplicit`. The dashboard writes the same file and resets the
-in-process cache; a hand edit takes effect on restart.
+Everything configurable lives in `~/.gate/routing.json`, merged key by key over
+the defaults, and it is three keys: `tiers` (the concrete id behind each tier),
+`aliases`, and `default` (which tier an unrecognised provider model counts as,
+which is what selects its fallback chain — it decides nothing about which model
+answers). The dashboard writes the same file and resets the in-process cache; a
+hand edit takes effect on restart. A file written before 0.39 keeps its old
+difficulty keys on disk; the loader reads only the three it uses, so an upgrade
+needs no migration.
 
 ## Key files
 
-- `src/lib/router.ts` — the category heuristics, presets, grade mapping, alias table, `routing.json` loading, `cheaperTier`
+- `src/lib/router.ts` — name resolution, the alias table, `routing.json` loading, `UnresolvedModelError`
 - `src/lib/reasoning.ts` — effort precedence, capability detection per model, `applyReasoning` and `sanitizeForModel`
-- `src/lib/grader.ts` — the Haiku difficulty judge and its content-hash cache
 - `src/lib/models.ts` — the model catalogue behind `/v1/models`, live from Anthropic with a known-list fallback
-- `src/lib/gateway-core.ts` — `dispatch` applies routing, the grader, stickiness and effort in that order, and sets the `x-gate-*` headers
-- `src/lib/usage.ts` — `getSessionRoute` / `setSessionRoute`, the sticky baseline per session
-- `src/components/routing-rules-panel.tsx` — the dashboard form: the preset, the six categories, the model behind each tier, and the three switches
+- `src/lib/gateway-core.ts` — `dispatch` resolves the name, applies effort, picks an account, and sets the `x-gate-*` headers
+- `src/lib/clients.ts` — the connect snippets, and the login-time repair that clears a pre-0.39 `auto`
+- `src/components/routing-rules-panel.tsx` — the dashboard card: the model behind each tier
 - `src/app/api/gateway/v1/messages/route.ts`, `.../chat/completions/route.ts`, `.../responses/route.ts`, `.../models/route.ts` — the endpoints that read `x-gate-effort` and hand the body to `dispatch`
 
 ## Pitfalls
 
-- Leaving effort unset is not neutral: the API default is `high`. A category whose effort is `default` sends nothing and pays for high.
-- A client that names a concrete `claude-*` model is not routed at all by default: it never reaches the categories, so editing the difficulty table changes nothing for Claude Code until **Route named models too** is on.
-- A client that sets its own `thinking` or `output_config.effort` is never overridden — `x-gate-effort` and the category effort are ignored for it. Claude Code is such a client.
-- Keyword detection reads the last user message and only a system prompt of 2000 characters or less; a heavy keyword buried in a long agent system prompt does nothing.
-- A sticky session never goes down. One heavy request early in a conversation keeps the rest of it on that tier until the session ends; only `background` and `heavy` categories escape.
+- Leaving effort unset is not neutral: the API default is `high`. `reasoning.defaultEffort: default` sends nothing and pays for high.
+- A client that sets its own `thinking` or `output_config.effort` is never overridden — `x-gate-effort` and the settings default are ignored for it. Claude Code is such a client, so the effort lever does not reach it; set effort in Claude Code itself.
+- `model: "auto"` is a 400, not a default. A machine connected before 0.39 keeps sending it until `/gate:login` is run again.
+- A tier alias resolves through `tiers`, so pointing `tiers.haiku` at a provider model silently redirects everything that asks for `haiku`, including an agent file that says `model: haiku`.
+- Nothing guards Haiku's 200K window before the call. An oversized prompt sent to Haiku is caught only by the 400 → Sonnet retry, after Anthropic refuses it.
 - `routing.json` is cached in-process. An edit by hand is not seen until restart; the dashboard's save resets the cache, a `$EDITOR` save does not.
-- The token estimate is characters divided by four unless `routingPrecision.countTokens` is on, which costs a `count_tokens` round trip per request.
-- The grader needs a connected Claude account and spends a few hundred Haiku tokens per uncached prompt; with no account it silently returns no grade and the heuristic category stands.
+- A fallback still crosses a prompt-cache boundary and can silently drop the previous turn's reasoning. It fires only on a 429/529 or an oversized-prompt 400, but when it fires the conversation continues on another model.
 
 ## Decisions
 
-- none recorded yet
+- [0015 — The gateway resolves names, never difficulty](../decisions/0015-the-gateway-resolves-names-never-difficulty.md)

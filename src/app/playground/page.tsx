@@ -17,7 +17,7 @@ interface Msg {
 export default function Playground() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [model, setModel] = useState("auto");
+  const [model, setModel] = useState("sonnet");
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -122,7 +122,6 @@ export default function Playground() {
           onChange={(e) => setModel(e.target.value)}
           className="h-10 rounded-md border border-input bg-transparent px-2 text-sm"
         >
-          <option value="auto">auto</option>
           <option value="haiku">haiku</option>
           <option value="sonnet">sonnet</option>
           <option value="opus">opus</option>

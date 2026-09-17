@@ -12,12 +12,6 @@ const effort = z.enum(["default", "none", "low", "medium", "high", "xhigh", "max
 const perTier = <T extends z.ZodTypeAny>(v: T) =>
   z.object({ haiku: v, sonnet: v, opus: v, fable: v }).partial();
 
-/** Object keyed by routing category with every key optional. */
-const perCategory = <T extends z.ZodTypeAny>(v: T) =>
-  z
-    .object({ background: v, trivial: v, agentic: v, largeContext: v, heavy: v, default: v })
-    .partial();
-
 export const settingsPatchSchema = z
   .object({
     compression: z
@@ -59,7 +53,6 @@ export const settingsPatchSchema = z
     throttle: z
       .object({
         enabled: z.boolean(),
-        downgradeAt: z.number().min(0).max(1),
         blockAt: z.number().min(0).max(1),
       })
       .partial(),
@@ -69,7 +62,6 @@ export const settingsPatchSchema = z
         maxRateLimitWaitMs: z.number().int().min(0).max(60_000),
       })
       .partial(),
-    routingPrecision: z.object({ countTokens: z.boolean() }).partial(),
     memory: z
       .object({
         enabled: z.boolean(),
@@ -94,22 +86,7 @@ export const routingPatchSchema = z
   .object({
     tiers: perTier(z.string().min(1).max(200)),
     aliases: z.record(z.string().min(1).max(100), z.string().min(1).max(200)),
-    thresholds: z
-      .object({
-        largeContext: z.number().int().min(1),
-        trivial: z.number().int().min(0),
-        haikuContextMax: z.number().int().min(1000).max(200_000),
-      })
-      .partial(),
-    heavyKeywords: z.array(z.string().min(1).max(200)).max(200),
-    backgroundKeywords: z.array(z.string().min(1).max(200)).max(200),
     default: tier,
-    categories: perCategory(tier),
-    effort: perCategory(effort),
-    preset: z.enum(["economy", "balanced", "quality"]),
-    classifier: z.object({ enabled: z.boolean(), minTokens: z.number().int().min(0).max(100_000) }).partial(),
-    sticky: z.object({ enabled: z.boolean(), minTokens: z.number().int().min(0).max(1_000_000) }).partial(),
-    overrideExplicit: z.boolean(),
   })
   .partial()
   .strict();

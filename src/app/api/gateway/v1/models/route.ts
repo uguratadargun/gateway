@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 /**
  * Model list in a shape both Anthropic and OpenAI SDKs accept. Lists the gate
- * tier aliases first (auto/haiku/sonnet/opus/fable), then the account's models,
+ * tier aliases first (haiku/sonnet/opus/fable), then the account's models,
  * then every provider model — so a client can name one directly rather than
  * going through a tier.
  */
@@ -34,7 +34,6 @@ export async function GET(req: Request) {
     owned_by,
   });
   const data = [
-    entry("auto", "gate"),
     ...Object.keys(cfg.tiers).map((t) => entry(t, "gate")),
     ...models.map((m) => entry(m, "anthropic")),
     ...fromProviders.flat().map((m) => entry(m.ref, m.owner)),

@@ -50,7 +50,7 @@ export function detectClients(baseUrl: string): ClientInfo[] {
       configPath: CLAUDE_SETTINGS,
       configured: claudeEnv.ANTHROPIC_BASE_URL === anthropicBase,
       canApply: true,
-      snippet: `# one-off\nANTHROPIC_BASE_URL=${anthropicBase} ANTHROPIC_MODEL=auto ANTHROPIC_SMALL_FAST_MODEL=haiku claude\n\n# persistent (~/.claude/settings.json) — "auto" lets gate route by difficulty;\n# a concrete model id would bypass routing.\n{ "env": {\n  "ANTHROPIC_BASE_URL": "${anthropicBase}",\n  "ANTHROPIC_MODEL": "auto",\n  "ANTHROPIC_SMALL_FAST_MODEL": "haiku",\n  "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"\n},\n  "modelPicker": { "options": [ { "model": "auto", "label": "Auto (gate)", "behavesAs": "claude-sonnet-5" } ] }\n}`,
+      snippet: `# one-off\nANTHROPIC_BASE_URL=${anthropicBase} claude\n\n# persistent (~/.claude/settings.json) — pick your model with /model as usual;\n# gate serves the one you name.\n{ "env": {\n  "ANTHROPIC_BASE_URL": "${anthropicBase}"\n} }`,
     },
     {
       id: "cursor",
@@ -59,7 +59,7 @@ export function detectClients(baseUrl: string): ClientInfo[] {
       configPath: null,
       configured: false,
       canApply: false,
-      snippet: `Cursor → Settings → Models → OpenAI API Key:\n  Override OpenAI Base URL: ${openaiBase}\n  API key: <a gate key, or any text if none issued>\nThen add model names: auto, haiku, sonnet, opus, fable`,
+      snippet: `Cursor → Settings → Models → OpenAI API Key:\n  Override OpenAI Base URL: ${openaiBase}\n  API key: <a gate key, or any text if none issued>\nThen add model names: haiku, sonnet, opus, fable`,
     },
     {
       id: "cline",
@@ -68,7 +68,7 @@ export function detectClients(baseUrl: string): ClientInfo[] {
       configPath: null,
       configured: false,
       canApply: false,
-      snippet: `Cline → API Provider: Anthropic\n  Use custom base URL: ${anthropicBase}\n  API key: <gate key or any text>\n  Model: auto (or haiku/sonnet/opus/fable)`,
+      snippet: `Cline → API Provider: Anthropic\n  Use custom base URL: ${anthropicBase}\n  API key: <gate key or any text>\n  Model: haiku, sonnet, opus or fable`,
     },
     {
       id: "opencode",
@@ -77,7 +77,7 @@ export function detectClients(baseUrl: string): ClientInfo[] {
       configPath: opencodeCfg,
       configured: false,
       canApply: false,
-      snippet: `// ${opencodeCfg}\n{\n  "provider": {\n    "gate": {\n      "npm": "@ai-sdk/anthropic",\n      "options": { "baseURL": "${anthropicBase}", "apiKey": "gate" },\n      "models": { "auto": {}, "sonnet": {}, "opus": {}, "fable": {} }\n    }\n  }\n}`,
+      snippet: `// ${opencodeCfg}\n{\n  "provider": {\n    "gate": {\n      "npm": "@ai-sdk/anthropic",\n      "options": { "baseURL": "${anthropicBase}", "apiKey": "gate" },\n      "models": { "haiku": {}, "sonnet": {}, "opus": {}, "fable": {} }\n    }\n  }\n}`,
     },
     {
       id: "codex",
@@ -86,7 +86,7 @@ export function detectClients(baseUrl: string): ClientInfo[] {
       configPath: codexCfg,
       configured: false,
       canApply: false,
-      snippet: `# ${codexCfg}\nmodel_provider = "gate"\nmodel = "auto"\n\n[model_providers.gate]\nname = "gate"\nbase_url = "${openaiBase}"\nwire_api = "responses"\nenv_key = "GATE_API_KEY"   # export GATE_API_KEY=<gate key or any text>`,
+      snippet: `# ${codexCfg}\nmodel_provider = "gate"\nmodel = "sonnet"\n\n[model_providers.gate]\nname = "gate"\nbase_url = "${openaiBase}"\nwire_api = "responses"\nenv_key = "GATE_API_KEY"   # export GATE_API_KEY=<gate key or any text>`,
     },
   ];
 }
@@ -104,29 +104,20 @@ export function applyClaudeCode(baseUrl: string, apiKey?: string): { ok: true; b
   }
   const env = { ...((cfg.env as Record<string, string> | undefined) ?? {}) };
   env.ANTHROPIC_BASE_URL = anthropicBase;
-  // Claude Code always sends a concrete model id, which gate passes through
-  // untouched; "auto" is what makes its traffic go through difficulty routing.
-  env.ANTHROPIC_MODEL = "auto";
+  // gate serves the model Claude Code names; it does not pick one. A machine
+  // connected before 0.39 still carries the old "auto" wiring, which gate now
+  // refuses — clear it here so re-connecting repairs it.
+  if (env.ANTHROPIC_MODEL === "auto") delete env.ANTHROPIC_MODEL;
+  if (env.CLAUDE_CODE_MAX_CONTEXT_TOKENS === "1000000") delete env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
   env.ANTHROPIC_SMALL_FAST_MODEL = "haiku";
-  // "auto" is not in Claude Code's model catalog; without this it assumes a
-  // 200K window for auto-compact. Sonnet/Opus/Fable all have 1M.
-  env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "1000000";
   if (apiKey) env.ANTHROPIC_AUTH_TOKEN = apiKey;
   cfg.env = env;
-  // Offer "auto" in Claude Code's /model picker. `behavesAs` gives an unknown
-  // model id the client-side profile of a known one (context window, effort
-  // defaults) without changing the id that is sent — gate still routes it.
-  const picker = (cfg.modelPicker as Record<string, unknown> | undefined) ?? {};
-  const options = (Array.isArray(picker.options) ? (picker.options as Array<Record<string, unknown>>) : []).filter(
-    (row) => row.model !== "auto",
-  );
-  options.unshift({
-    model: "auto",
-    label: "Auto (gate)",
-    description: "gate routes each request to Haiku/Sonnet/Opus/Fable by difficulty",
-    behavesAs: "claude-sonnet-5",
-  });
-  cfg.modelPicker = { ...picker, options };
+  const picker = cfg.modelPicker as Record<string, unknown> | undefined;
+  if (picker && Array.isArray(picker.options)) {
+    const rest = (picker.options as Array<Record<string, unknown>>).filter((row) => row.model !== "auto");
+    if (rest.length) cfg.modelPicker = { ...picker, options: rest };
+    else delete cfg.modelPicker;
+  }
   writeFileSync(CLAUDE_SETTINGS, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
   return { ok: true, backup };
 }

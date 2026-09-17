@@ -47,8 +47,9 @@ describe("GateModelProvider", () => {
     expect(body).toMatchObject({ model: "sonnet", system: "you are a tester", messages: [{ role: "user", content: "run it" }] });
     expect(opts.stream).toBe(false);
     expect(opts.effortHeader).toBe("low");
-    // Per-node sticky key: a node revisited in a loop keeps its model and cache.
-    expect(opts.session.stickyKey).toBe("workflow:exec1:tester");
+    // The run is one session for cost attribution; the node's model comes from
+    // the agent that names it, so there is nothing per-node to carry here.
+    expect(opts.session.id).toBe("workflow:exec1");
   });
 
   it("raises MODEL_EXECUTION_ERROR on an upstream failure", async () => {

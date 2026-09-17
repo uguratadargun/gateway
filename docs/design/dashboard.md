@@ -47,8 +47,8 @@ differs from what was loaded. It PUTs those keys alone; the routing and settings
 endpoints both merge a patch key by key, so a card never writes a field it does
 not render, and one panel cannot put back a stale copy of another's. A write
 that fails says so next to the button rather than flashing "Saved" regardless.
-The home page carries three such cards for routing, six for settings, and one
-for account rotation.
+The home page carries one such card for the model behind each tier, six for
+settings, and one for account rotation.
 
 ### Where a panel's rules live
 
@@ -60,8 +60,8 @@ went through it (`gateway-pipeline.md`); executions are runs and their steps
 definitions a run uses (`workflows-engine.md`, `agents-and-skills.md`); and
 repos, team, memory and tasks are the rest (`workspaces.md`,
 `teams-and-keys.md`, `telegram.md`, `memory.md`). The playground sends its
-prompt through the gateway exactly as any client would, so what it shows is the
-real routing.
+prompt through the gateway exactly as any client would, so what it shows is
+what a real client would get.
 
 ### Live updates
 

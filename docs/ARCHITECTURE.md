@@ -2,9 +2,9 @@
 
 gate is a personal Claude gateway with a team's development pipeline on top of
 it. One or more Claude Code OAuth logins are connected, plus any other model
-endpoint you have; any Anthropic-compatible tool is pointed at the gate, and
-each request goes to the right model at the right effort based on the
-prompt's shape. On the same gateway, a team keeps agents, workflows and skills,
+endpoint you have; any Anthropic-compatible tool is pointed at the gate, names
+the model it wants, and gets it — served by whichever account still has window,
+at the effort the client asked for. On the same gateway, a team keeps agents, workflows and skills,
 runs multi-agent pipelines against its repositories from Claude Code, and
 records what each run decided so the next run reads it before planning.
 
@@ -29,18 +29,18 @@ belongs to a team, and can be revoked on its own.
    OAuth token, presenting the request shape the `claude_code` scope requires.
    OpenAI-dialect clients call `/v1/chat/completions` on the same base URL and
    are translated both ways, streaming included.
-3. **Routing.** Each request is classified into a difficulty category from its
-   shape, then mapped to a model tier and an effort level. Effort is the
-   primary cost lever; a session never moves down a tier once it has one.
-   → `design/routing.md`
+3. **Model resolution.** The name the caller sent is resolved to an endpoint:
+   a provider model, a concrete `claude-*` id, or a tier alias. gate never
+   picks a model the caller did not name, and a name it cannot resolve is a
+   400. Effort is the one cost lever it still turns. → `design/routing.md`
 4. **Account pool.** With more than one login connected, a rate-limited account
-   is parked until its window resets and the next one takes over before any
-   tier is downgraded. → `design/account-pool.md`
+   is parked until its window resets and the next one takes over.
+   → `design/account-pool.md`
 5. **Providers.** A tier or an agent can point at something that is not a
    Claude account: a model on your machine, or a hosted endpoint.
    → `design/providers.md`
 
-Between routing and the provider sits the pipeline every request goes
+Between resolution and the provider sits the pipeline every request goes
 through: cache, compression, the limiter, in-flight tracking, budget, usage
 and traffic logging. → `design/gateway-pipeline.md`
 
@@ -75,8 +75,8 @@ and traffic logging. → `design/gateway-pipeline.md`
   behind an admin session. → `design/dashboard.md`
 
 Every model call a workflow makes goes through `executeMessages` in-process,
-so routing, effort, prompt caching, budget, throttling and traffic logging
-apply exactly as they do for any other client.
+so model resolution, effort, prompt caching, budget, quota protection and
+traffic logging apply exactly as they do for any other client.
 
 ## Invariants
 
@@ -139,7 +139,7 @@ upgrade.
 ## Files
 
 - `src/lib/claude/` — OAuth config, PKCE, token flow, Claude Code identity headers
-- `src/lib/router.ts` — context-aware model routing
+- `src/lib/router.ts` — model name resolution: provider refs, concrete ids, tier aliases
 - `src/lib/accounts.ts` / `account-pool.ts` / `token-manager.ts` — the account pool: sealed token store, selection strategies, cooldowns, per-account refresh
 - `src/lib/providers.ts` / `provider-exec.ts` / `anthropic-openai.ts` — non-Claude endpoints in both dialects: the Anthropic↔OpenAI translation, and the Anthropic-dialect forward
 - `src/lib/seal.ts` / `store.ts` — AES-256-GCM sealing; the credential shape and the pre-pool file reader

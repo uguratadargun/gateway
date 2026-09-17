@@ -26,9 +26,6 @@ export class GateModelProvider implements ModelProvider {
       session: {
         id: executionId ? `workflow:${executionId}` : null,
         title: req.context?.workflowId ? `workflow: ${req.context.workflowId}` : null,
-        // Each node keeps its own routing baseline, so a node revisited in a
-        // loop stays on the same model and reuses its prompt cache.
-        stickyKey: executionId && req.context?.nodeId ? `workflow:${executionId}:${req.context.nodeId}` : null,
       },
       requestPreview: JSON.stringify(body),
       signal: req.signal,

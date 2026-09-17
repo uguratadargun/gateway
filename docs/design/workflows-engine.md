@@ -44,10 +44,11 @@ Continue, so a run that hit a declared ceiling halts again at once.
 
 Cancellation is checked before every node and inside an agent's tool loop;
 the upstream request is really aborted and a command node's child is killed.
-Every model call goes through `executeMessages` in-process, so routing,
-effort, prompt caching, budget, throttling and traffic logging apply exactly
-as for any other client, and each node keeps its own sticky routing baseline,
-so a node revisited in a loop stays on its model and reuses its prompt cache.
+Every model call goes through `executeMessages` in-process, so model
+resolution, effort, prompt caching, budget, quota protection and traffic
+logging apply exactly as for any other client. A node runs on the model its
+agent names, so a node revisited in a loop stays on that model and reuses its
+prompt cache.
 
 ### Running branches in parallel
 

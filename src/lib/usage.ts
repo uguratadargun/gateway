@@ -101,23 +101,6 @@ function costOf(rows: ModelAgg[]): number {
   return rows.reduce((sum, r) => sum + costOfModel(r.model, usageOf(r)), 0);
 }
 
-// ---- Sticky sessions (model + effort held stable for prompt-cache hits) ----
-
-export function getSessionRoute(id: string): { tier: string | null; effort: string | null } | null {
-  const row = getDb().prepare("SELECT base_tier, effort FROM sessions WHERE id = ?").get(id);
-  if (!row) return null;
-  return { tier: row.base_tier ?? null, effort: row.effort ?? null };
-}
-
-export function setSessionRoute(id: string, tier: string, effort: string | null): void {
-  const now = Date.now();
-  getDb()
-    .prepare(
-      "INSERT INTO sessions (id, title, first_ts, last_ts, base_tier, effort) VALUES (?,NULL,?,?,?,?) ON CONFLICT(id) DO UPDATE SET base_tier = excluded.base_tier, effort = excluded.effort, last_ts = excluded.last_ts",
-    )
-    .run(id, now, now, tier, effort);
-}
-
 /** Total est. cost (USD) spent today and this calendar month. O(models), not O(rows). */
 export function getSpend(): { today: number; month: number } {
   const now = new Date();

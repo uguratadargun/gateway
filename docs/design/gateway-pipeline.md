@@ -4,7 +4,7 @@
 
 Every model call that reaches gate — from Claude Code, an SDK, an OpenAI
 client, or a workflow node running in-process — goes through one pipeline: it
-is authenticated, routed, trimmed, cached where it can be, held to a
+is authenticated, resolved to a model, trimmed, cached where it can be, held to a
 concurrency ceiling, sent upstream with retries and fallbacks, and then
 accounted for in usage, spend, the traffic log and the live activity feed. A
 person sees the outcome as response headers on the call and as dashboards
@@ -28,24 +28,23 @@ person attached and answer as the default team.
 
 **Session.** The conversation is identified from `x-gate-session` or
 `x-claude-code-session-id`, or from a fingerprint of the system prompt and
-first user message, so that cost can be grouped per session on `/sessions`
-and routing can stay sticky within one.
+first user message, so that cost can be grouped per session on `/sessions`.
 
 **Compression.** With `compression.enabled` (off by default), oversized text
 blocks are trimmed to `maxBlockChars` (20 000) and exact-duplicate adjacent
 blocks dropped before anything else reads the body.
 
-**Routing.** The request is classified and mapped to a tier and an effort;
-optionally with an exact `count_tokens` reading (`routingPrecision.countTokens`),
-optionally with a Haiku difficulty grade for the ambiguous middle, and then
-held to the session's sticky baseline. Effort is written onto the body,
-capability-aware, unless the client set its own. See `routing.md`.
+**Model resolution.** The name the caller sent is resolved to an endpoint — a
+provider reference, a concrete `claude-*` id, or a tier alias — and a name that
+resolves to none of those is a 400. gate never substitutes a model the caller
+did not name. Effort is then written onto the body, capability-aware, unless
+the client set its own. See `routing.md`.
 
 **Account and throttle.** For a Claude model the pool picks an account by the
 configured strategy (see `account-pool.md`). The throttle then reads that
-account's 5h utilization: at `throttle.downgradeAt` (0.85) the route drops
-one tier and the response carries `x-gate-throttled: 1`; at
-`throttle.blockAt` (0.98) the account is skipped and the next one tried. When
+account's 5h utilization: at `throttle.blockAt` (0.98) the account is skipped
+and the next one tried. It never changes the model — a cheaper tier on a live
+conversation costs more than it saves. When
 none is left the request is refused with a 429 that says it is gate's, not
 Anthropic's, names how many accounts it tried, and carries a `Retry-After`
 from the window reset. A provider model skips this step entirely.
@@ -93,7 +92,7 @@ retries against its endpoint and the same chain when it is down.
 tee feeds the accounting after the response is sent. The headers set on the
 way out are `x-gate-model`, `x-gate-tier`, `x-gate-route-reason`,
 `x-gate-tokens-est`, and when they apply `x-gate-fallback`,
-`x-gate-throttled`, `x-gate-budget`, `x-gate-session`, `x-gate-account`,
+`x-gate-budget`, `x-gate-session`, `x-gate-account`,
 `x-gate-provider`, `x-gate-cache`.
 
 **Accounting.** Once the body is complete its usage block is parsed —
@@ -108,7 +107,7 @@ rows kept, local only) and an activity event for the SSE live tail on
 a budget check stays O(1) in request count.
 
 ```
-request ─ auth ─ session ─ compress ─ route ─ account+throttle ─ prompt-cache ─ budget
+request ─ auth ─ session ─ compress ─ resolve ─ account+throttle ─ prompt-cache ─ budget
         ─ response-cache? ─ limiter ─ upstream (retry · rotate · fallback) ─ headers
         ─ stream to client ─┬─ usage · traffic · activity · cache store
 ```
@@ -138,8 +137,8 @@ request ─ auth ─ session ─ compress ─ route ─ account+throttle ─ pro
 - A `warn` budget never refuses anything; only `block` does. The header is the only sign.
 - The limiter is per process. Two gate processes on one account have twice the ceiling.
 - Usage for a streamed reply is written after the response finishes, via `after()`. A request that is cut off mid-stream leaves no usage row, and the concurrency slot is held until the tee drains.
-- Costs are API-list equivalents. On a subscription the real cost is flat; the numbers drive routing decisions and "savings", not an invoice.
-- A throttle downgrade and a fallback both change the model after routing; `x-gate-model` is what was actually used, `x-gate-route-reason` is why the original tier was chosen.
+- Costs are API-list equivalents. On a subscription the real cost is flat; the numbers are for comparison, not an invoice.
+- A fallback changes the model after resolution; `x-gate-model` is what was actually used, `x-gate-route-reason` is how the requested name resolved.
 - Compression is lossy by design (blocks are trimmed) and off by default. Turning it on changes prompts and therefore prompt-cache hits.
 
 ## Decisions

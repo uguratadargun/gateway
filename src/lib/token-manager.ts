@@ -65,8 +65,8 @@ export async function forceRefreshFor(accountId: string): Promise<StoredCredenti
 }
 
 /**
- * The account gate's own utility calls use — token counting, the difficulty
- * grader, the model catalogue, the health probe. These are not client traffic,
+ * The account gate's own utility calls use — token counting, the model
+ * catalogue, the health probe. These are not client traffic,
  * so they take the highest-priority enabled account and ignore pool rotation.
  */
 export function preferredAccount(): Account | null {

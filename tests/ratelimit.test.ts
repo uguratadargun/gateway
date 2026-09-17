@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { currentUtilization, forecastRateLimit, readRateLimit, recordRateLimit } from "@/lib/ratelimit";
-import { cheaperTier, loadRoutingConfig, routeModel } from "@/lib/router";
+import { routeModel } from "@/lib/router";
 
 describe("rate limit tracking", () => {
   it("captures raw headers, utilization, and epoch-second resets", () => {
@@ -41,26 +41,11 @@ describe("rate limit tracking", () => {
   });
 });
 
-describe("adaptive thinking + throttle helpers", () => {
-  it("has per-category effort defaults and exposes the category on routes", () => {
-    const cfg = loadRoutingConfig();
-    expect(cfg.effort.heavy).toBe("high");
-    expect(cfg.effort.trivial).toBe("low");
-    const r = routeModel("auto", { messages: [{ role: "user", content: "think hard about it" }] });
-    expect(r.category).toBe("heavy");
-    expect(routeModel("claude-opus-5", { messages: [] }).category).toBeNull();
-  });
-
-  it("walks down the tier ladder", () => {
-    expect(cheaperTier("fable")).toBe("opus");
-    expect(cheaperTier("opus")).toBe("sonnet");
-    expect(cheaperTier("sonnet")).toBe("haiku");
-    expect(cheaperTier("haiku")).toBeNull();
-  });
-
-  it("honours a tokenOverride for thresholds", () => {
-    const r = routeModel("auto", { messages: [{ role: "user", content: "short" }] }, { tokenOverride: 500_000 });
+describe("token estimate", () => {
+  it("reports a tokenOverride instead of the estimate", () => {
+    const r = routeModel("sonnet", { messages: [{ role: "user", content: "short" }] }, { tokenOverride: 500_000 });
+    expect(r.tokens).toBe(500_000);
+    // Reported only — the size of a prompt no longer moves it anywhere.
     expect(r.tier).toBe("sonnet");
-    expect(r.reason).toContain("large context");
   });
 });

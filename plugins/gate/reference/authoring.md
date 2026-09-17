@@ -248,15 +248,20 @@ new. See the diff node in the shape below — it is not optional.
 
 ## Models — who answers
 
-`model:` takes three forms. A tier alias (`sonnet`) is resolved per run by the
-router, which is what you want unless the node has a reason to pin one. A
-concrete `claude-*` id pins it. And `provider:<name>/<model>` sends the node to
-one of the endpoints configured under **Providers** on the dashboard — an
-Ollama or vLLM on the machine, or a hosted one like Z.AI's GLM.
+`model:` takes three forms. A tier alias (`sonnet`) resolves to whatever that
+tier is pointed at on the dashboard, which is what you want unless the node has
+a reason to pin one. A concrete `claude-*` id pins it. And
+`provider:<name>/<model>` sends the node to one of the endpoints configured
+under **Providers** on the dashboard — an Ollama or vLLM on the machine, or a
+hosted one like Z.AI's GLM.
 
-A provider model is not a way out of the system: it is routed, metered, logged
-and counted against the run's budget exactly like a Claude call, because it
-still goes through gate. What changes is the bill — a provider model costs
+Whichever form you use, that is the model the node runs on. gate serves the
+name it is given and never picks a different one, so this line is the only
+place a node's model is decided.
+
+A provider model is not a way out of the system: it is metered, logged and
+counted against the run's budget exactly like a Claude call, because it still
+goes through gate. What changes is the bill — a provider model costs
 nothing on the Anthropic account.
 
 With `executor: claude-code`, the child's model aliases are pinned to that same

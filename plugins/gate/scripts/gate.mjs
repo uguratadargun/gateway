@@ -7850,7 +7850,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.38.0";
+var GATE_VERSION = "0.39.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -7895,9 +7895,8 @@ var DEFAULT_SETTINGS = {
   promptCache: { enabled: true, ttl: "5m" },
   plugin: { source: process.env.GATE_PLUGIN_SOURCE?.trim() || PLUGIN_MARKETPLACE },
   concurrency: { maxInFlight: 4, queueTimeoutMs: 6e4 },
-  throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
+  throttle: { enabled: true, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5e3 },
-  routingPrecision: { countTokens: false },
   memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5 },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.

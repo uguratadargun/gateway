@@ -19,9 +19,8 @@ interface Settings {
   reasoning: { defaultEffort: "default" | "low" | "medium" | "high" | "xhigh" | "max" };
   promptCache: { enabled: boolean; ttl: "5m" | "1h" };
   concurrency: { maxInFlight: number; queueTimeoutMs: number };
-  throttle: { enabled: boolean; downgradeAt: number; blockAt: number };
+  throttle: { enabled: boolean; blockAt: number };
   retry: { maxRetries: number; maxRateLimitWaitMs: number };
-  routingPrecision: { countTokens: boolean };
   memory: { enabled: boolean; model: string; embeddings: { provider: string; model: string }; consolidateEvery: number };
   plugin: { source: string };
 }
@@ -92,7 +91,7 @@ const OWNS = {
   quota: ["throttle", "budget"],
   reliability: ["concurrency", "retry", "fallback"],
   memory: ["memory"],
-  precision: ["routingPrecision", "reasoning"],
+  precision: ["reasoning"],
   plugin: ["plugin"],
 } as const satisfies Record<string, readonly (keyof Settings)[]>;
 
@@ -231,7 +230,7 @@ export function SettingsPanel() {
         <Group icon={Gauge} title="Quota protection" description="What happens as the window and the budget fill." {...groupProps("quota")}>
           <div className="pb-2">
             <Row>
-              <Head label="Rate-limit throttle" hint="Downgrade tier, then block, as the 5h window fills." />
+              <Head label="Rate-limit throttle" hint="Park an account, then block, as the 5h window fills." />
               <Switch
                 checked={s.throttle.enabled}
                 onCheckedChange={(v) => setS({ ...s, throttle: { ...s.throttle, enabled: v } })}
@@ -239,14 +238,8 @@ export function SettingsPanel() {
             </Row>
             {s.throttle.enabled && (
               <Row>
-                <Label className="text-xs text-muted-foreground">Downgrade at / block at (%)</Label>
+                <Label className="text-xs text-muted-foreground">Block at (%)</Label>
                 <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    className="h-8 w-20"
-                    value={Math.round(s.throttle.downgradeAt * 100)}
-                    onChange={(e) => setS({ ...s, throttle: { ...s.throttle, downgradeAt: Number(e.target.value) / 100 } })}
-                  />
                   <Input
                     type="number"
                     className="h-8 w-20"
@@ -388,19 +381,10 @@ export function SettingsPanel() {
           </div>
         </Group>
 
-        <Group icon={Route} title="Routing precision" description="How carefully a request is sized and how hard it thinks." {...groupProps("precision")}>
-          <div className="pb-2">
-            <Row>
-              <Head label="Exact token routing" hint="Use count_tokens for thresholds (one extra call)." />
-              <Switch
-                checked={s.routingPrecision.countTokens}
-                onCheckedChange={(v) => setS({ ...s, routingPrecision: { countTokens: v } })}
-              />
-            </Row>
-          </div>
+        <Group icon={Route} title="Reasoning effort" description="How hard a model thinks when the client does not say." {...groupProps("precision")}>
           <div className="pt-2">
             <Row>
-              <Head label="Fallback reasoning effort" hint="Used when routing rules don't set one." />
+              <Head label="Default reasoning effort" hint="Used unless the client sets its own or sends x-gate-effort." />
               <Select
                 value={s.reasoning.defaultEffort}
                 onChange={(e) =>

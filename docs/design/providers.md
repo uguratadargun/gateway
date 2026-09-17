@@ -5,7 +5,7 @@
 A provider is any model endpoint that is not one of the connected Claude
 accounts: Ollama, vLLM, LM Studio or llama.cpp on the person's own machine, or
 a hosted service like Z.AI. Once added, its models appear as
-`provider:<name>/<model>` in every model picker — a routing tier, an agent, or
+`provider:<name>/<model>` in every model picker — a tier slot, an agent, or
 a client naming one directly — and a request that lands on one is still
 routed, logged and counted the same as a Claude call, while putting nothing
 on the Anthropic bill.
@@ -66,7 +66,7 @@ separates them. The prefix used to be `local:`, which was never true of a
 hosted endpoint. Both parse, forever: a `routing.json` or an agent written
 before the rename keeps resolving, and is canonicalised to `provider:` on the
 way through. Which tier a provider model counts as is whichever tier slot it
-was configured into, and the routing default when it is in none — that is
+was configured into, and `routing.json`'s `default` when it is in none — that is
 what the fallback chain uses.
 
 Whether the traffic leaves the network is a separate fact from the dialect.
@@ -140,8 +140,8 @@ Practical notes:
 - A request to a provider model needs no Claude account at all; the account
   pool and throttle are skipped for it.
 - `count_tokens` is never asked for a provider model — Anthropic cannot count
-  for a model it does not serve — so routing uses the local estimate.
-- You can also address one directly, without touching routing:
+  for a model it does not serve — so the reported token count is the local estimate.
+- You can also address one directly, without putting it in a tier:
   `model: "provider:ollama/qwen3-coder"`.
 
 ## Key files
@@ -163,7 +163,7 @@ Practical notes:
 - `openai-compat` drops thinking blocks on the way out; an agent that relies on visible reasoning across turns will not get it from a translated provider.
 - Streaming through `openai-compat` reports zero tokens if the server ignores `stream_options.include_usage`; the request still succeeds, it is just unmetered.
 - A provider model in a tier slot inherits that slot's fallback chain. `tiers.haiku` on an Ollama that is off means every trivial request drops to Sonnet on a Claude account until it is back.
-- The `provider:` reference is a routing decision, not a bypass: budget, concurrency, traffic logging and the response cache all still apply.
+- The `provider:` reference names an endpoint, it is not a bypass: budget, concurrency, traffic logging and the response cache all still apply.
 - The header comment in `providers.ts` still describes the `local:` spelling; the code canonicalises to `provider:`.
 
 ## Decisions

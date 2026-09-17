@@ -34,13 +34,15 @@ done, only the packaging was wrong. An answer cut off by the output ceiling is
 reported as `AGENT_OUTPUT_TRUNCATED`, not as bad formatting; raise `maxTokens`
 for agents that return long output.
 
-`model` is a tier alias the router resolves per run, a concrete `claude-*` id
-that pins it, or `provider:<name>/<model>` for a configured provider.
+`model` is a tier alias gate resolves to whatever that tier points at, a
+concrete `claude-*` id, or `provider:<name>/<model>` for a configured provider.
+Whichever form it takes, the agent file is where the choice is made: gate
+serves the model named here and never substitutes another.
 `executor` is a separate axis and every combination is valid: `gate` is the
 built-in loop, where gate holds the conversation and serves its own tools;
 `claude-code` hands the node to a headless Claude Code in the worktree,
-pointed at this gate's own gateway, so routing, metering and the run budget
-are unaffected. `tools` names what the agent may invoke, in the vocabulary
+pointed at this gate's own gateway, so metering and the run budget are
+unaffected. `tools` names what the agent may invoke, in the vocabulary
 of its executor — gate's own `read_file`, `list_files`, `search_files`,
 `write_file`, `edit_file`, `run_command`, plus `memory_search` and
 `memory_feature`, or Claude Code's `Read`, `Edit`, `Grep`, `Bash`. For a

@@ -5,7 +5,7 @@
 A person connects one or more Claude logins to gate, and every request is
 served by one of them. With a single login gate is a proxy; with a second it
 becomes a pool: an account that hits its rate limit is parked until its window
-resets and the next one takes over, before any tier is downgraded. The
+resets and the next one takes over, on the same model. The
 dashboard shows every account's quota windows live, and each response says
 which login served it.
 
@@ -119,7 +119,7 @@ has never been polled at all is filled in, the same rule the dashboard follows.
 - `src/lib/claude/oauth.ts`, `src/lib/claude/pkce.ts`, `src/lib/claude/config.ts` — the PKCE login, the public Claude Code client id, the endpoints and pinned CLI versions
 - `src/lib/claude/identity.ts` — the request shape the `claude_code` scope requires
 - `src/lib/claude/usage.ts` — the usage-endpoint poll, its backoff and its 429 pause
-- `src/lib/gateway-core.ts` — `dispatch` picks the account and applies the throttle; `sendWithFallback` walks the pool before the tier chain; `captureQuota` writes each reply's headers back to the row
+- `src/lib/gateway-core.ts` — `dispatch` picks the account and applies the quota ceiling; `sendWithFallback` walks the pool before the tier chain; `captureQuota` writes each reply's headers back to the row
 - `src/lib/ratelimit.ts` — the global snapshot and forecast, fed history only for a single-account pool
 
 ## Pitfalls

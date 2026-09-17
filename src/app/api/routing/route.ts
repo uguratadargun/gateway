@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { NextResponse } from "next/server";
 
-import { loadRoutingConfig, resetRoutingCache, routeModel } from "@/lib/router";
+import { loadRoutingConfig, resetRoutingCache } from "@/lib/router";
 import { routingPatchSchema } from "@/lib/schemas";
 
 export const runtime = "nodejs";
@@ -29,21 +29,10 @@ export async function PUT(req: Request) {
     ...current,
     ...patch,
     tiers: { ...current.tiers, ...patch.tiers },
-    thresholds: { ...current.thresholds, ...patch.thresholds },
-    categories: { ...current.categories, ...patch.categories },
-    effort: { ...current.effort, ...patch.effort },
-    classifier: { ...current.classifier, ...patch.classifier },
-    sticky: { ...current.sticky, ...patch.sticky },
+    aliases: { ...current.aliases, ...patch.aliases },
   };
   if (!existsSync(GATE_DIR)) mkdirSync(GATE_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(ROUTING_FILE, JSON.stringify(merged, null, 2), { mode: 0o600 });
   resetRoutingCache();
   return NextResponse.json(loadRoutingConfig());
-}
-
-/** Dry-run: given a request body, show which model it would route to. */
-export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
-  const requested = typeof body?.model === "string" ? body.model : undefined;
-  return NextResponse.json(routeModel(requested, body ?? {}));
 }

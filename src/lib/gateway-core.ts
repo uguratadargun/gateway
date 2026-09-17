@@ -25,20 +25,18 @@ import { applyClaudeCodeIdentity } from "./claude/identity";
 import { checkBudget } from "./budget";
 import { cacheGet, cacheKey, cacheSet } from "./cache";
 import { compressBody } from "./compress";
-import { countTokens } from "./count-tokens";
-import { gradeDifficulty } from "./grader";
 import { coalesce } from "./inflight";
 import { getLimiter } from "./limiter";
 import { sendToProvider } from "./provider-exec";
 import { getProviderByName, parseProviderRef, type ProviderModelRef } from "./providers";
 import { applyPromptCaching } from "./prompt-cache";
 import { currentUtilization, readRateLimit, recordRateLimit } from "./ratelimit";
-import { applyReasoning, normalizeEffort, sanitizeForModel, type Effort } from "./reasoning";
-import { cheaperTier, gradeToRoute, loadRoutingConfig, routeModel, TIER_RANK, type RouteResult } from "./router";
+import { applyReasoning, sanitizeForModel } from "./reasoning";
+import { loadRoutingConfig, routeModel, UnresolvedModelError, type RouteResult } from "./router";
 import { loadSettings, type Tier } from "./settings";
 import { forceRefreshFor, getValidCredentialsFor } from "./token-manager";
 import { recordTraffic, truncatePreview } from "./traffic";
-import { getSessionRoute, recordUsage, setSessionRoute } from "./usage";
+import { recordUsage } from "./usage";
 
 const FALLBACK_STATUSES = new Set([429, 529]);
 
@@ -83,17 +81,6 @@ function textOf(content: unknown): string {
   return "";
 }
 
-function lastUserText(body: Record<string, unknown>): string {
-  const messages = Array.isArray(body.messages) ? (body.messages as Array<Record<string, unknown>>) : [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
-      const t = textOf(messages[i].content).trim();
-      if (t) return t;
-    }
-  }
-  return "";
-}
-
 /**
  * Identify the conversation this request belongs to: an explicit session header
  * (Claude Code sends X-Claude-Code-Session-Id) or a fingerprint of the stable
@@ -103,13 +90,6 @@ export interface SessionInfo {
   /** Conversation id for grouping/cost attribution (header or prompt fingerprint). */
   id: string | null;
   title: string | null;
-  /**
-   * Key for sticky routing. A prompt cache is keyed by tools → system →
-   * messages, so a Claude Code subagent (same session header, different
-   * system prompt and tools) shares no cache with its parent and must get its
-   * own baseline instead of inheriting the parent's tier.
-   */
-  stickyKey: string | null;
 }
 
 export function sessionFromRequest(headers: Headers, body: Record<string, unknown>): SessionInfo {
@@ -119,20 +99,13 @@ export function sessionFromRequest(headers: Headers, body: Record<string, unknow
   const title = firstText ? firstText.slice(0, 80) : null;
 
   const sys = textOf(body.system).slice(0, 4000);
-  const toolNames = Array.isArray(body.tools)
-    ? (body.tools as Array<Record<string, unknown>>).map((t) => String(t.name ?? "")).join(",")
-    : "";
-  const prefixHash = createHash("sha256").update(`${sys}\n\n${toolNames}`).digest("hex").slice(0, 12);
 
   const explicit = headers.get("x-gate-session") || headers.get("x-claude-code-session-id");
-  if (explicit && explicit.trim()) {
-    const id = explicit.trim().slice(0, 64);
-    return { id, title, stickyKey: `${id}:${prefixHash}` };
-  }
+  if (explicit && explicit.trim()) return { id: explicit.trim().slice(0, 64), title };
 
-  if (!sys && !firstText) return { id: null, title, stickyKey: null };
+  if (!sys && !firstText) return { id: null, title };
   const id = createHash("sha256").update(`${sys.slice(0, 2000)}\n\n${firstText.slice(0, 500)}`).digest("hex").slice(0, 16);
-  return { id, title, stickyKey: `${id}:${prefixHash}` };
+  return { id, title };
 }
 
 // ---- Upstream send: refresh, retries, account rotation, tier fallback -------
@@ -567,7 +540,6 @@ export type Dispatch =
       usedModel: string;
       usedTier: Tier;
       requested: string;
-      throttled: boolean;
       headers: Headers;
       /** Record usage/traffic/activity for the finished response; releases the concurrency slot. */
       finalize: (text: string, contentType: string, extra?: { responsePreview?: string }) => ParsedUsage | Promise<ParsedUsage>;
@@ -576,8 +548,9 @@ export type Dispatch =
     };
 
 /**
- * compress → route → adaptive reasoning → throttle → prompt-cache → budget →
- * hooks → concurrency slot → send (refresh/retry/fallback) → gate headers.
+ * compress → resolve the model name → adaptive reasoning → account → prompt-cache
+ * → budget → hooks → concurrency slot → send (refresh/retry/fallback) → gate
+ * headers.
  */
 export async function dispatch(
   body: Record<string, unknown>,
@@ -590,61 +563,27 @@ export async function dispatch(
 
   compressBody(body);
 
-  // Routing (optionally with exact token counts).
-  const cfg = loadRoutingConfig();
-  let tokenOverride: number | undefined;
-  if (settings.routingPrecision.countTokens) {
-    const preliminary = routeModel(requested, body);
-    tokenOverride = (await countTokens(body, preliminary.model)) ?? undefined;
-  }
-  let route = routeModel(requested, body, { tokenOverride });
-  let categoryEffort: Effort | null = route.category ? normalizeEffort(cfg.effort[route.category]) : null;
-
-  // LLM difficulty judge for the ambiguous middle (RouteLLM-style). Only the
-  // query text is graded; the grade is cached by content hash.
-  if (cfg.classifier.enabled && route.category === "default" && route.tokens >= cfg.classifier.minTokens) {
-    const grade = await gradeDifficulty(lastUserText(body));
-    if (grade != null) {
-      const g = gradeToRoute(grade, cfg);
-      route = { ...route, tier: g.tier, model: cfg.tiers[g.tier], reason: `graded ${grade}/5` };
-      categoryEffort = g.effort;
-    }
-  }
-
-  // Sticky session: prompt caches are per-model and effort changes invalidate
-  // them, so within a conversation we never move *down* and we hold effort.
-  // Background traffic (separate small prompts) and explicit heavy escalations
-  // are exempt; upgrades become the new baseline.
-  const stickyKey = opts.session.stickyKey;
-  const sticky =
-    cfg.sticky.enabled &&
-    !!stickyKey &&
-    route.category !== null &&
-    route.category !== "background" &&
-    route.category !== "heavy" &&
-    route.tokens >= cfg.sticky.minTokens;
-  if (sticky) {
-    const prev = getSessionRoute(stickyKey!);
-    if (prev?.tier && prev.tier in TIER_RANK && TIER_RANK[prev.tier as Tier] > TIER_RANK[route.tier]) {
-      const t = prev.tier as Tier;
-      route = { ...route, tier: t, model: cfg.tiers[t], reason: `${route.reason} (sticky ${t})` };
-    }
-    if (prev?.effort) categoryEffort = normalizeEffort(prev.effort);
-    if (!prev?.tier || TIER_RANK[route.tier] > TIER_RANK[prev.tier as Tier]) {
-      setSessionRoute(stickyKey!, route.tier, categoryEffort);
-    }
+  // Name resolution. gate resolves what the caller asked for; it never picks a
+  // model the caller did not name, so a live conversation keeps its prompt
+  // cache (caches are per-model, with no escape hatch).
+  let route: RouteResult;
+  try {
+    route = routeModel(requested, body);
+  } catch (err) {
+    if (err instanceof UnresolvedModelError) return { ok: false, response: jsonError(400, err.message) };
+    throw err;
   }
   body.model = route.model;
 
-  // Effort (capability-aware): the primary cost lever.
-  applyReasoning(body, opts.effortHeader, categoryEffort, route.model);
+  // Effort (capability-aware): the primary cost lever, and the only one gate
+  // still turns. A client that sets its own is never overridden.
+  applyReasoning(body, opts.effortHeader, null, route.model);
 
   // Which login serves this request, and whether its 5h window still has room.
   // A route that already points at a provider model needs no Claude account.
   const pool = listAccounts();
   const poolConfig = settings.accountPool;
   let account: Account | null = null;
-  let throttled = false;
 
   if (!parseProviderRef(route.model)) {
     if (pool.length === 0) {
@@ -669,15 +608,6 @@ export async function dispatch(
       }
       account = pick.account;
       if (pick.commit) touchAccountUse(pick.commit.accountId, pick.commit.consecutiveUseCount);
-      if (util != null && util >= settings.throttle.downgradeAt) {
-        const lower = cheaperTier(route.tier);
-        if (lower) {
-          route = { ...route, tier: lower, model: cfg.tiers[lower], reason: `${route.reason} (throttled ${Math.round(util * 100)}%)` };
-          body.model = route.model;
-          throttled = true;
-          publishActivity({ ts: Date.now(), kind: "throttle", tier: lower, note: `downgraded to ${lower} at ${Math.round(util * 100)}%` });
-        }
-      }
       break;
     }
 
@@ -753,7 +683,6 @@ export async function dispatch(
   headers.set("x-gate-route-reason", route.reason);
   headers.set("x-gate-tokens-est", String(route.tokens));
   if (usedTier !== route.tier) headers.set("x-gate-fallback", `${route.tier}->${usedTier}`);
-  if (throttled) headers.set("x-gate-throttled", "1");
   if (budget.exceeded && budget.mode === "warn") headers.set("x-gate-budget", "exceeded");
   if (opts.session.id) headers.set("x-gate-session", opts.session.id);
   // Ids, not labels: a header must stay ASCII and a label is user-editable.
@@ -820,7 +749,6 @@ export async function dispatch(
     usedModel,
     usedTier,
     requested,
-    throttled,
     headers,
     finalize,
     release: () => {

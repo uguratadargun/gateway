@@ -2,9 +2,9 @@
 
 A personal Claude gateway. Connect one or more Claude Code OAuth logins — plus
 any other model endpoint you have, on your machine or hosted — then point any
-Anthropic-compatible tool at it and each request goes to the right model (Haiku
-/ Sonnet / Opus / Fable, a local model, or a GLM on Z.AI) based on the prompt's
-context. On top of it, a team keeps its agents, workflows and skills, runs
+Anthropic-compatible tool at it and name the model you want (Haiku / Sonnet /
+Opus / Fable, a local model, or a GLM on Z.AI) — gate serves it, from whichever
+login still has window. On top of it, a team keeps its agents, workflows and skills, runs
 multi-agent pipelines against its repositories from Claude Code, and records
 what each run decided so the next run reads it first. Dashboard built with
 Next.js + shadcn/ui.
@@ -59,8 +59,10 @@ ANTHROPIC_BASE_URL=http://localhost:4141/api/gateway claude
 new Anthropic({ baseURL: "http://localhost:4141/api/gateway", apiKey: "unused" })
 ```
 
-Requests to `model: "auto"` are routed by context. Response headers
-`x-gate-model`, `x-gate-tier`, and `x-gate-route-reason` report the decision.
+Name a model, a tier alias (`haiku`, `sonnet`, `opus`, `fable`) or a provider
+model (`provider:<name>/<model>`); a name gate cannot resolve is a 400. Response
+headers `x-gate-model`, `x-gate-tier`, and `x-gate-route-reason` report what it
+resolved to.
 
 OpenAI SDK clients work too — point them at the same base URL and call
 `/v1/chat/completions` (translated to/from Anthropic, streaming included).
@@ -84,8 +86,8 @@ The features, by design doc:
 
 | The gateway | The team layer |
 | --- | --- |
-| [Routing](docs/design/routing.md) — which model, at what effort, and why | [Teams and keys](docs/design/teams-and-keys.md) — a key is a person on a team |
-| [Account pool](docs/design/account-pool.md) — more than one login, rotated before any tier drops | [Agents and skills](docs/design/agents-and-skills.md) — the two file formats a team writes |
+| [Routing](docs/design/routing.md) — how a model name resolves, and at what effort | [Teams and keys](docs/design/teams-and-keys.md) — a key is a person on a team |
+| [Account pool](docs/design/account-pool.md) — more than one login, rotated on the same model | [Agents and skills](docs/design/agents-and-skills.md) — the two file formats a team writes |
 | [Providers](docs/design/providers.md) — endpoints that are not Claude, in both dialects | [Workflows and the engine](docs/design/workflows-engine.md) — the YAML graph, and the engine that walks it |
 | [The request pipeline](docs/design/gateway-pipeline.md) — cache, compression, limiter, budget, traffic | [Workspaces](docs/design/workspaces.md) — a run's own worktree and tools |
 | | [Executions](docs/design/executions.md) — every run recorded, with what it cost |

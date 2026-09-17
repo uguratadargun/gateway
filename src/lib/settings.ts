@@ -63,8 +63,6 @@ export interface GateSettings {
   /** Soft protection as the 5h rate-limit window fills (utilization 0..1). */
   throttle: {
     enabled: boolean;
-    /** At/above this utilization, route one tier cheaper. */
-    downgradeAt: number;
     /** At/above this utilization, refuse with 429 until reset. */
     blockAt: number;
   };
@@ -72,10 +70,6 @@ export interface GateSettings {
   retry: {
     maxRetries: number;
     maxRateLimitWaitMs: number;
-  };
-  /** Use Anthropic's count_tokens for exact routing thresholds (extra call). */
-  routingPrecision: {
-    countTokens: boolean;
   };
   /**
    * The memory layer: a finished run is read by the recorder, which writes
@@ -137,9 +131,8 @@ export const DEFAULT_SETTINGS: GateSettings = {
   promptCache: { enabled: true, ttl: "5m" },
   plugin: { source: process.env.GATE_PLUGIN_SOURCE?.trim() || PLUGIN_MARKETPLACE },
   concurrency: { maxInFlight: 4, queueTimeoutMs: 60_000 },
-  throttle: { enabled: true, downgradeAt: 0.85, blockAt: 0.98 },
+  throttle: { enabled: true, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
-  routingPrecision: { countTokens: false },
   memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5 },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
@@ -179,7 +172,6 @@ export interface SettingsPatch {
   concurrency?: Partial<GateSettings["concurrency"]>;
   throttle?: Partial<GateSettings["throttle"]>;
   retry?: Partial<GateSettings["retry"]>;
-  routingPrecision?: Partial<GateSettings["routingPrecision"]>;
   memory?: Partial<Omit<GateSettings["memory"], "embeddings">> & { embeddings?: Partial<GateSettings["memory"]["embeddings"]> };
   accountPool?: Partial<GateSettings["accountPool"]>;
 }
@@ -213,7 +205,6 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
     concurrency: { ...base.concurrency, ...patch.concurrency },
     throttle: { ...base.throttle, ...patch.throttle },
     retry: { ...base.retry, ...patch.retry },
-    routingPrecision: { ...base.routingPrecision, ...patch.routingPrecision },
     memory: {
       enabled: patch.memory?.enabled ?? base.memory.enabled,
       model: patch.memory?.model?.trim() || base.memory.model,

@@ -3,14 +3,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { canonicalModelRef, parseProviderRef } from "./providers";
-import { normalizeEffort, type Effort } from "./reasoning";
 
 /**
- * Context-aware model router.
+ * Model name resolution.
  *
- * Picks the concrete Claude model to serve a request from the request's shape:
- * explicit alias mapping first, then heuristics over context size, tool use, and
- * intent keywords. Rules are overridable via ~/.gate/routing.json.
+ * gate resolves the name a client asked for into a concrete endpoint — a
+ * provider reference, a concrete `claude-*` id, or a tier alias. It does not
+ * infer which model *should* answer: the caller declares that, and the caller
+ * knows better. A name that resolves to nothing is an error, not an invitation
+ * to guess. See docs/decisions/0015.
  */
 
 export type Tier = "haiku" | "sonnet" | "opus" | "fable";
@@ -20,96 +21,13 @@ export interface RoutingConfig {
   tiers: Record<Tier, string>;
   /** Alias → concrete model (or tier name). Case-insensitive keys. */
   aliases: Record<string, string>;
-  /** Approx token thresholds. */
-  thresholds: {
-    /** At or above this many estimated tokens, escalate to the large-context tier. */
-    largeContext: number;
-    /** At or below this many tokens with no tools, downgrade to the cheap tier. */
-    trivial: number;
-    /** Haiku's window is 200K; never send it more than this. */
-    haikuContextMax: number;
-  };
-  /** Cost/quality dial (RouteLLM-style threshold): shifts the grader mapping. */
-  preset: RoutingPreset;
-  /** LLM difficulty grader for the ambiguous "default" category. */
-  classifier: { enabled: boolean; minTokens: number };
-  /** Keep model + effort stable within a session (prompt caches are per-model). */
-  sticky: { enabled: boolean; minTokens: number };
-  /** Lowercased substrings that force the top tier when found in the prompt. */
-  heavyKeywords: string[];
-  /** Lowercased system/prompt substrings that mark cheap utility traffic. */
-  backgroundKeywords: string[];
-  /** Default tier when no rule fires. */
+  /**
+   * Which tier an unrecognised provider model counts as. It decides nothing
+   * about which model answers — only which fallback chain applies when the
+   * model is in no tier slot at all.
+   */
   default: Tier;
-  /**
-   * Which tier serves each difficulty category. This is the user-facing
-   * "which model for which difficulty" mapping.
-   */
-  categories: Record<RouteCategory, Tier>;
-  /** Reasoning effort per difficulty category (see reasoning.ts). */
-  effort: Record<RouteCategory, RouteEffort>;
-  /**
-   * When true — the default — an explicit concrete `claude-*` model is passed
-   * through untouched, and no tier mapping applies to it. Set it false to route
-   * those requests like any other: a client that names its model, Claude Code
-   * among them, then goes through the aliases and the difficulty heuristics.
-   * The name reads backwards; it is kept because live `routing.json` files
-   * carry the key.
-   */
-  overrideExplicit: boolean;
 }
-
-export type RouteEffort = Effort;
-export type RoutingPreset = "economy" | "balanced" | "quality";
-
-/**
- * Presets = the cost/quality dial. Balanced follows Anthropic's Sept-2026
- * guidance for an efficiency-first gateway: Sonnet as the daily driver at
- * medium effort, Haiku for utility traffic at low, the top tier only for
- * explicit heavy intent. Quality moves the daily driver up; Economy keeps
- * everything on Sonnet or below.
- */
-export const PRESETS: Record<RoutingPreset, { categories: Record<RouteCategory, Tier>; effort: Record<RouteCategory, RouteEffort> }> = {
-  economy: {
-    categories: { background: "haiku", trivial: "haiku", agentic: "sonnet", default: "sonnet", largeContext: "sonnet", heavy: "opus" },
-    effort: { background: "low", trivial: "low", agentic: "low", default: "low", largeContext: "low", heavy: "medium" },
-  },
-  balanced: {
-    categories: { background: "haiku", trivial: "haiku", agentic: "sonnet", default: "sonnet", largeContext: "sonnet", heavy: "fable" },
-    effort: { background: "low", trivial: "low", agentic: "medium", default: "medium", largeContext: "medium", heavy: "high" },
-  },
-  quality: {
-    categories: { background: "haiku", trivial: "sonnet", agentic: "opus", default: "sonnet", largeContext: "sonnet", heavy: "fable" },
-    effort: { background: "low", trivial: "medium", agentic: "high", default: "high", largeContext: "high", heavy: "xhigh" },
-  },
-};
-
-export const TIER_RANK: Record<Tier, number> = { haiku: 0, sonnet: 1, opus: 2, fable: 3 };
-
-/**
- * Map a 1–5 difficulty grade (from the Haiku judge) to a tier + effort, shifted
- * by the preset: Economy grades one step easier, Quality one step harder.
- */
-export function gradeToRoute(grade: number, cfg: RoutingConfig): { tier: Tier; effort: RouteEffort } {
-  const bias = cfg.preset === "economy" ? -1 : cfg.preset === "quality" ? 1 : 0;
-  const g = Math.max(1, Math.min(5, Math.round(grade) + bias));
-  const table: Record<number, { tier: Tier; effort: RouteEffort }> = {
-    1: { tier: "haiku", effort: "low" },
-    2: { tier: "haiku", effort: "medium" },
-    3: { tier: "sonnet", effort: "medium" },
-    4: { tier: "opus", effort: "high" },
-    5: { tier: "fable", effort: "high" },
-  };
-  return table[g];
-}
-
-export type RouteCategory =
-  | "background"
-  | "trivial"
-  | "agentic"
-  | "largeContext"
-  | "heavy"
-  | "default";
 
 const DEFAULT_CONFIG: RoutingConfig = {
   tiers: {
@@ -139,34 +57,8 @@ const DEFAULT_CONFIG: RoutingConfig = {
     sonnet: "sonnet",
     opus: "opus",
     fable: "fable",
-    // "auto" is a sentinel: fall through to context-based heuristics.
-    auto: "auto",
   },
-  thresholds: { largeContext: 180_000, trivial: 500, haikuContextMax: 150_000 },
-  preset: "balanced",
-  classifier: { enabled: true, minTokens: 300 },
-  sticky: { enabled: true, minTokens: 2000 },
-  // Only explicit intent phrases. Generic words ("step by step", "prove",
-  // "architect" — which also matches "architecture") leaked ordinary prompts
-  // onto the top tier with maximum thinking.
-  heavyKeywords: ["think hard", "think deeply", "ultrathink", "deep dive"],
-  backgroundKeywords: [
-    "generate a title",
-    "conversation title",
-    "one-line summary",
-    "short summary",
-    "summarize this",
-    "suggest a name",
-  ],
   default: "sonnet",
-  // Best practice: cheapest model that does the job, escalating by difficulty
-  // (haiku → sonnet → opus → fable). Sonnet 5 has a 1M window at standard
-  // pricing, so large context stays on Sonnet; only Haiku (200K) needs a guard.
-  categories: { ...PRESETS.balanced.categories },
-  // Effort is the main cost lever (API default is `high`): low for utility
-  // traffic, medium as the daily driver, high only for explicit heavy intent.
-  effort: { ...PRESETS.balanced.effort },
-  overrideExplicit: true,
 };
 
 let cached: RoutingConfig | null = null;
@@ -176,17 +68,15 @@ export function loadRoutingConfig(): RoutingConfig {
   const file = process.env.GATE_ROUTING_FILE || join(process.env.GATE_HOME || join(homedir(), ".gate"), "routing.json");
   if (existsSync(file)) {
     try {
+      // A file written before 0.39 carries keys that no longer exist
+      // (categories, thresholds, presets). Reading only what we still use
+      // leaves them in place and inert rather than failing the load.
       const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<RoutingConfig>;
       cached = {
         ...DEFAULT_CONFIG,
-        ...parsed,
         tiers: { ...DEFAULT_CONFIG.tiers, ...parsed.tiers },
         aliases: { ...DEFAULT_CONFIG.aliases, ...parsed.aliases },
-        thresholds: { ...DEFAULT_CONFIG.thresholds, ...parsed.thresholds },
-        categories: { ...DEFAULT_CONFIG.categories, ...parsed.categories },
-        effort: normalizeEffortMap({ ...DEFAULT_CONFIG.effort, ...parsed.effort }),
-        classifier: { ...DEFAULT_CONFIG.classifier, ...parsed.classifier },
-        sticky: { ...DEFAULT_CONFIG.sticky, ...parsed.sticky },
+        default: parsed.default ?? DEFAULT_CONFIG.default,
       };
       return cached;
     } catch {
@@ -202,10 +92,21 @@ export function resetRoutingCache(): void {
   cached = null;
 }
 
-function normalizeEffortMap(m: Record<string, unknown>): Record<RouteCategory, RouteEffort> {
-  const out = {} as Record<RouteCategory, RouteEffort>;
-  for (const k of Object.keys(m) as RouteCategory[]) out[k] = normalizeEffort(m[k]);
-  return out;
+/**
+ * A model name gate cannot resolve. Carried to the caller as a 400: guessing
+ * would put a conversation on a model nobody chose.
+ */
+export class UnresolvedModelError extends Error {
+  constructor(readonly requested: string) {
+    super(
+      `gate cannot resolve the model "${requested}". Name a concrete model ` +
+        `(claude-opus-5), a tier alias (haiku, sonnet, opus, fable), or a ` +
+        `provider model (provider:<name>/<model>). ` +
+        `If your client is still configured with "auto", re-run /gate:login to ` +
+        `clear it, or pick a model with /model — gate no longer chooses one for you.`,
+    );
+    this.name = "UnresolvedModelError";
+  }
 }
 
 /** Rough token estimate: ~4 chars/token over the serialized prompt payload. */
@@ -219,41 +120,11 @@ function estimateTokens(body: Record<string, unknown>): number {
   return Math.ceil(chars / 4);
 }
 
-function lastUserText(body: Record<string, unknown>): string {
-  const msgs = body.messages;
-  if (!Array.isArray(msgs)) return "";
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i] as Record<string, unknown>;
-    if (m?.role !== "user") continue;
-    const c = m.content;
-    if (typeof c === "string") return c;
-    if (Array.isArray(c)) {
-      return c
-        .map((b) => (b && typeof b === "object" && typeof (b as any).text === "string" ? (b as any).text : ""))
-        .join(" ");
-    }
-  }
-  return "";
-}
-
-function systemText(body: Record<string, unknown>): string {
-  const sys = body.system;
-  if (typeof sys === "string") return sys;
-  if (Array.isArray(sys)) {
-    return sys
-      .map((b) => (b && typeof b === "object" && typeof (b as any).text === "string" ? (b as any).text : ""))
-      .join(" ");
-  }
-  return "";
-}
-
 export interface RouteResult {
   model: string;
   tier: Tier;
   reason: string;
-  /** Difficulty category that drove the decision; null for explicit/alias routes. */
-  category: RouteCategory | null;
-  /** Estimated (or exact, when count_tokens is on) prompt tokens. */
+  /** Estimated (or exact, when count_tokens is on) prompt tokens. Reported only. */
   tokens: number;
 }
 
@@ -270,7 +141,8 @@ function tierToModel(cfg: RoutingConfig, tier: Tier): string {
 
 /**
  * Resolve the model to use for a request. `requested` is the `model` field from
- * the incoming payload (may be an alias, a tier name, or a concrete model).
+ * the incoming payload: a provider reference, a concrete `claude-*` id, or an
+ * alias. Anything else throws {@link UnresolvedModelError}.
  */
 export function routeModel(
   requested: string | undefined,
@@ -283,98 +155,47 @@ export function routeModel(
   const reqLower = req.toLowerCase();
   const tokens = opts.tokenOverride ?? estimateTokens(body);
 
-  // 1. An explicit local reference always wins: the caller named a specific
-  //    endpoint, and there is no tier ladder to second-guess it with.
+  // 1. An explicit provider reference always wins: the caller named a specific
+  //    endpoint, and there is no ladder to second-guess it with.
   if (parseProviderRef(req)) {
     return {
       model: canonicalModelRef(req),
       tier: inferTier(cfg, req),
       reason: "explicit provider model",
-      category: null,
       tokens,
     };
   }
 
-  // 2. Explicit concrete Claude model → pass through unless configured otherwise.
-  if (cfg.overrideExplicit && reqLower.startsWith("claude-")) {
-    return { model: req, tier: inferTier(cfg, req), reason: "explicit model", category: null, tokens };
+  // 2. A concrete Claude model passes through untouched. Prompt caches are
+  //    per-model with no escape hatch, so swapping one under a live
+  //    conversation costs more than it saves.
+  if (reqLower.startsWith("claude-")) {
+    return { model: req, tier: inferTier(cfg, req), reason: "explicit model", tokens };
   }
 
-  // 3. Alias mapping.
+  // 3. Alias mapping — a name table, not a judgement.
   const alias = cfg.aliases[reqLower];
-  if (alias && alias !== "auto") {
+  if (alias) {
     if (alias in cfg.tiers) {
-      return { model: tierToModel(cfg, alias as any), tier: alias as any, reason: `alias:${reqLower}`, category: null, tokens };
+      return { model: tierToModel(cfg, alias as Tier), tier: alias as Tier, reason: `alias:${reqLower}`, tokens };
     }
     if (alias.toLowerCase().startsWith("claude-") || parseProviderRef(alias)) {
       return {
         model: canonicalModelRef(alias),
         tier: inferTier(cfg, alias),
         reason: `alias:${reqLower}`,
-        category: null,
         tokens,
       };
     }
   }
 
-  // 4. Heuristic routing: classify the request into a difficulty category, then
-  //    map that category to the tier the user configured for it.
-  const text = lastUserText(body).toLowerCase();
-  const sysText = systemText(body).toLowerCase();
-  const hasTools = Array.isArray(body.tools) && (body.tools as unknown[]).length > 0;
-  const maxTokens = Number(body.max_tokens ?? body.max_completion_tokens ?? 0);
-
-  // Keyword detection looks at the user's request and at *short* system
-  // prompts only: a dedicated title/summary job has a small system prompt,
-  // while an agent's 30k-token system prompt mentions everything.
-  const sysForKeywords = sysText.length <= 2000 ? sysText : "";
-  const isBackground =
-    (!hasTools && maxTokens > 0 && maxTokens < 50) ||
-    cfg.backgroundKeywords.some((k) => sysForKeywords.includes(k) || text.includes(k));
-  const heavy = cfg.heavyKeywords.some((k) => text.includes(k));
-
-  let category: RouteCategory;
-  let detail: string;
-  if (isBackground) {
-    category = "background";
-    detail = "background/utility task";
-  } else if (heavy) {
-    category = "heavy";
-    detail = "heavy-intent keyword";
-  } else if (tokens >= cfg.thresholds.largeContext) {
-    category = "largeContext";
-    detail = `large context (~${tokens} tok)`;
-  } else if (!hasTools && tokens <= cfg.thresholds.trivial) {
-    category = "trivial";
-    detail = `trivial (~${tokens} tok)`;
-  } else if (hasTools) {
-    category = "agentic";
-    detail = "agentic (tools present)";
-  } else {
-    category = "default";
-    detail = "default";
-  }
-
-  let tier = cfg.categories[category] ?? cfg.default;
-  // Haiku's 200K window: never route an oversized prompt to it.
-  if (tier === "haiku" && tokens > cfg.thresholds.haikuContextMax) {
-    tier = "sonnet";
-    detail += " (haiku window guard)";
-  }
-  return { model: tierToModel(cfg, tier), tier, reason: detail, category, tokens };
-}
-
-/** Next cheaper tier, used by the rate-limit throttle. */
-export function cheaperTier(tier: Tier): Tier | null {
-  const order: Tier[] = ["fable", "opus", "sonnet", "haiku"];
-  const i = order.indexOf(tier);
-  return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
+  throw new UnresolvedModelError(req || "(none)");
 }
 
 function inferTier(cfg: RoutingConfig, model: string): Tier {
   // A provider model carries no Claude family name. Its tier is whichever slot
   // the user configured it into (that is what the fallback chain will use),
-  // and the routing default when it is not in the ladder at all. Both sides
+  // and the configured default when it is not in the ladder at all. Both sides
   // are canonicalised so a `local:`-era tier still matches a `provider:` ref.
   if (parseProviderRef(model)) {
     const ref = canonicalModelRef(model);

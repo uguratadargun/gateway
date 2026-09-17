@@ -2,11 +2,14 @@
 
 ## Unreleased
 
+- gate serves the model you name and no longer picks one for you: the difficulty table, the Haiku grader, sticky sessions and the throttle's tier downgrade are gone, because moving a live conversation between models rebuilds its prompt cache and costs more than it saves.
+- `model: "auto"` is refused with a message saying what to send instead; re-running `/gate:login` clears the setting from a machine connected before this release, and Claude Code now keeps whatever model you chose with `/model`.
+- The routing section of the dashboard is one card: which model each tier points at.
+- Reasoning effort is the one cost lever gate still turns, and a client that sets its own is still never overridden.
 - Forgetting a repository removes the checkout gate cloned for it, so connecting the same repository again works instead of failing on a directory nothing claimed; a checkout you pointed a path at is never touched, and one a run's worktree still branches from is kept, with the worktrees holding it named.
 - A repository says whose it is on the Repos page — at connect time and on the record afterwards — which is what decides whose `gate:ask` may read it; an owner naming no team is refused instead of stored.
 - The dashboard is one shape: every panel is a card with the same head, the headings that group them belong to the page, and an editable card ends in its own Save — under the controls it writes, disabled until something changed, and saving only the keys that card shows.
 - Saving a settings card no longer puts back the account rotation another panel had changed.
-- A client that names its model can be routed like any other: the dashboard carries "Route named models too", which is what puts Claude Code's own `claude-sonnet-5` on the difficulty table and lets a tier point it at a provider model.
 
 ## 0.38.0 — 2026-09-16
 

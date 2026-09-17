@@ -121,8 +121,8 @@ they call the bundled script (`plugins/gate/scripts/gate.mjs`, built by
 workflows into `~/.gate/cache/<team>/`, keyed by a hash the server answers
 `304` for; the mirror is replaced on the next pull. **Model calls go up**
 to `<gate>/api/gateway` on the person's own key, carrying `x-gate-session:
-workflow:<execution-id>`; routing, caching, the pool, budget and the
-traffic log apply as on the server. **Progress goes up** in batches to
+workflow:<execution-id>`; model resolution, caching, the pool, budget and
+the traffic log apply as on the server. **Progress goes up** in batches to
 `/api/v1/executions/…` about once a second; what comes back is the
 person's own runs, never a teammate's, on `/api/v1/executions/stream`
 together. **The work stays here**, on a branch of the person's clone from

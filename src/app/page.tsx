@@ -8,7 +8,6 @@ import { KeysPanel } from "@/components/keys-panel";
 import { ProvidersPanel } from "@/components/providers-panel";
 import { OverviewPanel } from "@/components/overview-panel";
 import { RoutingRulesPanel } from "@/components/routing-rules-panel";
-import { RoutingSimulator } from "@/components/routing-simulator";
 import { SettingsPanel } from "@/components/settings-panel";
 import { UsagePanel } from "@/components/usage-panel";
 
@@ -76,12 +75,11 @@ export default function Home() {
 
         <Section
           icon={Route}
-          title="Routing"
-          description="Which model answers which request. Every card here saves on its own."
+          title="Models"
+          description="What each model name resolves to. Every card here saves on its own."
         >
           <ProvidersPanel />
           <RoutingRulesPanel />
-          <RoutingSimulator />
         </Section>
 
         <Section
