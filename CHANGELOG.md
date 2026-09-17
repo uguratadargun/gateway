@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.40.0 — 2026-09-17
+
 - The accounts card keeps itself current: the windows are re-read every fifteen seconds, so usage moves while you watch instead of only when you reload the page, and a rotation setting you are part-way through editing is left alone. The "weekly limit incl. extra usage" bar is gone — Claude sent it for some accounts and not others, and it said what the weekly limit beside it already said.
 
 - The models your providers serve are in Claude Code's `/model` picker, under their own names: `glm-5.3-flash (zai)` picks GLM, `Qwen3.8-27B (vllm)` picks the box on your network, and the gate is asked for exactly the model the row says. Connecting a machine also lets Claude Code read the gate's model list for itself, so the connected account's own models are listed by the gate that will serve them. Until now a connected provider was invisible to everyone but the person who configured it.

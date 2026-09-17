@@ -7842,10 +7842,6 @@ var WINDOW_LABELS = {
   seven_day_opus: "Opus limit",
   seven_day_sonnet: "Sonnet limit",
   seven_day_fable: "Fable limit",
-  // `oi` is overage included — the weekly window with extra usage counted —
-  // and not a model. The model-scoped weekly limit arrives from the usage
-  // endpoint's `limits` list with its scope named, and is labelled from that.
-  seven_day_overage_included: "weekly limit incl. extra usage",
   overage: "usage credit limit"
 };
 function windowLabel(name, scope) {
@@ -7855,7 +7851,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.39.0";
+var GATE_VERSION = "0.40.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -8729,6 +8725,44 @@ function decodeConnectionToken(value) {
   return { url: u.replace(/\/+$/, ""), key: k };
 }
 
+// src/lib/model-picker.ts
+var PICKER_BEHAVES_AS = "claude-sonnet-5";
+var GATE_PREFIXES = ["provider:", "local:"];
+function isProviderModelId(id) {
+  return typeof id === "string" && GATE_PREFIXES.some((p) => id.startsWith(p));
+}
+function isGateRow(row) {
+  return isProviderModelId(row?.model);
+}
+function pickerRow(entry) {
+  return {
+    model: entry.id,
+    label: entry.display_name || entry.id,
+    ...entry.description ? { description: entry.description } : {},
+    behavesAs: PICKER_BEHAVES_AS
+  };
+}
+function readOptions(settings) {
+  const picker = settings.modelPicker && typeof settings.modelPicker === "object" && !Array.isArray(settings.modelPicker) ? settings.modelPicker : {};
+  return { picker, options: Array.isArray(picker.options) ? picker.options : [] };
+}
+function withPickerRows(settings, rows) {
+  const { picker, options } = readOptions(settings);
+  const foreign = options.filter((row) => !isGateRow(row));
+  const next2 = [...foreign, ...rows];
+  if (next2.length) settings.modelPicker = { ...picker, options: next2 };
+  else delete settings.modelPicker;
+  return settings;
+}
+function withoutPickerRows(settings) {
+  if (!settings.modelPicker) return settings;
+  const { picker, options } = readOptions(settings);
+  const foreign = options.filter((row) => !isGateRow(row));
+  if (foreign.length) settings.modelPicker = { ...picker, options: foreign };
+  else delete settings.modelPicker;
+  return settings;
+}
+
 // src/repos/detect.ts
 import { existsSync as existsSync6, readFileSync as readFileSync5 } from "node:fs";
 import { join as join7 } from "node:path";
@@ -9211,6 +9245,23 @@ var GateClient = class {
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
+  }
+  /**
+   * The models the gateway serves, as `/v1/models` reports them — the gateway
+   * endpoint rather than a client-API one, because it is the list every other
+   * client of this gate already sees, and it is already this key's to read.
+   * Only the provider models are of interest here: the Claude ones reach the
+   * picker through Claude Code's own discovery.
+   */
+  async providerModels() {
+    const res = await this.request(
+      "/api/gateway/v1/models"
+    );
+    return (Array.isArray(res.body?.data) ? res.body.data : []).filter((m) => isProviderModelId(m?.id)).map((m) => ({
+      id: String(m.id),
+      ...typeof m.display_name === "string" ? { display_name: m.display_name } : {},
+      ...typeof m.description === "string" ? { description: m.description } : {}
+    }));
   }
 };
 
@@ -11904,7 +11955,12 @@ function gatewayEnv(gatewayUrl2, key) {
     // session where the two disagree is a session that authenticates as
     // somebody else.
     ANTHROPIC_API_KEY: key,
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    // Claude Code asks the gateway's /v1/models at startup with this set, and
+    // the connected account's models reach the `/model` picker. Provider
+    // models never do — the client keeps only ids containing "claude" or
+    // "anthropic" — which is why the picker rows below are written by hand.
+    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1"
   };
 }
 function settingsPath(global, cwd = process.cwd()) {
@@ -11935,6 +11991,17 @@ function applyGatewaySettings(path, env, on) {
   }
   if (Object.keys(next2).length) settings.env = next2;
   else delete settings.env;
+  if (JSON.stringify(settings) === before) return false;
+  mkdirSync12(dirname4(path), { recursive: true });
+  writeFileSync10(path, `${JSON.stringify(settings, null, 2)}
+`, { mode: 384 });
+  return true;
+}
+function applyPickerRows(rows, on, path = settingsPath(true)) {
+  const settings = readSettings(path);
+  const before = JSON.stringify(settings);
+  if (on) withPickerRows(settings, rows);
+  else withoutPickerRows(settings);
   if (JSON.stringify(settings) === before) return false;
   mkdirSync12(dirname4(path), { recursive: true });
   writeFileSync10(path, `${JSON.stringify(settings, null, 2)}
@@ -12467,7 +12534,7 @@ async function cmdLogin(args) {
   console.log(`connected to ${url} as ${me.user?.email ?? "this key"} \xB7 team ${me.team.name}`);
   const manifest = await sync(client, me.team.id, true);
   console.log(`${manifest.workflows.length} workflow(s) available \u2014 \`gate list\` to see them`);
-  for (const line of setLive(true, true, client.gatewayUrl, key)) console.log(line);
+  for (const line of setLive(true, true, client.gatewayUrl, key, await pickerRows(client))) console.log(line);
   const synced = syncSubagents(me.team.id, cacheScope(me.team.id));
   if (synced.created) console.log("restart Claude Code once: its agents directory did not exist before, and it reads a new one at startup");
   return 0;
@@ -12790,6 +12857,7 @@ function cmdReset() {
       if (!existsSync16(path)) continue;
       try {
         if (applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), false)) console.log(`took the gateway out of ${path}`);
+        if (global && applyPickerRows([], false, path)) console.log(`took the provider models out of ${path}`);
       } catch (e) {
         console.log(`could not update ${path}: ${e.message}`);
       }
@@ -12823,14 +12891,24 @@ function sessionThroughGateway(client) {
   const norm = (u) => u.trim().replace(/\/+$/, "").toLowerCase();
   return norm(base) === norm(client.gatewayUrl);
 }
-function cmdLive(args) {
+async function cmdLive(args) {
   const config = readConfig();
   if (!config) die("not logged in - run `gate login <token>` first");
   const client = connect();
-  for (const line of setLive(args.flags.off !== true, args.flags.global === true, client.gatewayUrl, config.key)) console.log(line);
+  const on = args.flags.off !== true;
+  const lines = setLive(on, args.flags.global === true, client.gatewayUrl, config.key, on ? await pickerRows(client) : []);
+  for (const line of lines) console.log(line);
   return 0;
 }
-function setLive(on, global, gatewayUrl2, key) {
+async function pickerRows(client) {
+  try {
+    return (await client.providerModels()).map(pickerRow);
+  } catch (e) {
+    console.error(`# could not read the gateway's model list (${e.message}) \u2014 /model shows the built-in models only`);
+    return [];
+  }
+}
+function setLive(on, global, gatewayUrl2, key, rows = []) {
   const path = settingsPath(global);
   const where = global ? "every Claude Code session of yours" : `Claude Code sessions started in ${process.cwd()}`;
   let changed;
@@ -12839,15 +12917,25 @@ function setLive(on, global, gatewayUrl2, key) {
   } catch (e) {
     die(`could not update ${path}: ${e.message}`);
   }
+  let pickerPath = null;
+  try {
+    if ((on || global) && applyPickerRows(rows, on)) pickerPath = settingsPath(true);
+  } catch (e) {
+    console.error(`# could not write the model picker (${e.message})`);
+  }
   if (on && !global) keepOutOfGit(process.cwd());
   if (on) {
     return [
       changed ? `${where} now go through ${gatewayUrl2}` : `${where} already go through ${gatewayUrl2}`,
       `  written to ${path}`,
+      ...pickerPath ? [`  Claude Code's /model now lists ${rows.length} provider model(s), from ${pickerPath}`] : [],
       "A session already open picks that up on its own; if the next node in its own model still arrives as `wait` rather than as a subagent, restart Claude Code once."
     ];
   }
-  return [changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`];
+  return [
+    changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`,
+    ...pickerPath ? [`  the provider models are out of /model again (${pickerPath})`] : []
+  ];
 }
 function keepOutOfGit(cwd) {
   let gitDir;
@@ -13239,7 +13327,7 @@ async function main(argv) {
       case "env":
         return cmdEnv();
       case "live":
-        return cmdLive(args);
+        return await cmdLive(args);
       case "work":
         return await cmdWork(args);
       case "repo":
