@@ -556,6 +556,13 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["usage", "account_id", "account_id TEXT"],
   ["usage", "provider_id", "provider_id TEXT"],
   ["traffic", "account_id", "account_id TEXT"],
+  // Who called and who served. Ids, not labels: a label is editable and the row
+  // it names can be deleted, so /traffic resolves them as it reads and says so
+  // when it cannot. A row written before this release carries NULL throughout.
+  ["traffic", "key_id", "key_id TEXT"],
+  ["traffic", "user_id", "user_id TEXT"],
+  ["traffic", "team_id", "team_id TEXT"],
+  ["traffic", "provider_id", "provider_id TEXT"],
   // An endpoint that serves no /models list (Z.AI's Anthropic endpoint among
   // them) names its catalogue here instead of being discovered.
   ["providers", "models_json", "models_json TEXT"],

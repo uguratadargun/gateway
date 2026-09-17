@@ -1,6 +1,6 @@
 import { after } from "next/server";
 
-import { gateAuthOk } from "@/lib/gate-auth";
+import { gatePrincipal } from "@/lib/gate-auth";
 import { dispatch, jsonError, sessionFromRequest } from "@/lib/gateway-core";
 import { anthropicStreamToResponses, anthropicToResponses, responsesToAnthropic } from "@/lib/openai-responses";
 
@@ -11,7 +11,9 @@ const EFFORT_MAP: Record<string, string> = { minimal: "low", low: "low", medium:
 
 /** OpenAI Responses API-compatible endpoint (Codex CLI, new OpenAI SDKs). */
 export async function POST(req: Request) {
-  if (!gateAuthOk(req)) return jsonError(401, "Invalid gate API key");
+  // The principal, not just whether there is one: the traffic log names it.
+  const caller = gatePrincipal(req);
+  if (!caller) return jsonError(401, "Invalid gate API key");
 
   let oaiReq: Record<string, unknown>;
   try {
@@ -29,6 +31,7 @@ export async function POST(req: Request) {
     effortHeader: req.headers.get("x-gate-effort") ?? (effort ? EFFORT_MAP[effort] ?? null : null),
     session: sessionFromRequest(req.headers, body),
     requestPreview: JSON.stringify(oaiReq),
+    caller,
   });
   if (!d.ok) return d.response;
 

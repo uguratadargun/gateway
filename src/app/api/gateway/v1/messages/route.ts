@@ -1,4 +1,4 @@
-import { gateAuthOk } from "@/lib/gate-auth";
+import { gatePrincipal } from "@/lib/gate-auth";
 import { executeMessages, jsonError, sessionFromRequest } from "@/lib/gateway-core";
 
 export const runtime = "nodejs";
@@ -9,7 +9,9 @@ export const maxDuration = 600;
  * client at `<host>/api/gateway` as its base URL.
  */
 export async function POST(req: Request) {
-  if (!gateAuthOk(req)) return jsonError(401, "Invalid gate API key");
+  // The principal, not just whether there is one: the traffic log names it.
+  const caller = gatePrincipal(req);
+  if (!caller) return jsonError(401, "Invalid gate API key");
 
   let body: Record<string, unknown>;
   try {
@@ -25,5 +27,6 @@ export async function POST(req: Request) {
     effortHeader: req.headers.get("x-gate-effort"),
     session: sessionFromRequest(req.headers, body),
     requestPreview,
+    caller,
   });
 }

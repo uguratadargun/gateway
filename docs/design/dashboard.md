@@ -84,7 +84,9 @@ no panel can render one and no screenshot can leak one. A gateway key and a
 person's connect token are plaintext exactly once, in the answer to the call
 that created them, shown next to the line meant to be sent — reload the page
 and they are gone for good. Forgetting a memory record is possible only from
-here: no key, agent or run can delete one.
+here: no key, agent or run can delete one. The traffic log and its export are
+the one place on this surface that carries people's names and email addresses —
+not secrets, but the reason that page and that download stay behind the cookie.
 
 ## Key files
 

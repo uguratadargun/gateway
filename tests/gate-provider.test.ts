@@ -50,6 +50,8 @@ describe("GateModelProvider", () => {
     // The run is one session for cost attribution; the node's model comes from
     // the agent that names it, so there is nothing per-node to carry here.
     expect(opts.session.id).toBe("workflow:exec1");
+    // The traffic log names this caller for what it is: gate calling itself.
+    expect(opts.caller.keyId).toBe("workflow");
   });
 
   it("raises MODEL_EXECUTION_ERROR on an upstream failure", async () => {

@@ -1,4 +1,6 @@
+import { INTERNAL_KEY_ID } from "@/lib/gate-auth";
 import { executeMessages } from "@/lib/gateway-core";
+import { DEFAULT_TEAM_ID } from "@/lib/teams";
 import { WorkflowError } from "@/runtime/errors";
 
 import { fromAnthropicMessage, toAnthropicBody, type AnthropicMessage } from "./anthropic-shape";
@@ -29,6 +31,9 @@ export class GateModelProvider implements ModelProvider {
       },
       requestPreview: JSON.stringify(body),
       signal: req.signal,
+      // A workflow node is gate calling itself. Saying so is honest where a
+      // null would read as a row written before the log named its callers.
+      caller: { keyId: INTERNAL_KEY_ID, userId: null, teamId: DEFAULT_TEAM_ID, scopes: [] },
     }).catch((e) => {
       // The abort surfaces here as a fetch rejection; name it for what it is,
       // so a cancelled node is not reported as a model failure.

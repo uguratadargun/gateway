@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The Traffic page says who made each request, which model answered and which Claude account served it: the person behind the key by name, and the account by its label rather than its id. A request a provider answered names the provider instead, a workflow calling in-process names itself, and a person or account deleted since leaves the row readable rather than blank. The team, the key and the name the client originally asked for are in the expanded detail.
 - gate serves the model you name and no longer picks one for you: the difficulty table, the Haiku grader, sticky sessions and the throttle's tier downgrade are gone, because moving a live conversation between models rebuilds its prompt cache and costs more than it saves.
 - `model: "auto"` is refused with a message saying what to send instead; re-running `/gate:login` clears the setting from a machine connected before this release, and Claude Code now keeps whatever model you chose with `/model`.
 - The routing section of the dashboard is one card: which model each tier points at.

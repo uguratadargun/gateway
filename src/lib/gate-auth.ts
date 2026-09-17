@@ -1,6 +1,13 @@
 import { ALL_SCOPES, hasActiveKeys, resolveKey, type Principal } from "./apikeys";
 import { DEFAULT_TEAM_ID } from "./teams";
 
+/**
+ * The two key ids that belong to no issued key. Both are safe against a real
+ * one: `createKey` mints sixteen hex characters.
+ */
+export const LOCAL_KEY_ID = "local";
+export const INTERNAL_KEY_ID = "workflow";
+
 /** The bearer token on a request, from either header form clients use. */
 export function bearerToken(req: Request): string {
   const header = req.headers.get("authorization") || req.headers.get("x-api-key") || "";
@@ -21,7 +28,7 @@ export function gatePrincipal(req: Request): Principal | null {
   }
   const required = process.env.GATE_API_KEY;
   if (required && token !== required) return null;
-  return { keyId: "local", userId: null, teamId: DEFAULT_TEAM_ID, scopes: [...ALL_SCOPES] };
+  return { keyId: LOCAL_KEY_ID, userId: null, teamId: DEFAULT_TEAM_ID, scopes: [...ALL_SCOPES] };
 }
 
 /** Auth: an issued gate key (if any exist) or the GATE_API_KEY env, else open. */

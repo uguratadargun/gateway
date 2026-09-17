@@ -24,7 +24,11 @@ principal: an issued key with the `gateway` scope when any key exists, else
 `GATE_API_KEY`, else — when neither is configured — nobody in particular,
 which is what a loopback-only install has always been. A revoked key, or a
 disabled person's key, stops resolving at once. The last two cases have no
-person attached and answer as the default team.
+person attached and answer as the default team. The principal is carried
+through the pipeline rather than reduced to a yes at the door: it rides on the
+dispatch options as four scalars — key, person, team, scopes — because a
+streamed reply is accounted for after the request object is gone, and the
+traffic log names whoever made the call.
 
 **Session.** The conversation is identified from `x-gate-session` or
 `x-claude-code-session-id`, or from a fingerprint of the system prompt and
@@ -102,7 +106,12 @@ million in/out), cache reads at 10 % of input (2.5 % on Fable 5.1), cache
 writes at 1.25× for the 5m TTL and 2× for 1h, and a provider model at zero. A
 usage event, a traffic-log row (previews truncated to 2000 characters, 500
 rows kept, local only) and an activity event for the SSE live tail on
-`/traffic` are written, and the concurrency slot is released. `/analytics`,
+`/traffic` are written, and the concurrency slot is released. The traffic row
+names the key, the person and the team that called, and the account or the
+provider that served — as ids, which `/traffic` resolves to names as it reads,
+so a renamed account reads as it is now and a deleted one still reads. A
+workflow node calling in-process names itself `workflow`; a gate with no key
+issued and none configured names itself `local`. `/analytics`,
 `/sessions` and the CSV/JSON exports are `GROUP BY`s over the usage table, so
 a budget check stays O(1) in request count.
 
@@ -140,7 +149,9 @@ request ─ auth ─ session ─ compress ─ resolve ─ account+throttle ─ p
 - Costs are API-list equivalents. On a subscription the real cost is flat; the numbers are for comparison, not an invoice.
 - A fallback changes the model after resolution; `x-gate-model` is what was actually used, `x-gate-route-reason` is how the requested name resolved.
 - Compression is lossy by design (blocks are trimmed) and off by default. Turning it on changes prompts and therefore prompt-cache hits.
+- The traffic log holds served exchanges, not every call. A response-cache hit, a refusal (400, 401, 402, 429, 503) and the proxied `/v1/models`, `count_tokens` and `batches/*` write no row at all, so counting callers there under-counts them — the throttle's 429s, the ones a question about quota is usually about, are exactly what is missing. `from_cache` is written false for the same reason.
+- A traffic row is best-effort: the insert swallows its errors so a log line can never fail a served request, which also means a missing row is silent.
 
 ## Decisions
 
-- none recorded yet
+- [0017 — The traffic log names who called and who served](../decisions/0017-the-traffic-log-names-who-called-and-who-served.md)

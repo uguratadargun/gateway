@@ -8,6 +8,7 @@ import type { ClaudeAccount } from "@/lib/claude/oauth";
 import { addAccount, deleteAccount, listAccounts, loadAccountCredentials } from "@/lib/accounts";
 import type { StoredCredentials } from "@/lib/store";
 import { saveSettings } from "@/lib/settings";
+import { createUser, deleteUser, ensureDefaultTeam, DEFAULT_TEAM_ID } from "@/lib/teams";
 import { clearTraffic, readTraffic, recordTraffic } from "@/lib/traffic";
 import { getSpend, readUsage, recordUsage } from "@/lib/usage";
 
@@ -88,6 +89,50 @@ describe("traffic + ratelimit (sqlite)", () => {
     expect(t.map((e) => e.requested)).toEqual(["b", "a"]);
     clearTraffic();
     expect(readTraffic().length).toBe(0);
+  });
+  it("names the person who called and the account that served, and keeps the row readable when both are gone", () => {
+    clearTraffic();
+    ensureDefaultTeam();
+    const user = createUser({ email: "ada@example.test", name: "Ada Lovelace", teamId: DEFAULT_TEAM_ID });
+    const { key } = createKey({ name: "ada-laptop", userId: user.id, teamId: DEFAULT_TEAM_ID });
+    const account = addAccount(
+      {
+        accessToken: "a",
+        refreshToken: "r",
+        expiresAt: Date.now() + 3_600_000,
+        account: { account_uuid: "traffic-account", account_email: "work@example.test" } as ClaudeAccount,
+        cliUserID: "0".repeat(64),
+        connectedAt: 0,
+        updatedAt: 0,
+      },
+      "work",
+    );
+    const row = { ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
+    recordTraffic({ ...row, keyId: key.id, userId: user.id, teamId: DEFAULT_TEAM_ID, accountId: account.id });
+
+    const named = readTraffic()[0];
+    expect(named.caller).toBe("Ada Lovelace");
+    expect(named.servedBy).toBe("work");
+
+    // Deleting the person revokes the key rather than removing it, and a
+    // deleted account leaves nothing to join — the row must still read.
+    deleteAccount(account.id);
+    deleteUser(user.id);
+    const orphaned = readTraffic()[0];
+    expect(orphaned.caller).toBe("ada-laptop");
+    expect(orphaned.servedBy).toMatch(/^removed account /);
+    clearTraffic();
+  });
+  it("falls back to the sentinel key ids, then to unknown", () => {
+    clearTraffic();
+    const row = { endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
+    recordTraffic({ ...row, ts: 1 });
+    recordTraffic({ ...row, ts: 2, keyId: "workflow" });
+    recordTraffic({ ...row, ts: 3, keyId: "local" });
+    expect(readTraffic().map((e) => e.caller)).toEqual(["local", "workflow", "unknown"]);
+    // A caller with no account and no provider still reads.
+    expect(readTraffic()[0].servedBy).toBe("—");
+    clearTraffic();
   });
   it("persists the latest rate-limit snapshot", () => {
     recordRateLimit(new Headers({ "anthropic-ratelimit-unified-status": "allowed", "anthropic-ratelimit-tokens-remaining": "1234" }));

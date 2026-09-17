@@ -20,6 +20,7 @@ import {
   type AccountPoolConfig,
 } from "./account-pool";
 import { publishActivity } from "./activity";
+import type { Principal } from "./apikeys";
 import { ANTHROPIC_MESSAGES_URL } from "./claude/config";
 import { applyClaudeCodeIdentity } from "./claude/identity";
 import { checkBudget } from "./budget";
@@ -524,6 +525,12 @@ export interface DispatchOptions {
   requestPreview: string;
   /** Abort the upstream call; propagated to fetch. */
   signal?: AbortSignal;
+  /**
+   * Who is calling, for the traffic log. Four scalars rather than the request
+   * itself, because a streamed response is recorded from `after()`, long after
+   * the request is gone.
+   */
+  caller?: Principal | null;
 }
 
 export interface DispatchHooks {
@@ -724,6 +731,10 @@ export async function dispatch(
       requestPreview: truncatePreview(opts.requestPreview),
       responsePreview: truncatePreview(extra.responsePreview ?? text),
       accountId,
+      providerId,
+      keyId: opts.caller?.keyId ?? null,
+      userId: opts.caller?.userId ?? null,
+      teamId: opts.caller?.teamId ?? null,
     });
     publishActivity({
       ts: Date.now(),
