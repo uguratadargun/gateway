@@ -59,6 +59,15 @@ const STRATEGIES: { v: Strategy; label: string; hint: string }[] = [
   { v: "random", label: "Random", hint: "Uniformly random among available accounts." },
 ];
 
+/**
+ * How often the card re-reads the accounts. This costs gate a local database
+ * read and costs Anthropic nothing: `/api/accounts` only ever polls the usage
+ * endpoint for an account that has never been polled at all, and the periodic
+ * upstream refresh stays the daemon's job. What it buys is the reading a reply
+ * just stamped, which is the one that moves while somebody is watching.
+ */
+const ACCOUNTS_REFRESH_MS = 15_000;
+
 function relative(ms: number | null): string {
   if (!ms) return "never";
   const delta = Math.round((ms - Date.now()) / 1000);
@@ -104,9 +113,30 @@ export function AccountsPanel() {
     setPoolBase(data.strategy ?? null);
   }, []);
 
+  /**
+   * The same rows again, and nothing else. Windows move while the page is
+   * open — every reply gate serves stamps a fresh reading onto the account
+   * that served it — so a card loaded once shows yesterday's usage until
+   * somebody reloads. Rotation is deliberately left alone: it is a form
+   * somebody may be part-way through editing, and answering their typing with
+   * the stored value would throw the edit away.
+   */
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch("/api/accounts");
+      if (!res.ok) return;
+      const data = await res.json();
+      setAccounts(data.accounts ?? []);
+    } catch {
+      // A missed poll is the next one's problem; the card keeps what it has.
+    }
+  }, []);
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    const t = setInterval(poll, ACCOUNTS_REFRESH_MS);
+    return () => clearInterval(t);
+  }, [refresh, poll]);
 
   async function startLogin() {
     setBusy(true);
@@ -264,7 +294,9 @@ export function AccountsPanel() {
           <CardDescription>
             {accounts.length === 1
               ? "Tokens refresh on their own. Add a second account to keep serving when this one hits its window."
-              : "A rate-limited account cools down and the next one takes over, before any tier is downgraded."}
+              : "A rate-limited account cools down and the next one takes over, before any tier is downgraded."}{" "}
+            Windows are re-read every 15 seconds — live while an account is serving, and on the
+            daemon&rsquo;s next poll while it is idle.
           </CardDescription>
         </div>
       </CardHeader>

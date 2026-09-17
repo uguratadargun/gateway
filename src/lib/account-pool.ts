@@ -52,7 +52,9 @@ export function quotaBlockedWindow(
   for (const [name, window] of Object.entries(account.quota.windows)) {
     if (windowResetPassed(window, now)) continue;
     // Canonical, so what comes back can be named on a screen.
-    if (100 - window.utilization <= config.quotaMinRemainingPercent) return canonicalWindowName(name);
+    const canonical = canonicalWindowName(name);
+    if (HIDDEN_WINDOWS.has(canonical)) continue;
+    if (100 - window.utilization <= config.quotaMinRemainingPercent) return canonical;
   }
   return null;
 }
@@ -381,12 +383,25 @@ const WINDOW_LABELS: Record<string, string> = {
   seven_day_opus: "Opus limit",
   seven_day_sonnet: "Sonnet limit",
   seven_day_fable: "Fable limit",
-  // `oi` is overage included — the weekly window with extra usage counted —
-  // and not a model. The model-scoped weekly limit arrives from the usage
-  // endpoint's `limits` list with its scope named, and is labelled from that.
-  seven_day_overage_included: "weekly limit incl. extra usage",
   overage: "usage credit limit",
 };
+
+/**
+ * Windows gate keeps but never speaks about.
+ *
+ * `seven_day_overage_included` is the weekly window with extra usage counted
+ * on top (`oi` is *overage included*, not Opus). Anthropic sends it for some
+ * accounts and not others, so it appeared on one row and was missing from the
+ * next with nothing to explain the difference — and when it did appear it said
+ * roughly what the weekly limit beside it already said. Nobody can act on the
+ * difference: it is the same week, on the same plan.
+ *
+ * Hidden means hidden everywhere, including as the reason an account was held
+ * back. That costs nothing: this window counts extra usage on top of the
+ * weekly one, so it never has less left than the weekly window does, and the
+ * weekly window reaches the quota floor first.
+ */
+const HIDDEN_WINDOWS = new Set(["seven_day_overage_included"]);
 
 export function windowLabel(name: string, scope?: string | null): string {
   if (scope) return `${scope} limit`;
@@ -408,14 +423,17 @@ function sortWindows(windows: PoolWindow[]): PoolWindow[] {
  * One account's windows: canonical names, ordered, and read as percent *left*.
  *
  * The same window can sit in a snapshot twice — once under the header spelling
- * a previous build stored (`7d_oi`) and once under the name the usage endpoint
+ * a previous build stored (`7d`) and once under the name the usage endpoint
  * uses. The canonical key wins, because that is the one both sources write now
- * and the alias is frozen at whatever it last said.
+ * and the alias is frozen at whatever it last said. A hidden window is dropped
+ * here rather than at each screen, so every surface that reports windows —
+ * the accounts card, the pool's quota, `gate usage` — agrees on the list.
  */
 export function accountWindows(account: Account, now = Date.now()): PoolWindow[] {
   const byName = new Map<string, { window: QuotaWindow; canonical: boolean }>();
   for (const [key, window] of Object.entries(account.quota?.windows ?? {})) {
     const name = canonicalWindowName(key);
+    if (HIDDEN_WINDOWS.has(name)) continue;
     const canonical = key === name;
     const held = byName.get(name);
     if (held && (held.canonical || !canonical)) continue;

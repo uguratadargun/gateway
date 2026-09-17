@@ -307,24 +307,48 @@ describe("what the pool has left", () => {
     // Both orders: the alias is frozen at whatever it last said, so the key
     // both sources write now wins whether it was stored first or second.
     for (const windows of [
-      { "7d_oi": stale, seven_day_overage_included: fresh },
-      { seven_day_overage_included: fresh, "7d_oi": stale },
+      { "7d": stale, seven_day: fresh },
+      { seven_day: fresh, "7d": stale },
     ]) {
       expect(accountWindows(withWindows("a", windows), now)).toEqual([
-        { name: "seven_day_overage_included", remaining: 80, resetsAt: in3d },
+        { name: "seven_day", remaining: 80, resetsAt: in3d },
       ]);
     }
   });
 
   it("folds a snapshot stored under the header spelling into one window", () => {
     const pool = [
-      withWindows("headers", { "7d_oi": { utilization: 20, resetsAt: in3d } }),
-      withWindows("polled", { seven_day_overage_included: { utilization: 40, resetsAt: in3d } }),
+      withWindows("headers", { "7d": { utilization: 20, resetsAt: in3d } }),
+      withWindows("polled", { seven_day: { utilization: 40, resetsAt: in3d } }),
     ];
     const quota = poolQuota(pool, CONFIG, now);
-    expect(quota.windows).toEqual([{ name: "seven_day_overage_included", remaining: 80, resetsAt: in3d }]);
-    // Not a model: "oi" is the weekly window with extra usage counted in.
-    expect(windowLabel(quota.windows[0].name)).toBe("weekly limit incl. extra usage");
+    expect(quota.windows).toEqual([{ name: "seven_day", remaining: 80, resetsAt: in3d }]);
+    expect(windowLabel(quota.windows[0].name)).toBe("weekly limit");
+  });
+
+  it("never reports the overage-included window, under either spelling", () => {
+    // Anthropic sends it for some accounts and not others, and it says what
+    // the weekly limit beside it already said. It is still kept in the
+    // snapshot — only nothing shows it.
+    for (const key of ["7d_oi", "seven_day_overage_included"]) {
+      const account = withWindows("a", {
+        five_hour: { utilization: 25, resetsAt: in1h },
+        seven_day: { utilization: 40, resetsAt: in3d },
+        [key]: { utilization: 19, resetsAt: in3d },
+      });
+      expect(accountWindows(account, now).map((w) => w.name)).toEqual(["five_hour", "seven_day"]);
+      expect(poolQuota([account], CONFIG, now).windows.map((w) => w.name)).toEqual(["five_hour", "seven_day"]);
+    }
+  });
+
+  it("does not hold an account back on a window it will not show", () => {
+    const config = { ...CONFIG, quotaMinRemainingPercent: 10 };
+    // Extra usage counts on top of the weekly window, so this one always has
+    // at least as much left — the weekly window reaches the floor first, and
+    // naming a hidden window as the reason would say nothing to anybody.
+    const account = withWindows("a", { seven_day_overage_included: { utilization: 95, resetsAt: in3d } });
+    expect(quotaBlockedWindow(account, config, now)).toBeNull();
+    expect(poolQuota([account], config, now).accounts.available).toBe(1);
   });
 
   it("labels a model-scoped window from the scope the endpoint named, and carries it to the pool", () => {

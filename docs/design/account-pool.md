@@ -68,13 +68,26 @@ many accounts it tried, and what the ceiling was.
 
 Each account's windows come from the `anthropic-ratelimit-unified-*` headers
 on every reply, so a busy account's bars stay current for free. The accounts
-card draws **every** window the account reports — session, weekly, and
-whatever per-model ones the plan carries — each with what is left and when it
-rolls over, under the names Claude Code's own `/usage` uses for them. The
-header spelling and the usage endpoint's differ for one of them: `7d_oi` is
-`seven_day_overage_included`, *overage included* and not Opus. Gate folds the
-two into one window, so an account cannot list the same limit twice. Those
-headers only exist on a reply, though — a **just-connected account has no
+card draws every window the account reports — session, weekly, and whatever
+per-model ones the plan carries — each with what is left and when it rolls
+over, under the names Claude Code's own `/usage` uses for them, and re-reads
+them every fifteen seconds so a card left open shows what the last reply
+stamped. Re-reading costs a database read and nothing upstream: the rules
+below decide when Anthropic is actually asked.
+
+One window is kept and never shown: `seven_day_overage_included` — the weekly
+window with extra usage counted on top (`oi` is *overage included*, not Opus).
+Anthropic sends it for some accounts and not others, so it appeared on one row
+and was missing from the next with nothing to explain the difference, and when
+it did appear it said roughly what the weekly limit beside it already said.
+It is dropped in `accountWindows`, so every surface that reports windows
+agrees, and it is never named as the reason an account was held back either —
+counting extra usage on top means it never has less left than the weekly
+window, which therefore reaches the quota floor first. The header spelling and
+the usage endpoint's differ for it (`7d_oi` against the full name) and gate
+still folds the two into one window, so nothing lists the same limit twice.
+
+Those headers only exist on a reply, though — a **just-connected account has no
 window reading at all** — so gate also reads Claude's own usage endpoint
 (`/api/oauth/usage`, the one the CLI uses; no inference, no tokens spent).
 That endpoint describes every limit twice, as legacy keys and as a `limits`
@@ -88,7 +101,8 @@ asks it as little as it can get away with:
   snapshot, so it never looks stale.
 - **The dashboard polls only an account that has never been polled at all** —
   enough to fill a new account's bar, and nothing more. A page left open, or
-  reloaded while reordering the pool, triggers nothing.
+  reloaded while reordering the pool, triggers nothing; the card's fifteen
+  second re-read goes no further than gate's own database.
 - **Periodic refresh is the daemon's job**, once per `quotaRefreshMinutes`
   (default 30 — slow on purpose against a 5h window).
 - **Failures back off**: 10 min, doubling per consecutive failure, capped at
@@ -113,7 +127,8 @@ has never been polled at all is filled in, the same rule the dashboard follows.
 ## Key files
 
 - `src/lib/accounts.ts` — the account rows: priority, last use, backoff level, cooldown, quota snapshot; tokens sealed in the row
-- `src/lib/account-pool.ts` — pure selection and cooldown rules: eligibility, the five strategies, `computeCooldown`, unified-header parsing and window-name folding
+- `src/lib/account-pool.ts` — pure selection and cooldown rules: eligibility, the five strategies, `computeCooldown`, unified-header parsing, window-name folding and `HIDDEN_WINDOWS`
+- `src/components/accounts-panel.tsx` — the card: the rows, their windows re-read on an interval, and the rotation form that interval must not overwrite
 - `src/lib/token-manager.ts` — proactive and forced refresh, one in-flight refresh per account
 - `src/lib/seal.ts` — AES-256-GCM under a key derived from `GATE_SECRET`; `tryOpen` for a blob sealed under a different secret
 - `src/lib/claude/oauth.ts`, `src/lib/claude/pkce.ts`, `src/lib/claude/config.ts` — the PKCE login, the public Claude Code client id, the endpoints and pinned CLI versions
