@@ -186,11 +186,14 @@ export function readableSteps(steps: ExecutionStepRecord[]): ExecutionStepRecord
  */
 export function outcomeOf(execution: ExecutionRecord, steps: ExecutionStepRecord[]): DecisionOutcome {
   if (execution.status !== "completed") return "abandoned";
-  // A taught branch is the one case where a person is asserting the work
-  // landed — that is what teaching it to memory means — so it keeps the word
-  // that has always meant "we believe this is live". It is their claim and
-  // not gate's observation, which is why it is `shipped` and not `merged`.
-  if (execution.workflowId === TEACH_WORKFLOW_ID) return "shipped";
+  // A taught branch is the one case where a person is asserting how far the
+  // work got — it is their claim and not gate's observation, which is why it
+  // is `shipped` and not `merged`. A teaching that says the branch is not
+  // finished is taken at its word too: `in-progress`, so the sibling planner
+  // that finds it objects now rather than building on a choice still moving.
+  if (execution.workflowId === TEACH_WORKFLOW_ID) {
+    return execution.input?.wip === true ? "in-progress" : "shipped";
+  }
   const merge = steps.filter((s) => s.nodeId === "merge-request");
   if (!merge.length) return "completed";
   const opened = merge.some((s) => s.status === "completed" && (s.output as { ok?: boolean } | null)?.ok === true);

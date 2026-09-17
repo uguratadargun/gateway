@@ -255,6 +255,15 @@ export function describeDecision(d: DecisionCard): string {
     `id: ${d.id} · team: ${d.team} · ${d.outcome} · from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` · feature: ${d.featureId}` : ""}${d.supersedes ? ` · supersedes ${d.supersedes}` : ""}`,
     `run: ${d.executionId}${d.commits.base || d.commits.head ? ` · commits ${d.commits.base ?? "?"}..${d.commits.head ?? "?"}` : ""}`,
   ];
+  // The outcome word alone is a label in a line of labels, and this is the
+  // one that changes what the reader should do. A choice still moving is the
+  // moment an objection is cheap for everybody; after it sets it is a
+  // revision request against shipped work.
+  if (d.outcome === "in-progress") {
+    lines.push(
+      `⚠ work in progress: the team that taught this says it is not finished. Build on it only if you mean to, and raise an objection now rather than after it settles.`,
+    );
+  }
   if (d.decision) lines.push(`decision: ${clip(d.decision)}`);
   if (d.rationale) lines.push(`why: ${clip(d.rationale)}`);
   if (d.how) lines.push(`how: ${clip(d.how, 2_000)}`);

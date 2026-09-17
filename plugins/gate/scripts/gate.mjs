@@ -7381,6 +7381,11 @@ function describeDecision(d) {
     `id: ${d.id} \xB7 team: ${d.team} \xB7 ${d.outcome} \xB7 from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` \xB7 feature: ${d.featureId}` : ""}${d.supersedes ? ` \xB7 supersedes ${d.supersedes}` : ""}`,
     `run: ${d.executionId}${d.commits.base || d.commits.head ? ` \xB7 commits ${d.commits.base ?? "?"}..${d.commits.head ?? "?"}` : ""}`
   ];
+  if (d.outcome === "in-progress") {
+    lines.push(
+      `\u26A0 work in progress: the team that taught this says it is not finished. Build on it only if you mean to, and raise an objection now rather than after it settles.`
+    );
+  }
   if (d.decision) lines.push(`decision: ${clip(d.decision)}`);
   if (d.rationale) lines.push(`why: ${clip(d.rationale)}`);
   if (d.how) lines.push(`how: ${clip(d.how, 2e3)}`);
@@ -11177,7 +11182,7 @@ function waitInstruction(executionId, pending, agent) {
     ]
   };
 }
-async function begin(ctx, workflowId, input, cwd, repos) {
+async function begin(ctx, workflowId, input, cwd, repos, opts = {}) {
   const scope = cacheScope(ctx.team);
   const workflow = getWorkflow(workflowId, scope);
   const runInput = { ...input };
@@ -11199,6 +11204,10 @@ async function begin(ctx, workflowId, input, cwd, repos) {
       session
     },
     driver: "session",
+    // Which piece of cross-team work this run serves. A session run is filed
+    // the same way a headless one is: the work outlives both, and which of
+    // the two walked the graph says nothing about what the work was for.
+    taskId: opts.taskId,
     // From the mirror, which is what `pinDefinitions` freezes a line below:
     // the hash the server agrees to is the one for the copy this run walks.
     definitionsHash: definitionsHash(workflow.id, scope)
@@ -12129,7 +12138,22 @@ var teachSchema = external_exports.object({
   host: external_exports.string().max(120).nullish(),
   version: external_exports.string().max(40).nullish(),
   /** Teach it even though a run already recorded this branch. */
-  force: external_exports.boolean().default(false)
+  force: external_exports.boolean().default(false),
+  /**
+   * The branch is not finished, and the person says so. Its decisions are
+   * recorded as `in-progress`: worth putting in memory so the teams
+   * building against them object while the choices can still move, and
+   * never to be read as settled.
+   */
+  wip: external_exports.boolean().default(false),
+  /**
+   * The cross-team task this branch was work on, checked against the
+   * caller's family exactly as a run's is. Work finished before the gate
+   * recorded it belongs to a task no differently than work done under one:
+   * when the teaching is what fills a task in, refusing it the label would
+   * leave the task empty for the one branch it was opened for.
+   */
+  taskId: external_exports.string().min(1).max(64).optional()
 }).strict();
 var epochMs = external_exports.string().transform((v) => /^\d+$/.test(v) ? Number(v) : Date.parse(v)).refine((n) => Number.isFinite(n), "not a time").optional();
 var memorySearchSchema = external_exports.object({
@@ -12300,6 +12324,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
 
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task\u2026]                 start a run, print the first instruction
+       --task-id <id>                           file this run under a cross-team task
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
         [--subagent <id>]                        which subagent did it, so its next pass continues it
@@ -12318,8 +12343,10 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
        \u2026or --run <id>                           ask another team what their code does; answered from one commit, with files
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
-  gate teach --account-file <f> [--base <ref>] [--force] [--no-wait]
+  gate teach --account-file <f> [--base <ref>] [--force] [--no-wait] [--task-id <id>]
                                                 teach it to your team's memory, recorded the way a run is
+       --wip                                    the branch is not finished: its decisions are recorded as
+                                                in-progress, so other teams object before they set
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
 var VALUE_FLAGS = /* @__PURE__ */ new Set([
@@ -12866,7 +12893,9 @@ async function cmdBegin(args) {
   if (!entry) die(`no workflow "${workflowId}" for your team \u2014 \`gate list\` shows what there is`);
   if (!await confirmTrust(workflowId, entry.sha, team, args.flags.yes === true)) return 1;
   return printInstruction(
-    await begin(ctx, workflowId, parseInputs(args.flags, trailing), process.cwd(), repoPaths())
+    await begin(ctx, workflowId, parseInputs(args.flags, trailing), process.cwd(), repoPaths(), {
+      taskId: typeof args.flags["task-id"] === "string" ? args.flags["task-id"] : void 0
+    })
   );
 }
 async function cmdNext(args) {
@@ -13042,7 +13071,9 @@ async function cmdTeach(args) {
     diff: readBranchDiff(reading),
     host: hostname4(),
     version: CLI_VERSION,
-    force: args.flags.force === true
+    force: args.flags.force === true,
+    taskId: typeof args.flags["task-id"] === "string" ? args.flags["task-id"] : void 0,
+    wip: args.flags.wip === true
   });
   const url = `${client.url}/executions/${taught.executionId}`;
   console.log(`${taught.replaced ? "taught again, replacing the earlier teaching" : "taught"}: ${reading.branch} \u2192 ${url}`);

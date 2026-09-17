@@ -5,6 +5,7 @@ import { loadSettings } from "@/lib/settings";
 import { requireClient } from "@/lib/tenancy";
 import { scheduleExtraction } from "@/memory/queue";
 import { teachBranch } from "@/memory/teach";
+import { taskVisibleTo } from "@/orchestration/tasks";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,13 @@ export async function POST(req: Request) {
   const parsed = teachSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid teaching", issues: parsed.error.issues }, { status: 400 });
+  }
+
+  // A task the caller cannot see is not a task — the same refusal a run
+  // starting under one gets, in the same words, because the two callers are
+  // making the same claim about the same record.
+  if (parsed.data.taskId && !taskVisibleTo(parsed.data.taskId, auth.teamId)) {
+    return NextResponse.json({ error: "no such task", code: "TASK_NOT_FOUND" }, { status: 400 });
   }
 
   const outcome = teachBranch({ teamId: auth.teamId, userId: auth.userId }, parsed.data);

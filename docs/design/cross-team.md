@@ -60,12 +60,37 @@ exist, be an agent and declare the field, and a node reporting an answer must
 be one the graph let read that objection. A run cannot object to itself or
 outside its family, and a re-sent batch makes one row and one transition.
 
+Recall shows an objection to the planner working in the same paths, which is
+the right moment for a run and the wrong one for a person: a team that does not
+plan in those files for a month never learns anybody objected. The Objections
+page is the other half — the same rows found by team rather than by code, split
+into what stands against this team, what it raised, and what two other teams in
+its tree are disagreeing about. It is the only place an objection from a run
+that named no task is visible at all, and it says how many answers never
+reached the server, so an empty list is not read as agreement.
+
+It is closed by the side it belongs to, from the dashboard and nowhere else.
+The team whose decision was objected to **resolves** it, saying what was done —
+that note is what the objecting team's next recall shows. The team that raised
+it **withdraws** it. Neither may do the other's, and an objection a team is on
+neither side of reads as absent. No run closes one: a run finishing on either
+side is not evidence the other team was satisfied. A closed objection leaves
+both teams' recall and keeps its row, with who closed it and why.
+
 ### The task ledger
 
 A task is opened by a person: an owning team, a title, a status, visible to
-that team's family. A run is filed under one when it starts, a continued run
-inherits it, and every objection that run raises is stamped with it, so the
-task shows what is unsettled across the teams working on it.
+that team's family. Work is filed under one when it is recorded, a continued
+run inherits it, and every objection a filed run raises is stamped with it, so
+the task shows what is unsettled across the teams working on it.
+
+Every way work reaches the gate takes the same `--task-id`: a headless `gate
+run`, a session run through `gate begin`, and `gate teach`, which is how a
+branch finished before the task existed gets under it. The id is checked
+against the caller's family before anything is stored, in one wording for all
+three — a task the caller cannot see is not a task. Teaching a branch a second
+time takes a task the first teaching did not name and keeps the one it did;
+naming none is never a way to unfile it.
 
 It is **a label, never a key**. Nothing is required to have one; nothing is
 found only by one. An objection from a run that named no task reaches the team
@@ -82,8 +107,14 @@ it, and closing leaves every objection under it standing.
 - `src/executions/record.ts` — an objection written with the step that raised
   it; answers matched to it
 - `src/repos/publish.ts` — the push, the policy, the verified commit
-- `src/app/api/v1/ask/route.ts`, `src/app/api/tasks/route.ts` — the endpoints
+- `src/client/cli.ts`, `src/client/step.ts`, `src/memory/teach.ts` — the three
+  ways work names the task it serves
+- `src/app/api/v1/ask/route.ts`, `src/app/api/tasks/route.ts`,
+  `src/app/api/issues/route.ts`, `src/app/api/v1/memory/teach/route.ts` — the
+  endpoints
 - `src/app/tasks/page.tsx` — the work's page
+- `src/app/objections/page.tsx`, `src/components/objection-card.tsx` — what is
+  unsettled for a team, and the two ways one is closed
 - `src/agents/defaults.ts`, `src/workflows/defaults.ts` — the read-only
   reviewer, the ask pipeline and the objection nodes
 - `plugins/gate/commands/ask.md` — `/gate:ask`
@@ -94,17 +125,23 @@ it, and closing leaves every objection under it standing.
   done; reporting it as "they have not built it" is the failure this guards.
 - An answer is true of one commit; restating it without the commit is a
   different claim, and usually a wrong one.
-- Resolving or withdrawing an open objection has no surface yet: a person can
-  only refuse one while it is still unanswered, so an open one stands in the
-  other team's recall until somebody changes the row.
+- An objection is closed by a person, from the dashboard, and nothing verifies
+  the note: a resolution can be written while the code still disagrees.
+- A withdrawal is quiet. The team objected to may have planned around it
+  already, and all they see is that it is gone.
 - Closing a task settles nothing raised under it, and a task lists only the
   objections whose runs named it.
 - A run cannot open a task; it can only be filed under one that already exists.
+- A run names its task when it starts and never again: nothing moves a
+  finished run under a task opened later. A branch can be taught again to say
+  so, but a run cannot be re-filed, so a task opened mid-flight shows only what
+  started after it.
 - A replacement ask pipeline whose agent holds a write, edit or command tool
   turns a question into a change to someone else's checkout.
 
 ## Decisions
 
+- [0016 — An objection is closed by the side it belongs to](../decisions/0016-an-objection-is-closed-by-the-side-it-belongs-to.md)
 - [0008 — A task is a label, never a key](../decisions/0008-a-task-is-a-label-never-a-key.md)
 - [0003 — Ask answers from one commit](../decisions/0003-ask-answers-from-one-commit.md)
 - [0002 — Objection record instead of messaging](../decisions/0002-objection-record-instead-of-messaging.md)

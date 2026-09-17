@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, Bot, BookOpen, FolderGit2, GitBranch, History, LayoutDashboard, ListChecks, ListTree, LogOut, MessagesSquare, ScrollText, Sparkles, Users } from "lucide-react";
+import { BarChart3, Bot, BookOpen, FolderGit2, GitBranch, History, LayoutDashboard, ListChecks, ListTree, LogOut, MessageSquareWarning, MessagesSquare, ScrollText, Sparkles, Users } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,7 @@ const links = [
   { href: "/executions", label: "Executions", icon: History },
   { href: "/memory", label: "Memory", icon: BookOpen },
   { href: "/tasks", label: "Tasks", icon: ListChecks },
+  { href: "/objections", label: "Objections", icon: MessageSquareWarning },
   { href: "/team", label: "Team", icon: Users },
 ];
 

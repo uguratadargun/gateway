@@ -134,8 +134,13 @@ memory, and the run's page on the dashboard shows what was recorded.
 Start it, then repeat until it says it is done:
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" begin <workflow-id> "<task text>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" begin <workflow-id> "<task text>" [--task-id <id>]
 ```
+
+Add `--task-id` only when the user names the cross-team task this run serves — they open one on
+the dashboard, and passing it files this run and every objection it raises under that work. Never
+invent one: an id the team cannot see is refused and the run does not start, while no id at all is
+the ordinary case and costs the run nothing.
 
 Each call prints one JSON instruction:
 

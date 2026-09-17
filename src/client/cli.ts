@@ -57,6 +57,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
 
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task…]                 start a run, print the first instruction
+       --task-id <id>                           file this run under a cross-team task
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
         [--subagent <id>]                        which subagent did it, so its next pass continues it
@@ -75,8 +76,10 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
        …or --run <id>                           ask another team what their code does; answered from one commit, with files
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
-  gate teach --account-file <f> [--base <ref>] [--force] [--no-wait]
+  gate teach --account-file <f> [--base <ref>] [--force] [--no-wait] [--task-id <id>]
                                                 teach it to your team's memory, recorded the way a run is
+       --wip                                    the branch is not finished: its decisions are recorded as
+                                                in-progress, so other teams object before they set
 
 Environment: GATE_URL and GATE_KEY override the saved login.`;
 
@@ -834,7 +837,9 @@ async function cmdBegin(args: Args): Promise<number> {
   if (!(await confirmTrust(workflowId, entry.sha, team, args.flags.yes === true))) return 1;
 
   return printInstruction(
-    await begin(ctx, workflowId, parseInputs(args.flags, trailing), process.cwd(), repoPaths()),
+    await begin(ctx, workflowId, parseInputs(args.flags, trailing), process.cwd(), repoPaths(), {
+      taskId: typeof args.flags["task-id"] === "string" ? (args.flags["task-id"] as string) : undefined,
+    }),
   );
 }
 
@@ -1066,6 +1071,8 @@ async function cmdTeach(args: Args): Promise<number> {
     host: hostname(),
     version: CLI_VERSION,
     force: args.flags.force === true,
+    taskId: typeof args.flags["task-id"] === "string" ? (args.flags["task-id"] as string) : undefined,
+    wip: args.flags.wip === true,
   });
   const url = `${client.url}/executions/${taught.executionId}`;
   console.log(`${taught.replaced ? "taught again, replacing the earlier teaching" : "taught"}: ${reading.branch} → ${url}`);

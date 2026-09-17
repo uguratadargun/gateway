@@ -77,7 +77,10 @@ export function teachBranch(who: { teamId: string; userId: string | null }, body
     if (prior) return { ok: false, code: "ALREADY_RECORDED", executionId: prior.id, workflowId: prior.workflow_id };
   }
 
-  const input = { task: account.task };
+  // `wip` rides on the run's input because that is what `outcomeOf` reads,
+  // and because it is part of what was claimed when the branch was taught:
+  // re-teaching a branch that has since landed drops it, which is right.
+  const input = body.wip ? { task: account.task, wip: true } : { task: account.task };
   const client = { host: body.host ?? null, repo: workspace.repo, branch: workspace.branch, version: body.version ?? null };
   const existing = taughtBefore(who.teamId, workspace.branch, workspace.baseCommit);
   // Taught work belongs to a repository as much as a run's does: without it
@@ -93,12 +96,17 @@ export function teachBranch(who: { teamId: string; userId: string | null }, body
     if (getExtraction(existing)?.status === "running") return { ok: false, code: "RECORDING", executionId: existing };
     executionId = existing;
     db.prepare("DELETE FROM workflow_execution_steps WHERE execution_id = ?").run(executionId);
+    // A second teaching may name the task the first one did not: the task is
+    // usually opened once somebody notices the work spans teams, which is
+    // after the branch was first taught. Naming none leaves the earlier
+    // answer standing rather than unfiling it — nothing here is a way to say
+    // "this was not that work".
     db.prepare(
       `UPDATE workflow_executions
           SET status = 'running', started_at = ?, input_json = ?, user_id = ?, client_host = ?, client_repo = ?, client_branch = ?,
-              repo_id = COALESCE(?, repo_id), error_code = NULL, error_message = NULL
+              repo_id = COALESCE(?, repo_id), task_id = COALESCE(?, task_id), error_code = NULL, error_message = NULL
         WHERE id = ?`,
-    ).run(body.startedAt, JSON.stringify(input), who.userId, client.host, client.repo, client.branch, repoId, executionId);
+    ).run(body.startedAt, JSON.stringify(input), who.userId, client.host, client.repo, client.branch, repoId, body.taskId ?? null, executionId);
   } else {
     executionId = randomUUID();
     createExecution(executionId, TEACH_WORKFLOW_ID, input, body.startedAt, null, {
@@ -107,6 +115,7 @@ export function teachBranch(who: { teamId: string; userId: string | null }, body
       teamId: who.teamId,
       client,
       repoId,
+      taskId: body.taskId ?? null,
     });
   }
 

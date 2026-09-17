@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { MessageSquareWarning } from "lucide-react";
 
+import { ObjectionCard } from "@/components/objection-card";
 import { TeamPicker, useTeamScope, withTeam } from "@/components/team-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,12 +35,6 @@ const RUN_VARIANT: Record<string, "default" | "secondary" | "destructive" | "suc
   failed: "destructive",
   cancelled: "secondary",
 };
-
-function issueVariant(status: string): "destructive" | "success" | "secondary" {
-  if (status === "open") return "destructive";
-  if (status === "resolved") return "success";
-  return "secondary";
-}
 
 interface TaskDetail {
   task: ChangeTask;
@@ -235,28 +230,13 @@ export default function TasksPage() {
               </p>
             ) : (
               detail.issues.map((i) => (
-                <div key={i.id} className="space-y-1 rounded-md border px-2 py-1.5 text-xs">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={issueVariant(i.status)} className="text-[10px]">
-                      {i.status}
-                    </Badge>
-                    <span className="font-medium text-foreground">{i.title}</span>
-                    <span className="text-muted-foreground">
-                      {i.fromTeamId} → {i.targetTeamId}
-                    </span>
-                    <Link href={`/executions/${i.executionId}`} className="ml-auto text-muted-foreground underline-offset-2 hover:underline">
-                      run
-                    </Link>
-                  </div>
-                  {i.revision ? <p className="text-muted-foreground">asks: {i.revision}</p> : null}
-                  {i.resolution ? (
-                    <p className="text-muted-foreground">
-                      {i.resolvedBy ?? "settled"}: {i.resolution}
-                    </p>
-                  ) : i.status === "proposed" ? (
-                    <p className="text-muted-foreground">raised — nobody has answered it yet</p>
-                  ) : null}
-                </div>
+                <ObjectionCard
+                  key={i.id}
+                  issue={i}
+                  team={team}
+                  onSettled={() => open(detail.task.id)}
+                  onError={setError}
+                />
               ))
             )}
           </div>

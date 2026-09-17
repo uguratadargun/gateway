@@ -1,6 +1,6 @@
 ---
 description: Teach your team's memory a task finished before gate recorded runs, from its branch
-argument-hint: [--base <ref>] [what the task was…]
+argument-hint: [--base <ref>] [--wip] [what the task was…]
 ---
 
 <!-- No allowed-tools on purpose: understanding a finished task means reading
@@ -43,6 +43,13 @@ Read what the command printed above.
   own `--base` and checkout of its last commit), rather than teaching a mixture as one.
 - `merged into … by <sha>` means the base was found from the merge — confirm it with a glance at
   `git log --oneline <base>..<head>`.
+
+**Is the work finished?** Ask, unless the user already said. A branch somebody is still in the
+middle of is worth teaching — that is how the teams building against it get to object while the
+choices can still move — but it must not be recorded as though it settled. If it is unfinished,
+pass `--wip` in step 5 and say so in the account: what is done, what is not, and which parts are
+most likely to move. Every decision it writes is then recorded as `in-progress`, and the planner
+on another team that finds it is told to raise an objection now rather than build on it.
 
 ## 2. Read the work
 
@@ -114,15 +121,19 @@ The same rules the recorder writes by:
 Show the user the task line and one line per decision, and ask with AskUserQuestion whether to teach
 it as it is or change something first — this writes to the whole team's memory. Then:
 
-    node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" teach --account-file <file> [--base <ref>]
+    node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" teach --account-file <file> [--base <ref>] [--task-id <id>] [--wip]
 
-Pass the same `--base` the range was read with. It sends the account with the commits, the changed
+Pass the same `--base` the range was read with. Add `--task-id` only when the user names the
+cross-team task this branch was work on — they open one on the dashboard, and it is usually a
+teaching that puts the first thing under it. Never invent one; a wrong id is refused and no id
+at all costs the teaching nothing. It sends the account with the commits, the changed
 files and the diff, then waits for the recorder and prints the decisions it wrote and the feature it
 filed them under. Report that, with the run's link.
 
 - `already worked on this branch` — a gate run recorded this work already; its decisions are on
   that run's page. Tell the user, and add `--force` only if they want it taught anyway.
 - Teaching the same branch again (after more commits, or a better account) replaces the earlier
-  teaching; it does not add a second copy.
+  teaching; it does not add a second copy. Teach it again without `--wip` once it lands, and its
+  decisions stop reading as in-progress.
 - `the recorder failed` — say what it said; it retries on its own, and the run page has
   "Record again".

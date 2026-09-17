@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createExecution, finishExecution, recordStep, setExecutionDiff, stopSessionExecution } from "@/executions/store";
 import { createTeam, getTeam } from "@/lib/teams";
 import { docsInDiff, extractRun, outcomeOf, parseRecorderAnswer, pathsInDiff, readableSteps, recorderPrompt } from "@/memory/extract";
-import { TEACH_WORKFLOW_ID } from "@/memory/types";
+import { SHIPPED_OUTCOMES, TEACH_WORKFLOW_ID } from "@/memory/types";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 import { drainExtractions } from "@/memory/queue";
 import {
@@ -331,8 +331,8 @@ describe("runs from before memory existed", () => {
 });
 
 describe("how far the work got", () => {
-  const exec = (status: "completed" | "failed", workflowId = "dev") =>
-    ({ status, workflowId } as ExecutionRecord);
+  const exec = (status: "completed" | "failed", workflowId = "dev", input: Record<string, unknown> = {}) =>
+    ({ status, workflowId, input } as ExecutionRecord);
   const mergeStep = (ok: boolean, status: "completed" | "failed" = "completed") =>
     ({ nodeId: "merge-request", status, output: { ok } } as unknown as ExecutionStepRecord);
   const plannerStep = () => ({ nodeId: "planner", status: "completed", output: {} } as unknown as ExecutionStepRecord);
@@ -354,5 +354,15 @@ describe("how far the work got", () => {
 
   it("takes a taught branch at the person's word", () => {
     expect(outcomeOf(exec("completed", TEACH_WORKFLOW_ID), [])).toBe("shipped");
+  });
+
+  // Half-finished work is worth teaching precisely so the teams building
+  // against it object while the choices can still move. Every other word in
+  // this vocabulary would have read as settled.
+  it("calls a branch the person said was unfinished in-progress, not shipped", () => {
+    expect(outcomeOf(exec("completed", TEACH_WORKFLOW_ID, { task: "pq", wip: true }), [])).toBe("in-progress");
+    expect(SHIPPED_OUTCOMES).not.toContain("in-progress");
+    // Re-taught once it lands, without the flag, it is the person's word again.
+    expect(outcomeOf(exec("completed", TEACH_WORKFLOW_ID, { task: "pq" }), [])).toBe("shipped");
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { GET as issueBoard, PATCH as settleIssue } from "@/app/api/issues/route";
 import { recordReportedSteps, reconcilePendingApprovals } from "@/executions/record";
 import { createExecution, getExecution } from "@/executions/store";
 import { getDb } from "@/lib/db";
@@ -359,5 +360,123 @@ describe("what the other team reads", () => {
     const issue = findIssue(ex.id, "planner", 0, "done-with")!;
     resolveIssue(issue.id, "desktop", "revised");
     expect(liveIssues(memoryScopeFor("desktop"), { paths: ["src/done"] }).map((i) => i.conflictKey)).not.toContain("done-with");
+  });
+});
+
+/**
+ * Closing one, from the only surface that does it.
+ *
+ * The two closings belong to different teams and say different things: the
+ * team objected to says the request was met, the team that raised it takes it
+ * back. Every test here is one side reaching for the other's, or for an
+ * objection it is on neither side of.
+ */
+describe("settling an objection", () => {
+  const raise = (key: string, over: Record<string, unknown> = {}) => {
+    const ex = run("srv");
+    recordReportedSteps(ex, [step({ stepIndex: 0, nodeId: "planner", output: { conflicts: [conflict({ conflictKey: key, ...over })] } })]);
+    return findIssue(ex.id, "planner", 0, key)!;
+  };
+
+  const listIssues = async (team: string) =>
+    (await issueBoard(new Request(`http://gate.test/api/issues?team=${team}`))).json();
+
+  const patch = (team: string, payload: unknown) =>
+    settleIssue(
+      new Request(`http://gate.test/api/issues?team=${team}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+
+  // Recall finds an objection by the paths a planner happens to be working
+  // in. This list finds it by the team, which is the only way a person learns
+  // of one before they next plan in those files.
+  it("lists what is against a team and what it raised, whether or not a task named it", async () => {
+    const mine = raise("board-against", { paths: ["src/board/a"] });
+    const ours = raise("board-raised", { targetTeamId: "android", paths: ["src/board/b"] });
+
+    const desktop = await listIssues("desktop");
+    expect(desktop.against.map((i: { id: string }) => i.id)).toContain(mine.id);
+    expect(desktop.raised.map((i: { id: string }) => i.id)).not.toContain(ours.id);
+
+    const srv = await listIssues("srv");
+    expect(srv.raised.map((i: { id: string }) => i.id)).toEqual(expect.arrayContaining([mine.id, ours.id]));
+    expect(srv.against).toHaveLength(0);
+
+    // A third team in the same tree sees the disagreement without a side.
+    const android = await listIssues("android");
+    expect(android.elsewhere.map((i: { id: string }) => i.id)).toContain(mine.id);
+    expect(android.against.map((i: { id: string }) => i.id)).toContain(ours.id);
+  });
+
+  it("drops a settled objection off the board", async () => {
+    const issue = raise("board-settled", { paths: ["src/board/c"] });
+    expect((await listIssues("desktop")).against.map((i: { id: string }) => i.id)).toContain(issue.id);
+
+    await patch("desktop", { id: issue.id, action: "resolve", note: "done" });
+    expect((await listIssues("desktop")).against.map((i: { id: string }) => i.id)).not.toContain(issue.id);
+  });
+
+  it("lets the team objected to resolve it, and the note reaches the other side's recall", async () => {
+    const issue = raise("settle-resolve", { paths: ["src/settle/a"] });
+
+    const res = await patch("desktop", { id: issue.id, action: "resolve", note: "moved the share to the second flight" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      status: "resolved",
+      resolvedBy: "desktop",
+      resolution: "moved the share to the second flight",
+    });
+
+    // Settled is settled on both sides: neither planner is shown it again.
+    expect(liveIssues(memoryScopeFor("desktop"), { paths: ["src/settle/a"] })).toHaveLength(0);
+    expect(liveIssues(memoryScopeFor("srv"), { paths: ["src/settle/a"] })).toHaveLength(0);
+  });
+
+  it("lets the team that raised it withdraw it", async () => {
+    const issue = raise("settle-withdraw", { paths: ["src/settle/b"] });
+    expect((await patch("srv", { id: issue.id, action: "withdraw" })).status).toBe(200);
+    expect(getIssue(issue.id)!.status).toBe("withdrawn");
+  });
+
+  it("refuses each side the other's closing", async () => {
+    const issue = raise("settle-sides", { paths: ["src/settle/c"] });
+
+    const wrongWithdraw = await patch("desktop", { id: issue.id, action: "withdraw" });
+    expect(wrongWithdraw.status).toBe(403);
+    expect(await wrongWithdraw.json()).toMatchObject({ code: "NOT_THE_SOURCE" });
+
+    const wrongResolve = await patch("srv", { id: issue.id, action: "resolve", note: "we say it is fine" });
+    expect(wrongResolve.status).toBe(403);
+    expect(await wrongResolve.json()).toMatchObject({ code: "NOT_THE_TARGET" });
+
+    expect(getIssue(issue.id)!.status).toBe("proposed");
+  });
+
+  it("is not an objection at all to a team on neither side of it", async () => {
+    const issue = raise("settle-stranger", { paths: ["src/settle/d"] });
+
+    const res = await patch("android", { id: issue.id, action: "resolve", note: "nothing to do with us" });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "no such objection" });
+    expect(getIssue(issue.id)!.status).toBe("proposed");
+  });
+
+  it("asks what was done before resolving, and refuses a second settling", async () => {
+    const issue = raise("settle-twice", { paths: ["src/settle/e"] });
+
+    const bare = await patch("desktop", { id: issue.id, action: "resolve", note: "  " });
+    expect(bare.status).toBe(400);
+    expect(await bare.json()).toMatchObject({ code: "NOTE_REQUIRED" });
+    expect(getIssue(issue.id)!.status).toBe("proposed");
+
+    expect((await patch("desktop", { id: issue.id, action: "resolve", note: "revised" })).status).toBe(200);
+
+    const again = await patch("srv", { id: issue.id, action: "withdraw" });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ code: "SETTLED" });
+    expect(getIssue(issue.id)!.resolution).toBe("revised");
   });
 });

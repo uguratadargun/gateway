@@ -270,6 +270,21 @@ export const teachSchema = z
     version: z.string().max(40).nullish(),
     /** Teach it even though a run already recorded this branch. */
     force: z.boolean().default(false),
+    /**
+     * The branch is not finished, and the person says so. Its decisions are
+     * recorded as `in-progress`: worth putting in memory so the teams
+     * building against them object while the choices can still move, and
+     * never to be read as settled.
+     */
+    wip: z.boolean().default(false),
+    /**
+     * The cross-team task this branch was work on, checked against the
+     * caller's family exactly as a run's is. Work finished before the gate
+     * recorded it belongs to a task no differently than work done under one:
+     * when the teaching is what fills a task in, refusing it the label would
+     * leave the task empty for the one branch it was opened for.
+     */
+    taskId: z.string().min(1).max(64).optional(),
   })
   .strict();
 

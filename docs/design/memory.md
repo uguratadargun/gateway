@@ -82,8 +82,11 @@ Porter stemming so "notify" finds "notifications". `outcome` says how far
 the work got, no further than the run proves: `deployed`/`merged` (live),
 `pr-open` (a merge request opened, nobody watched it land), `completed`
 (never offered for merge), `unshipped` (the branch never got that far),
-`abandoned` (the run failed or was stopped); `shipped` is what older rows
-and taught branches carry. Decisions are bi-temporal — `valid_from`/
+`in-progress` (a branch its teacher said is not finished, so the choices
+may still move), `abandoned` (the run failed or was stopped); `shipped` is
+what older rows and taught branches carry. A decision recorded
+`in-progress` reaches a planner with a line telling it to object now
+rather than build on the choice. Decisions are bi-temporal — `valid_from`/
 `valid_to` for the world, `recorded_at`/`retracted_at` for the row — so
 "what held on date D" is a range query.
 
@@ -159,6 +162,14 @@ cannot tell, and writes the account a run's agents would have left
 server keeps it as a finished run of `gate:teach`, dated at the branch's
 last commit, for the same recorder. Teaching a branch again replaces the
 earlier teaching; a branch a run already recorded needs `--force`.
+
+A branch does not have to be finished. `--wip` says it is not, and its
+decisions are recorded `in-progress` — worth teaching precisely so the
+teams building against the work object while the choices can still move,
+and never to be read as settled. Teaching it again without the flag, once
+it lands, makes it the person's word again. `--task-id` files the teaching
+under a cross-team task, which is usually how a task opened after the work
+started gets anything under it.
 
 ### Reading
 
@@ -294,9 +305,11 @@ with here, the run puts the objection to the person (`conflict-review`),
 and nothing reaches the other team until they confirm. It is written with
 the step that raised it as `proposed`; a confirmation makes it `open`, the
 state the target team's recall is shown; it never writes `valid_to` on
-somebody else's decision. The team objected to may `resolve` it, the
-raising team `withdraw` it, a person `reject` it; it is found by its paths
-and feature. An answer whose objection never reached the server is kept
+somebody else's decision. The team objected to may `resolve` it with a note
+saying what was done, and the team that raised it may `withdraw` it — both
+from the dashboard, neither from a run, and neither may do the other's;
+`reject` is the raising side's own refusal before it is ever sent. It is
+found by its paths and feature. An answer whose objection never reached the server is kept
 and counted, and the count is shown to recall, so an empty list is not read
 as agreement. When memory cannot answer another team's question about
 code, `gate ask "<question>" --repo <host/owner/name>` runs the `ask`
@@ -346,6 +359,8 @@ no agent, run or CLI can forget anything.
 
 ## Decisions
 
+- [0018 — Unfinished work is taught, and says it is unfinished](../decisions/0018-unfinished-work-is-taught-as-in-progress.md)
+- [0016 — An objection is closed by the side it belongs to](../decisions/0016-an-objection-is-closed-by-the-side-it-belongs-to.md)
 - [0010 — Forgetting is a person's, and only from the dashboard](../decisions/0010-forgetting-is-a-persons-and-only-from-the-dashboard.md)
 - [0007 — A repository is named by its remote, and unknown is never guessed](../decisions/0007-a-repository-is-named-by-its-remote.md)
 - [0003 — Ask answers from one commit](../decisions/0003-ask-answers-from-one-commit.md)

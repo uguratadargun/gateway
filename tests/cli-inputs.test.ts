@@ -63,4 +63,13 @@ describe("parseArgs", () => {
     expect(args.flags.yes).toBe(true);
     expect(args.positional).toEqual(["smoke", "make", "a", "file"]);
   });
+
+  // `--task-id` and the trailing task sentence are two different things a
+  // hair apart in spelling; taking the id as a boolean would file the run
+  // under nothing and eat the first word of the work.
+  it("takes --task-id's value and leaves the task sentence whole", () => {
+    const args = parseArgs(["begin", "dev", "--task-id", "task_9f3c", "fix", "the", "queue"]);
+    expect(args.flags["task-id"]).toBe("task_9f3c");
+    expect(args.positional).toEqual(["dev", "fix", "the", "queue"]);
+  });
 });

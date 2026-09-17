@@ -15,9 +15,12 @@ import { readBranch, TeachError } from "@/client/teach";
 import { createExecution, finishExecution, getExecution, getExecutionDiff, getExecutionSteps } from "@/executions/store";
 import { createKey } from "@/lib/apikeys";
 import { createTeam, createUser } from "@/lib/teams";
+import { LocalMemoryAccess } from "@/memory/access";
+import { describeSearch } from "@/memory/cards";
 import { extractRun } from "@/memory/extract";
 import { decisionsForExecution, getExtraction } from "@/memory/store";
 import { TEACH_WORKFLOW_ID } from "@/memory/types";
+import { createTask, executionsForTask } from "@/orchestration/tasks";
 import { createState } from "@/runtime/state";
 
 import { FakeModelProvider } from "./fakes/fake-model-provider";
@@ -238,5 +241,92 @@ describe("teaching a branch", () => {
   it("names an account field it does not know rather than dropping it", async () => {
     const res = await post(annKey, body({ account: { ...ACCOUNT, rationale: "misnamed" } }));
     expect(res.status).toBe(400);
+  });
+});
+
+/**
+ * A branch somebody is still in the middle of, taught so the teams building
+ * against it object while the choices can still move. The whole point is the
+ * word the sibling planner reads: anything but `in-progress` says settled.
+ */
+describe("teaching a branch that is not finished", () => {
+  it("records its decisions as in-progress, and warns the planner that finds them", async () => {
+    const workspace = { ...body().workspace, branch: "feature/pq", baseCommit: "aa11aa11", commit: "aa22aa22", changedFiles: ["app/crypto/Kem.kt"] };
+    const res = await post(annKey, body({ workspace, wip: true }));
+    expect(res.status).toBe(201);
+
+    const { executionId } = await res.json();
+    expect(getExecution(executionId)!.input).toMatchObject({ wip: true });
+
+    const answer = {
+      ...ANSWER,
+      decisions: [{ ...ANSWER.decisions[0], title: "Hybrid KEM in the client handshake", touches: [{ kind: "file", ref: "app/crypto/Kem.kt" }] }],
+      feature: { ...ANSWER.feature, name: "Post-quantum handshake" },
+    };
+    expect(
+      await extractRun(executionId, new FakeModelProvider(() => JSON.stringify(answer)), { model: "sonnet" }),
+    ).toEqual({ status: "done", decisionCount: 1 });
+    const [decision] = decisionsForExecution(executionId);
+    expect(decision.outcome).toBe("in-progress");
+
+    // What another team actually reads. The outcome word alone is one label
+    // among several; the line under it is what changes what they do.
+    const brief = describeSearch(await new LocalMemoryAccess("tau").search({ paths: ["app/crypto/Kem.kt"] }));
+    expect(brief).toContain("in-progress");
+    expect(brief).toContain("raise an objection now rather than after it settles");
+  });
+
+  it("goes back to the person's word when the finished branch is taught again", async () => {
+    const workspace = { ...body().workspace, branch: "feature/pq-done", baseCommit: "bb11bb11", commit: "bb22bb22" };
+    const { executionId } = await (await post(annKey, body({ workspace, wip: true }))).json();
+    expect(getExecution(executionId)!.input).toMatchObject({ wip: true });
+
+    await post(annKey, body({ workspace }));
+    expect(getExecution(executionId)!.input).not.toHaveProperty("wip");
+  });
+});
+
+/**
+ * Work finished before the gate saw it belongs to a cross-team task as much as
+ * work done under one: teaching is usually how a task opened after the fact
+ * gets anything under it at all.
+ */
+describe("teaching a branch under a task", () => {
+  const branch = (name: string, base: string) => ({ ...body().workspace, branch: name, baseCommit: base, commit: `${base}ff` });
+
+  it("files the teaching under it, so the task lists the branch", async () => {
+    const task = createTask({ teamId: "tau", title: "Offline edits, desktop and server" });
+    const res = await post(annKey, body({ workspace: branch("feature/filed", "f1f1f1f1"), taskId: task.id }));
+    expect(res.status).toBe(201);
+
+    const { executionId } = await res.json();
+    expect(getExecution(executionId)!.taskId).toBe(task.id);
+    expect(executionsForTask(task.id).map((e) => e.id)).toContain(executionId);
+  });
+
+  it("refuses a task outside the family, and teaches nothing", async () => {
+    createTeam("Rho", "rho");
+    const theirs = createTask({ teamId: "rho", title: "Not tau's work" });
+
+    const res = await post(annKey, body({ workspace: branch("feature/outside", "f2f2f2f2"), taskId: theirs.id }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "TASK_NOT_FOUND" });
+    expect(executionsForTask(theirs.id)).toHaveLength(0);
+  });
+
+  it("takes the task a second teaching names, and keeps the first one's when it names none", async () => {
+    const task = createTask({ teamId: "tau", title: "Named after the fact" });
+    const workspace = branch("feature/late", "f3f3f3f3");
+
+    const first = await (await post(annKey, body({ workspace }))).json();
+    expect(getExecution(first.executionId)!.taskId).toBeNull();
+
+    const named = await (await post(annKey, body({ workspace, taskId: task.id }))).json();
+    expect(named).toMatchObject({ executionId: first.executionId, replaced: true });
+    expect(getExecution(first.executionId)!.taskId).toBe(task.id);
+
+    // Teaching it again without one is not a way to unfile it.
+    await post(annKey, body({ workspace }));
+    expect(getExecution(first.executionId)!.taskId).toBe(task.id);
   });
 });

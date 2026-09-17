@@ -11,6 +11,10 @@
 - A repository says whose it is on the Repos page — at connect time and on the record afterwards — which is what decides whose `gate:ask` may read it; an owner naming no team is refused instead of stored.
 - The dashboard is one shape: every panel is a card with the same head, the headings that group them belong to the page, and an editable card ends in its own Save — under the controls it writes, disabled until something changed, and saving only the keys that card shows.
 - Saving a settings card no longer puts back the account rotation another panel had changed.
+- An Objections page: what stands against your team, what your team raised, and what two other teams in your tree are disagreeing about — the same rows recall shows a planner, found by team instead of by the files you happen to be working in. Until now a team that did not plan in those files never learned anybody had objected.
+- A branch that is not finished can be taught, and says so: `gate teach --wip` records its decisions as `in-progress`, and the planner on another team that finds one is told to raise an objection now rather than build on a choice still moving. Teach the branch again once it lands and it stops reading that way. Before this, teaching a seventy-percent branch told every other team it had shipped.
+- An objection between teams can finally be closed: the team whose decision was objected to resolves it with a note saying what was done, the team that raised it withdraws it, and neither can do the other's. Both are on the task page, and a closed objection leaves both teams' planners alone — until now a confirmed one stood in their recall forever.
+- A session run and a taught branch can name the cross-team task they serve, the way a headless run already could: `gate begin --task-id`, `gate teach --task-id`, and `/gate:run` and `/gate:teach` pass on the one the user names. A branch taught before the task existed is what usually fills it in, so teaching the same branch again takes the task the first teaching did not name.
 
 ## 0.38.0 — 2026-09-16
 

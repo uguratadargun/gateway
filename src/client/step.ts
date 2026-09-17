@@ -461,6 +461,7 @@ export async function begin(
   input: Record<string, unknown>,
   cwd: string,
   repos: Record<string, string>,
+  opts: { taskId?: string } = {},
 ): Promise<Instruction> {
   const scope = cacheScope(ctx.team);
   const workflow = getWorkflow(workflowId, scope);
@@ -494,6 +495,10 @@ export async function begin(
       session,
     },
     driver: "session",
+    // Which piece of cross-team work this run serves. A session run is filed
+    // the same way a headless one is: the work outlives both, and which of
+    // the two walked the graph says nothing about what the work was for.
+    taskId: opts.taskId,
     // From the mirror, which is what `pinDefinitions` freezes a line below:
     // the hash the server agrees to is the one for the copy this run walks.
     definitionsHash: definitionsHash(workflow.id, scope),

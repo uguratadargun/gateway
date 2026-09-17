@@ -45,6 +45,12 @@ export interface Touch {
  * `shipped` is the value rows carried before the distinction existed. It is
  * not re-derived: a row recorded as shipped stays shipped, because the
  * evidence that would say which of the three it really was is not there.
+ *
+ * `in-progress` is the one nobody's pipeline produces: it is claimed, by a
+ * person teaching a branch they say is not finished. Work half-done is worth
+ * putting in memory precisely so the teams building against it object now
+ * rather than after it sets, and every other word here would have read as a
+ * settled choice to the planner that found it.
  */
 export type DecisionOutcome =
   | "shipped"
@@ -53,6 +59,7 @@ export type DecisionOutcome =
   | "pr-open"
   | "completed"
   | "unshipped"
+  | "in-progress"
   | "abandoned";
 
 /** Outcomes that mean the work reached users. Not `pr-open`: that is an offer. */
