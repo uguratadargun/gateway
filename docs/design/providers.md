@@ -5,10 +5,11 @@
 A provider is any model endpoint that is not one of the connected Claude
 accounts: Ollama, vLLM, LM Studio or llama.cpp on the person's own machine, or
 a hosted service like Z.AI. Once added, its models appear as
-`provider:<name>/<model>` in every model picker — a tier slot, an agent, or
-a client naming one directly — and a request that lands on one is still
-routed, logged and counted the same as a Claude call, while putting nothing
-on the Anthropic bill.
+`provider:<name>/<model>` in every model picker — a tier slot, an agent, a
+client naming one directly, and Claude Code's own `/model` on every machine
+connected to this gate — and a request that lands on one is still routed,
+logged and counted the same as a Claude call, while putting nothing on the
+Anthropic bill.
 
 ## How it works
 
@@ -82,6 +83,38 @@ asks the endpoint's own catalogue — `{baseUrl}/models` with a bearer token for
 *unreachable* rather than throwing, so the person can name the models by hand
 instead.
 
+`providerCatalogue()` puts every enabled provider's list together, each model
+named `<model> (<provider>)` and described by where the endpoint is. That one
+list is what `/v1/models` serves and what the rows in Claude Code's `/model`
+picker are built from, so a person sees the same names wherever they look. A
+provider that is off contributes nothing rather than emptying the list.
+
+### The rows in Claude Code's `/model`
+
+Claude Code lists Claude models. It will also read a gateway's `/v1/models` at
+startup — connecting a machine sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`
+for it — but it keeps only the entries whose id contains `claude` or
+`anthropic`, and a `provider:` reference never does. So gate writes those rows
+itself, into `modelPicker` in the user's own settings:
+
+```json
+{ "model": "provider:zai/glm-5.3-flash", "label": "glm-5.3-flash (zai)",
+  "description": "zai · remote", "behavesAs": "claude-sonnet-5" }
+```
+
+`behavesAs` is what makes the row work: it hands an id the client has never
+heard of the client-side profile of one it knows — context window, effort
+defaults — and without it the client says the model "isn't described by this
+version's model catalog". Picking the row sends `provider:zai/glm-5.3-flash`
+to the gate, so the name the person chose is the name that is resolved, logged
+and counted.
+
+The rows are written by `applyClaudeCode` on the gate's own machine and by
+`gate live` / `gate login` on everybody else's, both through
+`src/lib/model-picker.ts`. Rows somebody else put there are kept, and kept
+first; `replaceBuiltInOptions` is never written, so the built-in Claude rows
+stay.
+
 ### Example: Z.AI (GLM)
 
 Z.AI publishes a Messages API endpoint, which is what makes it worth
@@ -146,7 +179,8 @@ Practical notes:
 
 ## Key files
 
-- `src/lib/providers.ts` — the provider rows, the two dialects, `parseProviderRef` / `formatProviderRef` / `canonicalModelRef`, self-hosted detection, declared-or-discovered catalogue
+- `src/lib/providers.ts` — the provider rows, the two dialects, `parseProviderRef` / `formatProviderRef` / `canonicalModelRef`, self-hosted detection, declared-or-discovered catalogue, and `providerCatalogue()` behind both `/v1/models` and the picker
+- `src/lib/model-picker.ts` — the `modelPicker` row shape and the merge, database-free so the CLI bundles it · `src/client/live.ts` writes the rows on a developer's machine, `src/lib/clients.ts` on the gate's own
 - `src/lib/provider-exec.ts` — `sendToOpenAIProvider` (translate out and back) and `sendToAnthropicProvider` (forward, strip Anthropic-only fields)
 - `src/lib/anthropic-openai.ts` — Anthropic Messages → OpenAI Chat Completions and back, JSON and SSE
 - `src/lib/openai-compat.ts` — the inverse direction: OpenAI SDK clients calling `/v1/chat/completions`
@@ -160,6 +194,8 @@ Practical notes:
 ## Pitfalls
 
 - An `anthropic-compat` endpoint with an empty Models field shows nothing in the pickers, because there is no catalogue to discover. Write the list.
+- A picker row is written when a machine connects, not when a provider changes. Adding or removing a model shows up in `/model` after the next `gate live` (or `/gate:login`), and after the Claude Code session is restarted.
+- Every row borrows Sonnet's context window through `behavesAs`. A local model with a smaller one is compacted late, and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` does not correct it — that variable only applies to an id the client does not recognise.
 - `openai-compat` drops thinking blocks on the way out; an agent that relies on visible reasoning across turns will not get it from a translated provider.
 - Streaming through `openai-compat` reports zero tokens if the server ignores `stream_options.include_usage`; the request still succeeds, it is just unmetered.
 - A provider model in a tier slot inherits that slot's fallback chain. `tiers.haiku` on an Ollama that is off means every trivial request drops to Sonnet on a Claude account until it is back.
@@ -168,4 +204,4 @@ Practical notes:
 
 ## Decisions
 
-- none recorded yet
+- [0018 — A provider model reaches the picker under its own name](../decisions/0018-a-provider-model-reaches-the-picker-under-its-own-name.md)

@@ -1,6 +1,6 @@
 import { gateAuthOk } from "@/lib/gate-auth";
 import { jsonError } from "@/lib/gateway-core";
-import { formatProviderRef, listProviders, listProviderModels } from "@/lib/providers";
+import { providerCatalogue } from "@/lib/providers";
 import { fetchAvailableModels } from "@/lib/models";
 import { loadRoutingConfig } from "@/lib/router";
 
@@ -15,20 +15,18 @@ export const runtime = "nodejs";
 export async function GET(req: Request) {
   if (!gateAuthOk(req)) return jsonError(401, "Invalid gate API key");
   const { models } = await fetchAvailableModels();
-  const providers = listProviders().filter((p) => p.enabled);
-  const fromProviders = await Promise.all(
-    providers.map(async (p) => {
-      const { models: ids } = await listProviderModels(p);
-      return ids.map((id) => ({ ref: formatProviderRef(p.name, id), owner: p.name }));
-    }),
-  );
+  const fromProviders = await providerCatalogue();
   const cfg = loadRoutingConfig();
   const created = Math.floor(Date.now() / 1000);
-  const entry = (id: string, owned_by: string) => ({
+  // `display_name` and `description` are the two optional fields Claude Code's
+  // own gateway discovery reads, so a provider model is named the same way
+  // whether the picker row was written by gate or discovered by the client.
+  const entry = (id: string, owned_by: string, display_name = id, description?: string) => ({
     id,
     object: "model",
     type: "model",
-    display_name: id,
+    display_name,
+    ...(description ? { description } : {}),
     created,
     created_at: new Date(created * 1000).toISOString(),
     owned_by,
@@ -36,7 +34,7 @@ export async function GET(req: Request) {
   const data = [
     ...Object.keys(cfg.tiers).map((t) => entry(t, "gate")),
     ...models.map((m) => entry(m, "anthropic")),
-    ...fromProviders.flat().map((m) => entry(m.ref, m.owner)),
+    ...fromProviders.map((m) => entry(m.id, m.owner, m.display_name, m.description)),
   ];
   return Response.json({ object: "list", data, has_more: false, first_id: data[0]?.id ?? null, last_id: data.at(-1)?.id ?? null });
 }

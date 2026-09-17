@@ -27,7 +27,18 @@ OpenAI SDK clients work too — point them at the same base URL and call
 or `/v1/responses` for Codex CLI and the newer SDKs. `/v1/models` lists the
 four tier aliases, then what the connected account can actually use, then every
 provider model — fetched live from Anthropic and falling back to a known list
-when the fetch fails.
+when the fetch fails. A provider model is listed under a `display_name` that
+names its provider and a `description` saying whether the endpoint is on your
+network or remote, which are the two optional fields Claude Code's own
+discovery reads.
+
+Claude Code is told what this gate serves rather than left to guess.
+Connecting a machine sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, and
+the client asks `/v1/models` at startup and adds what it finds to `/model` — but
+it keeps only the entries whose id contains `claude` or `anthropic`, so no
+provider model ever reaches the picker that way. Those rows gate writes itself,
+into `modelPicker` in the user's own settings, one per provider model, under
+the name the catalogue gave it. → `decisions/0018-…`
 
 A name is resolved by trying four things in order and stopping at the first
 that answers:
@@ -96,7 +107,8 @@ needs no migration.
 - `src/lib/reasoning.ts` — effort precedence, capability detection per model, `applyReasoning` and `sanitizeForModel`
 - `src/lib/models.ts` — the model catalogue behind `/v1/models`, live from Anthropic with a known-list fallback
 - `src/lib/gateway-core.ts` — `dispatch` resolves the name, applies effort, picks an account, and sets the `x-gate-*` headers
-- `src/lib/clients.ts` — the connect snippets, and the login-time repair that clears a pre-0.39 `auto`
+- `src/lib/clients.ts` — the connect snippets, the picker rows and the variables written with them, and the login-time repair that clears a pre-0.39 `auto`
+- `src/lib/model-picker.ts` — the `modelPicker` row shape and the merge that keeps everybody else's rows; `src/client/live.ts` writes the same rows from a developer's machine
 - `src/components/routing-rules-panel.tsx` — the dashboard card: the model behind each tier
 - `src/app/api/gateway/v1/messages/route.ts`, `.../chat/completions/route.ts`, `.../responses/route.ts`, `.../models/route.ts` — the endpoints that read `x-gate-effort` and hand the body to `dispatch`
 
@@ -106,6 +118,9 @@ needs no migration.
 - A client that sets its own `thinking` or `output_config.effort` is never overridden — `x-gate-effort` and the settings default are ignored for it. Claude Code is such a client, so the effort lever does not reach it; set effort in Claude Code itself.
 - `model: "auto"` is a 400, not a default. A machine connected before 0.39 keeps sending it until `/gate:login` is run again.
 - A tier alias resolves through `tiers`, so pointing `tiers.haiku` at a provider model silently redirects everything that asks for `haiku`, including an agent file that says `model: haiku`.
+- `tiers` does not reach Claude Code. It resolves its own aliases before the request leaves, so the gate sees a concrete `claude-*` id and passes it through — background traffic included. Only a client that sends a bare alias, or an `ANTHROPIC_DEFAULT_*_MODEL` a person set themselves, goes through the table.
+- `modelPicker` is read from the user or managed scope only. A row written into a project's `.claude/settings.local.json` is ignored without a word, which is why `gate live` writes the rows to `~/.claude/settings.json` even when the gateway variables went into the repository's file.
+- A picker row gives a provider model Sonnet's client-side profile through `behavesAs`, its context window included. A local model with a smaller window is compacted late, and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` cannot correct it — that variable applies only to an id the client does not recognise, and `behavesAs` has just made it recognise this one.
 - Nothing guards Haiku's 200K window before the call. An oversized prompt sent to Haiku is caught only by the 400 → Sonnet retry, after Anthropic refuses it.
 - `routing.json` is cached in-process. An edit by hand is not seen until restart; the dashboard's save resets the cache, a `$EDITOR` save does not.
 - A fallback still crosses a prompt-cache boundary and can silently drop the previous turn's reasoning. It fires only on a 429/529 or an oversized-prompt 400, but when it fires the conversation continues on another model.
@@ -113,3 +128,4 @@ needs no migration.
 ## Decisions
 
 - [0015 — The gateway resolves names, never difficulty](../decisions/0015-the-gateway-resolves-names-never-difficulty.md)
+- [0018 — A provider model reaches the picker under its own name](../decisions/0018-a-provider-model-reaches-the-picker-under-its-own-name.md)

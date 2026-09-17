@@ -372,3 +372,34 @@ export async function listProviderModels(
 export function forgetProviderModels(id: string): void {
   modelCache.delete(id);
 }
+
+/**
+ * Every enabled provider's models, named the way a person reads them.
+ *
+ * One list, two readers: `/v1/models` serves it, and the Claude Code picker
+ * rows are built from it — the same names in both, whether they are written
+ * by the gate itself or by a CLI that only ever saw the endpoint. The name
+ * carries the provider because two of them may serve the same model id, and
+ * `glm-5.3` alone would not say which endpoint answered.
+ *
+ * An unreachable provider contributes nothing rather than failing the list;
+ * a box that is off should not empty the picker of the ones that are on.
+ */
+export async function providerCatalogue(): Promise<
+  Array<{ id: string; display_name: string; description: string; owner: string }>
+> {
+  const providers = listProviders().filter((p) => p.enabled);
+  const lists = await Promise.all(
+    providers.map(async (provider) => {
+      const { models } = await listProviderModels(provider);
+      const where = provider.selfHosted ? "on your network" : "remote";
+      return models.map((model) => ({
+        id: formatProviderRef(provider.name, model),
+        display_name: `${model} (${provider.name})`,
+        description: `${provider.label || provider.name} · ${where}`,
+        owner: provider.name,
+      }));
+    }),
+  );
+  return lists.flat();
+}

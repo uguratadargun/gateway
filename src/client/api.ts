@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 
 import type { AskBody, TeachRequest } from "@/lib/client-api-schemas";
+import { isProviderModelId } from "@/lib/model-picker";
 import { GATE_VERSION, isOlderThan, VERSION_HEADERS } from "@/lib/protocol";
 import type { FeatureDetail, MemorySearchRequest, MemorySearchResult } from "@/memory/cards";
 
@@ -360,5 +361,25 @@ export class GateClient {
   async listRuns(limit = 20): Promise<Array<Record<string, any>>> {
     const res = await this.request<{ executions: Array<Record<string, any>> }>(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
+  }
+
+  /**
+   * The models the gateway serves, as `/v1/models` reports them — the gateway
+   * endpoint rather than a client-API one, because it is the list every other
+   * client of this gate already sees, and it is already this key's to read.
+   * Only the provider models are of interest here: the Claude ones reach the
+   * picker through Claude Code's own discovery.
+   */
+  async providerModels(): Promise<Array<{ id: string; display_name?: string; description?: string }>> {
+    const res = await this.request<{ data?: Array<{ id?: unknown; display_name?: unknown; description?: unknown }> }>(
+      "/api/gateway/v1/models",
+    );
+    return (Array.isArray(res.body?.data) ? res.body.data : [])
+      .filter((m) => isProviderModelId(m?.id))
+      .map((m) => ({
+        id: String(m.id),
+        ...(typeof m.display_name === "string" ? { display_name: m.display_name } : {}),
+        ...(typeof m.description === "string" ? { description: m.description } : {}),
+      }));
   }
 }

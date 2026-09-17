@@ -11,6 +11,7 @@ import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 import { windowLabel } from "@/lib/account-pool";
 import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
+import { pickerRow, type PickerRow } from "@/lib/model-picker";
 import { describeFeature, describeSearch } from "@/memory/cards";
 import { parseSince } from "@/runtime/tools/memory-tools";
 import { LINKED_DIRECTORIES } from "@/repos/detect";
@@ -23,7 +24,7 @@ import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConf
 import { applyClean, describeVerdict, listWorkspaces, planClean } from "./clean";
 import { runLocal } from "./run";
 import { begin, continueRun, next, noteSession, reviewCommand, step, wait, work, type Instruction, type SessionRunContext } from "./step";
-import { applyGatewaySettings, gatewayEnv, settingsPath } from "./live";
+import { applyGatewaySettings, applyPickerRows, gatewayEnv, settingsPath } from "./live";
 import { removeSubagents, syncSubagents } from "./subagents";
 import { describeBranch, readAccount, readBranch, readBranchDiff, TeachError, type BranchReading } from "./teach";
 
@@ -242,7 +243,7 @@ async function cmdLogin(args: Args): Promise<number> {
   // Logging in is joining: from here every Claude Code session of theirs
   // goes through the gateway, so a run's nodes are its subagents and its
   // traffic is the team's. `gate live --off --global` is the way out.
-  for (const line of setLive(true, true, client.gatewayUrl, key)) console.log(line);
+  for (const line of setLive(true, true, client.gatewayUrl, key, await pickerRows(client))) console.log(line);
   const synced = syncSubagents(me.team.id, cacheScope(me.team.id));
   if (synced.created) console.log("restart Claude Code once: its agents directory did not exist before, and it reads a new one at startup");
   return 0;
@@ -685,6 +686,7 @@ function cmdReset(): number {
       if (!existsSync(path)) continue;
       try {
         if (applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), false)) console.log(`took the gateway out of ${path}`);
+        if (global && applyPickerRows([], false, path)) console.log(`took the provider models out of ${path}`);
       } catch (e) {
         console.log(`could not update ${path}: ${(e as Error).message}`);
       }
@@ -751,16 +753,35 @@ function sessionThroughGateway(client: GateClient): boolean {
  * reloads it live), or the user's settings with --global. `--off` takes
  * exactly those variables out again.
  */
-function cmdLive(args: Args): number {
+async function cmdLive(args: Args): Promise<number> {
   const config = readConfig();
   if (!config) die("not logged in - run `gate login <token>` first");
   const client = connect();
-  for (const line of setLive(args.flags.off !== true, args.flags.global === true, client.gatewayUrl, config.key)) console.log(line);
+  const on = args.flags.off !== true;
+  const lines = setLive(on, args.flags.global === true, client.gatewayUrl, config.key, on ? await pickerRows(client) : []);
+  for (const line of lines) console.log(line);
   return 0;
 }
 
+/**
+ * The provider models, as rows for Claude Code's picker.
+ *
+ * A gateway that cannot be reached, or one too old to describe its provider
+ * models, costs the person their picker rows and nothing else — being on the
+ * gateway is the part that matters, and failing `gate live` over a list would
+ * take that away too.
+ */
+async function pickerRows(client: GateClient): Promise<PickerRow[]> {
+  try {
+    return (await client.providerModels()).map(pickerRow);
+  } catch (e) {
+    console.error(`# could not read the gateway's model list (${(e as Error).message}) — /model shows the built-in models only`);
+    return [];
+  }
+}
+
 /** The body of `gate live`, shared with login and reset. Returns what to tell the person. */
-function setLive(on: boolean, global: boolean, gatewayUrl: string, key: string): string[] {
+function setLive(on: boolean, global: boolean, gatewayUrl: string, key: string, rows: PickerRow[] = []): string[] {
   const path = settingsPath(global);
   const where = global ? "every Claude Code session of yours" : `Claude Code sessions started in ${process.cwd()}`;
   let changed: boolean;
@@ -769,16 +790,34 @@ function setLive(on: boolean, global: boolean, gatewayUrl: string, key: string):
   } catch (e) {
     die(`could not update ${path}: ${(e as Error).message}`);
   }
+  // The picker rows are the user's settings whichever file the variables went
+  // into; `applyPickerRows` says why. Taking one repository off the gateway
+  // does not take them out again, though: the rows belong to the person, not
+  // to this directory, and somebody with the gateway on globally would lose
+  // the list everywhere for having left it here. Only leaving altogether —
+  // `--off --global`, or `gate reset` — removes them.
+  let pickerPath: string | null = null;
+  try {
+    if ((on || global) && applyPickerRows(rows, on)) pickerPath = settingsPath(true);
+  } catch (e) {
+    console.error(`# could not write the model picker (${(e as Error).message})`);
+  }
   if (on && !global) keepOutOfGit(process.cwd());
   if (on) {
     return [
       changed ? `${where} now go through ${gatewayUrl}` : `${where} already go through ${gatewayUrl}`,
       `  written to ${path}`,
+      ...(pickerPath
+        ? [`  Claude Code's /model now lists ${rows.length} provider model(s), from ${pickerPath}`]
+        : []),
       "A session already open picks that up on its own; if the next node in its own model still arrives as " +
         "`wait` rather than as a subagent, restart Claude Code once.",
     ];
   }
-  return [changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`];
+  return [
+    changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`,
+    ...(pickerPath ? [`  the provider models are out of /model again (${pickerPath})`] : []),
+  ];
 }
 
 /**
@@ -1269,7 +1308,7 @@ export async function main(argv: string[]): Promise<number> {
       case "env":
         return cmdEnv();
       case "live":
-        return cmdLive(args);
+        return await cmdLive(args);
       case "work":
         return await cmdWork(args);
       case "repo":

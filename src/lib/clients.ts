@@ -2,6 +2,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { pickerRow, withPickerRows, withoutPickerRows } from "./model-picker";
+import { providerCatalogue } from "./providers";
+
 /**
  * Local AI-client integration: detect installed tools and (for Claude Code)
  * write the gateway base URL into its settings, with a timestamped backup.
@@ -91,7 +94,20 @@ export function detectClients(baseUrl: string): ClientInfo[] {
   ];
 }
 
-export function applyClaudeCode(baseUrl: string, apiKey?: string): { ok: true; backup: string | null } {
+/**
+ * The row Claude Code offered for gate's difficulty router until 0.39. It is
+ * not one of ours by its model id, so the picker merge would keep it as
+ * somebody else's row; it is dropped here by name instead.
+ */
+function dropLegacyAutoRow(cfg: Record<string, unknown>): void {
+  const picker = cfg.modelPicker as Record<string, unknown> | undefined;
+  if (!picker || !Array.isArray(picker.options)) return;
+  const rest = (picker.options as Array<Record<string, unknown>>).filter((row) => row.model !== "auto");
+  if (rest.length) cfg.modelPicker = { ...picker, options: rest };
+  else delete cfg.modelPicker;
+}
+
+export async function applyClaudeCode(baseUrl: string, apiKey?: string): Promise<{ ok: true; backup: string | null }> {
   const anthropicBase = `${baseUrl}/api/gateway`;
   const dir = join(HOME, ".claude");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -109,15 +125,22 @@ export function applyClaudeCode(baseUrl: string, apiKey?: string): { ok: true; b
   // refuses — clear it here so re-connecting repairs it.
   if (env.ANTHROPIC_MODEL === "auto") delete env.ANTHROPIC_MODEL;
   if (env.CLAUDE_CODE_MAX_CONTEXT_TOKENS === "1000000") delete env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
-  env.ANTHROPIC_SMALL_FAST_MODEL = "haiku";
+  // Until 0.39 this said `ANTHROPIC_SMALL_FAST_MODEL=haiku`, which sent the
+  // background traffic through gate's `tiers` table. The variable is
+  // deprecated by the client, and nothing replaces it: Claude Code names a
+  // model for that traffic by itself and gate serves the name, as it serves
+  // any other. Sending it somewhere else is one line in the person's own
+  // settings, and theirs to write.
+  delete env.ANTHROPIC_SMALL_FAST_MODEL;
+  // Claude Code reads `/v1/models` from the gateway at startup when this is
+  // set, which is how the connected account's own models reach the picker. It
+  // keeps only ids containing "claude" or "anthropic", so it never surfaces a
+  // provider model — those are the rows written below.
+  env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
   if (apiKey) env.ANTHROPIC_AUTH_TOKEN = apiKey;
   cfg.env = env;
-  const picker = cfg.modelPicker as Record<string, unknown> | undefined;
-  if (picker && Array.isArray(picker.options)) {
-    const rest = (picker.options as Array<Record<string, unknown>>).filter((row) => row.model !== "auto");
-    if (rest.length) cfg.modelPicker = { ...picker, options: rest };
-    else delete cfg.modelPicker;
-  }
+  dropLegacyAutoRow(cfg);
+  withPickerRows(cfg, (await providerCatalogue()).map(pickerRow));
   writeFileSync(CLAUDE_SETTINGS, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
   return { ok: true, backup };
 }
@@ -132,15 +155,12 @@ export function revertClaudeCode(): { ok: true; backup: string | null } {
   delete env.ANTHROPIC_AUTH_TOKEN;
   if (env.ANTHROPIC_MODEL === "auto") delete env.ANTHROPIC_MODEL;
   if (env.ANTHROPIC_SMALL_FAST_MODEL === "haiku") delete env.ANTHROPIC_SMALL_FAST_MODEL;
+  delete env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY;
   if (env.CLAUDE_CODE_MAX_CONTEXT_TOKENS === "1000000") delete env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
   if (Object.keys(env).length) cfg.env = env;
   else delete cfg.env;
-  const picker = cfg.modelPicker as Record<string, unknown> | undefined;
-  if (picker && Array.isArray(picker.options)) {
-    const rest = (picker.options as Array<Record<string, unknown>>).filter((row) => row.model !== "auto");
-    if (rest.length) cfg.modelPicker = { ...picker, options: rest };
-    else delete cfg.modelPicker;
-  }
+  dropLegacyAutoRow(cfg);
+  withoutPickerRows(cfg);
   writeFileSync(CLAUDE_SETTINGS, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
   return { ok: true, backup };
 }

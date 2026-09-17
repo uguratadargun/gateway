@@ -21,7 +21,7 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Invalid request", issues: parsed.error.issues }, { status: 400 });
   const { action, apiKey } = parsed.data;
   try {
-    const result = action === "apply" ? applyClaudeCode(baseUrlFor(req), apiKey) : revertClaudeCode();
+    const result = action === "apply" ? await applyClaudeCode(baseUrlFor(req), apiKey) : revertClaudeCode();
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to update client config" }, { status: 500 });

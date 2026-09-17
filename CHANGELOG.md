@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The models your providers serve are in Claude Code's `/model` picker, under their own names: `glm-5.3-flash (zai)` picks GLM, `Qwen3.8-27B (vllm)` picks the box on your network, and the gate is asked for exactly the model the row says. Connecting a machine also lets Claude Code read the gate's model list for itself, so the connected account's own models are listed by the gate that will serve them. Until now a connected provider was invisible to everyone but the person who configured it.
+
 - The Traffic page says who made each request, which model answered and which Claude account served it: the person behind the key by name, and the account by its label rather than its id. A request a provider answered names the provider instead, a workflow calling in-process names itself, and a person or account deleted since leaves the row readable rather than blank. The team, the key and the name the client originally asked for are in the expanded detail.
 - gate serves the model you name and no longer picks one for you: the difficulty table, the Haiku grader, sticky sessions and the throttle's tier downgrade are gone, because moving a live conversation between models rebuilds its prompt cache and costs more than it saves.
 - `model: "auto"` is refused with a message saying what to send instead; re-running `/gate:login` clears the setting from a machine connected before this release, and Claude Code now keeps whatever model you chose with `/model`.

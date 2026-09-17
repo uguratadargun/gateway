@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { withPickerRows, withoutPickerRows, type PickerRow } from "@/lib/model-picker";
+
 import { claudeConfigDir } from "./subagents";
 
 /**
@@ -25,6 +27,11 @@ export function gatewayEnv(gatewayUrl: string, key: string): Record<string, stri
     // somebody else.
     ANTHROPIC_API_KEY: key,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    // Claude Code asks the gateway's /v1/models at startup with this set, and
+    // the connected account's models reach the `/model` picker. Provider
+    // models never do — the client keeps only ids containing "claude" or
+    // "anthropic" — which is why the picker rows below are written by hand.
+    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
   };
 }
 
@@ -71,6 +78,26 @@ export function applyGatewaySettings(path: string, env: Record<string, string>, 
   }
   if (Object.keys(next).length) settings.env = next;
   else delete settings.env;
+  if (JSON.stringify(settings) === before) return false;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
+  return true;
+}
+
+/**
+ * Writes the provider models into Claude Code's `/model` picker, or takes
+ * them out again. Returns whether the file changed.
+ *
+ * Always the user's own settings, even when the gateway variables went into
+ * the repository's: Claude Code reads `modelPicker` from the user or managed
+ * scope only, and a project file carrying one is ignored without a word. A
+ * person working in two repositories also wants one list, not two.
+ */
+export function applyPickerRows(rows: PickerRow[], on: boolean, path = settingsPath(true)): boolean {
+  const settings = readSettings(path);
+  const before = JSON.stringify(settings);
+  if (on) withPickerRows(settings, rows);
+  else withoutPickerRows(settings);
   if (JSON.stringify(settings) === before) return false;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
