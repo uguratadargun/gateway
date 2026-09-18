@@ -290,10 +290,14 @@ async function attemptOnAccount(args: {
       // anything is: captureQuota above has already folded the reply's own
       // window readings into the snapshot this reads.
       const rejected = upstream?.headers.get("anthropic-ratelimit-unified-status") === "rejected";
-      modelBlock = rejected
+      const rejection = rejected
         ? classifyUnifiedRejection({ headers: upstream!.headers, snapshot: account.quota, model: usedModel })
         : null;
-      accountLimited = rejected && modelBlock.kind === "account";
+      accountLimited = rejection?.kind === "account";
+      modelBlock =
+        rejection?.kind === "model"
+          ? { window: rejection.window, scope: rejection.scope, until: rejection.until }
+          : null;
       const ra = Number(upstream?.headers.get("retry-after") ?? NaN);
       // A short retry-after is worth waiting out even when a claim was
       // rejected (the window may be about to reset); otherwise hand back to

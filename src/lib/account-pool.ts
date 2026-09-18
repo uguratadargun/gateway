@@ -428,7 +428,7 @@ function modelRejection(snapshot: AccountQuota | null | undefined, window: strin
  * before: parking an account is the safe side of undecided.
  */
 export function classifyUnifiedRejection(args: {
-  headers: Headers | Record<string, string> | null | undefined;
+  headers?: Headers | Record<string, string> | null | undefined;
   snapshot: AccountQuota | null | undefined;
   model: string;
   now?: number;
