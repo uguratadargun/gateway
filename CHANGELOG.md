@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- A model's weekly limit blocks that model, not the account: a spent `seven_day_fable` no longer parks the whole login for eight hours while its session window is fine — the model is blocked on that account until the window resets, the login keeps serving everything else, and the pool's 429 names the real reason for each account instead of blaming the throttle.
+- A model's weekly limit blocks that model, not the account: a spent `seven_day_fable` no longer parks the whole login for eight hours while its session window is fine — the model is blocked on that account until the window resets, the login keeps serving everything else, and the pool's 429 names the real reason for each account instead of blaming the throttle. The quota floor reads the account-wide windows only, so a spent model week no longer idles a login for every other model before a request is even sent.
 
 ## 0.40.0 — 2026-09-17
 

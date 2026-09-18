@@ -104,3 +104,31 @@ unattributable rejection still parks the account, which is the safe side.
   before.
 - The block is read back from the database on a fresh `listAccounts`.
 - `npm test` and `npm run typecheck` pass.
+
+## Follow-up — the account-wide paths that still read a model's window
+
+The reactive path (a 429 classified into a `ModelBlock`) was not the only way
+a model's week could park a login. Two account-wide readings still scanned
+every window, so a spent `seven_day_fable` held the account back for every
+model even with the block working:
+
+- `quotaBlockedWindow` — the proactive floor. A scoped window at or under
+  `quotaMinRemainingPercent` dropped the account from `eligibleAccounts` for
+  every model, before any request was sent.
+- `exhaustedWindowReset` — the cooldown length for an account-wide rejection.
+  A scoped window at or above 99% timed the park off that window's reset,
+  sitting the login out to the eight-hour cap instead of until the
+  account-wide window recovered.
+
+Both now skip model-scoped windows through one predicate,
+`isModelScopedWindow`, which `scopedWindowName` also reads so the two
+definitions cannot drift.
+
+## Done when
+
+- The floor holds an account back on `five_hour` / `seven_day` only; a
+  login whose Fable week is spent still serves Sonnet.
+- An account-wide cooldown is timed off an account-wide window; a quota with
+  only a scoped window out reports no reset and falls back to the 5h one.
+- Both are covered by tests that fail without the change.
+- `npm test` and `npm run typecheck` pass.

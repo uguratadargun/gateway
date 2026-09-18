@@ -498,6 +498,43 @@ describe("what the pool has left", () => {
     expect(poolQuota([account], config, now).accounts.available).toBe(1);
   });
 
+  it("does not hold the whole account back on a model-scoped window at the floor", () => {
+    const config = { ...CONFIG, quotaMinRemainingPercent: 10 };
+    // Fable's week is spent; Sonnet and Opus read their own windows and the
+    // account-wide pair is barely touched, so this login still serves them.
+    const account = withWindows("fable-spent", {
+      five_hour: { utilization: 12, resetsAt: in1h },
+      seven_day: { utilization: 30, resetsAt: in3d },
+      seven_day_fable: { utilization: 100, resetsAt: in3d, scope: "Fable" },
+    });
+    expect(quotaBlockedWindow(account, config, now)).toBeNull();
+    expect(eligibleAccounts([account], config, new Set(), now, "claude-sonnet-5").map((a) => a.id)).toEqual([
+      "fable-spent",
+    ]);
+    expect(poolQuota([account], config, now).accounts.available).toBe(1);
+  });
+
+  it("times an account-wide cooldown off an account-wide window, not a model's week", () => {
+    // Only Fable's week is out. Reading it here would park the login for days
+    // over a window that stops one model, so there is no account-wide reset to
+    // report and the caller falls back to the 5h one.
+    const onlyScoped = {
+      windows: { seven_day_fable: { utilization: 100, resetsAt: in3d, scope: "Fable" } },
+      source: "headers" as const,
+    };
+    expect(exhaustedWindowReset(onlyScoped, now)).toBeNull();
+
+    // The account-wide window still decides when both are out.
+    const both = {
+      windows: {
+        seven_day: { utilization: 100, resetsAt: in1h },
+        seven_day_fable: { utilization: 100, resetsAt: in3d, scope: "Fable" },
+      },
+      source: "headers" as const,
+    };
+    expect(exhaustedWindowReset(both, now)).toBe(in1h);
+  });
+
   it("labels a model-scoped window from the scope the endpoint named, and carries it to the pool", () => {
     const fable = withWindows("scoped", {
       five_hour: { utilization: 63, resetsAt: in1h },

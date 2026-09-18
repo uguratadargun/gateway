@@ -70,10 +70,12 @@ served by the same exhausted quota, and the walk stops there.
 Availability is not just "enabled": an account is skipped while it is cooling
 down after a rate limit, while the requested model is blocked on it by a
 model-scoped window, and — if `quotaMinRemainingPercent` is set — while
-any quota window has less than that percentage left. Cooldowns follow the
-upstream: `Retry-After` wins, an exhausted quota waits for its window reset
-(fifteen minutes when no reset is known, never more than eight hours), and
-anything else backs off 5 s · 2ⁿ up to two minutes with a little jitter; a
+an account-wide quota window has less than that percentage left. Cooldowns
+follow the upstream: `Retry-After` wins, an exhausted quota waits for the
+reset of the account-wide window that is out — a model's week never times a
+cooldown on the login — (fifteen minutes when no reset is known, never more
+than eight hours), and anything else backs off 5 s · 2ⁿ up to two minutes
+with a little jitter; a
 5xx sits the account out for three seconds. A model-scoped block runs until
 its own window resets, which for a weekly window legitimately runs days out —
 the block names the model, not the login, so the length costs nothing. An
@@ -171,7 +173,7 @@ has never been polled at all is filled in, the same rule the dashboard follows.
   that neither headers nor the snapshot can attribute still parks the whole
   account; that is the safe side of undecided.
 - `fill-first` with one hot account is the cache-friendly choice; `random` and `p2c` spread traffic and cold prompt caches with it.
-- The quota floor (`quotaMinRemainingPercent`) reads *any* window, including a per-model weekly one; a floor of 10 can idle an account whose session window is empty of nothing.
+- The quota floor (`quotaMinRemainingPercent`) reads the account-wide windows only. A per-model weekly one at the floor is what the model block is for, and holding the whole login back on it would idle an account whose session window is empty of nothing.
 - A freshly connected account shows no bars until it is polled or serves a request. That is not a failure; the daemon fills it within `quotaRefreshMinutes`.
 - The usage endpoint's own 429 pauses polling for that token, not for chat. A bar that stops updating while requests still flow is this, and the panel says so.
 - The rate-limit forecast is meaningless on a pool of more than one account and is deliberately not fed; per-account windows on the rows are the reading to trust.

@@ -43,7 +43,17 @@ function windowResetPassed(window: QuotaWindow, now: number): boolean {
   return Number.isFinite(reset) && reset <= now;
 }
 
-/** Name of the first quota window at or under the configured floor, else null. */
+/**
+ * A weekly window one model family reads, rather than one of the account-wide
+ * pair. Never a reason to hold the whole account back: every other model on
+ * the login reads a different window, so a model-scoped window that is out
+ * becomes a ModelBlock and the account keeps serving everything else.
+ */
+function isModelScopedWindow(canonical: string): boolean {
+  return canonical.startsWith("seven_day_") && !HIDDEN_WINDOWS.has(canonical);
+}
+
+/** Name of the first account-wide quota window at or under the floor, else null. */
 export function quotaBlockedWindow(
   account: Account,
   config: AccountPoolConfig,
@@ -54,7 +64,7 @@ export function quotaBlockedWindow(
     if (windowResetPassed(window, now)) continue;
     // Canonical, so what comes back can be named on a screen.
     const canonical = canonicalWindowName(name);
-    if (HIDDEN_WINDOWS.has(canonical)) continue;
+    if (HIDDEN_WINDOWS.has(canonical) || isModelScopedWindow(canonical)) continue;
     if (100 - window.utilization <= config.quotaMinRemainingPercent) return canonical;
   }
   return null;
@@ -327,7 +337,10 @@ export function parseUnifiedRateLimitHeaders(
 export function exhaustedWindowReset(quota: AccountQuota | null | undefined, now = Date.now()): string | null {
   if (!quota) return null;
   let best: number | null = null;
-  for (const window of Object.values(quota.windows)) {
+  for (const [name, window] of Object.entries(quota.windows)) {
+    // What recovers an account-wide rejection is an account-wide window. A
+    // model-scoped one that is out would park the login for its whole week.
+    if (isModelScopedWindow(canonicalWindowName(name))) continue;
     if (window.utilization < 99 || !window.resetsAt) continue;
     const reset = Date.parse(window.resetsAt);
     if (!Number.isFinite(reset) || reset <= now) continue;
@@ -395,9 +408,7 @@ export type UnifiedRejection =
  */
 function scopedWindowName(name: string): string | null {
   const canonical = canonicalWindowName(name);
-  if (HIDDEN_WINDOWS.has(canonical)) return null;
-  if (canonical === "five_hour" || canonical === "seven_day") return null;
-  return canonical.startsWith("seven_day_") ? canonical : null;
+  return isModelScopedWindow(canonical) ? canonical : null;
 }
 
 /** A weekly window is the longest reset hint there is; bound a bad parse anyway. */
