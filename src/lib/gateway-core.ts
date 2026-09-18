@@ -7,17 +7,25 @@ import {
   listAccounts,
   saveAccountQuota,
   setAccountCooldown,
+  setAccountModelBlock,
   touchAccountUse,
   type Account,
 } from "./accounts";
 import {
+  activeModelBlock,
+  classifyUnifiedRejection,
   computeCooldown,
   exhaustedWindowReset,
+  isCoolingDown,
   mergeQuota,
   parseUnifiedRateLimitHeaders,
+  quotaBlockedWindow,
   selectAccount,
+  upsertModelBlock,
   utilizationOf,
+  windowLabel,
   type AccountPoolConfig,
+  type ModelBlock,
 } from "./account-pool";
 import { publishActivity } from "./activity";
 import type { Principal } from "./apikeys";
@@ -183,8 +191,13 @@ const AUTH_REJECTED_COOLDOWN_MS = 60_000;
 interface AttemptResult {
   upstream: Response | null;
   cls: ErrorClass;
-  /** The whole account was rejected, not just this model's limit. */
+  /** The whole account was rejected, not just one model's window. */
   accountLimited: boolean;
+  /**
+   * A model-scoped window rejected this model: the block to record on the
+   * account, which keeps serving every other model.
+   */
+  modelBlock: ModelBlock | null;
   /** A 400 for an oversized prompt; the caller inserts a wider tier. */
   windowFallback: boolean;
 }
@@ -210,7 +223,7 @@ async function attemptOnAccount(args: {
 
   let creds = await getValidCredentialsFor(account.id);
   if (!creds) {
-    return { upstream: jsonError(401, `Account "${account.label}" has no usable credentials.`), cls: "auth", accountLimited: false, windowFallback: false };
+    return { upstream: jsonError(401, `Account "${account.label}" has no usable credentials.`), cls: "auth", accountLimited: false, modelBlock: null, windowFallback: false };
   }
 
   const send = async (): Promise<Response> => {
@@ -234,6 +247,7 @@ async function attemptOnAccount(args: {
   let upstream: Response | null = null;
   let cls: ErrorClass = "network";
   let accountLimited = false;
+  let modelBlock: ModelBlock | null = null;
   let windowFallback = false;
 
   for (let attempt = 0; ; attempt++) {
@@ -271,12 +285,21 @@ async function attemptOnAccount(args: {
       continue;
     }
     if (cls === "rate_limit") {
-      accountLimited = upstream?.headers.get("anthropic-ratelimit-unified-status") === "rejected";
+      // `rejected` says a claim was refused — the account's, or one model's
+      // window on it. Which one decides what may be parked, so classify before
+      // anything is: captureQuota above has already folded the reply's own
+      // window readings into the snapshot this reads.
+      const rejected = upstream?.headers.get("anthropic-ratelimit-unified-status") === "rejected";
+      modelBlock = rejected
+        ? classifyUnifiedRejection({ headers: upstream!.headers, snapshot: account.quota, model: usedModel })
+        : null;
+      accountLimited = rejected && modelBlock.kind === "account";
       const ra = Number(upstream?.headers.get("retry-after") ?? NaN);
-      // A short retry-after is worth waiting out even when account-limited
-      // (the window may be about to reset); otherwise hand back to the pool.
+      // A short retry-after is worth waiting out even when a claim was
+      // rejected (the window may be about to reset); otherwise hand back to
+      // the pool.
       if (attempt < settings.retry.maxRetries) {
-        const waitMs = Number.isFinite(ra) ? ra * 1000 : accountLimited ? Infinity : backoffMs(attempt);
+        const waitMs = Number.isFinite(ra) ? ra * 1000 : rejected ? Infinity : backoffMs(attempt);
         if (waitMs <= settings.retry.maxRateLimitWaitMs) {
           await sleep(waitMs);
           continue;
@@ -286,7 +309,7 @@ async function attemptOnAccount(args: {
     break;
   }
 
-  return { upstream, cls, accountLimited, windowFallback };
+  return { upstream, cls, accountLimited, modelBlock, windowFallback };
 }
 
 /** Send to a configured OpenAI-compatible endpoint, with transient retries. */
@@ -312,6 +335,7 @@ async function attemptOnProvider(args: {
       // whole request down.
       cls: "network",
       accountLimited: false,
+      modelBlock: null,
       windowFallback: false,
       providerId: provider?.id ?? null,
     };
@@ -338,7 +362,7 @@ async function attemptOnProvider(args: {
     if (!RETRYABLE.has(cls) || attempt >= settings.retry.maxRetries) break;
     await sleep(backoffMs(attempt));
   }
-  return { upstream, cls, accountLimited: false, windowFallback: false, providerId: provider.id };
+  return { upstream, cls, accountLimited: false, modelBlock: null, windowFallback: false, providerId: provider.id };
 }
 
 /**
@@ -388,6 +412,9 @@ export async function sendWithFallback(opts: {
     let cls: ErrorClass = "network";
     let accountLimited = false;
     let windowFallback = false;
+    /** How the accounts were spent in this tier, when they were. */
+    let parkedWide = false;
+    let parkedModel = false;
 
     const local = parseProviderRef(usedModel);
     if (local) {
@@ -400,7 +427,7 @@ export async function sendWithFallback(opts: {
       providerId = null;
       for (;;) {
         if (!account) {
-          const pick = selectAccount(pool, poolConfig, { excluded: spent, isRetry: true });
+          const pick = selectAccount(pool, poolConfig, { excluded: spent, isRetry: true, model: usedModel });
           if (!pick.account) break;
           account = pick.account;
           if (pick.commit) touchAccountUse(pick.commit.accountId, pick.commit.consecutiveUseCount);
@@ -436,8 +463,6 @@ export async function sendWithFallback(opts: {
         // An account-wide rejection or a dead token is this login's problem,
         // not this tier's: no cheaper model on the same account would be
         // served either, so park it and let the next login serve this model.
-        // A *model-specific* 429 is left alone deliberately — the account is
-        // fine, and the tier chain below is the cheaper answer.
         if (cls === "auth" || (cls === "rate_limit" && accountLimited)) {
           if (cls === "auth") {
             setAccountCooldown(account.id, Date.now() + AUTH_REJECTED_COOLDOWN_MS, "[401] upstream auth rejected");
@@ -445,14 +470,38 @@ export async function sendWithFallback(opts: {
             coolDownAccount(account, upstream, true);
           }
           spent.add(account.id);
+          parkedWide = true;
           account = null;
+          continue;
+        }
+        // A *model-scoped* rejection parks the model on the account, not the
+        // account in the pool: one weekly window is out, and every other model
+        // this login serves reads a different one. The next login takes this
+        // model; the tier chain below is only reached once every account is
+        // blocked for it, which the check after this loop decides.
+        if (cls === "rate_limit" && result.modelBlock) {
+          const block = result.modelBlock;
+          const label = account.label;
+          setAccountModelBlock(account.id, block);
+          // The row in memory carries it too: the next selection in this same
+          // request reads these objects, not the database.
+          account.modelBlocks = upsertModelBlock(account.modelBlocks, block);
+          parkedModel = true;
+          account = null;
+          publishActivity({
+            ts: Date.now(),
+            kind: "fallback",
+            tier: usedTier,
+            note: `${windowLabel(block.window, block.scope)} exhausted on ${label} — next account`,
+          });
           continue;
         }
         break;
       }
       // Every account is spent. A cheaper tier is served by the same exhausted
-      // logins, so there is nothing left to try.
-      if (!account) break;
+      // logins, so there is nothing left to try — unless what spent them was
+      // model-scoped, because the cheaper tier reads a different window.
+      if (!account && (parkedWide || !parkedModel)) break;
     }
 
     // Context-window fallback: retry an oversized Haiku prompt on Sonnet.
@@ -514,6 +563,38 @@ export async function parseUsage(text: string, contentType: string): Promise<Par
 }
 
 // ---- Dispatch: the shared pipeline ----------------------------------------
+
+function untilText(ms: number | null | undefined): string {
+  if (ms == null) return "an unknown time";
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
+/**
+ * Why this one account cannot serve this model right now: the first reason
+ * that applies, in the order the pool itself checks. The pool-wide 429 lists
+ * one of these per account, so a refusal names what is actually wrong with
+ * each login instead of blaming the throttle for everything.
+ */
+function accountRefusalReason(
+  a: Account,
+  model: string,
+  settings: ReturnType<typeof loadSettings>,
+  overCeiling: boolean,
+  now: number,
+): string {
+  if (!a.enabled) return "paused";
+  if (isCoolingDown(a, now)) return `cooling down until ${untilText(a.cooldownUntil)}`;
+  const block = activeModelBlock(a, model, now);
+  if (block) return `${windowLabel(block.window, block.scope)} blocked until ${untilText(block.until)}`;
+  if (overCeiling) {
+    return `over the throttle ceiling (block at ${Math.round(settings.throttle.blockAt * 100)}% of the 5h window)`;
+  }
+  const floored = quotaBlockedWindow(a, settings.accountPool, now);
+  if (floored) return `${windowLabel(floored)} under the ${settings.accountPool.quotaMinRemainingPercent}% floor`;
+  return "out of eligible accounts";
+}
 
 export interface DispatchOptions {
   endpoint: "messages" | "chat/completions" | "responses";
@@ -597,10 +678,12 @@ export async function dispatch(
       return { ok: false, response: jsonError(401, "No Claude account connected. Log in via the dashboard.") };
     }
     // An account past the ceiling is skipped, not refused — having a second
-    // login is exactly what should keep the request alive.
+    // login is exactly what should keep the request alive. Selection knows the
+    // model: an account with one model's weekly window out on it still serves
+    // the models whose windows are fine.
     const overCeiling = new Set<string>();
     for (;;) {
-      const pick = selectAccount(pool, poolConfig, { excluded: overCeiling });
+      const pick = selectAccount(pool, poolConfig, { excluded: overCeiling, model: route.model });
       if (!pick.account) break;
       // Per-account quota only exists once Anthropic has answered on that
       // login. With a single account the pre-pool global snapshot is the same
@@ -622,14 +705,23 @@ export async function dispatch(
       const resetAt = readRateLimit()?.resetAt ?? null;
       const retryAfter = resetAt ? Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)) : 300;
       publishActivity({ ts: Date.now(), kind: "throttle", note: `no account available (${pool.length} connected)` });
+      const now = Date.now();
+      const reasons = pool
+        .map((a) => `${a.label}: ${accountRefusalReason(a, route.model, settings, overCeiling.has(a.id), now)}`)
+        .join("; ");
+      // The throttle is named only when it caused the refusal — not as the
+      // blanket explanation for every account the pool had to turn away.
+      const ceiling = pool.some((a) => a.enabled && overCeiling.has(a.id));
       return {
         ok: false,
         response: jsonError(
           429,
-          `gate is refusing this request: none of the ${pool.length} connected Claude account(s) can serve it — ` +
-            `each is either cooling down after a rate limit or past the throttle ceiling ` +
-            `(setting: block at ${Math.round(settings.throttle.blockAt * 100)}% of the 5h window). ` +
-            `This is gate, not Anthropic. Connect another account, or turn the throttle off in Settings.`,
+          `gate is refusing this request: none of the ${pool.length} connected Claude account(s) can serve ` +
+            `${route.model} — ${reasons}. This is gate, not Anthropic. ` +
+            (ceiling
+              ? `The throttle ceiling is block at ${Math.round(settings.throttle.blockAt * 100)}% of the 5h window; ` +
+                `connect another account, or turn the throttle off in Settings.`
+              : `Connect another account, or re-enable a paused one in Settings.`),
           { "Retry-After": String(retryAfter) },
         ),
       };

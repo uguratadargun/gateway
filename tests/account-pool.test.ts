@@ -4,14 +4,18 @@ import {
   BACKOFF,
   accountHealth,
   accountWindows,
+  activeModelBlock,
+  classifyUnifiedRejection,
   computeCooldown,
   eligibleAccounts,
   exhaustedWindowReset,
   mergeQuota,
+  modelScopedWindow,
   parseUnifiedRateLimitHeaders,
   poolQuota,
   quotaBlockedWindow,
   selectAccount,
+  upsertModelBlock,
   utilizationOf,
   windowLabel,
   type AccountPoolConfig,
@@ -39,6 +43,7 @@ function account(patch: Partial<Account> & { id: string }): Account {
     backoffLevel: 0,
     cooldownUntil: null,
     lastError: null,
+    modelBlocks: [],
     quota: null,
     quotaFetchedAt: null,
     connectedAt: 0,
@@ -231,6 +236,148 @@ describe("unified rate-limit headers", () => {
   });
 });
 
+describe("model-scoped rejections", () => {
+  const now = Date.parse("2026-09-18T12:00:00Z");
+  const in1h = new Date(now + 3_600_000).toISOString();
+  const in3d = new Date(now + 3 * 86_400_000).toISOString();
+  // The live gate on 2026-09-18: two accounts' Fable weekly window spent, their
+  // session windows fine — and an Opus request refused pool-wide anyway.
+  const fableSpent = {
+    windows: {
+      five_hour: { utilization: 39, resetsAt: in1h },
+      seven_day: { utilization: 32, resetsAt: in3d },
+      seven_day_fable: { utilization: 99.7, resetsAt: in3d, scope: "Fable" },
+    },
+    source: "usage-endpoint" as const,
+  };
+
+  it("maps a model to the weekly window scoped to it", () => {
+    expect(modelScopedWindow("claude-fable-5-1")).toBe("seven_day_fable");
+    expect(modelScopedWindow("claude-opus-5")).toBe("seven_day_opus");
+    expect(modelScopedWindow("claude-sonnet-5")).toBe("seven_day_sonnet");
+    // Haiku has no model-scoped weekly window to hit.
+    expect(modelScopedWindow("claude-haiku-5")).toBeNull();
+  });
+
+  it("reads a scoped window at or above 99% with 5h/7d below as a block on that model", () => {
+    expect(classifyUnifiedRejection({ snapshot: fableSpent, model: "claude-fable-5-1", now })).toEqual({
+      kind: "model",
+      window: "seven_day_fable",
+      scope: "Fable",
+      until: Date.parse(in3d),
+    });
+  });
+
+  it("keeps an account-wide rejection account-wide", () => {
+    // The account-wide window is itself out: the whole login was rejected.
+    const wide = {
+      windows: {
+        five_hour: { utilization: 39, resetsAt: in1h },
+        seven_day: { utilization: 100, resetsAt: in3d },
+        seven_day_fable: { utilization: 100, resetsAt: in3d, scope: "Fable" },
+      },
+      source: "usage-endpoint" as const,
+    };
+    expect(classifyUnifiedRejection({ snapshot: wide, model: "claude-fable-5-1", now }).kind).toBe("account");
+    // Nothing to read at all: undecided stays on the safe side.
+    expect(classifyUnifiedRejection({ snapshot: null, model: "claude-fable-5-1", now }).kind).toBe("account");
+  });
+
+  it("lets a per-window status header decide, for the window names the header set is known to carry", () => {
+    // `anthropic-ratelimit-unified-7d-status` is a header the code captures
+    // (ratelimit.ts); no reply header has ever named a model-scoped window,
+    // so anything the header step can actually name is account-wide.
+    const headers = {
+      "anthropic-ratelimit-unified-status": "rejected",
+      "anthropic-ratelimit-unified-7d-status": "rejected",
+    };
+    expect(classifyUnifiedRejection({ headers, snapshot: fableSpent, model: "claude-fable-5-1", now }).kind).toBe(
+      "account",
+    );
+    // The bare status header names no window: the snapshot decides, and the
+    // snapshot says Fable.
+    const bare = { "anthropic-ratelimit-unified-status": "rejected" };
+    expect(classifyUnifiedRejection({ headers: bare, snapshot: fableSpent, model: "claude-fable-5-1", now })).toEqual({
+      kind: "model",
+      window: "seven_day_fable",
+      scope: "Fable",
+      until: Date.parse(in3d),
+    });
+  });
+
+  it("does not guess between two exhausted scoped windows the request did not name", () => {
+    const both = {
+      windows: {
+        five_hour: { utilization: 10, resetsAt: in1h },
+        seven_day: { utilization: 10, resetsAt: in3d },
+        seven_day_fable: { utilization: 100, resetsAt: in3d, scope: "Fable" },
+        seven_day_opus: { utilization: 100, resetsAt: in3d, scope: "Opus" },
+      },
+      source: "usage-endpoint" as const,
+    };
+    // The model asked for names its own window.
+    expect(classifyUnifiedRejection({ snapshot: both, model: "claude-fable-5-1", now }).kind).toBe("model");
+    // A model with no scoped window cannot be attributed to either one.
+    expect(classifyUnifiedRejection({ snapshot: both, model: "claude-haiku-5", now }).kind).toBe("account");
+  });
+
+  it("reads a legacy seven_day_opus key as scoped even without a scope label", () => {
+    const legacy = {
+      windows: {
+        five_hour: { utilization: 0, resetsAt: in1h },
+        seven_day: { utilization: 10, resetsAt: in3d },
+        seven_day_opus: { utilization: 99.5, resetsAt: in3d },
+      },
+      source: "usage-endpoint" as const,
+    };
+    expect(classifyUnifiedRejection({ snapshot: legacy, model: "claude-opus-5", now })).toEqual({
+      kind: "model",
+      window: "seven_day_opus",
+      scope: null,
+      until: Date.parse(in3d),
+    });
+  });
+
+  it("blocks the model the block names, and nothing else", () => {
+    const blocked = account({ id: "blocked", modelBlocks: [{ window: "seven_day_fable", scope: "Fable", until: now + 86_400_000 }] });
+    expect(activeModelBlock(blocked, "claude-fable-5-1", now)?.window).toBe("seven_day_fable");
+    expect(activeModelBlock(blocked, "claude-opus-5", now)).toBeNull();
+    expect(eligibleAccounts([blocked], CONFIG, new Set(), now, "claude-fable-5-1")).toEqual([]);
+    expect(eligibleAccounts([blocked], CONFIG, new Set(), now, "claude-opus-5")).toEqual([blocked]);
+    // An expired block is not a block: the window has reset by then.
+    const expired = account({ id: "expired", modelBlocks: [{ window: "seven_day_fable", scope: "Fable", until: now - 1 }] });
+    expect(activeModelBlock(expired, "claude-fable-5-1", now)).toBeNull();
+    expect(eligibleAccounts([expired], CONFIG, new Set(), now, "claude-fable-5-1")).toEqual([expired]);
+  });
+
+  it("replaces a window's block and keeps the others", () => {
+    const blocks = upsertModelBlock([{ window: "seven_day_opus", scope: "Opus", until: now + 100 }], {
+      window: "seven_day_fable",
+      scope: "Fable",
+      until: now + 200,
+    });
+    expect(upsertModelBlock(blocks, { window: "seven_day_fable", scope: "Fable", until: now + 300 })).toEqual([
+      { window: "seven_day_opus", scope: "Opus", until: now + 100 },
+      { window: "seven_day_fable", scope: "Fable", until: now + 300 },
+    ]);
+    expect(upsertModelBlock(null, { window: "seven_day_fable", scope: null, until: now })).toHaveLength(1);
+  });
+
+  it("counts a model-scoped block as a block on that model, not the account cooling down", () => {
+    const blocked = account({
+      id: "blocked",
+      modelBlocks: [{ window: "seven_day_fable", scope: "Fable", until: now + 86_400_000 }],
+    });
+    const quota = poolQuota([blocked, account({ id: "fresh" })], CONFIG, now);
+    expect(quota.accounts).toMatchObject({ available: 2, coolingDown: 0, modelBlocked: 1 });
+    // Asked about fable, the blocked account is not available; asked about
+    // opus, it is, and there is nothing to count.
+    expect(poolQuota([blocked], CONFIG, now, "claude-fable-5-1").accounts.available).toBe(0);
+    expect(poolQuota([blocked], CONFIG, now, "claude-fable-5-1").accounts.modelBlocked).toBe(1);
+    expect(poolQuota([blocked], CONFIG, now, "claude-opus-5").accounts).toMatchObject({ available: 1, modelBlocked: 0 });
+  });
+});
+
 describe("what the pool has left", () => {
   const now = Date.parse("2026-09-08T12:00:00Z");
   const in1h = new Date(now + 3_600_000).toISOString();
@@ -249,7 +396,7 @@ describe("what the pool has left", () => {
     // Averaging these two would say 42% left, and a request would still be
     // served by the fresh account's window.
     expect(quota.windows).toEqual([{ name: "five_hour", remaining: 80, resetsAt: in1h }]);
-    expect(quota.accounts).toEqual({ total: 2, enabled: 2, available: 2, coolingDown: 0, quotaBlocked: 0 });
+    expect(quota.accounts).toEqual({ total: 2, enabled: 2, available: 2, coolingDown: 0, quotaBlocked: 0, modelBlocked: 0 });
   });
 
   it("reads a window whose reset has passed as full again", () => {
@@ -264,7 +411,7 @@ describe("what the pool has left", () => {
     ];
     const quota = poolQuota(pool, CONFIG, now);
     expect(quota.windows).toEqual([{ name: "five_hour", remaining: 0, resetsAt: in1h }]);
-    expect(quota.accounts).toEqual({ total: 2, enabled: 1, available: 0, coolingDown: 1, quotaBlocked: 0 });
+    expect(quota.accounts).toEqual({ total: 2, enabled: 1, available: 0, coolingDown: 1, quotaBlocked: 0, modelBlocked: 0 });
   });
 
   it("counts an account the floor holds back, and reports the floor", () => {

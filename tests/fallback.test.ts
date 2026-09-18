@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { addAccount, listAccounts, type Account } from "@/lib/accounts";
+import { addAccount, listAccounts, saveAccountQuota, type Account } from "@/lib/accounts";
 import { sendWithFallback } from "@/lib/gateway-core";
 import { getDb } from "@/lib/db";
 import { routeModel } from "@/lib/router";
@@ -130,5 +130,103 @@ describe("sendWithFallback", () => {
     // Parking a healthy account here would take it out of the pool for
     // everything else too.
     expect(listAccounts().find((a) => a.id === first.id)!.cooldownUntil).toBeNull();
+  });
+
+  it("parks a Fable-scoped rejection on the model — the account keeps serving, another login takes Fable", async () => {
+    const first = connect("first");
+    const second = connect("second");
+    // The live shape from 2026-09-18: the weekly Fable window spent, the
+    // session and plain weekly windows fine. The reply headers name no window,
+    // so the snapshot is what decides.
+    saveAccountQuota(first.id, {
+      windows: {
+        five_hour: { utilization: 39, resetsAt: new Date(Date.now() + 3_600_000).toISOString() },
+        seven_day: { utilization: 32, resetsAt: new Date(Date.now() + 3 * 86_400_000).toISOString() },
+        seven_day_fable: { utilization: 99.7, resetsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(), scope: "Fable" },
+      },
+      source: "usage-endpoint",
+      polledAt: Date.now(),
+    });
+    saveSettings({ retry: { maxRetries: 0, maxRateLimitWaitMs: 0 }, fallback: { enabled: true } });
+    const calls = mockFetch([
+      { status: 429, headers: { "anthropic-ratelimit-unified-status": "rejected" } },
+      { status: 200 },
+    ]);
+    const route = routeModel("fable", { messages: [{ role: "user", content: "x" }] });
+    const r = await sendWithFallback({ body: { model: route.model, messages: [] }, route, stream: false, ...pool() });
+    // Same tier, next account: the model moved, nothing was downgraded.
+    expect(r.upstream.status).toBe(200);
+    expect(r.usedTier).toBe("fable");
+    expect(calls).toEqual(["claude-fable-5-1", "claude-fable-5-1"]);
+    expect(r.accountId).toBe(second.id);
+    // The account is not cooled down — its 5h window is fine and every other
+    // model reads it. The block is, until the window resets.
+    const row = listAccounts().find((a) => a.id === first.id)!;
+    expect(row.cooldownUntil).toBeNull();
+    expect(row.modelBlocks).toEqual([
+      { window: "seven_day_fable", scope: "Fable", until: expect.any(Number) },
+    ]);
+    expect(row.modelBlocks[0].until).toBeGreaterThan(Date.now());
+    expect(listAccounts().find((a) => a.id === second.id)!.modelBlocks).toEqual([]);
+  });
+
+  it("with every account Fable-blocked, a Fable request walks down the tier chain", async () => {
+    const first = connect("first");
+    const second = connect("second");
+    for (const a of [first, second]) {
+      saveAccountQuota(a.id, {
+        windows: {
+          five_hour: { utilization: 10, resetsAt: new Date(Date.now() + 3_600_000).toISOString() },
+          seven_day: { utilization: 10, resetsAt: new Date(Date.now() + 3 * 86_400_000).toISOString() },
+          seven_day_fable: { utilization: 100, resetsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(), scope: "Fable" },
+        },
+        source: "usage-endpoint",
+        polledAt: Date.now(),
+      });
+    }
+    saveSettings({ retry: { maxRetries: 0, maxRateLimitWaitMs: 0 }, fallback: { enabled: true } });
+    const rejected = { "anthropic-ratelimit-unified-status": "rejected" };
+    const calls = mockFetch([
+      { status: 429, headers: rejected },
+      { status: 429, headers: rejected },
+      { status: 200 },
+    ]);
+    const route = routeModel("fable", { messages: [{ role: "user", content: "x" }] });
+    const r = await sendWithFallback({ body: { model: route.model, messages: [] }, route, stream: false, ...pool() });
+    // Both logins refused Fable, so the chain dropped a rung — Opus reads a
+    // different window, and the same logins serve it.
+    expect(r.upstream.status).toBe(200);
+    expect(r.usedTier).toBe("opus");
+    expect(calls).toEqual(["claude-fable-5-1", "claude-fable-5-1", "claude-opus-5"]);
+    expect(r.accountId).toBe(first.id);
+    // And nobody was parked account-wide: no cooldown anywhere, one block each.
+    for (const a of listAccounts()) {
+      expect(a.cooldownUntil).toBeNull();
+      expect(a.modelBlocks.map((b) => b.window)).toEqual(["seven_day_fable"]);
+    }
+  });
+
+  it("a model block is on the row, so a restart keeps it", async () => {
+    const solo = connect("solo");
+    saveAccountQuota(solo.id, {
+      windows: {
+        five_hour: { utilization: 10, resetsAt: new Date(Date.now() + 3_600_000).toISOString() },
+        seven_day_fable: { utilization: 100, resetsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(), scope: "Fable" },
+      },
+      source: "usage-endpoint",
+      polledAt: Date.now(),
+    });
+    saveSettings({ retry: { maxRetries: 0, maxRateLimitWaitMs: 0 }, fallback: { enabled: true } });
+    mockFetch([
+      { status: 429, headers: { "anthropic-ratelimit-unified-status": "rejected" } },
+      { status: 200 },
+    ]);
+    const route = routeModel("fable", { messages: [{ role: "user", content: "x" }] });
+    await sendWithFallback({ body: { model: route.model, messages: [] }, route, stream: false, ...pool() });
+    // A fresh read — what a restarted gate's listAccounts loads — carries the
+    // block and no cooldown.
+    const reread = listAccounts().find((a) => a.id === solo.id)!;
+    expect(reread.modelBlocks).toEqual([{ window: "seven_day_fable", scope: "Fable", until: expect.any(Number) }]);
+    expect(reread.cooldownUntil).toBeNull();
   });
 });

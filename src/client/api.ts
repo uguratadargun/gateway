@@ -187,7 +187,15 @@ export class GateClient {
    */
   async usage(): Promise<{
     windows: Array<{ name: string; remaining: number; resetsAt: string | null; label?: string }>;
-    accounts: { total: number; enabled: number; available: number; coolingDown: number; quotaBlocked: number };
+    accounts: {
+      total: number;
+      enabled: number;
+      available: number;
+      coolingDown: number;
+      quotaBlocked: number;
+      /** A newer field an older gate omits; `?.` at the call site, not here. */
+      modelBlocked?: number;
+    };
     plan: string | null;
     updatedAt: number | null;
     floorPercent: number;

@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 
 import { listAccounts } from "@/lib/accounts";
-import { accountWindows, isCoolingDown, quotaBlockedWindow, utilizationOf, windowLabel } from "@/lib/account-pool";
+import {
+  accountWindows,
+  activeModelBlocks,
+  isCoolingDown,
+  quotaBlockedWindow,
+  utilizationOf,
+  windowLabel,
+} from "@/lib/account-pool";
 import { refreshUnpolledQuotas } from "@/lib/claude/usage";
 import { loadSettings } from "@/lib/settings";
 
@@ -24,6 +31,9 @@ export async function GET() {
     ...a,
     coolingDown: isCoolingDown(a, now),
     quotaBlockedWindow: quotaBlockedWindow(a, settings.accountPool, now),
+    // A model-scoped block is displayed as the block on that model it is —
+    // labelled here, like the windows, since the panel cannot name one itself.
+    modelBlocks: activeModelBlocks(a, now).map((b) => ({ label: windowLabel(b.window, b.scope), until: b.until })),
     utilization: utilizationOf(a, now),
     // Every window this account reports, not just the 5h one — a weekly limit
     // is what a person hits after a good day, and it used to be invisible here.

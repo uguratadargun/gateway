@@ -677,6 +677,12 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // are checked the way they always were rather than refused for lacking
   // evidence they were never asked for.
   ["workflow_executions", "definitions_json", "definitions_json TEXT"],
+  // A model-scoped weekly limit that rejected a request parks the model on the
+  // account, not the account in the pool. One JSON column: at most a handful of
+  // entries, each the window's name, the scope it answered as, and the reset
+  // time — a weekly window legitimately runs days out, which a cooldown column
+  // could not say without taking the whole login with it.
+  ["accounts", "model_blocks_json", "model_blocks_json TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

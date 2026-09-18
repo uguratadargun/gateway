@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { upsertModelBlock, type ModelBlock } from "./account-pool";
 import { getDb } from "./db";
 import { seal, tryOpen } from "./seal";
 import { readLegacyCredentials, retireLegacyCredentials, type StoredCredentials } from "./store";
@@ -60,6 +61,12 @@ export interface Account {
   backoffLevel: number;
   cooldownUntil: number | null;
   lastError: string | null;
+  /**
+   * Model-scoped windows that are out on this login, each until its reset. The
+   * account serves every other model while one of these stands — the opposite
+   * of `cooldownUntil`, which takes the whole login out of the pool.
+   */
+  modelBlocks: ModelBlock[];
   quota: AccountQuota | null;
   quotaFetchedAt: number | null;
   connectedAt: number;
@@ -73,6 +80,15 @@ function mapAccount(row: Record<string, unknown>): Account {
       quota = JSON.parse(String(row.quota_json)) as AccountQuota;
     } catch {
       quota = null;
+    }
+  }
+  let modelBlocks: ModelBlock[] = [];
+  if (row.model_blocks_json) {
+    try {
+      const parsed: unknown = JSON.parse(String(row.model_blocks_json));
+      if (Array.isArray(parsed)) modelBlocks = parsed as ModelBlock[];
+    } catch {
+      modelBlocks = [];
     }
   }
   return {
@@ -89,6 +105,7 @@ function mapAccount(row: Record<string, unknown>): Account {
     backoffLevel: Number(row.backoff_level ?? 0),
     cooldownUntil: (row.cooldown_until as number) ?? null,
     lastError: (row.last_error as string) ?? null,
+    modelBlocks,
     quota,
     quotaFetchedAt: (row.quota_fetched_at as number) ?? null,
     connectedAt: Number(row.connected_at),
@@ -161,7 +178,7 @@ export function addAccount(creds: StoredCredentials, label?: string): Account {
         `UPDATE accounts
             SET sealed = ?, label = ?, email = ?, organization = ?, plan_tier = ?,
                 enabled = 1, backoff_level = 0, cooldown_until = NULL, last_error = NULL,
-                updated_at = ?
+                model_blocks_json = NULL, updated_at = ?
           WHERE id = ?`,
       )
       .run(
@@ -284,6 +301,30 @@ export function clearAccountFailure(id: string): void {
         WHERE id = ? AND (backoff_level <> 0 OR last_error IS NOT NULL OR cooldown_until IS NOT NULL)`,
     )
     .run(id);
+}
+
+/**
+ * Record that one model family's weekly window is out on this login, until the
+ * window resets. The block expires on its own `until` — a successful request on
+ * another model proves nothing about this window, so nothing clears it early.
+ */
+export function setAccountModelBlock(id: string, block: ModelBlock): void {
+  const row = getDb().prepare("SELECT model_blocks_json FROM accounts WHERE id = ?").get(id) as
+    | { model_blocks_json: string | null }
+    | undefined;
+  if (!row) return;
+  let blocks: ModelBlock[] = [];
+  if (row.model_blocks_json) {
+    try {
+      const parsed: unknown = JSON.parse(row.model_blocks_json);
+      if (Array.isArray(parsed)) blocks = parsed as ModelBlock[];
+    } catch {
+      blocks = [];
+    }
+  }
+  getDb()
+    .prepare("UPDATE accounts SET model_blocks_json = ?, updated_at = ? WHERE id = ?")
+    .run(JSON.stringify(upsertModelBlock(blocks, block)), Date.now(), id);
 }
 
 export function saveAccountQuota(id: string, quota: AccountQuota | null): void {

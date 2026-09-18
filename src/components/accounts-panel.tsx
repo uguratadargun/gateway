@@ -28,6 +28,8 @@ interface Account {
   connectedAt: number;
   coolingDown: boolean;
   quotaBlockedWindow: string | null;
+  /** Model-scoped windows that are out on this login, labelled by the server. */
+  modelBlocks: { label: string; until: number }[];
   /** 5h window used, 0..1. Null while no window reading is known yet. */
   utilization: number | null;
   /** Every window this account reports, named and ordered by the server. */
@@ -318,6 +320,14 @@ export function AccountsPanel() {
                         <Badge variant="destructive">
                           {a.windows?.find((w) => w.name === a.quotaBlockedWindow)?.label ?? a.quotaBlockedWindow} exhausted
                         </Badge>
+                      ) : (a.modelBlocks ?? []).length ? (
+                        // One model's window being out is a block on that model,
+                        // not the account cooling down — the login still serves.
+                        a.modelBlocks.map((b) => (
+                          <Badge key={b.label} variant="destructive" className="gap-1">
+                            <Timer className="size-3" /> {b.label} blocked {relative(b.until)}
+                          </Badge>
+                        ))
                       ) : a.enabled ? (
                         <Badge variant="success">ready</Badge>
                       ) : (

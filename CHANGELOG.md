@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A model's weekly limit blocks that model, not the account: a spent `seven_day_fable` no longer parks the whole login for eight hours while its session window is fine — the model is blocked on that account until the window resets, the login keeps serving everything else, and the pool's 429 names the real reason for each account instead of blaming the throttle.
+
 ## 0.40.0 — 2026-09-17
 
 - The accounts card keeps itself current: the windows are re-read every fifteen seconds, so usage moves while you watch instead of only when you reload the page, and a rotation setting you are part-way through editing is left alone. The "weekly limit incl. extra usage" bar is gone — Claude sent it for some accounts and not others, and it said what the weekly limit beside it already said.

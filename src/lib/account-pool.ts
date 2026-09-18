@@ -1,5 +1,6 @@
 import { randomInt } from "node:crypto";
 
+import { tierOf, type Tier } from "./pricing";
 import type { Account, AccountQuota, QuotaWindow } from "./accounts";
 
 /**
@@ -64,13 +65,15 @@ export function eligibleAccounts(
   config: AccountPoolConfig,
   excluded: ReadonlySet<string> = new Set(),
   now = Date.now(),
+  model?: string,
 ): Account[] {
   return pool.filter(
     (a) =>
       a.enabled &&
       !excluded.has(a.id) &&
       !isCoolingDown(a, now) &&
-      quotaBlockedWindow(a, config, now) === null,
+      quotaBlockedWindow(a, config, now) === null &&
+      !(model && activeModelBlock(a, model, now)),
   );
 }
 
@@ -122,10 +125,10 @@ function sortOldestFirst(pool: Account[]): Account[] {
 export function selectAccount(
   pool: Account[],
   config: AccountPoolConfig,
-  options: { excluded?: ReadonlySet<string>; now?: number; isRetry?: boolean } = {},
+  options: { excluded?: ReadonlySet<string>; now?: number; isRetry?: boolean; model?: string } = {},
 ): SelectionResult {
   const now = options.now ?? Date.now();
-  const candidates = eligibleAccounts(pool, config, options.excluded ?? new Set(), now).sort(byPriority);
+  const candidates = eligibleAccounts(pool, config, options.excluded ?? new Set(), now, options.model).sort(byPriority);
   if (candidates.length === 0) return NONE;
   if (candidates.length === 1) {
     const only = candidates[0];
@@ -333,6 +336,155 @@ export function exhaustedWindowReset(quota: AccountQuota | null | undefined, now
   return best === null ? null : new Date(best).toISOString();
 }
 
+// ── model-scoped rejections ─────────────────────────────────────────────────
+
+/**
+ * The weekly window each model family reads, as the usage endpoint names it.
+ * Haiku has no model-scoped weekly window to hit.
+ */
+const TIER_WINDOWS: Record<Tier, string | null> = {
+  haiku: null,
+  sonnet: "seven_day_sonnet",
+  opus: "seven_day_opus",
+  fable: "seven_day_fable",
+};
+
+/** The scoped weekly window this model draws from, or null when it has none. */
+export function modelScopedWindow(model: string): string | null {
+  return TIER_WINDOWS[tierOf(model)] ?? null;
+}
+
+/**
+ * One model's window being out on one account, until the window resets. The
+ * account itself stays in the pool: every other model reads a different window.
+ * Survives a restart on the account row.
+ */
+export interface ModelBlock {
+  /** The scoped window that is out: "seven_day_fable". */
+  window: string;
+  /** The scope as the usage endpoint names it ("Fable"), when it said. */
+  scope: string | null;
+  /** Epoch ms the window resets at. */
+  until: number;
+}
+
+export function activeModelBlocks(account: Account, now = Date.now()): ModelBlock[] {
+  return (account.modelBlocks ?? []).filter((b) => b.until > now);
+}
+
+/** The block that stops this model on this account, when there is one. */
+export function activeModelBlock(account: Account, model: string, now = Date.now()): ModelBlock | null {
+  const window = modelScopedWindow(model);
+  if (!window) return null;
+  return activeModelBlocks(account, now).find((b) => b.window === window) ?? null;
+}
+
+/** Same window replaced, the others kept. */
+export function upsertModelBlock(blocks: ModelBlock[] | null, block: ModelBlock): ModelBlock[] {
+  return [...(blocks ?? []).filter((b) => b.window !== block.window), block];
+}
+
+export type UnifiedRejection =
+  | { kind: "account" }
+  | { kind: "model"; window: string; scope: string | null; until: number };
+
+/**
+ * The canonical name of a model-scoped window, or null. The account-wide pair
+ * and the hidden overage window are never one, and an unknown name is not
+ * judged: a guess here parks an account, or leaves it serving, on no evidence.
+ */
+function scopedWindowName(name: string): string | null {
+  const canonical = canonicalWindowName(name);
+  if (HIDDEN_WINDOWS.has(canonical)) return null;
+  if (canonical === "five_hour" || canonical === "seven_day") return null;
+  return canonical.startsWith("seven_day_") ? canonical : null;
+}
+
+/** A weekly window is the longest reset hint there is; bound a bad parse anyway. */
+const MODEL_BLOCK_MAX_MS = 8 * 24 * 60 * 60 * 1000;
+
+function modelRejection(snapshot: AccountQuota | null | undefined, window: string, now: number): UnifiedRejection {
+  const w = snapshot?.windows?.[window];
+  const reset = w?.resetsAt ? Date.parse(w.resetsAt) : NaN;
+  const until =
+    Number.isFinite(reset) && reset > now
+      ? Math.min(reset, now + MODEL_BLOCK_MAX_MS)
+      : now + QUOTA_FALLBACK_COOLDOWN_MS;
+  return { kind: "model", window, scope: w?.scope ?? null, until };
+}
+
+/**
+ * Which claim a `rejected` unified status was about: the whole account, or one
+ * model's window.
+ *
+ * The bare `anthropic-ratelimit-unified-status: rejected` header says only that
+ * *a* claim was refused — Anthropic sets it for a spent `seven_day_fable` just
+ * as for a spent account, and no reply header has ever named a model-scoped
+ * window. So: a per-window `-status` header naming an account-wide window
+ * decides as the whole account (the one spelling the header set is known to
+ * carry); otherwise the snapshot decides — a scoped window at or above 99%
+ * while `five_hour` and `seven_day` sit below it is the window that was
+ * rejected. When neither source decides, the whole account is the answer, as
+ * before: parking an account is the safe side of undecided.
+ */
+export function classifyUnifiedRejection(args: {
+  headers: Headers | Record<string, string> | null | undefined;
+  snapshot: AccountQuota | null | undefined;
+  model: string;
+  now?: number;
+}): UnifiedRejection {
+  const now = args.now ?? Date.now();
+
+  if (args.headers) {
+    const entries: Array<[string, string]> =
+      args.headers instanceof Headers
+        ? Array.from(args.headers.entries())
+        : Object.entries(args.headers).map(([k, v]) => [k.toLowerCase(), v]);
+    const rejectedWide: string[] = [];
+    const rejectedScoped: string[] = [];
+    for (const [key, value] of entries) {
+      const status = /^anthropic-ratelimit-unified-([a-z0-9_]+)-status$/.exec(key);
+      if (!status || value.trim() !== "rejected") continue;
+      const canonical = canonicalWindowName(status[1]);
+      if (canonical === "five_hour" || canonical === "seven_day") rejectedWide.push(canonical);
+      else {
+        const scoped = scopedWindowName(canonical);
+        if (scoped) rejectedScoped.push(scoped);
+      }
+    }
+    if (rejectedWide.length > 0) return { kind: "account" };
+    if (rejectedScoped.length > 0) {
+      const wanted = modelScopedWindow(args.model);
+      const window = wanted && rejectedScoped.includes(wanted) ? wanted : rejectedScoped[0];
+      return modelRejection(args.snapshot, window, now);
+    }
+  }
+
+  const windows = args.snapshot?.windows ?? {};
+  const live = (name: string): QuotaWindow | null => {
+    const w = windows[name];
+    if (!w || windowResetPassed(w, now)) return null;
+    return w;
+  };
+  // An account-wide window that is itself out ends the question.
+  for (const wide of ["five_hour", "seven_day"]) {
+    const w = live(wide);
+    if (w && w.utilization >= 99) return { kind: "account" };
+  }
+  const exhausted = new Map<string, QuotaWindow>();
+  for (const [name, w] of Object.entries(windows)) {
+    const scoped = scopedWindowName(name);
+    if (!scoped) continue;
+    const q = live(name);
+    if (q && q.utilization >= 99) exhausted.set(scoped, q);
+  }
+  const wanted = modelScopedWindow(args.model);
+  const picked =
+    wanted && exhausted.has(wanted) ? wanted : exhausted.size === 1 ? [...exhausted.keys()][0] : null;
+  if (!picked) return { kind: "account" };
+  return modelRejection(args.snapshot, picked, now);
+}
+
 // ── what the pool has left ──────────────────────────────────────────────────
 
 export interface PoolWindow {
@@ -360,6 +512,12 @@ export interface PoolQuota {
     coolingDown: number;
     /** Enabled, but held back by `quotaMinRemainingPercent`. */
     quotaBlocked: number;
+    /**
+     * Enabled, healthy, with one model's window out on them — serving, but not
+     * for that model. A whole account cooling down is `coolingDown`; this is
+     * the narrower kind, and it reads as a block on the model, not the login.
+     */
+    modelBlocked: number;
   };
   /** The plan behind these windows, when an account reported one. */
   plan: string | null;
@@ -468,9 +626,9 @@ export function accountWindows(account: Account, now = Date.now()): PoolWindow[]
  * Pure, like the rest of this module: the caller lists the accounts and decides
  * whether to refresh them first.
  */
-export function poolQuota(pool: Account[], config: AccountPoolConfig, now = Date.now()): PoolQuota {
+export function poolQuota(pool: Account[], config: AccountPoolConfig, now = Date.now(), model?: string): PoolQuota {
   const enabled = pool.filter((a) => a.enabled);
-  const available = eligibleAccounts(enabled, config, new Set(), now);
+  const available = eligibleAccounts(enabled, config, new Set(), now, model);
   const speaking = available.length ? available : enabled;
 
   const best = new Map<string, PoolWindow>();
@@ -490,6 +648,9 @@ export function poolQuota(pool: Account[], config: AccountPoolConfig, now = Date
     available: available.length,
     coolingDown: enabled.filter((a) => isCoolingDown(a, now)).length,
     quotaBlocked: enabled.filter((a) => !isCoolingDown(a, now) && quotaBlockedWindow(a, config, now) !== null).length,
+    modelBlocked: enabled.filter(
+      (a) => !isCoolingDown(a, now) && (model ? activeModelBlock(a, model, now) : activeModelBlocks(a, now).length > 0),
+    ).length,
   };
 
   return {

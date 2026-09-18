@@ -353,6 +353,9 @@ async function cmdUsage(args: Args): Promise<number> {
   const a = usage.accounts;
   const parts = [`${a.available} of ${a.enabled} account${a.enabled === 1 ? "" : "s"} serving now`];
   if (a.coolingDown) parts.push(`${a.coolingDown} cooling down`);
+  // A whole login cooling down and one model's window being out are different
+  // states, and the bars above already name which model the second is.
+  if (a.modelBlocked) parts.push(`${a.modelBlocked} parked on a model-scoped limit`);
   // A floor is why a window can read 8% left and still serve nobody.
   if (a.quotaBlocked) parts.push(`${a.quotaBlocked} held back by the ${usage.floorPercent}% floor`);
   if (usage.plan) parts.push(usage.plan);
