@@ -130,6 +130,9 @@ describe("remote sessions", () => {
     expect(terminal.file).toBe(process.execPath);
     expect(terminal.args).toContain("--settings");
     expect(terminal.args[terminal.args.indexOf("--plugin-dir") + 1]).toMatch(/plugins[\\/]gate$/);
+    // Nobody is sitting at this terminal: it starts in auto mode, so a run in it
+    // does not spend its nodes waiting on prompts answered from a cockpit.
+    expect(terminal.args[terminal.args.indexOf("--permission-mode") + 1]).toBe("auto");
     expect(terminal.opts.cwd).toBe(repoRoot);
     expect(terminal.opts.cols).toBe(100);
     const env = terminal.opts.env;

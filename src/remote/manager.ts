@@ -357,7 +357,16 @@ export class RemoteManager {
 
     let proc: PtyProcess;
     try {
-      proc = pty.spawn(claude.path, ["--settings", settings, "--plugin-dir", this.pluginDir(), ...o.args], {
+      // A session here starts in auto mode, as it does in the cockpit. The
+      // person who opened it is not sitting at this terminal — the prompts of
+      // the default mode would reach them through the cockpit's Approvals one
+      // by one, and a `/gate:run` started here would spend its nodes waiting on
+      // them. `auto` decides without asking and hands over only what it will
+      // not decide, which is still held for the person. Not
+      // `bypassPermissions`: Claude Code refuses it when the process is root,
+      // which is how a gate runs as a service.
+      const args = ["--settings", settings, "--plugin-dir", this.pluginDir(), "--permission-mode", "auto", ...o.args];
+      proc = pty.spawn(claude.path, args, {
         name: "xterm-256color",
         cols,
         rows,

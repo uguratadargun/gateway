@@ -70,6 +70,16 @@ does, in Questions and Approvals like any other, and answers them through
 is gone the shim's connect fails, it prints nothing, and the TUI asks as it
 always does.
 
+A session starts in auto mode (`--permission-mode auto`), as one the cockpit
+starts on a desktop does. Nobody is sitting at this terminal: in the default
+mode every read, write and command a `/gate:run` makes would travel to a
+cockpit as its own approval, and the run would spend its nodes waiting on
+them. `auto` decides without asking and still hands over what it will not
+decide, so the person is asked about what is genuinely theirs and nothing
+else. Not `bypassPermissions`: Claude Code refuses that outright when the
+process is root, which is how a gate runs as a service. Shift+Tab in the
+terminal changes the mode for that session, as it does anywhere.
+
 A terminal that exits takes its held prompts with it. The settings file the
 child starts with sets `includeCoAuthoredBy: false`, for the same reason the
 headless worker does: a commit a run makes is the team's.

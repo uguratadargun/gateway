@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A session on the gate server starts in auto mode, like one in the cockpit does: nobody is sitting at that terminal, so a run started there no longer stops on every read, write and command as its own approval. What auto mode will not decide is still held for the person in their cockpit, and Shift+Tab changes the mode for that session.
+
 - Remote sessions start again on a gate running a production build: the cockpit refused them with `node-pty is not installed` on servers where it was installed and working, because the bundled server code lost the function it loads native modules with. The terminal is now reached the way the bundler cannot rewrite, and a gate that genuinely lacks `node-pty` still says so.
 
 - A model's weekly limit blocks that model, not the account: a spent `seven_day_fable` no longer parks the whole login for eight hours while its session window is fine — the model is blocked on that account until the window resets, the login keeps serving everything else, and the pool's 429 names the real reason for each account instead of blaming the throttle. The quota floor reads the account-wide windows only, so a spent model week no longer idles a login for every other model before a request is even sent.
