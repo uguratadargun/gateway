@@ -33,6 +33,8 @@ line is how a reader gets from `git blame` to the reasoning.
 
 - `npm test` — vitest, the whole suite. `npx vitest run tests/<file>` for one.
 - `npm run typecheck` — `tsc --noEmit`.
+- `npm run docs:check` — the record's form: decision numbers, sections,
+  links, spec headers. The same check runs inside `npm test`.
 - `npm run build:cli` — bundles the plugin CLI; refuses when the three
   version numbers disagree, warns when the plugin changed without a bump or
   the changelog has no entry for the version.

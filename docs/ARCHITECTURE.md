@@ -117,8 +117,9 @@ not as a log to be reconstructed.
 **The repository keeps its own record.** How a feature works is in
 `docs/design/`, why in `docs/decisions/`, what a run set out to do in
 `docs/specs/`. The pipeline writes them with the code and holds a change
-against them; memory indexes them, it does not replace them.
-→ `decisions/0005-docs-as-code-in-every-repository.md`
+against them; memory indexes them, it does not replace them. The form of
+the record is checked by code inside `npm test`; its truth by the reviewer.
+→ `decisions/0005-docs-as-code-in-every-repository.md`, `design/the-record.md`
 
 ## Storage
 
@@ -158,3 +159,4 @@ upgrade.
 - `src/client/` — the CLI that runs a workflow on a developer's machine: the mirror, the HTTP provider onto the gateway, and the reporter · `scripts/build-cli.mjs` bundles it into the plugin
 - `plugins/gate/` — the Claude Code plugin: `/gate:init`, `/gate:run`, `/gate:design`, `/gate:teach`, `/gate:ask`, the authoring and documentation references, and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
 - `docs/` — this map, `design/`, `decisions/`, `specs/`; `plans/` is the pipeline's gitignored working directory
+- `scripts/check-docs.mjs` — the record's form, checked; `tests/docs-record.test.ts` runs it in the suite

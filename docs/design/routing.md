@@ -38,7 +38,7 @@ the client asks `/v1/models` at startup and adds what it finds to `/model` — b
 it keeps only the entries whose id contains `claude` or `anthropic`, so no
 provider model ever reaches the picker that way. Those rows gate writes itself,
 into `modelPicker` in the user's own settings, one per provider model, under
-the name the catalogue gave it. → `decisions/0018-…`
+the name the catalogue gave it. → `decisions/0020-…`
 
 A name is resolved by trying four things in order and stopping at the first
 that answers:
@@ -128,4 +128,4 @@ needs no migration.
 ## Decisions
 
 - [0015 — The gateway resolves names, never difficulty](../decisions/0015-the-gateway-resolves-names-never-difficulty.md)
-- [0018 — A provider model reaches the picker under its own name](../decisions/0018-a-provider-model-reaches-the-picker-under-its-own-name.md)
+- [0020 — A provider model reaches the picker under its own name](../decisions/0020-a-provider-model-reaches-the-picker-under-its-own-name.md)

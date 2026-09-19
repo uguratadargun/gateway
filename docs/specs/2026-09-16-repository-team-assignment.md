@@ -1,6 +1,6 @@
 Status: done
 Branch: main
-Decisions: —
+Decisions: none
 Design: docs/design/repositories.md ("Whose it is"), docs/design/cross-team.md
 
 # Whose repository it is, said on the page

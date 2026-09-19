@@ -1,6 +1,6 @@
 Status: done
 Branch: main
-Decisions: —
+Decisions: none
 Design: docs/design/cross-team.md ("The task ledger")
 
 # Every way work reaches the gate can name its task

@@ -204,4 +204,4 @@ Practical notes:
 
 ## Decisions
 
-- [0018 — A provider model reaches the picker under its own name](../decisions/0018-a-provider-model-reaches-the-picker-under-its-own-name.md)
+- [0020 — A provider model reaches the picker under its own name](../decisions/0020-a-provider-model-reaches-the-picker-under-its-own-name.md)

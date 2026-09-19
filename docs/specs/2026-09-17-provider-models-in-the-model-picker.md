@@ -1,6 +1,6 @@
 Status: done
 Branch: main
-Decisions: docs/decisions/0018-a-provider-model-reaches-the-picker-under-its-own-name.md
+Decisions: docs/decisions/0020-a-provider-model-reaches-the-picker-under-its-own-name.md
 Design: docs/design/providers.md ("The rows in Claude Code's /model", key files, pitfalls), docs/design/routing.md (how it works, pitfalls)
 
 # The providers a gate serves are pickable in a normal Claude Code session
@@ -18,7 +18,7 @@ sends that provider reference to the gate, and the built-in Claude rows are
 still there.
 
 Out of scope: per-person routing on the server, and any mapping that makes
-`sonnet` mean something other than Sonnet. 0018 rules both out.
+`sonnet` mean something other than Sonnet. 0020 rules both out.
 
 ## Approach
 
@@ -57,7 +57,7 @@ One variable went and none replaced it. `applyClaudeCode` wrote
 spelling was written in its place and then taken out again. Sending Claude
 Code's background traffic through the gate's `tiers` would let `tiers.haiku`
 decide what answers when somebody picks Haiku — the same name-versus-model gap
-0018 refuses elsewhere — and Anthropic documents that traffic as "typically
+0020 refuses elsewhere — and Anthropic documents that traffic as "typically
 under $0.04 per session", so the feature was not worth the exception. A person
 who wants it writes the variable in their own settings.
 

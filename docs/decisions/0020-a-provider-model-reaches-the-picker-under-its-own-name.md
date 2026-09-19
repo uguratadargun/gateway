@@ -1,4 +1,4 @@
-# 0018. A provider model reaches the picker under its own name
+# 0020. A provider model reaches the picker under its own name
 
 Status: accepted
 Date: 2026-09-17
