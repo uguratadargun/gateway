@@ -71,7 +71,14 @@ export function loadPty(): { spawn: PtySpawn | null; reason: string | null } {
   if (g.__gateRemotePty) return g.__gateRemotePty;
   let result: { spawn: PtySpawn | null; reason: string | null };
   try {
-    const req = createRequire(join(process.cwd(), "package.json"));
+    // Next's server bundle rewrites the `node:module` import to a stub, so the
+    // bundled `createRequire` is `undefined` at runtime and every load failed
+    // with "Cannot read properties of undefined" — reported below as a missing
+    // node-pty, on servers where it was installed and working.
+    // `process.getBuiltinModule` reaches the real builtin; the bundler has no
+    // import to rewrite.
+    const nodeModule = process.getBuiltinModule?.("module") ?? { createRequire };
+    const req = nodeModule.createRequire(join(process.cwd(), "package.json"));
     const main = req.resolve("node-pty");
     // lib/index.js → the package root, where the prebuilds sit.
     ensureHelperExecutable(join(main, "..", ".."));

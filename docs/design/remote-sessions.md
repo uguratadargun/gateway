@@ -141,6 +141,7 @@ which is missing.
 
 - A remote session's questions reach the cockpit only through the hook shim; when the shim cannot reach gate it prints nothing and the TUI asks in the terminal instead, where nobody is watching.
 - On macOS a deep `GATE_HOME` would overflow the unix socket path; the socket then lives under a hashed name in the temp directory, not beside the data.
+- The loader reaches `createRequire` through `process.getBuiltinModule("module")`, not an import: Next's server bundle rewrites a `node:module` import to a stub, and the bundled `createRequire` is then `undefined` — remote sessions read as unavailable on a server where `node-pty` is installed and working.
 - `node-pty` sometimes lands without its `spawn-helper` execute bit; the server restores it before the first spawn, but a read-only install cannot be fixed and every spawn then fails with "posix_spawnp failed".
 - Questions from a session running in a desktop cockpit on the person's own machine are held by that cockpit, not by the server; they do not show here.
 - The idle timer does not sleep a session holding a run, and a sleeping session is not a stopped run: the run's own rules on silence still apply (see `executions.md`).
