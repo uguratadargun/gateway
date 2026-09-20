@@ -1,4 +1,5 @@
 import { ALL_SCOPES, hasActiveKeys, resolveKey, type Principal } from "./apikeys";
+import { resolveRunToken } from "./run-tokens";
 import { DEFAULT_TEAM_ID } from "./teams";
 
 /**
@@ -15,13 +16,20 @@ export function bearerToken(req: Request): string {
 }
 
 /**
- * The caller behind a gateway request: an issued key (if any exist), the
- * GATE_API_KEY env, or — when neither is configured — nobody in particular,
- * which is what a localhost-only install has always been. The last two cases
- * have no person attached, so they answer as the default team.
+ * The caller behind a gateway request: a run this process is holding, an issued
+ * key (if any exist), the GATE_API_KEY env, or — when none of those is
+ * configured — nobody in particular, which is what a localhost-only install has
+ * always been. The last two cases have no person attached, so they answer as
+ * the default team.
  */
 export function gatePrincipal(req: Request): Principal | null {
   const token = bearerToken(req);
+  // A run this process is holding right now, answering as the person and team
+  // it is for. First, because a run token is not an issued key: on a gate that
+  // has issued any it would be refused below, and where GATE_API_KEY is set it
+  // would fail the equality.
+  const run = token ? resolveRunToken(token) : null;
+  if (run) return run;
   if (hasActiveKeys()) {
     const principal = resolveKey(token, req.headers.get("x-gate-host"));
     return principal?.scopes.includes("gateway") ? principal : null;
