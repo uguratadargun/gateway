@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseAgent } from "@/agents/loader";
 import { providerModelEnv, runClaudeCodeNode } from "@/runtime/executors/claude-code";
@@ -248,6 +248,57 @@ describe("claude-code executor", () => {
       runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: fakeCli("", 1, "not logged in") }, null),
     ).rejects.toMatchObject({ code: "MODEL_EXECUTION_ERROR", message: expect.stringContaining("not logged in") });
   });
+
+  it("says why the child stopped, not only that it did", async () => {
+    // The exact shape of the failure this was found by: a result line that
+    // reports success as its subtype and carries no answer, because the child
+    // died on its first request. Without the reason, the node reads as
+    // "claude-code did not finish (success)" and the cause stays in the logs.
+    const agent = parseAgent("builder", AGENT, meta);
+    const line = JSON.stringify({ type: "result", subtype: "success", usage: { input_tokens: 0 } });
+    await expect(
+      runClaudeCodeNode(
+        agent,
+        "go",
+        "build",
+        { workspace, spawnCli: fakeCli(line, 1, "Not logged in · Please run /login") },
+        null,
+      ),
+    ).rejects.toMatchObject({
+      code: "MODEL_EXECUTION_ERROR",
+      message: expect.stringContaining("(success)"),
+    });
+    await expect(
+      runClaudeCodeNode(
+        agent,
+        "go",
+        "build",
+        { workspace, spawnCli: fakeCli(line, 1, "Not logged in · Please run /login") },
+        null,
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining("Not logged in") });
+  });
+
+  it("prefers the child's own report to whatever else was on its stderr", async () => {
+    const agent = parseAgent("builder", AGENT, meta);
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "Credit balance is too low",
+      usage: { input_tokens: 12 },
+    });
+    const noise = "warning: a deprecation nobody needs to read";
+    await expect(
+      runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: fakeCli(line, 1, noise) }, null),
+    ).rejects.toMatchObject({
+      code: "MODEL_EXECUTION_ERROR",
+      message: expect.stringContaining("Credit balance is too low"),
+    });
+    await expect(
+      runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: fakeCli(line, 1, noise) }, null),
+    ).rejects.toMatchObject({ message: expect.not.stringContaining(noise) });
+  });
 });
 
 describe("a node running on a provider model", () => {
@@ -279,5 +330,60 @@ describe("a node running on a provider model", () => {
     await runClaudeCodeNode(agent, "go", "n1", { workspace, spawnCli, gatewayUrl: "http://gate/api/gateway" }, null);
     expect(seen!.ANTHROPIC_BASE_URL).toBe("http://gate/api/gateway");
     expect(seen!.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("provider:zai/glm-5.3");
+  });
+});
+
+/** Captures the environment the child would have been spawned with. */
+function envCapture(): { env: () => Record<string, string>; spawnCli: never } {
+  let seen: Record<string, string> = {};
+  type Spawn = (cmd: string, args: string[], opts: { env: Record<string, string> }) => unknown;
+  const inner = fakeCli(STREAM) as unknown as Spawn;
+  return {
+    env: () => seen,
+    spawnCli: ((cmd: string, args: string[], opts: { env: Record<string, string> }) => {
+      seen = opts.env;
+      return inner(cmd, args, opts);
+    }) as never,
+  };
+}
+
+describe("where the child sends its calls", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("goes to the gateway on this machine, not out through the public address", async () => {
+    // A server sets GATE_SELF_URL for the cockpit's sake — a URL a person's
+    // browser has to reach. The child is on the same host as the gateway that
+    // meters it, so that round trip through the reverse proxy buys nothing and
+    // exposes a long stream to proxy buffering.
+    vi.stubEnv("GATE_SELF_URL", "https://gate.example.test");
+    const agent = parseAgent("builder", AGENT, meta);
+    const capture = envCapture();
+    await runClaudeCodeNode(agent, "go", "n1", { workspace, spawnCli: capture.spawnCli }, null);
+    expect(capture.env().ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4141/api/gateway");
+  });
+
+  it("follows the port this process is actually listening on", async () => {
+    vi.stubEnv("GATE_SELF_URL", "https://gate.example.test");
+    vi.stubEnv("PORT", "8080");
+    const agent = parseAgent("builder", AGENT, meta);
+    const capture = envCapture();
+    await runClaudeCodeNode(agent, "go", "n1", { workspace, spawnCli: capture.spawnCli }, null);
+    expect(capture.env().ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8080/api/gateway");
+  });
+
+  it("carries the token it was given, and nothing where there is none", async () => {
+    const agent = parseAgent("builder", AGENT, meta);
+    const withToken = envCapture();
+    await runClaudeCodeNode(agent, "go", "n1", { workspace, spawnCli: withToken.spawnCli, authToken: "gate_run_abc" }, null);
+    expect(withToken.env().ANTHROPIC_AUTH_TOKEN).toBe("gate_run_abc");
+    expect(withToken.env().ANTHROPIC_API_KEY).toBe("gate_run_abc");
+
+    // Stubbed away because the child inherits this process's environment, and
+    // a developer's shell may well have one of its own.
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", undefined);
+    const without = envCapture();
+    await runClaudeCodeNode(agent, "go", "n1", { workspace, spawnCli: without.spawnCli }, null);
+    // Not an empty string: an empty value would be sent as a credential.
+    expect(without.env().ANTHROPIC_AUTH_TOKEN).toBeUndefined();
   });
 });

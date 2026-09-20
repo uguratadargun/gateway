@@ -20,6 +20,9 @@ import { getRepo, publicationTarget, type RepoRecord } from "@/repos/store";
 import { isPathLike, prepareWorktree } from "@/repos/setup";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { DEFAULT_TEAM, teamScope, type DefinitionScope } from "@/lib/def-root";
+import type { Principal } from "@/lib/apikeys";
+import { INTERNAL_KEY_ID } from "@/lib/gate-auth";
+import { withRunToken } from "@/lib/run-tokens";
 import { getWorkflow } from "@/workflows/registry";
 import { snapshotDefinitions } from "@/workflows/snapshot";
 import type { WorkflowDefinition, WorkspaceSpec } from "@/workflows/types";
@@ -292,63 +295,88 @@ async function launch(
   const controller = new AbortController();
   inFlight.set(executionId, controller);
 
-  try {
-    // Linking dependencies and generating build output happen before the first
-    // node, not as nodes: a worktree carries only what git tracks, and every
-    // pipeline pointed at the same repo was otherwise repeating the same three
-    // command nodes — one of which, got wrong, cost a whole run.
-    if (connected && workspace) await prepareWorktree(connected, workspace.root);
+  // The run answers for itself at gate's own gateway. A node handed to a
+  // headless Claude Code calls that gateway like any other client, and a gate
+  // that has issued keys refuses a request without one whatever its source
+  // address — so a node's child arrived as nobody and died on its first
+  // request. The token is the run's own identity, read off its row: its person
+  // where it has one, its team either way. `withRunToken` drops it however
+  // this settles, including the crash path below.
+  const row = getExecution(executionId);
+  const principal: Principal = {
+    keyId: INTERNAL_KEY_ID,
+    userId: row?.userId ?? null,
+    teamId: row?.teamId ?? scope.teamId ?? DEFAULT_TEAM,
+    // The gateway and nothing else: a run's token has no business anywhere a
+    // person's key goes, and the client API resolves keys by another route.
+    scopes: ["gateway"],
+  };
 
-    const state = await runWorkflow(workflow, {
-      provider,
-      input,
-      executionId,
-      workspace,
-      loadAgent: (id) => getAgent(id, scope),
-      loadSkill: (id) => getSkill(id, scope),
-      // Memory answers as the run's team: its own tree, nothing else — and
-      // about the repository this run is actually in, which the run knows and
-      // the model does not have to be asked for.
-      memory: new LocalMemoryAccess(scope.teamId ?? DEFAULT_TEAM, connected?.repoId ?? null),
-      emit: publishWorkflowEvent,
-      // Through the same door a reported step comes in by, so a node that
-      // raises an objection has it written with the step here too — the
-      // engine-side run is not a second, quieter path into the same tables.
-      onStep: (step) => {
-        const record = getExecution(executionId);
-        if (record) {
-          recordReportedSteps(record, [step]);
-          return;
-        }
-        // The row a running execution was started from cannot normally be
-        // gone. If it is, the step is still worth keeping, but an objection
-        // in it has no team to be raised against and is dropped — which is
-        // the kind of silence that makes a lost objection look like agreement.
-        console.log(`gate: execution ${executionId} has no row — step ${step.nodeId} kept, its cross-team fields dropped`);
-        recordStep(executionId, step);
-      },
-      signal: controller.signal,
-      resume,
-    });
-    inFlight.delete(executionId);
-    finishExecution(state, workspaceSummary(workspace));
-    releaseWorkspace(workspace, executionId, connected);
-    scheduleExtraction();
-    return state;
-  } catch (e) {
-    // The engine records its own node failures; this covers preparing the
-    // worktree and a crash in the engine itself, both of which must still
-    // close out the execution row.
-    inFlight.delete(executionId);
-    const message = (e as Error).message;
-    const code = e instanceof WorkflowError ? e.code : "WORKFLOW_ROUTING_ERROR";
-    const state = failedState(executionId, workflow.id, input, code, message);
-    finishExecution(state, workspaceSummary(workspace));
-    releaseWorkspace(workspace, executionId, connected);
-    publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: code as never, message });
-    scheduleExtraction();
-    return state;
-  }
+  return withRunToken(executionId, principal, async (runToken) => {
+    try {
+      // Linking dependencies and generating build output happen before the first
+      // node, not as nodes: a worktree carries only what git tracks, and every
+      // pipeline pointed at the same repo was otherwise repeating the same three
+      // command nodes — one of which, got wrong, cost a whole run.
+      if (connected && workspace) await prepareWorktree(connected, workspace.root);
+
+      const state = await runWorkflow(workflow, {
+        provider,
+        input,
+        executionId,
+        workspace,
+        loadAgent: (id) => getAgent(id, scope),
+        loadSkill: (id) => getSkill(id, scope),
+        // The credential a claude-code node's child authenticates with. No
+        // gatewayUrl: the executor's own default is the gateway of this very
+        // process, which is where a child on this machine belongs. A run on a
+        // developer's machine comes through src/client/run.ts instead, with
+        // that person's key and their server's URL, and that still wins.
+        claudeCode: { authToken: runToken },
+        // Memory answers as the run's team: its own tree, nothing else — and
+        // about the repository this run is actually in, which the run knows and
+        // the model does not have to be asked for.
+        memory: new LocalMemoryAccess(scope.teamId ?? DEFAULT_TEAM, connected?.repoId ?? null),
+        emit: publishWorkflowEvent,
+        // Through the same door a reported step comes in by, so a node that
+        // raises an objection has it written with the step here too — the
+        // engine-side run is not a second, quieter path into the same tables.
+        onStep: (step) => {
+          const record = getExecution(executionId);
+          if (record) {
+            recordReportedSteps(record, [step]);
+            return;
+          }
+          // The row a running execution was started from cannot normally be
+          // gone. If it is, the step is still worth keeping, but an objection
+          // in it has no team to be raised against and is dropped — which is
+          // the kind of silence that makes a lost objection look like agreement.
+          console.log(`gate: execution ${executionId} has no row — step ${step.nodeId} kept, its cross-team fields dropped`);
+          recordStep(executionId, step);
+        },
+        signal: controller.signal,
+        resume,
+      });
+      inFlight.delete(executionId);
+      finishExecution(state, workspaceSummary(workspace));
+      releaseWorkspace(workspace, executionId, connected);
+      scheduleExtraction();
+      return state;
+    } catch (e) {
+      // The engine records its own node failures; this covers preparing the
+      // worktree and a crash in the engine itself, both of which must still
+      // close out the execution row.
+      inFlight.delete(executionId);
+      const message = (e as Error).message;
+      const code = e instanceof WorkflowError ? e.code : "WORKFLOW_ROUTING_ERROR";
+      const state = failedState(executionId, workflow.id, input, code, message);
+      finishExecution(state, workspaceSummary(workspace));
+      releaseWorkspace(workspace, executionId, connected);
+      publishWorkflowEvent({ type: "workflow.failed", executionId, at: Date.now(), code: code as never, message });
+      scheduleExtraction();
+      return state;
+    }
+  });
 }
 
 function workspaceSummary(workspace: RunWorkspace | null): ExecutionWorkspace | null {

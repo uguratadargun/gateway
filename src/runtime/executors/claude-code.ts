@@ -33,14 +33,21 @@ import { outputCorrection, parseOutput } from "./agent";
 /**
  * Where the child sends its API calls. A gate gateway either way, so routing,
  * metering and the run's budget still apply — but which gate depends on who is
- * running the node. On the server it is this process; on a developer's machine
- * the client passes the company server's URL and that person's API key, which
- * is the whole of what makes a local run still a metered one.
+ * running the node. On a developer's machine the client passes the company
+ * server's URL and that person's API key, which is the whole of what makes a
+ * local run still a metered one.
+ *
+ * Otherwise it is this very process, over loopback. The child runs on the same
+ * host as the gateway that meters it, so leaving by the public address and
+ * coming back in through the reverse proxy is a round trip that buys nothing
+ * and puts a stream that may last an hour at the mercy of proxy buffering and
+ * proxy timeouts. That is why `GATE_SELF_URL` is not consulted here: it is the
+ * address a *person's* cockpit has to be able to reach (src/remote/manager.ts),
+ * which is a different question from where a process on this host should send
+ * a request to itself.
  */
 function gatewayUrl(override?: string): string {
   if (override) return `${override.replace(/\/$/, "")}`;
-  if (process.env.GATE_SELF_URL)
-    return `${process.env.GATE_SELF_URL.replace(/\/$/, "")}/api/gateway`;
   return `http://127.0.0.1:${process.env.PORT ?? 4141}/api/gateway`;
 }
 
@@ -150,6 +157,26 @@ interface CliResult {
     cache_read_input_tokens?: number;
   };
   modelUsage?: Record<string, unknown>;
+}
+
+/**
+ * The child's own account of why it stopped, for the error a person reads.
+ *
+ * What it reported wins over what it printed: the result line is the child
+ * answering the question, stderr is whatever else the process had to say. A
+ * failure otherwise reaches the dashboard as the shape of the failure alone —
+ * "did not finish (success)" — while the reason stays in the logs.
+ */
+function failureDetail(r: CliResult | null, stderr: string): string {
+  const said =
+    typeof r?.result === "string"
+      ? r.result.trim()
+      : // Not JSON.stringify on its own: `undefined` does not come back a
+        // string from it, and "undefined" is worse than nothing.
+        r?.result == null
+        ? ""
+        : JSON.stringify(r.result);
+  return (said || stderr.trim()).slice(0, 500);
 }
 
 /**
@@ -275,8 +302,11 @@ export async function runClaudeCodeNode(
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: gatewayUrl(deps.gatewayUrl),
-        // Only set when the caller has one: on the server the gateway is
-        // loopback and needs no key, and an empty value would be sent as one.
+        // How the child gets through gate's own front door: on the server, a
+        // token minted for this run; on a developer's machine, that person's
+        // own key. Being loopback buys it nothing — a gate that has issued any
+        // key refuses a request without one whatever its source address.
+        // Conditional because an empty value would be sent as a credential.
         ...(deps.authToken ? { ANTHROPIC_AUTH_TOKEN: deps.authToken, ANTHROPIC_API_KEY: deps.authToken } : {}),
         // Claude Code would otherwise send only its own session id, and the
         // gateway would file a node's calls as unrelated traffic. This is the
@@ -419,7 +449,7 @@ export async function runClaudeCodeNode(
 
     const parsed = final as CliResult | null;
     if (!parsed) {
-      const detail = (stderr.trim() || "no output").slice(0, 500);
+      const detail = failureDetail(null, stderr) || "no output";
       throw new WorkflowError(
         "MODEL_EXECUTION_ERROR",
         `node "${nodeId}": claude-code exited ${settled.code ?? "without a code"} before reporting a result — ${detail}`,
@@ -434,9 +464,13 @@ export async function runClaudeCodeNode(
     usage.cacheReadTokens += parsed.usage?.cache_read_input_tokens ?? 0;
 
     if (parsed.is_error || typeof parsed.result !== "string") {
+      const why = failureDetail(parsed, stderr);
       throw new WorkflowError(
         "MODEL_EXECUTION_ERROR",
         `node "${nodeId}": claude-code did not finish (${parsed.subtype ?? "unknown"})` +
+          // The child's own reason, where it gave one: the subtype says the
+          // shape of the failure, this says the cause.
+          (why ? ` — ${why}` : "") +
           // Denials are silent otherwise, and a node that lost the tool it
           // needed reads exactly like one that simply answered badly.
           (parsed.permission_denials?.length
