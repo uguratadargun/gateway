@@ -1,6 +1,6 @@
 Status: done
 Branch: main
-Decisions: docs/decisions/0023-the-remotes-host-opens-the-merge-request.md
+Decisions: docs/decisions/0024-the-remotes-host-opens-the-merge-request.md
 Design: docs/design/dev-workflow.md
 
 # The shipped pipelines open a pull request on GitHub

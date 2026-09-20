@@ -1,4 +1,4 @@
-# 0023. The remote's host opens the merge request
+# 0024. The remote's host opens the merge request
 
 Status: accepted
 Date: 2026-09-20
