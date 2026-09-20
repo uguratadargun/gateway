@@ -33,14 +33,21 @@ import { outputCorrection, parseOutput } from "./agent";
 /**
  * Where the child sends its API calls. A gate gateway either way, so routing,
  * metering and the run's budget still apply — but which gate depends on who is
- * running the node. On the server it is this process; on a developer's machine
- * the client passes the company server's URL and that person's API key, which
- * is the whole of what makes a local run still a metered one.
+ * running the node. On a developer's machine the client passes the company
+ * server's URL and that person's API key, which is the whole of what makes a
+ * local run still a metered one.
+ *
+ * Otherwise it is this very process, over loopback. The child runs on the same
+ * host as the gateway that meters it, so leaving by the public address and
+ * coming back in through the reverse proxy is a round trip that buys nothing
+ * and puts a stream that may last an hour at the mercy of proxy buffering and
+ * proxy timeouts. That is why `GATE_SELF_URL` is not consulted here: it is the
+ * address a *person's* cockpit has to be able to reach (src/remote/manager.ts),
+ * which is a different question from where a process on this host should send
+ * a request to itself.
  */
 function gatewayUrl(override?: string): string {
   if (override) return `${override.replace(/\/$/, "")}`;
-  if (process.env.GATE_SELF_URL)
-    return `${process.env.GATE_SELF_URL.replace(/\/$/, "")}/api/gateway`;
   return `http://127.0.0.1:${process.env.PORT ?? 4141}/api/gateway`;
 }
 
@@ -275,8 +282,11 @@ export async function runClaudeCodeNode(
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: gatewayUrl(deps.gatewayUrl),
-        // Only set when the caller has one: on the server the gateway is
-        // loopback and needs no key, and an empty value would be sent as one.
+        // How the child gets through gate's own front door: on the server, a
+        // token minted for this run; on a developer's machine, that person's
+        // own key. Being loopback buys it nothing — a gate that has issued any
+        // key refuses a request without one whatever its source address.
+        // Conditional because an empty value would be sent as a credential.
         ...(deps.authToken ? { ANTHROPIC_AUTH_TOKEN: deps.authToken, ANTHROPIC_API_KEY: deps.authToken } : {}),
         // Claude Code would otherwise send only its own session id, and the
         // gateway would file a node's calls as unrelated traffic. This is the
