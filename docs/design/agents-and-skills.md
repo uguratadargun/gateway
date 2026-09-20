@@ -42,7 +42,11 @@ serves the model named here and never substitutes another.
 built-in loop, where gate holds the conversation and serves its own tools;
 `claude-code` hands the node to a headless Claude Code in the worktree,
 pointed at this gate's own gateway, so metering and the run budget are
-unaffected. `tools` names what the agent may invoke, in the vocabulary
+unaffected. Which gateway, and with what credential, follows from where the
+engine is running: on the gate server it is that machine's own gateway over
+loopback, with a token minted for the run that answers as the run's person and
+team; on a developer's machine the CLI passes their server's address and their
+own key. `tools` names what the agent may invoke, in the vocabulary
 of its executor — gate's own `read_file`, `list_files`, `search_files`,
 `write_file`, `edit_file`, `run_command`, plus `memory_search` and
 `memory_feature`, or Claude Code's `Read`, `Edit`, `Grep`, `Bash`. For a

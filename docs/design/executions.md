@@ -168,6 +168,14 @@ lines; when nothing matches a known failure shape, the tail of the output is
 shown, since that is where runners print their summary. A gate that refused
 every attempt is called out as having been red before the run started.
 
+A node handed to a headless Claude Code carries that child's own account of
+why it stopped: what it reported in its result where it reported anything,
+otherwise what it printed, truncated. The subtype of the failure says its
+shape — that the child did not finish — and the reason says the cause, so a
+node that died before it reached a model reads as why it died rather than as a
+node that merely produced nothing. The tool calls it did make and the tokens
+it did spend stay attached either way.
+
 When a run stops at a loop ceiling, the error names what kept sending it
 back — `node "implementation" ran 6 times (max 5); last sent back by "tests"
 (exit 1)` — because a loop limit on its own says a node repeated, not why,

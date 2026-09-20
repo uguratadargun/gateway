@@ -20,10 +20,17 @@ and translate the answer back; `/v1/models`, `/v1/messages/count_tokens` and
 round trip back to itself.
 
 **Auth.** The bearer token (`Authorization` or `x-api-key`) is resolved to a
-principal: an issued key with the `gateway` scope when any key exists, else
-`GATE_API_KEY`, else — when neither is configured — nobody in particular,
-which is what a loopback-only install has always been. A revoked key, or a
-disabled person's key, stops resolving at once. The last two cases have no
+principal: first a run this process is holding right now — the token gate
+minted for a workflow run, which answers as that run's own person and team —
+then an issued key with the `gateway` scope when any key exists, else
+`GATE_API_KEY`, else — when none of those is configured — nobody in particular,
+which is what a loopback-only install has always been. The run token comes
+first because it is not an issued key: on a gate that has issued any it would
+be refused by the rule below, and where `GATE_API_KEY` is set it would fail the
+equality. A revoked key, or a disabled person's key, stops resolving at once.
+A run token stops resolving when its run ends, whichever way it ended, and
+nothing is ever written down for it — a restart invalidates every one there is.
+The two cases with no key have no
 person attached and answer as the default team. The principal is carried
 through the pipeline rather than reduced to a yes at the door: it rides on the
 dispatch options as four scalars — key, person, team, scopes — because a
@@ -110,8 +117,12 @@ rows kept, local only) and an activity event for the SSE live tail on
 names the key, the person and the team that called, and the account or the
 provider that served — as ids, which `/traffic` resolves to names as it reads,
 so a renamed account reads as it is now and a deleted one still reads. A
-workflow node calling in-process names itself `workflow`; a gate with no key
-issued and none configured names itself `local`. `/analytics`,
+workflow node names itself `workflow` with the run's own person and team,
+whether gate held the conversation itself or handed the node to a spawned
+Claude Code answering on the run's token — one run's spend reads as one
+caller either way, and a run with no person recorded reads as `workflow` with
+its team alone. A gate with no key issued and none configured names itself
+`local`. `/analytics`,
 `/sessions` and the CSV/JSON exports are `GROUP BY`s over the usage table, so
 a budget check stays O(1) in request count.
 
@@ -124,7 +135,8 @@ request ─ auth ─ session ─ compress ─ resolve ─ account+throttle ─ p
 ## Key files
 
 - `src/lib/gateway-core.ts` — `dispatch` (the ordered pipeline), `sendWithFallback`, `attemptOnAccount`, `attemptOnProvider`, `executeMessages` (adds response cache and coalescing), `parseUsage`
-- `src/lib/gate-auth.ts` — `gatePrincipal`: issued key, `GATE_API_KEY`, or open on loopback
+- `src/lib/gate-auth.ts` — `gatePrincipal`: a live run's token, an issued key, `GATE_API_KEY`, or open on loopback
+- `src/lib/run-tokens.ts` — the in-memory registry of tokens for runs in flight: minted with the run, dropped when it ends, never stored
 - `src/lib/compress.ts` — block trimming and adjacent-duplicate removal
 - `src/lib/prompt-cache.ts` — `cache_control` breakpoints on system, tools and last turn
 - `src/lib/budget.ts` — daily and monthly caps, `warn` or `block`
@@ -151,7 +163,9 @@ request ─ auth ─ session ─ compress ─ resolve ─ account+throttle ─ p
 - Compression is lossy by design (blocks are trimmed) and off by default. Turning it on changes prompts and therefore prompt-cache hits.
 - The traffic log holds served exchanges, not every call. A response-cache hit, a refusal (400, 401, 402, 429, 503) and the proxied `/v1/models`, `count_tokens` and `batches/*` write no row at all, so counting callers there under-counts them — the throttle's 429s, the ones a question about quota is usually about, are exactly what is missing. `from_cache` is written false for the same reason.
 - A traffic row is best-effort: the insert swallows its errors so a log line can never fail a served request, which also means a missing row is silent.
+- A run's token lives in the process that minted it and in no other. A second gate process cannot resolve it, and a restart invalidates every token in flight — which is the design, since a run does not survive its process either.
 
 ## Decisions
 
+- [0023 — A run carries a token of its own](../decisions/0023-a-run-carries-a-token-of-its-own.md)
 - [0017 — The traffic log names who called and who served](../decisions/0017-the-traffic-log-names-who-called-and-who-served.md)
