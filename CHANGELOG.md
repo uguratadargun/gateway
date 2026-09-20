@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The shipped pipelines open a pull request on GitHub. `dev`, `dev-super` and `dev-quick` knew only GitLab — `glab`, or push options GitHub does not implement — so a run in a GitHub repository ended with its branch pushed and nothing opened. The remote's host now picks the route: `gh pr create` for GitHub, glab or push options for everything else. A GitHub remote on a machine whose `gh` is not signed in ends the run saying exactly that. Run `npm run defaults:restore -- --refresh` on a live gate to take the new workflows.
+
 - A workflow run on a gate that has issued keys gets through its own gateway: a node handed to Claude Code is now given a credential minted for that run, where before it arrived as an unauthenticated caller and died on its first request with nothing spent and nothing said. What such a node spends is filed against the run's own person and team, and its calls stay on the machine rather than going out by the public address and back in. When a node does fail, the run says why in the child's own words — not logged in, a credit balance, whatever it was — instead of only that it did not finish.
 
 - A session on the gate server starts in auto mode, like one in the cockpit does: nobody is sitting at that terminal, so a run started there no longer stops on every read, write and command as its own approval. What auto mode will not decide is still held for the person in their cockpit, and Shift+Tab changes the mode for that session.

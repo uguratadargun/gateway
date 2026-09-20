@@ -549,6 +549,14 @@ Try {{inputs.implementer.summary}}
     // push has happened leaves the push-option route nothing to push.
     expect(mr[2]).toContain("glab auth status");
     expect(mr[2]).toContain("merge_request.create");
+    // The remote's host picks the route, not whichever CLI happens to be
+    // installed: GitHub has no push options, so a GitHub remote goes through
+    // gh, and a machine whose gh is not signed in says so rather than pushing
+    // a branch no pull request will ever point at.
+    expect(mr[2]).toContain("git remote get-url origin");
+    expect(mr[2]).toContain("*github.com*");
+    expect(mr[2]).toContain("gh pr create");
+    expect(mr[2]).toContain("gh auth status");
     // The title is the task's first line: git refuses a push option with a
     // newline in it, and a brief is often several paragraphs.
     expect(mr[2]).not.toContain('merge_request.title=$1');

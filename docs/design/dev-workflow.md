@@ -69,8 +69,12 @@ times, before the run ends on `no-spec`. The plan's `## Documentation`
 section names the design doc and the decision record the change has to
 leave true under `docs/design/` and `docs/decisions/`; the implementer
 writes them as the plan's last task, and the verifier and reviewer hold
-the change against them. The merge request is opened with `glab` when
-signed in, else with GitLab push options. There is no `npm ci` and no `npm test` in the graph:
+the change against them. The merge request is opened by the host the remote
+names: `gh pr create` on a GitHub remote, and on anything else `glab` when it
+is signed in, else GitLab's push options. A GitHub remote on a machine whose
+`gh` is not signed in ends the run saying so, rather than pushing a branch no
+pull request will point at — GitHub has no push option that opens one, so
+there is nothing there to fall back to. There is no `npm ci` and no `npm test` in the graph:
 those are facts about one project, for `/gate:design` to add.
 
 ### The shipped pipelines

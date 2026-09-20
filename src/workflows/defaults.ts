@@ -404,9 +404,19 @@ nodes:
   - id: merge-request
     type: command
     label: Push and open the merge request
-    # glab when it is there and signed in, and GitLab's push options when it is
-    # not: those need no CLI and no API token, because the SSH key that cloned
-    # the repository is already the whole authentication story.
+    # The remote's host decides how, because only the host knows what opening
+    # a merge request even means: GitHub has no push options and never will,
+    # and a machine with both CLIs installed would otherwise take whichever
+    # branch was written first and fail on the other's server.
+    #
+    # GitHub: \`gh pr create\`. There is no way to open a pull request without
+    # an API token, so a machine whose gh is not signed in cannot ship — it
+    # says so and stops instead of pushing a branch nobody will look at.
+    #
+    # Everything else is GitLab: glab when it is there and signed in, and
+    # GitLab's push options when it is not — those need no CLI and no API
+    # token, because the SSH key that cloned the repository is already the
+    # whole authentication story.
     #
     # Signed in is checked up front, not discovered. Push options only take
     # effect on a push that moves the branch, so a glab that fails after the
@@ -429,11 +439,21 @@ nodes:
       - -c
       - >-
         t=$(printf '%s\\n' "\$1" | sed -n 1p);
+        case "$(git remote get-url origin 2>/dev/null)" in
+        *github.com*)
+        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        git push --set-upstream origin HEAD && gh pr create --fill --title "$t";
+        else
+        echo "this remote is GitHub and gh is not signed in on this machine: install the GitHub CLI and run gh auth login there, then the run can open the pull request" >&2;
+        exit 1;
+        fi;;
+        *)
         if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
         git push --set-upstream origin HEAD && glab mr create --fill --yes --title "$t";
         else
         git push -o merge_request.create -o "merge_request.title=$t" --set-upstream origin HEAD;
-        fi
+        fi;;
+        esac
       - gate-open-mr
       - "{{input.task}}"
     edges:
@@ -716,11 +736,21 @@ nodes:
       - -c
       - >-
         t=$(printf '%s\\n' "\$1" | sed -n 1p);
+        case "$(git remote get-url origin 2>/dev/null)" in
+        *github.com*)
+        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        git push --set-upstream origin HEAD && gh pr create --fill --title "$t";
+        else
+        echo "this remote is GitHub and gh is not signed in on this machine: install the GitHub CLI and run gh auth login there, then the run can open the pull request" >&2;
+        exit 1;
+        fi;;
+        *)
         if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
         git push --set-upstream origin HEAD && glab mr create --fill --yes --title "$t";
         else
         git push -o merge_request.create -o "merge_request.title=$t" --set-upstream origin HEAD;
-        fi
+        fi;;
+        esac
       - gate-open-mr
       - "{{input.task}}"
     edges:
