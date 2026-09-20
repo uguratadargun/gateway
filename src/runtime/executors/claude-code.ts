@@ -160,6 +160,26 @@ interface CliResult {
 }
 
 /**
+ * The child's own account of why it stopped, for the error a person reads.
+ *
+ * What it reported wins over what it printed: the result line is the child
+ * answering the question, stderr is whatever else the process had to say. A
+ * failure otherwise reaches the dashboard as the shape of the failure alone —
+ * "did not finish (success)" — while the reason stays in the logs.
+ */
+function failureDetail(r: CliResult | null, stderr: string): string {
+  const said =
+    typeof r?.result === "string"
+      ? r.result.trim()
+      : // Not JSON.stringify on its own: `undefined` does not come back a
+        // string from it, and "undefined" is worse than nothing.
+        r?.result == null
+        ? ""
+        : JSON.stringify(r.result);
+  return (said || stderr.trim()).slice(0, 500);
+}
+
+/**
  * How many times the child may be shown its own validation error and asked again.
  *
  * Resumed, not re-run: the session already holds everything it read and decided,
@@ -429,7 +449,7 @@ export async function runClaudeCodeNode(
 
     const parsed = final as CliResult | null;
     if (!parsed) {
-      const detail = (stderr.trim() || "no output").slice(0, 500);
+      const detail = failureDetail(null, stderr) || "no output";
       throw new WorkflowError(
         "MODEL_EXECUTION_ERROR",
         `node "${nodeId}": claude-code exited ${settled.code ?? "without a code"} before reporting a result — ${detail}`,
@@ -444,9 +464,13 @@ export async function runClaudeCodeNode(
     usage.cacheReadTokens += parsed.usage?.cache_read_input_tokens ?? 0;
 
     if (parsed.is_error || typeof parsed.result !== "string") {
+      const why = failureDetail(parsed, stderr);
       throw new WorkflowError(
         "MODEL_EXECUTION_ERROR",
         `node "${nodeId}": claude-code did not finish (${parsed.subtype ?? "unknown"})` +
+          // The child's own reason, where it gave one: the subtype says the
+          // shape of the failure, this says the cause.
+          (why ? ` — ${why}` : "") +
           // Denials are silent otherwise, and a node that lost the tool it
           // needed reads exactly like one that simply answered badly.
           (parsed.permission_denials?.length

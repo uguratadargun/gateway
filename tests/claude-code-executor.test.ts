@@ -248,6 +248,57 @@ describe("claude-code executor", () => {
       runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: fakeCli("", 1, "not logged in") }, null),
     ).rejects.toMatchObject({ code: "MODEL_EXECUTION_ERROR", message: expect.stringContaining("not logged in") });
   });
+
+  it("says why the child stopped, not only that it did", async () => {
+    // The exact shape of the failure this was found by: a result line that
+    // reports success as its subtype and carries no answer, because the child
+    // died on its first request. Without the reason, the node reads as
+    // "claude-code did not finish (success)" and the cause stays in the logs.
+    const agent = parseAgent("builder", AGENT, meta);
+    const line = JSON.stringify({ type: "result", subtype: "success", usage: { input_tokens: 0 } });
+    await expect(
+      runClaudeCodeNode(
+        agent,
+        "go",
+        "build",
+        { workspace, spawnCli: fakeCli(line, 1, "Not logged in · Please run /login") },
+        null,
+      ),
+    ).rejects.toMatchObject({
+      code: "MODEL_EXECUTION_ERROR",
+      message: expect.stringContaining("(success)"),
+    });
+    await expect(
+      runClaudeCodeNode(
+        agent,
+        "go",
+        "build",
+        { workspace, spawnCli: fakeCli(line, 1, "Not logged in · Please run /login") },
+        null,
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining("Not logged in") });
+  });
+
+  it("prefers the child's own report to whatever else was on its stderr", async () => {
+    const agent = parseAgent("builder", AGENT, meta);
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "Credit balance is too low",
+      usage: { input_tokens: 12 },
+    });
+    const noise = "warning: a deprecation nobody needs to read";
+    await expect(
+      runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: fakeCli(line, 1, noise) }, null),
+    ).rejects.toMatchObject({
+      code: "MODEL_EXECUTION_ERROR",
+      message: expect.stringContaining("Credit balance is too low"),
+    });
+    await expect(
+      runClaudeCodeNode(agent, "go", "build", { workspace, spawnCli: fakeCli(line, 1, noise) }, null),
+    ).rejects.toMatchObject({ message: expect.not.stringContaining(noise) });
+  });
 });
 
 describe("a node running on a provider model", () => {
