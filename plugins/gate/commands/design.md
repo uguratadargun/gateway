@@ -52,6 +52,15 @@ yours to extend: the quick implementer finds this project's own check for
 the files it touched by reading the repository, which is the whole of what a
 quick change needs. Leave it as it is.
 
+And `dev-auto`: `dev`'s graph with nobody in the loop, for a task settled well
+enough to hand over. Its `clarify` node is the shipped `decide` agent, which
+rules on the planner's questions from the planner's own recommendation and
+the repository's record instead of asking; there is no plan review and no
+acceptance, and the reviewer's approval opens the merge request. It is not
+the base for what you design either — a pipeline shaped around a project
+keeps the gates, and the person decides when to go without them by naming
+this road. Leave it as it is.
+
 ## 1. Use the default team, do not rewrite it
 
 `planner`, `implementer`, `verifier` and `reviewer` are not starting points

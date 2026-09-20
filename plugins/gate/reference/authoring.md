@@ -448,6 +448,18 @@ base ─▶ implementer ─┬─ changed: false ─▶ nothing-changed
           └──────────────────────────────────── revise: the person asked for changes ──────────────────────────────────────┘
 ```
 
+And `dev-auto`, `dev` with nobody in the loop: the same working four, the
+same verifier, spec check, diff and review, and none of the three gates. Its
+`clarify` node is the shipped `decide` agent — the node keeps the id because
+the planner reads its answers as `clarify.answers` — which rules on the
+planner's questions from the planner's own recommendation and the
+repository's record, and tells the planner to write every ruling into the
+plan's assumptions. There is no plan review and no acceptance; `commit`
+continues to `merge-request`. Three rounds of answers that still end in a
+question land on `never-planned`, and a planner that objects to another
+team's decision lands on `objection-needs-a-person`, because an objection is
+a request to another team and nobody on this road can confirm one.
+
 `base` records the commit the run started from, `diff` is the working tree
 against it — because the implementer commits as it goes, one commit per
 task, and a diff against the index would be empty — and the reviewer is

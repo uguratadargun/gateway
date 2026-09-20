@@ -792,6 +792,322 @@ nodes:
 `;
 
 /**
+ * The autonomous road: `dev` with nobody in the loop.
+ *
+ * `dev` turns to the person three times, and each turn is a place a run
+ * started at the end of the day stands still until morning. This is the
+ * road for work that is meant to finish on its own — a task settled well
+ * enough to hand over, started and read back as a merge request. It plans,
+ * builds, verifies and reviews exactly as `dev` does, on the same four
+ * working agents, and the three gates are gone: nothing is shown before the
+ * build, nothing is tried before the push, and the reviewer's approval is
+ * what opens the merge request.
+ *
+ * The planner still asks. Its rule that a decision made on the person's
+ * behalf is a defect is what makes `dev` safe, and a second planner told to
+ * skip it is the copy the design command tells everyone never to make. So
+ * the questions are asked as always, and on this road the `clarify` node —
+ * the id the planner reads its answers under — is the shipped `decide`
+ * agent instead of the one that asks: it rules from the planner's own
+ * recommendation, the repository's record and memory, and hands the answers
+ * back marked as the run's, so the planner writes them into the plan's
+ * assumptions and they reach the person in the spec and the merge request,
+ * where they can be undone. Three rounds of answers that still end in a
+ * question is a task that was not settled enough to hand over, and the run
+ * ends on `never-planned` rather than ruling a fourth time.
+ *
+ * One decision the road does not make: a planner that objects to another
+ * team's decision stops the run. An objection is a request to another team,
+ * and the shipped conflict-review says why nobody confirms one on the
+ * person's behalf; a run with no person ends at `objection-needs-a-person`
+ * with the objection in the planner's output, and `dev` is where it goes.
+ *
+ * Everything from the implementer on is `dev`'s, node for node — the
+ * verifier, the spec check, the diff against the base, the reviewer that
+ * says where its rejection goes, the give-up edges — except that `staged`
+ * and `commit` continue to the merge request rather than to acceptance.
+ * Nothing here is derived from `dev`'s text, because the graph is not the
+ * same graph: a node is missing, and a regex that removes nodes is a
+ * pipeline nobody can read.
+ */
+const DEV_AUTO = `name: Dev auto
+description: Plan, build, verify and review a change with nobody in the loop — the planner's questions are answered by the run itself, the plan is not shown, and the reviewer's approval opens the merge request. For a task settled well enough to hand over; the person reads the merge request, where every decision the run made is written down.
+entry: base
+workspace: {}
+# No engine ceilings, as in dev: every loop ends on its own give-up edge,
+# landing on a terminal that says what is stuck.
+maxWorkflowSteps: 0
+maxVisits: 0
+maxCostUsd: 0
+nodes:
+  - id: base
+    type: command
+    label: Record the starting commit
+    command: [git, log, "-1", --format=format:%H]
+    next: plan-dir
+
+  - id: plan-dir
+    type: command
+    label: Keep the plan out of the commit
+    # As in dev: the plan stays on disk for the implementer, the verifier and
+    # the reviewer, and out of the commit; a project's own docs/plans/.gitignore is kept.
+    command:
+      - sh
+      - -c
+      - >-
+        mkdir -p docs/plans &&
+        { [ -e docs/plans/.gitignore ] || printf '*\\n' > docs/plans/.gitignore; }
+    next: recall
+
+  - id: recall
+    type: agent
+    agent: recall
+    label: Read the team's memory
+    next: planner
+
+  - id: planner
+    type: agent
+    agent: planner
+    label: Plan
+    next: conflict-check
+
+  # The one thing this road does not decide. An objection to another team's
+  # decision is a request to that team, and nobody here can confirm one on
+  # the person's behalf; the run stops with the objection in the planner's
+  # output, and dev is the road that puts it to the person. Written as "no
+  # key", as in dev, so absent and empty both mean nothing is in the way.
+  - id: conflict-check
+    type: condition
+    label: Does another team's decision block this?
+    edges:
+      - when: "!outputs.planner.conflictKey"
+        to: plan-check
+        label: nothing in the way
+      - to: objection-needs-a-person
+        label: objects to another team's decision
+
+  - id: plan-check
+    type: condition
+    label: Questions?
+    edges:
+      # Declared before the edge to clarify: edges are tried in order. Three
+      # rounds of answers that still end in a question is a task that was not
+      # settled enough to hand over, and a fourth ruling is not going to be
+      # the one that settles it.
+      - when: outputs.planner.questions != "" && visits.clarify >= 3
+        to: never-planned
+        label: still asking after 3 rounds of answers
+      - when: outputs.planner.questions != ""
+        to: clarify
+        label: has questions
+      # No plan review: the plan is not shown to anyone. The planner's
+      # assumptions are the record of what was decided, and they reach the
+      # person in the spec and the merge request.
+      - to: implementer
+        label: has a plan
+
+  # Named clarify, not decide: outputs are keyed by node id, and the shipped
+  # planner reads its answers as clarify.answers. The agent is the one that
+  # rules instead of asking.
+  - id: clarify
+    type: agent
+    agent: decide
+    label: Answer the planner's questions
+    next: planner
+
+  - id: implementer
+    type: agent
+    agent: implementer
+    label: Implement
+    edges:
+      - when: outputs.implementer.changed == false
+        to: nothing-changed
+        label: deliberately changed nothing
+      - to: verifier
+        label: implemented
+
+  - id: verifier
+    type: agent
+    agent: verifier
+    label: Verify
+    edges:
+      - when: outputs.verifier.verified == true
+        to: record
+        label: checks green, plan met
+      - when: visits.verifier >= 3
+        to: not-verified
+        label: still failing after 3 checks
+      - to: implementer
+        label: gaps to fix
+
+  # As in dev: the spec is the one fact about the record a command can check.
+  - id: record
+    type: command
+    label: Is the spec there?
+    command:
+      - sh
+      - -c
+      - >-
+        git add -N -- docs/specs 2>/dev/null;
+        if git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/specs | grep -q .;
+        then :;
+        else echo 'No spec under docs/specs/. Copy the plan file, as it stands, to docs/specs/YYYY-MM-DD-<topic>.md — date and topic from the plan file name, any -revN dropped — with Status: done, Branch:, Decisions: and Design: lines above it, and commit it as "Spec: <topic>".';
+        exit 1;
+        fi
+    edges:
+      - when: outputs.record.ok == true
+        to: stage
+        label: spec written
+      - when: visits.record >= 3
+        to: no-spec
+        label: still no spec after 3 asks
+      - to: implementer
+        label: spec missing
+
+  - id: stage
+    type: command
+    label: Stage new files
+    command: [git, add, -N, .]
+    next: diff
+
+  - id: diff
+    type: command
+    label: Diff against the starting commit
+    command: [git, diff, "{{outputs.base.stdout}}"]
+    edges:
+      - when: outputs.diff.stdout == ""
+        to: nothing-changed
+        label: nothing changed
+      - to: reviewer
+        label: has a diff
+
+  - id: reviewer
+    type: agent
+    agent: reviewer
+    label: Review
+    next: verdict
+
+  # The reviewer is the last judgement on this road: its approval is what
+  # opens the merge request, and its rejection goes where it says, as in dev.
+  - id: verdict
+    type: condition
+    label: Ships?
+    edges:
+      - when: outputs.reviewer.verdict == "approved"
+        to: stage-all
+        label: approved
+      - when: visits.reviewer >= 4
+        to: review-stuck
+        label: still rejected after 4 reviews
+      - when: outputs.reviewer.replan == false
+        to: implementer
+        label: fix requested
+      - to: planner
+        label: plan changes requested
+
+  - id: stage-all
+    type: command
+    label: Stage everything
+    command: [git, add, -A]
+    next: staged
+
+  - id: staged
+    type: command
+    label: Anything left to commit?
+    command: [git, diff, --cached, --quiet]
+    edges:
+      - when: outputs.staged.ok == true
+        to: merge-request
+        label: already committed
+      - to: commit
+        label: has staged changes
+
+  - id: commit
+    type: command
+    label: Commit
+    command: [git, commit, -m, "{{input.task}}", -m, "{{outputs.implementer.summary}}"]
+    edges:
+      - when: outputs.commit.ok == true
+        to: merge-request
+        label: committed
+      - to: not-shipped
+        label: commit failed
+
+  - id: merge-request
+    type: command
+    label: Push and open the merge request
+    # The same node as dev's; see the comment there.
+    command:
+      - sh
+      - -c
+      - >-
+        t=$(printf '%s\\n' "\$1" | sed -n 1p);
+        case "$(git remote get-url origin 2>/dev/null)" in
+        *github.com*)
+        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        git push --set-upstream origin HEAD && gh pr create --fill --title "$t";
+        else
+        echo "this remote is GitHub and gh is not signed in on this machine: install the GitHub CLI and run gh auth login there, then the run can open the pull request" >&2;
+        exit 1;
+        fi;;
+        *)
+        if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
+        git push --set-upstream origin HEAD && glab mr create --fill --yes --title "$t";
+        else
+        git push -o merge_request.create -o "merge_request.title=$t" --set-upstream origin HEAD;
+        fi;;
+        esac
+      - gate-open-mr
+      - "{{input.task}}"
+    edges:
+      - when: outputs.merge-request.ok == true
+        to: done
+        label: merge request opened
+      - to: not-shipped
+        label: push failed
+
+  - id: done
+    type: terminal
+    label: Merge request opened
+    status: completed
+
+  - id: objection-needs-a-person
+    type: terminal
+    label: Stopped — the plan objects to another team's decision; only a person raises one
+    status: failed
+
+  - id: never-planned
+    type: terminal
+    label: Still asking after 3 rounds of answers — the task was not settled enough
+    status: failed
+
+  - id: nothing-changed
+    type: terminal
+    label: Nothing was changed
+    status: failed
+
+  - id: review-stuck
+    type: terminal
+    label: Review never approved
+    status: failed
+
+  - id: not-verified
+    type: terminal
+    label: Verification never passed
+    status: failed
+
+  - id: no-spec
+    type: terminal
+    label: The run wrote no spec under docs/specs
+    status: failed
+
+  - id: not-shipped
+    type: terminal
+    label: Reviewed, but not shipped
+    status: failed
+`;
+
+/**
  * The blame road: something that used to work does not, and the person
  * wants to know what changed, why, and what would fix it.
  *
@@ -901,6 +1217,7 @@ export const DEFAULT_WORKFLOWS: Record<string, string> = {
   dev: DEV,
   "dev-super": DEV_SUPER,
   "dev-quick": DEV_QUICK,
+  "dev-auto": DEV_AUTO,
   blame: BLAME,
   ask: ASK,
 };

@@ -87,11 +87,15 @@ the long road with that report as its brief. A task that both describes a breaka
 for it to be fixed goes down the long road directly; the planner reads memory first anyway.
 
 **The long road is the team's own pipeline for this repository, when it has one**: a workflow
-in the list above that is not one of the shipped four (`dev`, `dev-super`, `dev-quick`, `blame`), takes
-a `task`, and works in a git worktree — `/gate:design` builds those around this project's own
-codegen, test command and merge-request host, and that is what a real change here should run
-through. If there is more than one such workflow, ask which, once. If there is none, the long
-road is `dev`. `dev-super` is never picked on your own: it runs when the user names it.
+in the list above that is not one of the shipped five (`dev`, `dev-super`, `dev-quick`, `dev-auto`,
+`blame`), takes a `task`, and works in a git worktree — `/gate:design` builds those around this
+project's own codegen, test command and merge-request host, and that is what a real change here
+should run through. If there is more than one such workflow, ask which, once. If there is none,
+the long road is `dev`. `dev-super` and `dev-auto` are never picked on your own: they run when
+the user names them. `dev-auto` is `dev` with nobody in the loop — the planner's questions are
+answered by the run, the plan is not shown, and the reviewer's approval opens the merge request —
+so when the user names it, settle the brief with particular care: what is left open is decided
+by the run, not by them, and shows up in the plan's assumptions and the merge request.
 
 Any condition of the short road that does not hold sends the task down the long road. When
 it is genuinely on the line — the files are two but one is shared by half the app, the fix is

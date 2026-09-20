@@ -98,6 +98,7 @@ describe("what the shipped agents declare", () => {
       "acceptance",
       "clarify",
       "conflict-review",
+      "decide",
       "implementer",
       "investigator",
       "plan-review",
@@ -182,6 +183,20 @@ describe("what the shipped agents declare", () => {
       expect(byId.get(id)!.tools).not.toContain("write_file");
       expect(byId.get(id)!.executor).toBe("gate");
     }
+    // The autonomous road's answerer is the gates' opposite: it rules instead
+    // of asking, so it carries no `asks` and never pauses a run, reads the
+    // planner's questions and notes, and answers under the shape the planner
+    // reads from the clarify node.
+    const decide = byId.get("decide")!;
+    expect(decide.executor).toBe("gate");
+    expect(decide.asks).toBeUndefined();
+    expect(decide.skills).toEqual([]);
+    expect(decide.inputs).toContain("planner.questions");
+    expect(decide.inputs).toContain("planner.notes?");
+    expect(decide.inputs).toContain("recall.brief?");
+    for (const tool of ["write_file", "edit_file", "run_command"]) expect(decide.tools).not.toContain(tool);
+    expect(decide.output).toEqual(byId.get("clarify")!.output);
+    expect(DEFAULT_AGENTS.decide).toContain("record each one in the plan's Assumptions");
     // The person's answers, plan feedback and requests all reach the planner.
     expect(byId.get("planner")!.inputs).toContain("clarify.answers?");
     expect(byId.get("planner")!.inputs).toContain("plan-review.feedback?");
@@ -1197,6 +1212,295 @@ Try {{inputs.implementer.summary}}
     expect(terminalOf(events)).toBe("nothing-changed");
     expect(state.visitCounts.reviewer ?? 0).toBe(0);
     expect(ran.find((c) => c[0] === "git" && c[1] === "diff")).toBeUndefined();
+  });
+});
+
+describe("the shipped autonomous pipeline", () => {
+  /**
+   * dev with nobody in the loop. Under test is the graph: that no node on it
+   * asks anyone, that the planner's questions are answered by the run and
+   * reach the planner under the name it reads, where the answering gives up,
+   * that an objection stops the run, and that the reviewer's approval is
+   * what opens the merge request.
+   */
+  const STANDINS: Record<string, string> = {
+    planner: `---
+name: Planner
+inputs: [clarify.answers?, reviewer.feedback?, implementer.summary?]
+output:
+  type: json
+  schema:
+    questions: string
+    conflictKey: string
+    plan: string
+    planFile: string
+    notes: string
+    conflicts: "object[]?"
+---
+Plan {{input.task}} {{inputs.clarify.answers}} {{inputs.reviewer.feedback}} {{inputs.implementer.summary}}
+`,
+    decide: `---
+name: Decide
+inputs: [planner.questions, planner.notes?]
+output:
+  type: json
+  schema:
+    answers: string
+---
+Rule on {{inputs.planner.questions}} given {{inputs.planner.notes}}
+`,
+    implementer: `---
+name: Implementer
+inputs: [planner.plan, planner.planFile, reviewer.feedback?, verifier.gaps?, record.stdout?]
+output:
+  type: json
+  schema:
+    summary: string
+    changed: boolean
+---
+Do {{inputs.planner.planFile}} {{inputs.reviewer.feedback}} {{inputs.verifier.gaps}} {{inputs.record.stdout}}
+`,
+    verifier: `---
+name: Verifier
+inputs: [planner.plan, planner.planFile, implementer.summary]
+output:
+  type: json
+  schema:
+    verified: boolean
+    evidence: string
+    gaps: "string?"
+---
+Verify {{inputs.planner.planFile}} against {{inputs.implementer.summary}}
+`,
+    reviewer: `---
+name: Reviewer
+inputs: [base.stdout, planner.plan, planner.planFile, implementer.summary, verifier.evidence]
+output:
+  type: json
+  schema:
+    verdict: string
+    replan: boolean
+    feedback: "string?"
+---
+Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.verifier.evidence}}
+`,
+  };
+
+  const BASE = "abcdef0123456789abcdef0123456789abcdef01";
+
+  function terminalOf(events: WorkflowEvent[]): string | undefined {
+    const done = events.find((e) => e.type === "workflow.completed");
+    return done && "terminalNodeId" in done ? done.terminalNodeId : undefined;
+  }
+
+  function fakeGit(opts: { staged?: boolean; changed?: boolean } = {}) {
+    const ran: string[][] = [];
+    const runCommand = async (node: { id: string; command: string[] }) => {
+      ran.push(node.command);
+      switch (node.id) {
+        case "base":
+          return { ok: true, exitCode: 0, stdout: BASE, stderr: "" };
+        case "diff":
+          return { ok: true, exitCode: 0, stdout: opts.changed === false ? "" : "--- a.ts\n+++ a.ts\n", stderr: "" };
+        case "staged":
+          return opts.staged === false ? { ok: true, exitCode: 0, stdout: "", stderr: "" } : { ok: false, exitCode: 1, stdout: "", stderr: "" };
+        default:
+          return { ok: true, exitCode: 0, stdout: "", stderr: "" };
+      }
+    };
+    return { ran, runCommand: runCommand as never };
+  }
+
+  const PLAN = (visit: number) =>
+    JSON.stringify({ questions: "", conflictKey: "", plan: `plan ${visit}`, planFile: "docs/plans/2026-09-20-thing.md", notes: `notes ${visit}` });
+  const ASK = (visit: number) =>
+    JSON.stringify({ questions: "Which surface: the settings page, or a flag? (recommend: the flag)", conflictKey: "", plan: "", planFile: "", notes: `notes ${visit}` });
+  const VERIFIED = () => JSON.stringify({ verified: true, evidence: "npm test: 12 passed, 0 failed" });
+  const APPROVED = () => JSON.stringify({ verdict: "approved", replan: false });
+  const RULED = () => JSON.stringify({ answers: "Which surface — the flag; the settings page is a new surface the task did not ask for.\nThese were decided by the run, not by the person: record each one in the plan's Assumptions." });
+
+  function fakeTeam(
+    reviews: (visit: number) => string = APPROVED,
+    plans: (visit: number) => string = PLAN,
+    decides: (visit: number) => string = RULED,
+    verifies: (visit: number) => string = VERIFIED,
+  ) {
+    const visits: Record<string, number> = {};
+    return new FakeModelProvider((req) => {
+      const node = req.context?.nodeId ?? "";
+      const visit = (visits[node] = (visits[node] ?? 0) + 1);
+      switch (node) {
+        case "planner":
+          return plans(visit);
+        case "clarify":
+          return decides(visit);
+        case "implementer":
+          return JSON.stringify({ summary: `pass ${visit}`, changed: true });
+        case "verifier":
+          return verifies(visit);
+        case "reviewer":
+          return reviews(visit);
+        default:
+          return node === "recall" ? RECALLED : "{}";
+      }
+    });
+  }
+
+  function auto() {
+    ensureDefaultWorkflows();
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    return getWorkflow("dev-auto");
+  }
+
+  it("has no node that asks anyone, and no ceiling the engine enforces", () => {
+    const workflow = auto();
+    const agents = workflow.nodes.filter((n) => n.type === "agent").map((n) => (n as { agent: string }).agent);
+    for (const gate of ["clarify", "plan-review", "acceptance", "conflict-review"]) expect(agents).not.toContain(gate);
+    for (const id of agents) expect(getAgent(id).asks).toBeUndefined();
+    // The same working four as dev, no skill among them, and the answerer in
+    // the clarify node's place — under that id, which is what the planner reads.
+    expect(agents).toEqual(["recall", "planner", "decide", "implementer", "verifier", "reviewer"]);
+    expect(workflow.nodes.find((n) => n.id === "clarify")).toMatchObject({ agent: "decide" });
+    expect(DEFAULT_WORKFLOWS["dev-auto"]).not.toContain("super-");
+    expect(workflow.maxWorkflowSteps ?? 0).toBe(0);
+    expect(workflow.maxVisits ?? 0).toBe(0);
+    expect(workflow.maxCostUsd ?? 0).toBe(0);
+    // Every loop has its own way out, on a terminal that says what is stuck.
+    const terminals = workflow.nodes.filter((n) => n.type === "terminal").map((n) => n.id);
+    expect(terminals).toEqual(expect.arrayContaining(["never-planned", "review-stuck", "not-verified", "no-spec", "objection-needs-a-person"]));
+  });
+
+  it("answers the planner's questions itself, builds, verifies, reviews, commits and opens the merge request", async () => {
+    const workflow = auto();
+    const provider = fakeTeam(APPROVED, (visit) => (visit === 1 ? ASK(visit) : PLAN(visit)));
+    const { ran, runCommand } = fakeGit();
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
+
+    expect(state.error).toBeNull();
+    expect(state.status).toBe("completed");
+    // Asked once, answered by the run, planned on the second pass; nothing
+    // shown, nothing tried, nobody asked.
+    expect(state.visitCounts.planner).toBe(2);
+    expect(state.visitCounts.clarify).toBe(1);
+    expect(state.visitCounts["plan-review"] ?? 0).toBe(0);
+    expect(state.visitCounts.acceptance ?? 0).toBe(0);
+    expect(state.visitCounts.implementer).toBe(1);
+    expect(state.visitCounts.verifier).toBe(1);
+    expect(state.visitCounts.reviewer).toBe(1);
+    // The questions reach the answerer with the planner's notes, and the
+    // answers reach the planner's second pass under the name it reads.
+    const ruling = provider.callsFor("clarify")[0].messages[0].content;
+    expect(ruling).toContain("Which surface");
+    expect(ruling).toContain("notes 1");
+    const plans = provider.callsFor("planner").map((c) => c.messages[0].content);
+    expect(plans[0]).not.toContain("the flag;");
+    expect(plans[1]).toContain("the flag; the settings page is a new surface");
+    // The ending is dev's without the person: commit, then the merge request,
+    // with the task as the title.
+    const commit = ran.find((c) => c[0] === "git" && c[1] === "commit")!;
+    expect(commit).toContain("Add a thing");
+    expect(commit).toContain("pass 1");
+    const mr = ran.find((c) => c.includes("gate-open-mr"))!;
+    expect(mr.at(-1)).toBe("Add a thing");
+    expect(ran.indexOf(commit)).toBeLessThan(ran.indexOf(mr));
+  });
+
+  it("opens the merge request straight from a branch the implementer already committed", async () => {
+    const workflow = auto();
+    const { ran, runCommand } = fakeGit({ staged: false });
+    const state = await runWorkflow(workflow, { provider: fakeTeam(), runCommand, input: { task: "Add a thing" } });
+    expect(state.status).toBe("completed");
+    expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeUndefined();
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeDefined();
+  });
+
+  it("gives up when the planner is still asking after three rounds of answers", async () => {
+    const workflow = auto();
+    const provider = fakeTeam(APPROVED, ASK);
+    const { ran, runCommand } = fakeGit();
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.status).toBe("failed");
+    expect(terminalOf(events)).toBe("never-planned");
+    expect(state.visitCounts.clarify).toBe(3);
+    expect(state.visitCounts.planner).toBe(4);
+    expect(state.visitCounts.implementer ?? 0).toBe(0);
+    expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeUndefined();
+  });
+
+  it("stops when the planner objects to another team's decision, building nothing", async () => {
+    const workflow = auto();
+    const provider = fakeTeam(APPROVED, () =>
+      JSON.stringify({
+        questions: "",
+        conflictKey: "pq-kem",
+        plan: "",
+        planFile: "",
+        notes: "",
+        conflicts: [{ conflictKey: "pq-kem", targetTeamId: "desktop", title: "the KEM choice does not fit our handshake" }],
+      }),
+    );
+    const { ran, runCommand } = fakeGit();
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.status).toBe("failed");
+    expect(terminalOf(events)).toBe("objection-needs-a-person");
+    expect(state.visitCounts.clarify ?? 0).toBe(0);
+    expect(state.visitCounts.implementer ?? 0).toBe(0);
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
+  });
+
+  it("sends a rejection where the reviewer says, and gives up after four reviews with nothing pushed", async () => {
+    const workflow = auto();
+    const provider = fakeTeam((visit) =>
+      visit === 1
+        ? JSON.stringify({ verdict: "changes-requested", replan: true, feedback: "Cut at the wrong seam." })
+        : visit === 2
+          ? JSON.stringify({ verdict: "changes-requested", replan: false, feedback: "Missing the test for the empty case." })
+          : APPROVED(),
+    );
+    const { ran, runCommand } = fakeGit();
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" } });
+    expect(state.status).toBe("completed");
+    // A fault in the plan went to the planner, a bounded fix to the implementer.
+    expect(state.visitCounts.planner).toBe(2);
+    expect(state.visitCounts.implementer).toBe(3);
+    expect(state.visitCounts.reviewer).toBe(3);
+    expect(provider.callsFor("planner")[1].messages[0].content).toContain("Cut at the wrong seam.");
+    expect(provider.callsFor("implementer")[2].messages[0].content).toContain("Missing the test for the empty case.");
+    expect(ran.filter((c) => c.includes("gate-open-mr"))).toHaveLength(1);
+
+    const never = fakeTeam(() => JSON.stringify({ verdict: "changes-requested", replan: false, feedback: "No." }));
+    const events: WorkflowEvent[] = [];
+    const { ran: stuckRan, runCommand: git } = fakeGit();
+    const stuck = await runWorkflow(workflow, { provider: never, runCommand: git, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+    expect(stuck.status).toBe("failed");
+    expect(terminalOf(events)).toBe("review-stuck");
+    expect(stuck.visitCounts.reviewer).toBe(4);
+    expect(stuckRan.find((c) => c[0] === "git" && c[1] === "commit")).toBeUndefined();
+    expect(stuckRan.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
+  });
+
+  it("sends the verifier's gaps back to the implementer, and gives up after three checks", async () => {
+    const workflow = auto();
+    const provider = fakeTeam(APPROVED, PLAN, RULED, () => JSON.stringify({ verified: false, evidence: "npm test: 1 failed", gaps: "Task 2 not done." }));
+    const { ran, runCommand } = fakeGit();
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(state.status).toBe("failed");
+    expect(terminalOf(events)).toBe("not-verified");
+    expect(state.visitCounts.verifier).toBe(3);
+    expect(state.visitCounts.implementer).toBe(3);
+    expect(state.visitCounts.reviewer ?? 0).toBe(0);
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
   });
 });
 

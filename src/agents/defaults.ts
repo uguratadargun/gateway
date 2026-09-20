@@ -78,6 +78,16 @@ import { agentExists, agentsDir, readAgentSource } from "./registry";
  * loop driving the run — the session, when there is one — and hold when
  * there is nobody there. The three pipelines share them: their inputs are
  * read by node id, and every pipeline names its nodes the same way.
+ *
+ * One more, `decide`, is the opposite of those three: it is the place the
+ * `dev-auto` pipeline turns instead of to the person. It stands in the
+ * `clarify` node of that road — the node id is what the planner reads its
+ * answers under — and rules on the planner's questions itself, from the
+ * planner's own recommendation, the repository's record and the team's
+ * memory, and tells the planner to write every ruling into the plan's
+ * assumptions so the person reads them in the merge request. It never asks:
+ * that road exists to finish without anyone, and a question carried back
+ * unanswered is a run that stops.
  */
 
 const SUPER_PLANNER = `---
@@ -1798,6 +1808,103 @@ is what they want changed, present only when the decision is "revise".
 `;
 
 /**
+ * The autonomous road's answer to the planner's questions.
+ *
+ * It is written against the planner as it is, not against a planner told not
+ * to ask: the planner's rule that a ruling made on the person's behalf is a
+ * defect is what makes `dev` safe, and a second planner that skips it is the
+ * copy the design command tells everyone never to make. So the questions are
+ * still asked, and on this road they are answered here — a node under the id
+ * `clarify`, which is the name the planner reads answers under — by taking
+ * the planner's own recommendation unless the record or the code says
+ * otherwise, and the answers go back marked as the run's, so the planner
+ * files them under assumptions where the person will read them.
+ *
+ * `executor: gate` with read tools and memory: it runs on the loop driving
+ * the run, in-process on the server or as the session's own turn, and never
+ * as a spawned Claude Code — there is no work to do in the worktree, only
+ * reading. No `asks:`, because it asks nobody; a session doing this node is
+ * told so in the prompt, over the run command's general licence to ask.
+ */
+const DECIDE = `---
+name: Decide
+description: Answers the planner's questions on the run's behalf, on the road that has nobody to ask — from the planner's own recommendation, the repository's record and the team's memory — and says which reading it took and why.
+model: opus
+effort: high
+executor: gate
+inputs: [planner.questions, planner.notes?, recall.brief?]
+tools: [read_file, list_files, search_files, memory_search]
+timeoutMs: 900000
+output:
+  type: json
+  schema:
+    answers: string
+---
+
+The planner, working on this task, stopped to ask questions it judged to be
+the person's to answer. On this road there is no person: the run was started
+to finish without one, and the questions come to you instead. You answer
+every one of them, now, and the planner reads your answers as it would read
+theirs. You ask nobody — not the person who started the run, not the session
+this runs in, not with a question that ends your turn. Whatever a general
+notice about asking the user says, it does not apply to this node: a question
+carried back unanswered is a run that stops, and this road exists so that it
+does not.
+
+The task:
+{{input.task}}
+
+The planner asks:
+{{inputs.planner.questions}}
+
+{{inputs.planner.notes}}
+
+{{inputs.recall.brief}}
+
+If there are notes under the questions, they are the planner's own — what it
+read, what it found, what it had settled before it stopped — and the questions
+were written from them; read them first. A brief after that is what the team's
+memory holds about this task: decisions that already hold in the areas it
+touches, the same feature built by a sibling team, attempts that were
+abandoned. A decision recorded as holding is an answer, not a choice.
+
+**How to rule.** Take each question in turn, in the order asked.
+
+- The planner's recommendation, where it gave one, is the answer unless
+  something you can point at says otherwise: the task's own words, the
+  repository's record (\`docs/ARCHITECTURE.md\`, the design doc of the feature
+  under \`docs/design/\`, a decision under \`docs/decisions/\`), the convention
+  the code around the change already follows, a decision in memory. Read
+  those before you rule, not after; \`search_files\` for the names in the
+  question, \`read_file\` what decides it, \`memory_search\` for the area.
+- Where there is no recommendation, take the reading a careful colleague
+  would take: the option that changes the least, that keeps behaviour the
+  task did not ask to change, that does what the repository already does
+  elsewhere, and that can be undone. Between two ways of doing something
+  new, the one the nearest existing feature already uses.
+- Where the repository answers the question, the answer is what you found,
+  with the path.
+- A question about scope is answered with the smallest scope that does what
+  the task says. Do not widen the task, and do not add what was not asked.
+- Never answer with a question, with "either", "up to you", or with an option
+  the planner did not offer and the code does not already contain. The planner
+  cannot come back for a second reading without another whole pass of itself.
+  Answer as an instruction — what to build, in one or two sentences — and the
+  reason in one more, naming what you read.
+
+You change nothing: you have no tools that write, and you run no commands.
+If a question can only be settled by trying something, rule on it from what
+you can read and say that the plan should name the test that proves it.
+
+Return JSON: \`answers\` is every question, followed by your answer to it and
+the reason, in the order asked, as one block of text — and then, as its last
+line, exactly this sentence: "These were decided by the run, not by the
+person: record each one in the plan's Assumptions." The planner writes them
+there, and from there they travel into the spec and the merge request, where
+the person reads what was decided on their behalf and can undo it.
+`;
+
+/**
  * The agent `gate ask` runs when memory cannot answer: it reads another
  * team's source at one fixed commit and answers the question from it.
  *
@@ -1902,8 +2009,8 @@ it.
  * Listed here rather than parsed back out of the prompts: the Skills page uses
  * it to say which of them a team is missing, and a default that names a skill
  * nobody can see is a run that fails halfway with a message about a library
- * the person has never opened. Only `dev-super` needs them; `dev` and
- * `dev-quick` run on agents that name no skill.
+ * the person has never opened. Only `dev-super` needs them; `dev`, `dev-quick`
+ * and `dev-auto` run on agents that name no skill.
  */
 export const DEFAULT_AGENT_SKILLS: Array<{ id: string; source: string; sourceSkill: string }> = [
   { id: "superpowers-brainstorming", source: "superpowers", sourceSkill: "brainstorming" },
@@ -1943,6 +2050,7 @@ export const DEFAULT_AGENTS: Record<string, string> = {
   clarify: CLARIFY,
   "plan-review": PLAN_REVIEW,
   "conflict-review": CONFLICT_REVIEW,
+  decide: DECIDE,
   implementer: IMPLEMENTER,
   verifier: VERIFIER,
   reviewer: REVIEWER,

@@ -102,7 +102,7 @@ for (const team of teams) {
   if (missingSkills.length) {
     console.log(
       `${team}: the shipped super-* agents (dev-super) name skills this team has not imported — ${missingSkills.join(", ")}.` +
-        ` Import them on the dashboard's Skills page, or a dev-super run stops at its first node; dev and dev-quick need none.`,
+        ` Import them on the dashboard's Skills page, or a dev-super run stops at its first node; dev, dev-quick and dev-auto need none.`,
     );
   }
 }

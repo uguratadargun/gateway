@@ -249,8 +249,8 @@ export default function SkillsPage() {
         <Card className="flex flex-wrap items-center gap-3 border-amber-500/40 bg-amber-500/10 p-3 text-xs">
           <span>
             The shipped super-* agents (dev-super) follow {missing.length} skill{missing.length > 1 ? "s" : ""} this team does not
-            have: <span className="font-mono">{missing.map((m) => m.sourceSkill).join(", ")}</span>. dev and dev-quick need
-            none; a dev-super run stops at the first node that needs one.
+            have: <span className="font-mono">{missing.map((m) => m.sourceSkill).join(", ")}</span>. dev, dev-quick and dev-auto
+            need none; a dev-super run stops at the first node that needs one.
           </span>
           <Button size="sm" className="ml-auto" disabled={busy !== null} onClick={importForDefaults}>
             {busy === "defaults" ? <Loader2 className="animate-spin" /> : <DownloadCloud />} Import them

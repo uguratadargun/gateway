@@ -95,7 +95,24 @@ reviewer reads the diff itself, and the person is in it once, at
 acceptance. A task that turns out not to be small, or that would need a
 decision record, ends at `nothing-changed` with the reason, so it can go
 through `dev` instead.
-Both roads read memory first. Two more roads build nothing. **`blame`** is
+**`dev-auto`** is `dev` with nobody in the loop, for a task settled well
+enough to hand over and read back as a merge request: the same working
+four, the same verifier, spec check, diff and review, and none of the three
+gates. The planner still asks what it judges to be the person's — its rule
+that a ruling made on the person's behalf is a defect is not rewritten — but
+on this road the `clarify` node is the shipped `decide` agent, which keeps
+the node's id because the planner reads its answers under it, and rules
+from the planner's own recommendation, the repository's record and memory,
+handing the answers back marked as the run's so the planner writes them into
+the plan's assumptions; they reach the person in the spec and the merge
+request, where they can be undone. Nothing is shown before the build and
+nothing is tried before the push: the reviewer's approval is what opens the
+merge request. Three rounds of answers that still end in a question end the
+run on `never-planned`, and a planner that objects to another team's
+decision ends it on `objection-needs-a-person` — an objection is a request
+to another team, and nobody on this road can confirm one, so that task goes
+through `dev`. The road is never picked on the person's behalf; they name it.
+All three roads read memory first. Two more roads build nothing. **`blame`** is
 for something that used to work: recall lists the runs, commits and
 decisions that touched the area, the investigator reads the code and the
 history against that and says how sure it is — *related*, *suspected*,
@@ -313,8 +330,8 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Key files
 
-- `src/workflows/defaults.ts` — the shipped pipelines: `dev`, `dev-super` derived from it, `dev-quick`, `blame`, `ask`, with the reasoning for each edge
-- `src/agents/defaults.ts` — the shipped agents and their `super-*` and `quick-*` counterparts, the investigator, source-review
+- `src/workflows/defaults.ts` — the shipped pipelines: `dev`, `dev-super` derived from it, `dev-quick`, `dev-auto`, `blame`, `ask`, with the reasoning for each edge
+- `src/agents/defaults.ts` — the shipped agents and their `super-*` and `quick-*` counterparts, the three gates to the person and `decide` in their place on the autonomous road, the investigator, source-review
 - `src/client/cli.ts`, `step.ts` — the `gate` command (login, the mirror, the first-run approval, every subcommand) and the session-driven loop: `begin` / `next` / `step` / `wait`, the definition pin, the session pointer, the worker
 - `src/client/walk.ts`, `run.ts`, `subagents.ts`, `cache.ts` — the replay, the headless engine, a claude-code node as a subagent, the mirror
 - `src/lib/protocol.ts`, `src/app/api/v1/` — the version headers and `MIN_CLIENT_VERSION`; the client API: identity, the bundle, run registration, progress, stop, continue
@@ -330,5 +347,6 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Decisions
 
+- [0025 — The autonomous road answers the planner's questions itself](../decisions/0025-the-autonomous-road-answers-the-planners-questions-itself.md)
 - [0004 — The plan file is never committed](../decisions/0004-the-plan-file-is-never-committed.md)
 - [0001 — The engine routes, never a model](../decisions/0001-the-engine-routes-never-a-model.md)
