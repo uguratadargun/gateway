@@ -1,5 +1,6 @@
 import { callerLabel, servedByLabel } from "./attribution";
 import { getDb } from "./db";
+import { loadSettings } from "./settings";
 
 /**
  * Local request/response traffic log for debugging the gateway. Bodies are
@@ -70,18 +71,16 @@ export interface TrafficQuery {
 }
 
 const MAX_PREVIEW = 2000;
-const MAX_ROWS = 500;
 
 export function truncatePreview(s: string): string {
   return s.length > MAX_PREVIEW ? `${s.slice(0, MAX_PREVIEW)}…[+${s.length - MAX_PREVIEW}]` : s;
 }
 
 /** How many rows the log keeps — the sensible default for "give me all of
- *  what was filtered" on an unfiltered export. A property read behind this
- *  function rather than the constant itself, so a caller of it never has to
- *  change when Task 5 moves the number into settings. */
+ *  what was filtered" on an unfiltered export. `loadSettings` caches at
+ *  module level, so this is a property read, not a file read. */
 export function trafficRetentionCap(): number {
-  return MAX_ROWS;
+  return loadSettings().traffic.maxRows;
 }
 
 export function recordTraffic(e: TrafficEntry): void {
@@ -111,7 +110,7 @@ export function recordTraffic(e: TrafficEntry): void {
     // Bound the table; cheap because of the ts index.
     db.prepare(
       "DELETE FROM traffic WHERE id NOT IN (SELECT id FROM traffic ORDER BY ts DESC LIMIT ?)",
-    ).run(MAX_ROWS);
+    ).run(trafficRetentionCap());
   } catch {
     // best-effort
   }

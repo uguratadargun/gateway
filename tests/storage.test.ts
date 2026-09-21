@@ -134,6 +134,24 @@ describe("traffic + ratelimit (sqlite)", () => {
     expect(readTraffic()[0].servedBy).toBe("—");
     clearTraffic();
   });
+  it("keeps only as many rows as the settings say", () => {
+    // maxRows is clamped to a floor of 100 (mergeSettings), so the smallest
+    // value that actually narrows anything is 100 itself.
+    clearTraffic();
+    saveSettings({ traffic: { maxRows: 100 } });
+    try {
+      const row = { endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
+      const total = 105;
+      for (let i = 1; i <= total; i++) recordTraffic({ ...row, ts: i, requestId: `r${i}` });
+      const kept = readTraffic({ limit: 1000 });
+      expect(kept).toHaveLength(100);
+      expect(kept[0].requestId).toBe(`r${total}`);
+      expect(kept[kept.length - 1].requestId).toBe(`r${total - 100 + 1}`);
+    } finally {
+      saveSettings({ traffic: { maxRows: 5_000 } });
+      clearTraffic();
+    }
+  });
   it("persists the latest rate-limit snapshot", () => {
     recordRateLimit(new Headers({ "anthropic-ratelimit-unified-status": "allowed", "anthropic-ratelimit-tokens-remaining": "1234" }));
     const rl = readRateLimit();

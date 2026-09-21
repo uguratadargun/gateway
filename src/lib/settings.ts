@@ -93,6 +93,13 @@ export interface GateSettings {
      */
     consolidateEvery: number;
   };
+  /**
+   * How many served exchanges the local traffic log keeps. This is a promise
+   * about how long real prompts and replies sit on disk, on the one surface
+   * carrying people's names and email addresses — raise it deliberately, not
+   * by accident.
+   */
+  traffic: { maxRows: number };
   /** How a request picks among several connected Claude accounts. */
   accountPool: {
     strategy: PoolStrategy;
@@ -134,6 +141,7 @@ export const DEFAULT_SETTINGS: GateSettings = {
   throttle: { enabled: true, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
   memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5 },
+  traffic: { maxRows: 5_000 },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
   accountPool: { strategy: "fill-first", stickyRoundRobinLimit: 3, quotaMinRemainingPercent: 0, quotaRefreshMinutes: 30 },
@@ -173,6 +181,7 @@ export interface SettingsPatch {
   throttle?: Partial<GateSettings["throttle"]>;
   retry?: Partial<GateSettings["retry"]>;
   memory?: Partial<Omit<GateSettings["memory"], "embeddings">> & { embeddings?: Partial<GateSettings["memory"]["embeddings"]> };
+  traffic?: Partial<GateSettings["traffic"]>;
   accountPool?: Partial<GateSettings["accountPool"]>;
 }
 
@@ -214,6 +223,9 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
       },
       consolidateEvery: Math.max(0, Math.floor(patch.memory?.consolidateEvery ?? base.memory.consolidateEvery)),
     },
+    // A hand-edited 0 or negative value cannot turn the log into a single row
+    // or an unbounded one.
+    traffic: { maxRows: Math.max(100, Math.floor(patch.traffic?.maxRows ?? base.traffic.maxRows)) },
     accountPool: {
       ...base.accountPool,
       ...patch.accountPool,
