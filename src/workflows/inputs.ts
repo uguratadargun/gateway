@@ -1,6 +1,7 @@
 import { templatePaths } from "@/agents/template";
 import type { AgentDefinition } from "@/agents/types";
 
+import { conditionPaths } from "./condition";
 import type { WorkflowDefinition } from "./types";
 
 /**
@@ -38,6 +39,34 @@ export function requiredRunInputs(wf: WorkflowDefinition, loadAgent: (id: string
   // pipeline can be pointed at whatever project the caller is working in.
   if (wf.workspace && !wf.workspace.repo) keys.add("repo");
   return [...keys].sort();
+}
+
+/**
+ * Which run-input keys a workflow's edge guards read, but no agent does.
+ *
+ * A guard like `input.deliver == "branch"` decides where a run ends, not
+ * whether it can start — the edge without a match is still there to take. So
+ * this is kept apart from `requiredRunInputs`: promoting a guard-read key to
+ * required would refuse every existing run that starts without it, over a
+ * value the run only needs if it ever reaches that fork.
+ */
+export function optionalRunInputs(wf: WorkflowDefinition, loadAgent: (id: string) => AgentDefinition): string[] {
+  const keys = new Set<string>();
+  for (const node of wf.nodes) {
+    // A step that is switched off never evaluates its guards: the run takes
+    // `skipTo` instead, so asking for a value only that guard would have read
+    // is noise, the same reason `requiredRunInputs` skips it.
+    if ("disabled" in node && node.disabled) continue;
+    for (const edge of node.edges) {
+      if (!edge.condition) continue;
+      for (const path of conditionPaths(edge.condition)) {
+        if (path[0] !== "input" || !path[1]) continue;
+        keys.add(path[1]);
+      }
+    }
+  }
+  const required = new Set(requiredRunInputs(wf, loadAgent));
+  return [...keys].filter((key) => !required.has(key)).sort();
 }
 
 /** The keys a run was started without. */

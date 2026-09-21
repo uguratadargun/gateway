@@ -10,6 +10,7 @@ import { teamScope } from "@/lib/def-root";
 import { runWorkflow } from "@/runtime/engine";
 import type { WorkflowEvent } from "@/events/types";
 import { DEFAULT_WORKFLOWS, ensureDefaultWorkflows, writeMissingDefaultWorkflows } from "@/workflows/defaults";
+import { optionalRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { deleteWorkflow, getWorkflow, listWorkflows, workflowsDir } from "@/workflows/registry";
 
 import { FakeModelProvider } from "./fakes/fake-model-provider";
@@ -1824,6 +1825,12 @@ Fix the record for {{inputs.planner.planFile}} from {{inputs.base.stdout}}: {{in
     // in REROUTED, so the body check above already holds the two together,
     // and a host added to one reaches the other or the test says so.
     expect(DEFAULT_WORKFLOWS["dev-auto"]).not.toContain("super-");
+  });
+
+  it("lists deliver as optional and not required, the case the whole change exists for", () => {
+    const graph = auto();
+    expect(optionalRunInputs(graph, getAgent)).toContain("deliver");
+    expect(requiredRunInputs(graph, getAgent)).not.toContain("deliver");
   });
 });
 

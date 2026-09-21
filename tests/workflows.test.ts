@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { agentsDir } from "@/agents/registry";
 import type { AgentDefinition } from "@/agents/types";
-import { requiredRunInputs } from "@/workflows/inputs";
+import { optionalRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { agentUsage } from "@/workflows/usage";
 import { parseWorkflow } from "@/workflows/loader";
 import { skipTargetOf } from "@/workflows/types";
@@ -451,6 +451,120 @@ nodes:
 `;
     const briefer = { id: "briefer", inputs: [], prompt: "Read {{input.ticket}}" } as unknown as AgentDefinition;
     expect(requiredRunInputs(parseWorkflow("w", src, meta), () => briefer)).toEqual([]);
+  });
+
+  it("puts a condition node's guarded key in the optional list, not the required one", () => {
+    const src = `name: W
+entry: start
+nodes:
+  - id: start
+    type: command
+    command: ["true"]
+    next: gate
+  - id: gate
+    type: condition
+    edges:
+      - when: input.deliver == "branch"
+        to: branch-done
+      - to: full-done
+  - id: branch-done
+    type: terminal
+  - id: full-done
+    type: terminal
+`;
+    const wf = parseWorkflow("w", src, meta);
+    expect(optionalRunInputs(wf, noAgents)).toEqual(["deliver"]);
+    expect(requiredRunInputs(wf, noAgents)).toEqual([]);
+  });
+
+  it("counts a guard on an ordinary command node's edge the same as one on a condition node", () => {
+    const src = `name: W
+entry: start
+nodes:
+  - id: start
+    type: command
+    command: ["true"]
+    edges:
+      - when: input.deliver == "branch"
+        to: branch-done
+      - to: full-done
+  - id: branch-done
+    type: terminal
+  - id: full-done
+    type: terminal
+`;
+    const wf = parseWorkflow("w", src, meta);
+    expect(optionalRunInputs(wf, noAgents)).toEqual(["deliver"]);
+  });
+
+  it("keeps a key both an agent declares and a guard reads only in the required list", () => {
+    const src = `name: W
+entry: start
+nodes:
+  - id: start
+    type: agent
+    agent: briefer
+    inputs: [input.ticket]
+    edges:
+      - when: input.ticket == "urgent"
+        to: fast
+      - to: slow
+  - id: fast
+    type: terminal
+  - id: slow
+    type: terminal
+`;
+    const briefer = { id: "briefer", inputs: [], prompt: "just do it" } as unknown as AgentDefinition;
+    const wf = parseWorkflow("w", src, meta);
+    expect(requiredRunInputs(wf, () => briefer)).toEqual(["ticket"]);
+    expect(optionalRunInputs(wf, () => briefer)).toEqual([]);
+  });
+
+  it("does not read outputs.* or visits.* as run inputs", () => {
+    const src = `name: W
+entry: cmd
+nodes:
+  - id: cmd
+    type: command
+    command: ["true"]
+    next: gate
+  - id: gate
+    type: condition
+    edges:
+      - when: outputs.cmd.ok == true && visits.cmd >= 1
+        to: a
+      - to: b
+  - id: a
+    type: terminal
+  - id: b
+    type: terminal
+`;
+    const wf = parseWorkflow("w", src, meta);
+    expect(optionalRunInputs(wf, noAgents)).toEqual([]);
+  });
+
+  it("does not ask for what only a switched-off step's guard would have read", () => {
+    const src = `name: W
+entry: brief
+nodes:
+  - id: brief
+    type: agent
+    agent: briefer
+    disabled: true
+    skipTo: done
+    edges:
+      - when: input.deliver == "branch"
+        to: alt
+      - to: done
+  - id: alt
+    type: terminal
+  - id: done
+    type: terminal
+`;
+    const briefer = { id: "briefer", inputs: [], prompt: "just do it" } as unknown as AgentDefinition;
+    const wf = parseWorkflow("w", src, meta);
+    expect(optionalRunInputs(wf, () => briefer)).toEqual([]);
+    expect(requiredRunInputs(wf, () => briefer)).toEqual([]);
   });
 });
 
