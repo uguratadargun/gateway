@@ -68,7 +68,9 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task…]                 start a run, print the first instruction
        --task-id <id>                           file this run under a cross-team task
-  gate next <execution-id>                      what to do next
+  gate next <execution-id> [--full]             what to do next (--full: the whole
+                                                prompt again, for a node whose
+                                                subagent is gone)
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
         [--subagent <id>]                        the agent id the Agent tool returned, so its next pass
                                                  continues it — not the gate-<team>-<agent> type name
@@ -904,9 +906,12 @@ async function cmdBegin(args: Args): Promise<number> {
 
 async function cmdNext(args: Args): Promise<number> {
   const [executionId] = args.positional;
-  if (!executionId) die("usage: gate next <execution-id>");
+  if (!executionId) die("usage: gate next <execution-id> [--full]");
   const { ctx } = await sessionContext();
-  return printInstruction(await next(ctx, executionId));
+  // A node's second pass is normally only what changed since its first, sent
+  // to the subagent that is still holding the rest. --full is for when that
+  // subagent is gone and the node has to be started from nothing.
+  return printInstruction(await next(ctx, executionId, { full: args.flags.full === true }));
 }
 
 async function cmdStep(args: Args): Promise<number> {

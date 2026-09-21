@@ -64,6 +64,43 @@ nodes:
     status: completed
 `,
   );
+  // A node that reads its own last answer: its second pass has something new
+  // to be given, which is what a resume is supposed to carry.
+  writeFileSync(
+    join(cache, "agents", "reviser.md"),
+    `---
+name: Reviser
+model: provider:zai/glm-5.3
+executor: claude-code
+inputs: [revise.summary?]
+output:
+  type: json
+  schema:
+    summary: string
+---
+Build {{input.task}}, the long way round, with everything that takes.
+
+Where the last pass got to: {{inputs.revise.summary}}
+`,
+  );
+  writeFileSync(
+    join(cache, "workflows", "revise.yaml"),
+    `name: Revise
+entry: revise
+workspace: {}
+nodes:
+  - id: revise
+    type: agent
+    agent: reviser
+    edges:
+      - when: visits.revise >= 2
+        to: done
+      - to: revise
+  - id: done
+    type: terminal
+    status: completed
+`,
+  );
   // The same node twice: the second pass is the first subagent continued.
   writeFileSync(
     join(cache, "workflows", "twice.yaml"),
@@ -238,7 +275,7 @@ describe("the same node when the session itself runs through the gateway", () =>
       // What `gate next` does before every instruction on such a session.
       const synced = syncSubagents("t", { root: join(home, "cache", "t"), teamId: "t" });
       expect(synced.created).toBe(true);
-      expect(synced.written).toEqual(["gate-t-builder"]);
+      expect(synced.written).toEqual(["gate-t-builder", "gate-t-reviser"]);
       const file = readFileSync(join(process.env.CLAUDE_CONFIG_DIR, "agents", "gate-t-builder.md"), "utf8");
       expect(file).toContain("name: gate-t-builder");
       expect(file).toContain("model: provider:zai/glm-5.3");
@@ -321,6 +358,54 @@ describe("the same node when the session itself runs through the gateway", () =>
       if (o2.do !== "delegate") return;
       expect(o2.resume).toBeNull();
       expect(o2.remember[0]).toContain("Start the subagent");
+    } finally {
+      if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousConfig;
+    }
+  });
+
+  /**
+   * A continued subagent already holds the brief. Sending it again was
+   * measured at 52,146 characters re-sent to deliver about 4,500 characters of
+   * new material, and a 250-second gap in the driving session while that was
+   * assembled and relayed — the single largest delay in the run.
+   */
+  it("sends a continued subagent only what changed, and --full is the way back to the whole brief", async () => {
+    const previousConfig = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "gate-claude-"));
+    try {
+      const server = fakeServer("e8", "revise");
+      const ctx = context(server.client, { throughGateway: true, spawnWorker: () => process.pid });
+      syncSubagents("t", { root: join(home, "cache", "t"), teamId: "t" });
+
+      const first = await next(ctx, "e8");
+      expect(first.do).toBe("delegate");
+      if (first.do !== "delegate") return;
+      expect(first.prompt).toContain("the long way round");
+
+      const second = await step(ctx, "e8", "revise", '{"summary": "pass one"}', { subagent: "agent-one" });
+      expect(second.do).toBe("delegate");
+      if (second.do !== "delegate") return;
+      expect(second.resume).toBe("agent-one");
+
+      // What moved, and not the brief that did not.
+      expect(second.prompt).toContain("revise.summary");
+      expect(second.prompt).toContain("pass one");
+      expect(second.prompt).not.toContain("the long way round");
+      expect(second.prompt.length).toBeLessThan(first.prompt.length);
+      // Still says where the answer goes, and it is this pass's own file.
+      expect(second.prompt).toContain(second.outputFile);
+      expect(second.outputFile).toBe(outputFileFor("e8", "revise", 2));
+      // A delta is no use to a fresh agent, and the session is told the way out.
+      expect(second.remember[0]).toContain("gate next e8 --full");
+
+      // Which gives the whole brief back, for a node with no subagent left.
+      const full = await next(ctx, "e8", { full: true });
+      expect(full.do).toBe("delegate");
+      if (full.do !== "delegate") return;
+      expect(full.prompt).toContain("the long way round");
+      expect(full.prompt).toContain("pass one");
+      expect(full.remember[0]).not.toContain("--full");
     } finally {
       if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
       else process.env.CLAUDE_CONFIG_DIR = previousConfig;

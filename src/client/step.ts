@@ -31,7 +31,7 @@ import { getSkill, resolveSkillDir } from "@/skills/registry";
 import type { SkillDefinition } from "@/skills/types";
 import { getWorkflow } from "@/workflows/registry";
 import { definitionsHash } from "@/workflows/snapshot";
-import type { WorkflowDefinition } from "@/workflows/types";
+import { findNode, type WorkflowDefinition } from "@/workflows/types";
 
 import type { GateClient } from "./api";
 import { CLI_VERSION } from "./api";
@@ -533,7 +533,11 @@ export async function begin(
  * The loop inside is what keeps command and control nodes off the session's
  * plate: it advances until it reaches an agent node, a terminal, or a failure.
  */
-export async function next(ctx: SessionRunContext, executionId: string): Promise<Instruction> {
+export async function next(
+  ctx: SessionRunContext,
+  executionId: string,
+  opts: { full?: boolean } = {},
+): Promise<Instruction> {
   for (;;) {
     const { execution, steps, publish } = await ctx.client.execution(executionId);
     // Settled from outside since this session last looked: Stop on the
@@ -693,12 +697,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
         // The session's endpoint is the gateway, so a subagent of the session
         // reaches the agent's model too — and is drawn live where the
         // person is looking, which a worker's log never is.
-        const shape =
-          prepared.agent.output.type === "json"
-            ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema)
-                .map(([k, t]) => `${k} (${t})`)
-                .join(", ")}`
-            : "the answer as plain text";
+        const shape = outputShape(prepared.agent.output);
         const subagent = subagentName(ctx.team, prepared.agent.id);
         const outputFile = outputFileFor(executionId, node.id, position.visit);
         // The same node again — a planner after the person's answers, an
@@ -706,9 +705,33 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
         // with everything it read still in its context. Only when this run
         // saw it before; the file says.
         const resume = position.visit > 1 ? recallSubagent(executionId, node.id) : null;
+        // A continued subagent is sent what moved, not the whole brief over
+        // again. `--full` is the way back to the whole brief, for the one case
+        // that needs it: the subagent is gone and this node has to be started
+        // from nothing.
+        let delta: string | null = null;
+        if (resume && !opts.full) {
+          const before = outputsBeforePreviousVisit(workflow, steps as ExecutionStepRecord[], node.id, position.stepIndex);
+          if (before) {
+            try {
+              const earlier = prepareAgentNode(node, stateFor(execution, before), (id) => getAgent(id, scope));
+              delta = resumePrompt(
+                node.id,
+                position.visit,
+                node.inputs ?? prepared.agent.inputs,
+                prepared.inputs,
+                earlier.inputs,
+              );
+            } catch {
+              // The earlier pass cannot be reconstructed — a definition edited
+              // between runs, an input that no longer resolves. Send it all.
+              delta = null;
+            }
+          }
+        }
         ctx.say(
           `  as subagent ${subagent} in ${prepared.agent.model} · live in this session` +
-            (resume ? ` · continuing ${resume}` : ""),
+            (resume ? ` · continuing ${resume}${delta ? " · sending what is new" : ""}` : ""),
         );
         return {
           do: "delegate",
@@ -718,7 +741,9 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           model: prepared.agent.model,
           subagent,
           resume,
-          prompt: `${prepared.prompt}\n\n${unattendedNotice()}\n\n${answerFileNotice(outputFile, shape)}`,
+          prompt: delta
+            ? `${delta}\n\n${answerFileNotice(outputFile, shape)}`
+            : `${prepared.prompt}\n\n${unattendedNotice()}\n\n${answerFileNotice(outputFile, shape)}`,
           outputFile,
           output:
             prepared.agent.output.type === "json"
@@ -731,8 +756,13 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
             resume
               ? `This node ran earlier in this run as subagent ${resume}. Continue that same agent with SendMessage ` +
                 `(to: "${resume}"), giving it \`prompt\` whole and unchanged as the message: it keeps everything it ` +
-                "read and decided last time, and the prompt carries what is new — the answers, the feedback. Only if " +
-                `the send fails because that agent is gone, start "${subagent}" fresh with the Agent tool instead.`
+                (delta
+                  ? "read and decided last time, and the prompt is only what has changed since — the answers, the " +
+                    "feedback, the gaps. It is deliberately not the whole brief again, so it is no use to a fresh " +
+                    `agent. If the send fails because that agent is gone, run \`gate next ${executionId} --full\` ` +
+                    "for the whole brief and start the node over with that."
+                  : "read and decided last time. If the send fails because that agent is gone, start " +
+                    `"${subagent}" fresh with the Agent tool and this same prompt instead.`)
               : `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` ` +
                 "as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not " +
                 "pick a model for it: its file sets the agent's own model.",
@@ -782,12 +812,7 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
         return waitInstruction(executionId, pending, prepared.agent);
       }
 
-      const shape =
-        prepared.agent.output.type === "json"
-          ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema)
-              .map(([k, t]) => `${k} (${t})`)
-              .join(", ")}`
-          : "the answer as plain text";
+      const shape = outputShape(prepared.agent.output);
       const outputFile = outputFileFor(executionId, node.id, position.visit);
       return {
         do: "agent",
@@ -813,10 +838,22 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
           "Say what you are doing as you go; the user is watching this happen.",
           "What gate printed above this JSON — the command nodes it ran on the way here and their output — the user " +
             "has not seen: relay those lines to them before you start, as they are.",
-          "Ask the user when the brief does not settle something, or something looks wrong. They can answer. " +
-            "Ask with AskUserQuestion, one question at a time, their own words through Other — never with a plain " +
-            "message that ends your turn: a question asked that way reaches only this terminal, and a person " +
-            "watching several runs from elsewhere never sees it.",
+          // Whether this node may ask is the agent's own `asks`, not a blanket
+          // rule about running in a session. Told to every gate-executor node,
+          // "ask the user" reached agents written to decide alone — the
+          // unattended road's `decide`, whose prompt says "You ask nobody" in
+          // its third sentence — so the instruction and the prompt arrived in
+          // the same breath contradicting each other, and which one won was
+          // left to the model.
+          personsTurn
+            ? "Ask the user when the brief does not settle something, or something looks wrong. They can answer. " +
+              "Ask with AskUserQuestion, one question at a time, their own words through Other — never with a plain " +
+              "message that ends your turn: a question asked that way reaches only this terminal, and a person " +
+              "watching several runs from elsewhere never sees it."
+            : "This node does not ask the user: its agent declares no `asks`, so nothing here pauses for a person. " +
+              "When the brief does not settle something, settle it on what you can read and say in your answer what " +
+              "you decided and why. If you find something genuinely wrong, that too goes in the answer — the edges " +
+              "read it, and that is how the run is stopped.",
           ...(prepared.agent.tools.some((t) => t.startsWith("memory_"))
             ? [
                 "This agent reads the team's memory, and here the memory tools are commands: `gate memory search \"<words>\"` " +
@@ -840,6 +877,122 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
     // Everything else is gate's own work: run it, record it, go round again.
     await runControlNode(ctx, executionId, node, state, position, workspaceOf(execution));
   }
+}
+
+/**
+ * The outputs a node saw the last time it ran.
+ *
+ * Folded straight off the recorded steps rather than by walking the graph
+ * again: the steps are linear and each one's output is assigned under its
+ * node id, exactly as `walk` does it, so the fold up to the step before this
+ * node's previous visit is what that visit was handed. Null when the node has
+ * not run in this execution yet.
+ */
+function outputsBeforePreviousVisit(
+  workflow: WorkflowDefinition,
+  steps: ExecutionStepRecord[],
+  nodeId: string,
+  stepIndex: number,
+): Record<string, unknown> | null {
+  let previous = -1;
+  for (let i = 0; i < stepIndex && i < steps.length; i++) {
+    if (steps[i].nodeId === nodeId) previous = i;
+  }
+  if (previous < 0) return null;
+  const outputs: Record<string, unknown> = {};
+  for (let i = 0; i < previous; i++) {
+    const node = findNode(workflow, steps[i].nodeId);
+    // Control nodes route; they contribute no state an agent can read.
+    if (!node || node.type === "condition" || node.type === "parallel") continue;
+    outputs[steps[i].nodeId] = steps[i].output;
+  }
+  return outputs;
+}
+
+function readResolved(root: Record<string, unknown>, path: string): unknown {
+  let cur: unknown = root;
+  for (const segment of path.split(".").filter(Boolean)) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[segment];
+  }
+  return cur;
+}
+
+function renderValue(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v === null || typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v, null, 2);
+}
+
+/**
+ * What a node's next pass is sent, when the subagent that did the last one is
+ * still there holding everything it read.
+ *
+ * The whole prompt used to go again — the agent's entire body, the task, and
+ * every input whether or not it had moved. Measured on one run: 52,146
+ * characters re-sent to deliver about 4,500 characters of genuinely new
+ * material, and a 250-second gap in the driving session while it was
+ * assembled and relayed. The session contract has claimed since it was
+ * written that "the prompt carries what is new"; this is the half of it that
+ * was never implemented.
+ *
+ * Only declared inputs are compared, because they are the only thing that can
+ * have changed: the agent's body is fixed and the run's input is fixed. An
+ * input that went from empty to filled — the answers, the feedback, the gaps
+ * — is what a second pass exists for, and is all that is sent.
+ *
+ * Null when nothing can be shown to have moved. The caller then sends the
+ * whole prompt: a pass that cannot say what is new has no business claiming
+ * to be a continuation.
+ */
+function resumePrompt(
+  nodeId: string,
+  visit: number,
+  paths: string[],
+  current: Record<string, unknown>,
+  previous: Record<string, unknown>,
+): string | null {
+  const changed: Array<[string, unknown]> = [];
+  for (const raw of paths) {
+    const path = raw.replace(/\?$/, "");
+    const now = readResolved(current, path);
+    if (now === undefined || now === "" || (Array.isArray(now) && !now.length)) continue;
+    if (JSON.stringify(now) === JSON.stringify(readResolved(previous, path))) continue;
+    changed.push([path, now]);
+  }
+  if (!changed.length) return null;
+  return (
+    `Pass ${visit} of the "${nodeId}" node — the same node you worked on before, continued.\n\n` +
+    "Everything you were given last time still holds: the task, the brief, and what you read and " +
+    "decided while doing it. Do not start the node over and do not ask for any of it again; go on " +
+    "from where you left off.\n\nWhat is new since your last pass:\n\n" +
+    changed.map(([path, value]) => `## ${path}\n\n${renderValue(value)}`).join("\n\n")
+  );
+}
+
+/**
+ * The answer's shape, in words, for whoever is about to write it.
+ *
+ * The bare notation used to be handed over as it stands — `gaps (string?)` —
+ * next to "exactly these keys", which reads as an instruction to write every
+ * key, and leaves the model to guess what the `?` licenses. One guessed
+ * `null`, which the validator then refused, and a finished verification was
+ * thrown away over its punctuation. So the notation is glossed here rather
+ * than quoted: optional is spelled out, and both spellings of "nothing to
+ * say" are named.
+ */
+function outputShape(output: { type: "json"; schema: Record<string, string> } | { type: "text" }): string {
+  if (output.type !== "json") return "the answer as plain text";
+  const fields = Object.entries(output.schema)
+    .map(([key, type]) => (type.endsWith("?") ? `${key} (${type.slice(0, -1)}, optional)` : `${key} (${type})`))
+    .join(", ");
+  const anyOptional = Object.values(output.schema).some((type) => type.endsWith("?"));
+  return (
+    `a JSON object with these keys: ${fields}` +
+    (anyOptional
+      ? " — an optional key may be left out or written as null when there is nothing to say, and every other key is required"
+      : ", and nothing else")
+  );
 }
 
 /**
