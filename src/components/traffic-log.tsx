@@ -119,7 +119,12 @@ function RunLink({
   );
 }
 
-export function TrafficLog({ person, served, tier, requestId }: TrafficLogFilters) {
+/**
+ * `reloadKey` is the page's Refresh and Clear buttons: any change to it
+ * re-runs the effect, which fetches at once rather than leaving the list up to
+ * six seconds stale after a person has just asked for it.
+ */
+export function TrafficLog({ person, served, tier, requestId, reloadKey = 0 }: TrafficLogFilters & { reloadKey?: number }) {
   const [entries, setEntries] = useState<TrafficRow[]>([]);
   const [open, setOpen] = useState<number | null>(null);
 
@@ -136,7 +141,7 @@ export function TrafficLog({ person, served, tier, requestId }: TrafficLogFilter
       cancelled = true;
       clearInterval(t);
     };
-  }, [person, served, tier, requestId]);
+  }, [person, served, tier, requestId, reloadKey]);
 
   if (entries.length === 0) return <p className="text-sm text-muted-foreground">No traffic yet.</p>;
 

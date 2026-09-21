@@ -42,6 +42,24 @@ describe("filtering the traffic log", () => {
     expect(readTraffic({ requestId: "r2" }).map((r) => r.requestId)).toEqual(["r2"]);
     expect(readTraffic().map((r) => r.requestId)).toEqual(["r3", "r2", "r1"]);
   });
+
+  /**
+   * The API route refuses a limit that is not a positive integer, but
+   * `readTraffic` is called directly too — by the export route, which passes
+   * the retention cap. The clamp is what makes the interface's "1..the
+   * retention cap" true wherever the call comes from.
+   */
+  it("clamps the limit to a whole row count within the retention cap", () => {
+    recordTraffic(row({ ts: 1, requestId: "r1" }));
+    recordTraffic(row({ ts: 2, requestId: "r2" }));
+
+    expect(readTraffic({ limit: 1 }).map((r) => r.requestId)).toEqual(["r2"]);
+    expect(readTraffic({ limit: 0 }).map((r) => r.requestId)).toEqual(["r2"]);
+    expect(readTraffic({ limit: -5 }).map((r) => r.requestId)).toEqual(["r2"]);
+    expect(readTraffic({ limit: 1.9 }).map((r) => r.requestId)).toEqual(["r2"]);
+    // Above the cap asks for rows the log does not keep; it returns what there is.
+    expect(readTraffic({ limit: 10_000_000 }).map((r) => r.requestId)).toEqual(["r2", "r1"]);
+  });
 });
 
 describe("the facets a filter bar offers", () => {

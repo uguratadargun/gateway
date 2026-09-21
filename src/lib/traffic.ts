@@ -156,7 +156,10 @@ export function readTraffic(q: TrafficQuery = {}): TrafficRow[] {
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const limit = q.limit ?? 100;
+  // Clamped here rather than trusted from the caller: the API route rejects a
+  // limit that is not a positive integer, but `readTraffic` is called directly
+  // too, and asking for more rows than the log retains can only return fewer.
+  const limit = Math.min(Math.max(Math.floor(q.limit ?? 100), 1), trafficRetentionCap());
 
   // One join rather than five lookups: a deleted account, person or team yields
   // NULL by construction, which is exactly what the labels above degrade to.

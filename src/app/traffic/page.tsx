@@ -89,8 +89,18 @@ export default function TrafficPage() {
     return () => clearInterval(t);
   }, [ready]);
 
+  // Refresh and Clear are the two places a person asks for the list to be
+  // current. Reloading the facets alone left the rows themselves up to six
+  // seconds behind — after a Clear, showing the traffic that was just deleted.
+  // Bumping this key re-runs the log's own fetch.
+  const [reload, setReload] = useState(0);
+  async function refresh() {
+    setReload((n) => n + 1);
+    await loadFacets();
+  }
   async function clear() {
     await fetch("/api/traffic", { method: "DELETE" });
+    setReload((n) => n + 1);
     await loadFacets();
   }
 
@@ -118,7 +128,7 @@ export default function TrafficPage() {
           <Button variant="ghost" size="sm" onClick={() => (window.location.href = trafficExportUrl({ person, served, tier, request }))}>
             <Download /> Export
           </Button>
-          <Button variant="ghost" size="icon" onClick={loadFacets} aria-label="Refresh">
+          <Button variant="ghost" size="icon" onClick={refresh} aria-label="Refresh">
             <RefreshCw />
           </Button>
           <Button variant="ghost" size="icon" onClick={clear} aria-label="Clear">
@@ -187,7 +197,7 @@ export default function TrafficPage() {
               and batches/* calls.
             </p>
           </div>
-          <TrafficLog person={person} served={served} tier={tier} requestId={request} />
+          <TrafficLog person={person} served={served} tier={tier} requestId={request} reloadKey={reload} />
         </div>
       )}
     </main>

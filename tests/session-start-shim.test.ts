@@ -44,7 +44,11 @@ describe("the SessionStart hook's gate shim", () => {
     const old = new Date(Date.now() - 60_000);
     utimesSync(shim, old, old);
     runHook(home);
-    expect(statSync(shim).mtimeMs).toBe(old.getTime());
+    // Rounded: utimes takes a float of seconds and the filesystem keeps
+    // nanoseconds, so a whole-millisecond time comes back as x.999 on APFS.
+    // What is under test is that the file was not rewritten, not that two
+    // clocks agree to the nanosecond.
+    expect(Math.round(statSync(shim).mtimeMs)).toBe(old.getTime());
 
     // A plugin update moves the bundle, and the shim follows it.
     execFileSync("/bin/sh", ["-c", `printf '#!/bin/sh\\nexec node "/old/gate.mjs" "$@"\\n' > ${shim}`]);
