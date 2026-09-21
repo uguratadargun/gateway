@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 
 import { getAgent, listAgents, readAgentSource } from "@/agents/registry";
 import type { WorkflowEvent } from "@/events/types";
+import { optionalRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 
 import { windowLabel } from "@/lib/account-pool";
@@ -383,16 +384,36 @@ async function cmdUsage(args: Args): Promise<number> {
   return 0;
 }
 
+/**
+ * The third `gate list` line: what a workflow needs to start, and — if the
+ * workflow's guards read anything else — what else it will listen to. The two
+ * lists never share a key, so there is nothing to reconcile between them; the
+ * optional segment simply disappears when there is nothing in it, which is
+ * why a workflow with no guard-read key prints exactly what it always has.
+ */
+export function inputSummary(required: string[], optional: string[]): string {
+  const base = `input: ${required.length ? required.join(", ") : "none"}`;
+  return optional.length ? `${base} · optional: ${optional.join(", ")}` : base;
+}
+
 async function cmdList(): Promise<number> {
   const client = connect();
   const config = readConfig()!;
-  const manifest = await sync(client, await teamOf(client, config));
+  const team = await teamOf(client, config);
+  const manifest = await sync(client, team);
   if (!manifest.workflows.length) {
     console.log("no workflows defined for your team yet");
     return 0;
   }
+  const scope = cacheScope(team);
   for (const wf of manifest.workflows) {
-    const inputs = wf.inputs.length ? wf.inputs.join(", ") : "none";
+    let optional: string[] = [];
+    try {
+      optional = optionalRunInputs(getWorkflow(wf.id, scope), (id) => getAgent(id, scope));
+    } catch {
+      // A definition the mirror cannot parse must not stop the listing; it
+      // simply shows no optional inputs.
+    }
     const where = !wf.workspace
       ? "no workspace (agents cannot touch files)"
       : wf.workspace.repo
@@ -400,7 +421,7 @@ async function cmdList(): Promise<number> {
         : "git worktree of the repo you run it in";
     console.log(wf.id);
     console.log(`  ${wf.name}${wf.description ? ` — ${wf.description}` : ""}`);
-    console.log(`  input: ${inputs} · ${wf.nodeCount} nodes · ${where}`);
+    console.log(`  ${inputSummary(wf.inputs, optional)} · ${wf.nodeCount} nodes · ${where}`);
   }
   return 0;
 }
@@ -431,7 +452,19 @@ async function cmdShow(args: Args): Promise<number> {
   await sync(client, team, true);
   const scope = cacheScope(team);
   try {
-    console.log(readWorkflowSource(id, scope));
+    const source = readWorkflowSource(id, scope);
+    try {
+      const workflow = getWorkflow(id, scope);
+      const req = requiredRunInputs(workflow, (agentId) => getAgent(agentId, scope));
+      const opt = optionalRunInputs(workflow, (agentId) => getAgent(agentId, scope));
+      if (req.length) console.log(`# required input: ${req.join(", ")}`);
+      if (opt.length) console.log(`# optional input: ${opt.join(", ")}`);
+      if (req.length || opt.length) console.log();
+    } catch {
+      // A source the mirror cannot parse into a definition is still printed
+      // as-is; the header is a courtesy, not a requirement to read it.
+    }
+    console.log(source);
   } catch {
     try {
       console.log(readAgentSource(id, scope));

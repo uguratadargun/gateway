@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseArgs, parseInputs } from "@/client/cli";
+import { inputSummary, parseArgs, parseInputs } from "@/client/cli";
 
 /**
  * `--input` reaches `parseInputs` in two shapes, and both are in use: a person
@@ -71,5 +71,23 @@ describe("parseArgs", () => {
     const args = parseArgs(["begin", "dev", "--task-id", "task_9f3c", "fix", "the", "queue"]);
     expect(args.flags["task-id"]).toBe("task_9f3c");
     expect(args.positional).toEqual(["dev", "fix", "the", "queue"]);
+  });
+});
+
+describe("what a workflow needs", () => {
+  it("names the required keys, then the optional ones after a separator", () => {
+    expect(inputSummary(["repo", "task"], ["deliver"])).toBe("input: repo, task · optional: deliver");
+  });
+
+  it("omits the optional segment when there is nothing optional", () => {
+    expect(inputSummary(["repo"], [])).toBe("input: repo");
+  });
+
+  it("says none rather than an empty list when both are empty", () => {
+    expect(inputSummary([], [])).toBe("input: none");
+  });
+
+  it("still says optional when a workflow needs nothing to start", () => {
+    expect(inputSummary([], ["deliver"])).toBe("input: none · optional: deliver");
   });
 });
