@@ -169,13 +169,19 @@ Each call prints one JSON instruction:
     role listing only reads is reviewing, not implementing — and stay inside it. An empty list
     is a node that is a conversation with the user and nothing else (the shipped `clarify`):
     no files, no commands, just the asking.
-  - **Ask the user when you need to.** A choice the brief does not settle, something that
-    looks wrong, a destructive step, anything you would otherwise guess at — ask, and wait.
-    This is their session: they are there, they can answer, and a question costs a minute
-    where a wrong guess costs the rest of the run. Ask with AskUserQuestion, one question at
-    a time, their own words through Other — never with a plain message that ends your turn,
-    which reaches only this terminal. The node's answer goes in a file, not in what you say,
-    so asking never gets in the way of finishing it.
+  - **Ask the user when the node is one that asks.** A choice the brief does not settle,
+    something that looks wrong, a destructive step, anything you would otherwise guess at —
+    ask, and wait. This is their session: they are there, they can answer, and a question
+    costs a minute where a wrong guess costs the rest of the run. Ask with AskUserQuestion,
+    one question at a time, their own words through Other — never with a plain message that
+    ends your turn, which reaches only this terminal. The node's answer goes in a file, not
+    in what you say, so asking never gets in the way of finishing it.
+
+    Which nodes those are is not yours to judge: the agent's definition says so, and
+    `remember` tells you which kind this one is. A node whose agent declares no `asks` is
+    written to decide alone — the unattended road's `decide` is one — and asking there stops
+    a run that exists so as not to stop. Settle it on what you can read, and say in the
+    answer what you decided.
   - **But never stop a run for something the pipeline has already decided.** What the
     pipeline's own nodes do next — stage, commit, open the merge request, which files the
     commit takes — is the workflow's, settled when it was written, and not a question for
@@ -209,7 +215,8 @@ Each call prints one JSON instruction:
     node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" step <execution-id> <node-id> --output-file <outputFile>
     ```
     `output.type: json` means the file holds **exactly** that JSON object — the keys in
-    `output.schema`, nothing else, no prose, no code fence. A type ending in `?` is optional.
+    `output.schema`, nothing else, no prose, no code fence. A type ending in `?` is optional:
+    leave that key out, or write `null` — both say there was nothing to put there.
     If gate refuses it, the message says what did not match: fix the file and hand it back
     again. Do not redo the work.
   - `step` prints the next instruction, so carry straight on.

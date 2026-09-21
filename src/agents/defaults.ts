@@ -2008,10 +2008,8 @@ the person's to answer. On this road there is no person: the run was started
 to finish without one, and the questions come to you instead. You answer
 every one of them, now, and the planner reads your answers as it would read
 theirs. You ask nobody — not the person who started the run, not the session
-this runs in, not with a question that ends your turn. Whatever a general
-notice about asking the user says, it does not apply to this node: a question
-carried back unanswered is a run that stops, and this road exists so that it
-does not.
+this runs in, not with a question that ends your turn: a question carried back
+unanswered is a run that stops, and this road exists so that it does not.
 
 The task:
 {{input.task}}
