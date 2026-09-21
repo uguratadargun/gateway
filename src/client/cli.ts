@@ -20,7 +20,16 @@ import { readRemoteUrl, type RunWorkspace } from "@/runtime/workspace";
 
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
-import { isTrusted, readConfig, repoPaths, setRepoPath, trustWorkflow, writeConfig, type ClientConfig } from "./config";
+import {
+  isTrusted,
+  readConfig,
+  repoPaths,
+  setRepoPath,
+  trustWorkflow,
+  writeConfig,
+  writeLogin,
+  type ClientConfig,
+} from "./config";
 import { applyClean, describeVerdict, listWorkspaces, planClean } from "./clean";
 import { runLocal } from "./run";
 import { begin, continueRun, next, noteSession, reviewCommand, step, wait, work, type Instruction, type SessionRunContext } from "./step";
@@ -234,7 +243,7 @@ async function cmdLogin(args: Args): Promise<number> {
 
   const client = new GateClient({ url, key });
   const me = await client.me();
-  writeConfig({ url, key, team: me.team.id, user: me.user?.email });
+  writeLogin({ url, key, team: me.team.id, user: me.user?.email });
   console.log(`connected to ${url} as ${me.user?.email ?? "this key"} · team ${me.team.name}`);
 
   const manifest = await sync(client, me.team.id, true);
@@ -257,6 +266,13 @@ async function cmdLogin(args: Args): Promise<number> {
  * person to type ("gate login", the command the dashboard hands them) assumes
  * a `gate` that exists. A three-line shim is the whole of making the two
  * agree; it points at this exact bundle, so a plugin update moves with it.
+ *
+ * The plugin's SessionStart hook (`plugins/gate/scripts/session-start.mjs`)
+ * writes the same shim unasked, because the person who needs it most cannot
+ * run this command: a Claude Code at its weekly limit runs no prompt at all.
+ * This command stays for a machine holding the bundle without the plugin, and
+ * for one that wants the shim somewhere else; the two writers must agree on
+ * the shim's contents.
  */
 function cmdInstall(args: Args): number {
   const target = typeof args.flags.dir === "string" ? args.flags.dir : join(homedir(), ".local", "bin");

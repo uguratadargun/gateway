@@ -66,6 +66,28 @@ export function writeConfig(config: ClientConfig): void {
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 
+/**
+ * Saves a login, keeping the decisions this machine had already made.
+ *
+ * Logging in again is an ordinary thing to do — a reissued key, a machine
+ * reconnected after its Claude Code was out of quota — and it must not quietly
+ * undo the two things on this file that are a person's choices rather than a
+ * connection: which workflow versions they approved to run here, and where
+ * their own clone of each connected repository is. Both are kept when the same
+ * gate is being connected to again.
+ *
+ * A **different** gate drops them, and that is not a special case being made:
+ * an approval is recorded against a definition hash that gate issued, and a
+ * repo id only means anything to the gate that resolves it. Carried across,
+ * they would be approvals nobody gave.
+ */
+export function writeLogin(login: Pick<ClientConfig, "url" | "key" | "team" | "user">): void {
+  const onDisk = readConfigFile();
+  const url = login.url.replace(/\/+$/, "");
+  const sameGate = onDisk?.url?.replace(/\/+$/, "") === url;
+  writeConfig(sameGate ? { ...login, url, trusted: onDisk?.trusted, repos: onDisk?.repos } : { ...login, url });
+}
+
 /** What the file holds, ignoring any environment override. */
 function readConfigFile(): ClientConfig | null {
   try {

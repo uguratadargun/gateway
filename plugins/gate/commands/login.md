@@ -28,6 +28,13 @@ Then say what they can do next: `/gate:run` alone lists their team's workflows a
 run; `/gate:run <id> <task>` starts one here, in a worktree of the repository they are in; and
 the nodes that run in their own model show up live in this terminal, already.
 
+If they say this command would not run at all — their Claude Code is at its weekly limit and refuses
+every prompt — the way in is a terminal, with Claude Code closed: `~/.local/bin/gate login <token>`,
+the same login, written there by the plugin itself on every session start. A machine that has the
+plugin but has not restarted Claude Code since installing it has no such file yet and runs
+`node ~/.claude/plugins/cache/gateway/gate/*/scripts/gate.mjs login <token>` instead. Connecting
+spends no model call, so a spent weekly limit cannot stop it.
+
 If it refuses, report what it said rather than retrying. An invalid or revoked key, a key that
 may not pull workflows, and a token pasted in half each say so in their own words — and a
 `CLIENT_TOO_OLD` means this plugin needs `/gate:update` first.

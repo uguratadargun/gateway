@@ -55,7 +55,7 @@ function migrateLegacyDefinitions() {
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join as join2, relative } from "node:path";
 
-// node_modules/js-yaml/dist/js-yaml.mjs
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
 function defineScalarTag(tagName, options) {
   return {
@@ -3151,7 +3151,7 @@ var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
-// node_modules/zod/v3/external.js
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -3263,7 +3263,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// node_modules/zod/v3/helpers/util.js
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -3397,7 +3397,7 @@ var getParsedType = (data) => {
   }
 };
 
-// node_modules/zod/v3/ZodError.js
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -3515,7 +3515,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// node_modules/zod/v3/locales/en.js
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -3618,7 +3618,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// node_modules/zod/v3/errors.js
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -3627,7 +3627,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// node_modules/zod/v3/helpers/parseUtil.js
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -3737,14 +3737,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// node_modules/zod/v3/helpers/errorUtil.js
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// node_modules/zod/v3/types.js
+// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -7824,6 +7824,30 @@ function renderTemplate(tpl, ctx) {
 import { homedir as homedir2 } from "node:os";
 import { join as join4 } from "node:path";
 
+// src/lib/pricing.ts
+var PRICE_PER_MTOK = {
+  haiku: { input: 1, output: 5 },
+  sonnet: { input: 2, output: 10 },
+  opus: { input: 5, output: 25 },
+  fable: { input: 10, output: 50 }
+};
+function tierOf(model) {
+  const m = model.toLowerCase();
+  if (m.includes("haiku")) return "haiku";
+  if (m.includes("fable") || m.includes("mythos")) return "fable";
+  if (m.includes("opus")) return "opus";
+  return "sonnet";
+}
+function cacheReadMultiplier(model) {
+  const m = (model ?? "").toLowerCase();
+  return /fable-5-1|mythos-5-1/.test(m) ? 0.025 : 0.1;
+}
+function costForUsage(tier, u, opts = {}) {
+  const p = PRICE_PER_MTOK[tier];
+  const writeMult = opts.cacheTtl === "1h" ? 2 : 1.25;
+  return (u.input * p.input + (u.cacheRead ?? 0) * p.input * cacheReadMultiplier(opts.model) + (u.cacheCreation ?? 0) * p.input * writeMult + u.output * p.output) / 1e6;
+}
+
 // src/lib/account-pool.ts
 var BACKOFF = { baseMs: 5e3, maxMs: 2 * 60 * 1e3, maxLevel: 15 };
 var QUOTA_FALLBACK_COOLDOWN_MS = 15 * 60 * 1e3;
@@ -7836,6 +7860,7 @@ var WINDOW_NAMES = {
 function canonicalWindowName(name) {
   return WINDOW_NAMES[name] ?? name;
 }
+var MODEL_BLOCK_MAX_MS = 8 * 24 * 60 * 60 * 1e3;
 var WINDOW_LABELS = {
   five_hour: "session limit",
   seven_day: "weekly limit",
@@ -7851,7 +7876,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.40.0";
+var GATE_VERSION = "0.41.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -9297,6 +9322,12 @@ function writeConfig(config) {
   writeFileSync5(file, `${JSON.stringify(config, null, 2)}
 `, { mode: 384 });
 }
+function writeLogin(login) {
+  const onDisk = readConfigFile();
+  const url = login.url.replace(/\/+$/, "");
+  const sameGate = onDisk?.url?.replace(/\/+$/, "") === url;
+  writeConfig(sameGate ? { ...login, url, trusted: onDisk?.trusted, repos: onDisk?.repos } : { ...login, url });
+}
 function readConfigFile() {
   try {
     return JSON.parse(readFileSync6(configPath(), "utf8"));
@@ -9647,8 +9678,6 @@ function parseProviderRef(ref) {
 // src/runtime/executors/claude-code.ts
 function gatewayUrl(override) {
   if (override) return `${override.replace(/\/$/, "")}`;
-  if (process.env.GATE_SELF_URL)
-    return `${process.env.GATE_SELF_URL.replace(/\/$/, "")}/api/gateway`;
   return `http://127.0.0.1:${process.env.PORT ?? 4141}/api/gateway`;
 }
 function providerModelEnv(model) {
@@ -9674,6 +9703,14 @@ function renderResult(content) {
     ).join("\n");
   }
   return content == null ? "" : JSON.stringify(content);
+}
+function failureDetail(r, stderr) {
+  const said = typeof r?.result === "string" ? r.result.trim() : (
+    // Not JSON.stringify on its own: `undefined` does not come back a
+    // string from it, and "undefined" is worse than nothing.
+    r?.result == null ? "" : JSON.stringify(r.result)
+  );
+  return (said || stderr.trim()).slice(0, 500);
 }
 var MAX_OUTPUT_RETRIES = 2;
 async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
@@ -9758,8 +9795,11 @@ A type ending in "?" is optional.`
       env: {
         ...process.env,
         ANTHROPIC_BASE_URL: gatewayUrl(deps.gatewayUrl),
-        // Only set when the caller has one: on the server the gateway is
-        // loopback and needs no key, and an empty value would be sent as one.
+        // How the child gets through gate's own front door: on the server, a
+        // token minted for this run; on a developer's machine, that person's
+        // own key. Being loopback buys it nothing — a gate that has issued any
+        // key refuses a request without one whatever its source address.
+        // Conditional because an empty value would be sent as a credential.
         ...deps.authToken ? { ANTHROPIC_AUTH_TOKEN: deps.authToken, ANTHROPIC_API_KEY: deps.authToken } : {},
         // Claude Code would otherwise send only its own session id, and the
         // gateway would file a node's calls as unrelated traffic. This is the
@@ -9875,7 +9915,7 @@ A type ending in "?" is optional.`
     }
     const parsed = final;
     if (!parsed) {
-      const detail = (stderr.trim() || "no output").slice(0, 500);
+      const detail = failureDetail(null, stderr) || "no output";
       throw new WorkflowError(
         "MODEL_EXECUTION_ERROR",
         `node "${nodeId2}": claude-code exited ${settled.code ?? "without a code"} before reporting a result \u2014 ${detail}`,
@@ -9887,9 +9927,12 @@ A type ending in "?" is optional.`
     usage.outputTokens += parsed.usage?.output_tokens ?? 0;
     usage.cacheReadTokens += parsed.usage?.cache_read_input_tokens ?? 0;
     if (parsed.is_error || typeof parsed.result !== "string") {
+      const why = failureDetail(parsed, stderr);
       throw new WorkflowError(
         "MODEL_EXECUTION_ERROR",
-        `node "${nodeId2}": claude-code did not finish (${parsed.subtype ?? "unknown"})` + // Denials are silent otherwise, and a node that lost the tool it
+        `node "${nodeId2}": claude-code did not finish (${parsed.subtype ?? "unknown"})` + // The child's own reason, where it gave one: the subtype says the
+        // shape of the failure, this says the cause.
+        (why ? ` \u2014 ${why}` : "") + // Denials are silent otherwise, and a node that lost the tool it
         // needed reads exactly like one that simply answered badly.
         (parsed.permission_denials?.length ? `; ${parsed.permission_denials.length} tool call(s) denied by the permission mode` : ""),
         // The tool calls it did make and the tokens it did spend are attached, so
@@ -10496,30 +10539,6 @@ import { resolve as resolve5 } from "node:path";
 // src/runtime/engine.ts
 import { randomUUID } from "node:crypto";
 import { existsSync as existsSync12 } from "node:fs";
-
-// src/lib/pricing.ts
-var PRICE_PER_MTOK = {
-  haiku: { input: 1, output: 5 },
-  sonnet: { input: 2, output: 10 },
-  opus: { input: 5, output: 25 },
-  fable: { input: 10, output: 50 }
-};
-function tierOf(model) {
-  const m = model.toLowerCase();
-  if (m.includes("haiku")) return "haiku";
-  if (m.includes("fable") || m.includes("mythos")) return "fable";
-  if (m.includes("opus")) return "opus";
-  return "sonnet";
-}
-function cacheReadMultiplier(model) {
-  const m = (model ?? "").toLowerCase();
-  return /fable-5-1|mythos-5-1/.test(m) ? 0.025 : 0.1;
-}
-function costForUsage(tier, u, opts = {}) {
-  const p = PRICE_PER_MTOK[tier];
-  const writeMult = opts.cacheTtl === "1h" ? 2 : 1.25;
-  return (u.input * p.input + (u.cacheRead ?? 0) * p.input * cacheReadMultiplier(opts.model) + (u.cacheCreation ?? 0) * p.input * writeMult + u.output * p.output) / 1e6;
-}
 
 // src/runtime/executors/condition.ts
 function selectEdge(node, state) {
@@ -12530,7 +12549,7 @@ async function cmdLogin(args) {
   if (!url || !key) die("usage: gate login <token>   (or: gate login --url <gate-url> --key <api-key>)");
   const client = new GateClient({ url, key });
   const me = await client.me();
-  writeConfig({ url, key, team: me.team.id, user: me.user?.email });
+  writeLogin({ url, key, team: me.team.id, user: me.user?.email });
   console.log(`connected to ${url} as ${me.user?.email ?? "this key"} \xB7 team ${me.team.name}`);
   const manifest = await sync(client, me.team.id, true);
   console.log(`${manifest.workflows.length} workflow(s) available \u2014 \`gate list\` to see them`);
@@ -12614,6 +12633,7 @@ async function cmdUsage(args) {
   const a = usage.accounts;
   const parts = [`${a.available} of ${a.enabled} account${a.enabled === 1 ? "" : "s"} serving now`];
   if (a.coolingDown) parts.push(`${a.coolingDown} cooling down`);
+  if (a.modelBlocked) parts.push(`${a.modelBlocked} parked on a model-scoped limit`);
   if (a.quotaBlocked) parts.push(`${a.quotaBlocked} held back by the ${usage.floorPercent}% floor`);
   if (usage.plan) parts.push(usage.plan);
   console.log(parts.join(" \xB7 "));

@@ -21,7 +21,7 @@
  * bundled into the CLI.
  */
 
-export const GATE_VERSION = "0.40.1";
+export const GATE_VERSION = "0.41.0";
 
 /** The oldest CLI this server will serve. Older ones are refused, with the fix. */
 export const MIN_CLIENT_VERSION = "0.13.0";
@@ -44,6 +44,29 @@ export const PLUGIN_ID = "gate@gateway";
  */
 export function installLines(loginLine: string, source: string = PLUGIN_MARKETPLACE): string[] {
   return [`/plugin marketplace add ${source}`, `/plugin install ${PLUGIN_ID}`, loginLine];
+}
+
+/**
+ * The same login, as a line for a terminal rather than for Claude Code.
+ *
+ * `/gate:login` is a slash command, which is a prompt, which is a model turn —
+ * and a Claude Code at its weekly limit has none to give. That is precisely
+ * when a person is trying to connect to a gateway that would serve them on the
+ * team's quota instead, so the way in cannot be inside Claude Code. The shim
+ * the plugin's SessionStart hook writes is named by absolute path, so this line
+ * works whether or not `~/.local/bin` is on their PATH.
+ */
+export function terminalLoginLine(loginArgument: string): string {
+  return `~/.local/bin/gate login ${loginArgument}`;
+}
+
+/**
+ * The same line for a machine that has the plugin but has never restarted
+ * Claude Code since, so no shim has been written yet: the bundle itself, under
+ * the marketplace's own name, which is `gateway` wherever the plugin came from.
+ */
+export function bundleLoginLine(loginArgument: string): string {
+  return `node ~/.claude/plugins/cache/gateway/gate/*/scripts/gate.mjs login ${loginArgument}`;
 }
 
 /** Header names the two ends use to tell each other what they are. */

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readConfig, writeConfig } from "@/client/config";
+import { readConfig, writeConfig, writeLogin } from "@/client/config";
 
 /**
  * The CLI's saved login, and the environment that may stand in for it for
@@ -32,5 +32,33 @@ describe("the CLI's connection", () => {
     expect(readConfig()).toMatchObject({ url: "http://company:4141", key: "gate_company", team: "desktop" });
     expect(readConfig()?.fromEnv).toBeUndefined();
     expect(readFileSync(join(process.env.GATE_HOME!, "client.json"), "utf8")).not.toContain("gate_local");
+  });
+
+  it("keeps this machine's approvals and repo paths when the same gate is connected again", () => {
+    process.env.GATE_HOME = mkdtempSync(join(tmpdir(), "gate-cfg-"));
+    writeConfig({
+      url: "http://company:4141",
+      key: "gate_old",
+      team: "desktop",
+      trusted: { dev: "8d602af6" },
+      repos: { gateway: "/Users/someone/Projects/gateway" },
+    });
+
+    // A reissued key on the same gate: the connection changes, the decisions
+    // this person made on this machine do not.
+    writeLogin({ url: "http://company:4141/", key: "gate_new", team: "desktop", user: "a@company" });
+    expect(readConfig()).toMatchObject({
+      key: "gate_new",
+      user: "a@company",
+      trusted: { dev: "8d602af6" },
+      repos: { gateway: "/Users/someone/Projects/gateway" },
+    });
+
+    // Another gate: an approval is against a hash that gate issued, and a repo
+    // id only means something to the gate that resolves it. Neither carries.
+    writeLogin({ url: "http://other:4141", key: "gate_other", team: "default" });
+    expect(readConfig()).toMatchObject({ url: "http://other:4141", key: "gate_other", team: "default" });
+    expect(readConfig()?.trusted).toBeUndefined();
+    expect(readConfig()?.repos).toBeUndefined();
   });
 });

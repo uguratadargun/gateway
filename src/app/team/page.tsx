@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { TelegramPanel } from "@/components/telegram-panel";
 import { encodeConnectionToken } from "@/lib/connect-token";
-import { installLines, PLUGIN_ID, PLUGIN_MARKETPLACE } from "@/lib/protocol";
+import { bundleLoginLine, installLines, PLUGIN_ID, PLUGIN_MARKETPLACE, terminalLoginLine } from "@/lib/protocol";
 
 /**
  * Who may connect, and what they connect with.
@@ -249,7 +249,9 @@ export default function TeamPage() {
         <p className="text-xs text-muted-foreground">
           A machine that has never had <code>gate</code> installs it from this repository&apos;s marketplace, inside
           Claude Code, and restarts Claude Code once. Then the <code>/gate:login</code> line a key issues below connects
-          it. Later updates are <code>/gate:update</code>. The source is set on the Settings page.
+          it. Later updates are <code>/gate:update</code>. The source is set on the Settings page. That restart also
+          puts a <code>gate</code> on the machine, so the same login can be run from a terminal by anyone whose Claude
+          Code is out of quota and will not run a command at all.
         </p>
         <div className="flex items-start gap-2">
           <pre className="flex-1 overflow-x-auto rounded bg-background px-2 py-1 text-xs">
@@ -444,6 +446,39 @@ export default function TeamPage() {
                         <Copy />
                       </Button>
                     </div>
+                    {/* The way in that does not go through Claude Code. A
+                        slash command is a prompt, and a Claude Code at its
+                        weekly limit runs none — which is the moment someone
+                        most wants to be on the team's gateway instead. */}
+                    <p className="text-xs text-muted-foreground">
+                      If their Claude Code will not run at all — a spent weekly limit refuses every prompt, including{" "}
+                      <code>/gate:login</code> — this is the same login, in a plain terminal with Claude Code closed.
+                      Connecting spends no model call:
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 truncate rounded bg-background px-2 py-1 text-xs">
+                        {terminalLoginLine(encodeConnectionToken({ url: origin, key: issued.key }))}
+                      </code>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() =>
+                          navigator.clipboard.writeText(
+                            terminalLoginLine(encodeConnectionToken({ url: origin, key: issued.key })),
+                          )
+                        }
+                        aria-label="Copy the terminal command"
+                        title="Copy the terminal command"
+                      >
+                        <Copy />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      That <code>gate</code> is written by the plugin itself, on every session start. A machine that
+                      has the plugin but has not restarted Claude Code since installing it has no such file yet, and
+                      runs the bundle directly instead:{" "}
+                      <code>{bundleLoginLine("<the token above>")}</code>
+                    </p>
                     <p className="text-xs text-muted-foreground">
                       The raw key is <code>{issued.key}</code> if they need it for a tool that wants one.
                     </p>

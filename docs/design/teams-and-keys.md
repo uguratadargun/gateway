@@ -12,11 +12,32 @@ exactly as before, on the `default` team.
 ## How it works
 
 `/team` is where a person becomes able to connect: add a team, add someone to
-it, issue them a key. The key is shown once, as the command they run:
+it, issue them a key. The key is shown once, and in two forms — the same login
+by two roads, because one of them is closed exactly when it is needed:
 
 ```bash
-gate login --url https://gate.internal --key gate_…
+/gate:login <token>                  # in Claude Code
+~/.local/bin/gate login <token>      # in a terminal, Claude Code closed
 ```
+
+**Connecting never needs a model turn.** The slash command is a prompt, so it
+costs one; a Claude Code whose account is at its weekly limit runs no prompt at
+all, and the person it refuses is precisely the person trying to get onto a
+gateway that would serve them on the team's quota instead. So the plugin writes
+`~/.local/bin/gate` itself, from its SessionStart hook, on every ordinary
+session — ahead of the emergency, and pointing at the bundle that session
+loaded, so a plugin update moves it. The terminal line names the shim by
+absolute path and therefore does not care whether `~/.local/bin` is on anyone's
+PATH. Logging in itself contacts only the gate: the team, the definitions, and
+one optional read of the model list that falls back to a built-in list when the
+account behind it is spent. A rate limit can no more block a login than it can
+block the dashboard.
+
+Logging in again keeps what this machine had decided — the workflow versions
+its owner approved to run here, and where their own clone of each connected
+repository is. Connecting to a *different* gate drops both, since an approval
+is recorded against a definition hash that gate issued and a repository id
+means nothing to a gate that never resolved it.
 
 Only the SHA-256 hash of the key is stored; the plaintext is not recoverable
 afterwards. A **team** is a slug (`[a-z0-9-]`, up to 64 characters), not a
@@ -116,6 +137,10 @@ loading are named.
 - `src/lib/def-root.ts` — `DefinitionScope`: a team's root, its fallback to the default team, `ownScope`, the one-time legacy rename, `scopeFromRequest` for `?team=`
 - `src/agents/registry.ts`, `src/workflows/registry.ts`, `src/skills/registry.ts` — the file stores, each taking a scope rather than knowing a path
 - `src/middleware.ts` — the admin cookie that guards the dashboard and `/api/*` management routes, a separate concern from keys
+- `src/lib/protocol.ts` — the lines a key is handed out as: `installLines` for Claude Code, `terminalLoginLine` and `bundleLoginLine` for a terminal
+- `plugins/gate/scripts/session-start.mjs` — the SessionStart hook: writes `~/.local/bin/gate` pointing at the bundle beside it, and only when it would change
+- `src/client/cli.ts` — `cmdLogin`, and `cmdInstall`, the by-hand writer of the same shim
+- `src/client/config.ts` — `writeLogin`: a login that keeps this machine's approvals and repo paths on the same gate, and drops them on a different one
 
 ## Pitfalls
 
@@ -126,7 +151,10 @@ loading are named.
 - The fallback to the default team is read-only. A team that edits an inherited agent gets its own copy; the default team's file is untouched and other teams still see it.
 - Deleting a team does not delete `~/.gate/teams/<team>/`. Re-creating the same slug picks the old files back up.
 - The legacy rename runs once per process per `GATE_HOME`; a rename that fails (permissions, a mount boundary) leaves the old directory in place and the team starts empty and seeded.
+- The shim is written by a session, so a machine that installed the plugin and never restarted Claude Code has none yet. The dashboard names the bundle path as well for exactly that machine, and `gate install` writes it by hand.
+- `~/.local/bin` that cannot be written leaves no shim and says nothing: a session start is not failed over a convenience. The bundle is still reachable by its own path.
 
 ## Decisions
 
 - [0011 — Three auth surfaces, three rules](../decisions/0011-three-auth-surfaces-three-rules.md)
+- [0026 — Connecting a machine never needs a model turn](../decisions/0026-connecting-never-needs-a-model-turn.md)
