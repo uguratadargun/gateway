@@ -751,7 +751,10 @@ export async function next(ctx: SessionRunContext, executionId: string): Promise
             `The prompt tells it to write that answer to ${outputFile} itself. The moment it returns, hand that file back ` +
               "as it is — before telling the user anything, and without retyping it — naming the subagent so the next " +
               "pass of this node can continue it:",
-            `  gate step ${executionId} ${node.id} --output-file ${outputFile} --subagent <its agent id or name>`,
+            `  gate step ${executionId} ${node.id} --output-file ${outputFile} --subagent <its agent id>`,
+            `The agent id is the short opaque id the Agent tool returned in its result. It is not "${subagent}": that ` +
+              "is the type you started, and sending to it resolves to nobody, so the next pass would start over from " +
+              "nothing. `gate step` refuses that name rather than storing it.",
             "If the file is not there, take the answer from its final message, write it to that path, and hand it back the same way.",
           ],
         };
@@ -971,6 +974,26 @@ export async function step(
     throw new WorkflowError(
       "WORKFLOW_ROUTING_ERROR",
       `this run is waiting on "${pending.nodeId}", not "${nodeId}" — run \`gate next ${executionId}\` to see what it wants`,
+    );
+  }
+  // `--subagent` is what the next pass of this node is resumed with, and only
+  // the agent id the Agent tool returned resolves. The type name — what
+  // `~/.claude/agents/` calls the file, which gate itself wrote — never does,
+  // and nothing downstream notices: the value is stored, the next pass sends
+  // to a name that is not an address, the send fails, and a fresh subagent
+  // reads everything again. Measured in one run: the verifier's subtree read
+  // the plan file fourteen times and one source file eleven. The test is
+  // exact, because the wrong value is always this prefix. Refused here, before
+  // the step is recorded, so that a refused step is a step that did not run
+  // and can be handed back with the right id.
+  const mirrorPrefix = subagentName(ctx.team, "");
+  if (opts.subagent?.startsWith(mirrorPrefix)) {
+    throw new WorkflowError(
+      "WORKFLOW_ROUTING_ERROR",
+      `--subagent takes the agent id the Agent tool returned — the short opaque id in its result — not ` +
+        `"${opts.subagent}", which is the subagent's type name in ~/.claude/agents/. Resuming by type name ` +
+        `spawns a fresh subagent on every pass, which reads the whole worktree again. Hand this step back with ` +
+        `that id, or without --subagent at all if you no longer have it.`,
     );
   }
 

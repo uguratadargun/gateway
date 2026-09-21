@@ -224,9 +224,12 @@ Each call prints one JSON instruction:
     `outputFile`. When it returns, hand that file back with the `gate step` line in
     `remember` — as it is, without opening it to retype it, and before you say anything to
     the user; the file is what the run reads, and the minute you would spend reproducing it
-    is a minute the run stands still. Name the subagent on that line (`--subagent`, its
-    agent id or name from the Agent tool's result) so the next pass can continue it. Only if
-    the file is missing do you take the answer from its final message and write it there.
+    is a minute the run stands still. Name the subagent on that line (`--subagent`, **the
+    agent id from the Agent tool's result** — the short opaque id, not the
+    `gate-<team>-<agent>` type name you started, which resolves to nobody) so the next pass
+    can continue it; `gate step` refuses the type name rather than storing a resume target
+    that will not work. Only if the file is missing do you take the answer from its final
+    message and write it there.
   - **A node's next pass continues the same subagent.** When `resume` names one, this node
     ran earlier in this run — a planner coming back with the person's answers, an
     implementer with a bounded fix — and that subagent still holds everything it read and

@@ -70,7 +70,8 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
        --task-id <id>                           file this run under a cross-team task
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
-        [--subagent <id>]                        which subagent did it, so its next pass continues it
+        [--subagent <id>]                        the agent id the Agent tool returned, so its next pass
+                                                 continues it — not the gate-<team>-<agent> type name
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
   gate continue <execution-id>                  pick a failed run back up at the node it failed on
   gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings

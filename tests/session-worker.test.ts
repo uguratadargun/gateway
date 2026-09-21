@@ -242,8 +242,12 @@ describe("the same node when the session itself runs through the gateway", () =>
       const file = readFileSync(join(process.env.CLAUDE_CONFIG_DIR, "agents", "gate-t-builder.md"), "utf8");
       expect(file).toContain("name: gate-t-builder");
       expect(file).toContain("model: provider:zai/glm-5.3");
-      // The subagent is told its own subagents run in the background here.
+      // The subagent is told its own subagents run in the background here, and
+      // how reading a file costs what it costs. Both ride the mirror file
+      // because a subagent gets no appended system prompt from the executor.
       expect(file).toContain("run in the background");
+      expect(file).toContain("Never dispatch a subagent type that copies your own context");
+      expect(file).toContain("Read files with Read");
       // Unchanged content is not rewritten: Claude Code watches the directory.
       expect(syncSubagents("t", { root: join(home, "cache", "t"), teamId: "t" }).written).toEqual([]);
 
@@ -317,6 +321,47 @@ describe("the same node when the session itself runs through the gateway", () =>
       if (o2.do !== "delegate") return;
       expect(o2.resume).toBeNull();
       expect(o2.remember[0]).toContain("Start the subagent");
+    } finally {
+      if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = previousConfig;
+    }
+  });
+
+  /**
+   * The type name is what the session can see — it is on the delegate
+   * instruction, and it is the file gate wrote — so it is the value a session
+   * reaches for, and sending to it resolves to nobody. Stored, it costs a
+   * whole pass: the next one starts a fresh subagent that reads the worktree
+   * again. Refused before the step is recorded, so the session can hand the
+   * same answer back with the right id.
+   */
+  it("refuses the subagent's type name, records nothing, and keeps the id an earlier pass named", async () => {
+    const previousConfig = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "gate-claude-"));
+    try {
+      const server = fakeServer("e7", "twice");
+      const ctx = context(server.client, { throughGateway: true, spawnWorker: () => process.pid });
+      syncSubagents("t", { root: join(home, "cache", "t"), teamId: "t" });
+
+      const first = await next(ctx, "e7");
+      expect(first.do).toBe("delegate");
+      if (first.do !== "delegate") return;
+      // Exactly the name the instruction just handed the session.
+      expect(first.subagent).toBe("gate-t-builder");
+      await step(ctx, "e7", "build", '{"summary": "pass one"}', { subagent: "agent-one" });
+      expect(recallSubagent("e7", "build")).toBe("agent-one");
+
+      await expect(step(ctx, "e7", "build", '{"summary": "pass two"}', { subagent: first.subagent })).rejects.toThrow(
+        /agent id the Agent tool returned/,
+      );
+      // Nothing happened: the step was not recorded, and the resume target the
+      // first pass named is still there to hand back with.
+      expect(server.steps.filter((s) => s.nodeId === "build").length).toBe(1);
+      expect(recallSubagent("e7", "build")).toBe("agent-one");
+
+      // The same answer with the right id goes through.
+      const done = await step(ctx, "e7", "build", '{"summary": "pass two"}', { subagent: "agent-two" });
+      expect(done.do).toBe("done");
     } finally {
       if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
       else process.env.CLAUDE_CONFIG_DIR = previousConfig;
