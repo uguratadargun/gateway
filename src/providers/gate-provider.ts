@@ -33,7 +33,7 @@ export class GateModelProvider implements ModelProvider {
       signal: req.signal,
       // A workflow node is gate calling itself. Saying so is honest where a
       // null would read as a row written before the log named its callers.
-      caller: { keyId: INTERNAL_KEY_ID, userId: null, teamId: DEFAULT_TEAM_ID, scopes: [] },
+      caller: { keyId: INTERNAL_KEY_ID, userId: null, teamId: DEFAULT_TEAM_ID, scopes: [], executionId },
     }).catch((e) => {
       // The abort surfaces here as a fetch rejection; name it for what it is,
       // so a cancelled node is not reported as a model failure.

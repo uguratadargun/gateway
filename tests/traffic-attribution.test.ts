@@ -118,4 +118,15 @@ describe("a run's own token at the gateway", () => {
       expect(listKeys()).toHaveLength(0);
     });
   });
+
+  it("carries the run's own id on the principal it resolves to", async () => {
+    await withRunToken("exec-6", principal, async (token) => {
+      expect(gatePrincipal(request(token))?.executionId).toBe("exec-6");
+    });
+
+    const { key, plaintext } = createKey({ name: "not-a-run", userId: "u-2", teamId: DEFAULT_TEAM_ID });
+    const seen = gatePrincipal(request(plaintext));
+    expect(seen?.keyId).toBe(key.id);
+    expect(seen?.executionId ?? null).toBeNull();
+  });
 });

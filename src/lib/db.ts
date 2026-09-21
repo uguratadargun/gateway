@@ -683,6 +683,11 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // time — a weekly window legitimately runs days out, which a cooldown column
   // could not say without taking the whole login with it.
   ["accounts", "model_blocks_json", "model_blocks_json TEXT"],
+  // A traffic row's own id, for a copyable link straight to one exchange, and
+  // the run it was made for, so a row can be traced back to the execution and
+  // node that caused it. Both NULL on a row written before this release.
+  ["traffic", "request_id", "request_id TEXT"],
+  ["traffic", "execution_id", "execution_id TEXT"],
 ];
 
 let db: SqlDatabase | null = null;
@@ -705,6 +710,22 @@ export function getDb(): SqlDatabase {
   // so the repository travels in the index rather than as a filter applied
   // to everything the path alone matched.
   d.exec("CREATE INDEX IF NOT EXISTS memory_touches_ref_repo ON memory_touches(ref, repo_id)");
+  // Traffic: a point lookup for the request id a row shows, a join to the
+  // execution it traces to, and one composite per filterable column — each
+  // ordered (value, ts) because every filtered read is "this value, newest
+  // first, limit N", which the composite serves without a sort left behind.
+  d.exec("CREATE INDEX IF NOT EXISTS traffic_request_id ON traffic(request_id)");
+  d.exec("CREATE INDEX IF NOT EXISTS traffic_execution_id ON traffic(execution_id)");
+  d.exec("CREATE INDEX IF NOT EXISTS traffic_user_ts ON traffic(user_id, ts)");
+  d.exec("CREATE INDEX IF NOT EXISTS traffic_key_ts ON traffic(key_id, ts)");
+  d.exec("CREATE INDEX IF NOT EXISTS traffic_account_ts ON traffic(account_id, ts)");
+  d.exec("CREATE INDEX IF NOT EXISTS traffic_provider_ts ON traffic(provider_id, ts)");
+  d.exec("CREATE INDEX IF NOT EXISTS traffic_tier_ts ON traffic(tier, ts)");
+  // For Task 3's node-resolution subquery: which step of a run was open when
+  // a traffic row's timestamp fell.
+  d.exec(
+    "CREATE INDEX IF NOT EXISTS workflow_execution_steps_execution_started ON workflow_execution_steps(execution_id, started_at)",
+  );
   ensureFtsTokenizer(d);
   db = d;
   importLegacyFiles(d);

@@ -73,7 +73,9 @@ export async function withRunToken<T>(
   const token = mint();
   const previous = registry.byExecution.get(executionId);
   if (previous) registry.byToken.delete(previous);
-  registry.byToken.set(token, principal);
+  // So no caller has to remember to set it: every request made on a run's
+  // token carries the run, whatever the principal it was minted with said.
+  registry.byToken.set(token, { ...principal, executionId });
   registry.byExecution.set(executionId, token);
   try {
     return await body(token);

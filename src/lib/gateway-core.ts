@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { after } from "next/server";
 
@@ -650,6 +650,9 @@ export async function dispatch(
   hooks: DispatchHooks = {},
 ): Promise<Dispatch> {
   const t0 = Date.now();
+  // This exchange's own id, for a copyable link straight to one row. Sixteen
+  // hex characters, matching the shape a key id already has.
+  const requestId = randomBytes(8).toString("hex");
   const settings = loadSettings();
   const requested = typeof body.model === "string" ? body.model : "(none)";
 
@@ -843,6 +846,8 @@ export async function dispatch(
       keyId: opts.caller?.keyId ?? null,
       userId: opts.caller?.userId ?? null,
       teamId: opts.caller?.teamId ?? null,
+      requestId,
+      executionId: opts.caller?.executionId ?? null,
     });
     publishActivity({
       ts: Date.now(),

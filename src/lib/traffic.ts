@@ -26,6 +26,10 @@ export interface TrafficEntry {
   keyId?: string | null;
   userId?: string | null;
   teamId?: string | null;
+  /** This exchange's own id, for a copyable link straight to one row. */
+  requestId: string;
+  /** The run this request was made for, when it was one. Null on a call gate made for itself outside any run, and on any row written before this column existed. */
+  executionId?: string | null;
 }
 
 /** What the page reads: the row, plus the names those ids resolve to. */
@@ -48,7 +52,7 @@ export function recordTraffic(e: TrafficEntry): void {
   try {
     const db = getDb();
     db.prepare(
-      "INSERT INTO traffic (ts,endpoint,requested,routed,tier,status,stream,from_cache,request_preview,response_preview,account_id,provider_id,key_id,user_id,team_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO traffic (ts,endpoint,requested,routed,tier,status,stream,from_cache,request_preview,response_preview,account_id,provider_id,key_id,user_id,team_id,request_id,execution_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     ).run(
       e.ts,
       e.endpoint,
@@ -65,6 +69,8 @@ export function recordTraffic(e: TrafficEntry): void {
       e.keyId ?? null,
       e.userId ?? null,
       e.teamId ?? null,
+      e.requestId,
+      e.executionId ?? null,
     );
     // Bound the table; cheap because of the ts index.
     db.prepare(
@@ -83,6 +89,7 @@ export function readTraffic(limit = 100): TrafficRow[] {
       `SELECT t.ts, t.endpoint, t.requested, t.routed, t.tier, t.status, t.stream,
               t.from_cache, t.request_preview, t.response_preview,
               t.account_id, t.provider_id, t.key_id, t.user_id, t.team_id,
+              t.request_id, t.execution_id,
               a.label AS account_label, p.label AS provider_label,
               u.name AS user_name, u.email AS user_email,
               k.name AS key_name, m.name AS team_name
@@ -97,7 +104,8 @@ export function readTraffic(limit = 100): TrafficRow[] {
     .all(limit) as any[];
   // This key order is the CSV header of /api/export?what=traffic — append,
   // never reorder, and set every key on every row: the header is read off the
-  // first one.
+  // first one. requestId and executionId were appended here after the
+  // original eighteen.
   return rows.map((r) => ({
     ts: Number(r.ts),
     endpoint: r.endpoint ?? "",
@@ -117,6 +125,8 @@ export function readTraffic(limit = 100): TrafficRow[] {
     caller: callerLabel(r),
     servedBy: servedByLabel(r),
     team: r.team_name ?? r.team_id ?? "",
+    requestId: r.request_id ?? "",
+    executionId: r.execution_id ?? null,
   }));
 }
 

@@ -55,6 +55,8 @@ export interface Principal {
   userId: string | null;
   teamId: string;
   scopes: KeyScope[];
+  /** The run this caller is acting for, when it is one. Trace data: it is never consulted by an authority check. */
+  executionId?: string | null;
 }
 
 function hashKey(raw: string): string {
