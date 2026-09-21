@@ -1,4 +1,7 @@
-import { readTraffic } from "@/lib/traffic";
+import { NextResponse } from "next/server";
+
+import { parseTrafficFilters } from "@/app/api/traffic/route";
+import { readTraffic, trafficRetentionCap } from "@/lib/traffic";
 import { exportUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
@@ -13,12 +16,26 @@ function toCsv(rows: Record<string, unknown>[]): string {
   return [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\n") + "\n";
 }
 
-/** Download usage or traffic as CSV/JSON. */
+/** Download usage or traffic as CSV/JSON. Traffic takes the same filters
+ *  `/api/traffic` does, so a filtered export is the whole of what was
+ *  filtered rather than a fixed, unrelated slice. */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const what = url.searchParams.get("what") === "traffic" ? "traffic" : "usage";
   const format = url.searchParams.get("format") === "json" ? "json" : "csv";
-  const rows: Record<string, unknown>[] = what === "traffic" ? (readTraffic({ limit: 500 }) as unknown as Record<string, unknown>[]) : exportUsage();
+
+  let rows: Record<string, unknown>[];
+  if (what === "traffic") {
+    const parsed = parseTrafficFilters(url);
+    if ("error" in parsed) return NextResponse.json({ error: `invalid ${parsed.error}` }, { status: 400 });
+    rows = readTraffic({ ...parsed.query, limit: parsed.query.limit ?? trafficRetentionCap() }) as unknown as Record<
+      string,
+      unknown
+    >[];
+  } else {
+    rows = exportUsage();
+  }
+
   const date = new Date().toISOString().slice(0, 10);
   const filename = `gate-${what}-${date}.${format}`;
   const body = format === "json" ? JSON.stringify(rows, null, 2) : toCsv(rows);

@@ -76,6 +76,14 @@ export function truncatePreview(s: string): string {
   return s.length > MAX_PREVIEW ? `${s.slice(0, MAX_PREVIEW)}…[+${s.length - MAX_PREVIEW}]` : s;
 }
 
+/** How many rows the log keeps — the sensible default for "give me all of
+ *  what was filtered" on an unfiltered export. A property read behind this
+ *  function rather than the constant itself, so a caller of it never has to
+ *  change when Task 5 moves the number into settings. */
+export function trafficRetentionCap(): number {
+  return MAX_ROWS;
+}
+
 export function recordTraffic(e: TrafficEntry): void {
   try {
     const db = getDb();
