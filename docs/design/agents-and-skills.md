@@ -179,7 +179,9 @@ The full frontmatter: `name`, `description`, `model` (default `sonnet`),
 hour, `0` for none), `maxTokens` (default 8192), `maxToolIterations` (`0` or
 unset means no cap, the default). Output field types are `string`, `number`,
 `boolean`, `string[]`, `number[]`, `object`, `object[]`, `any`, each with an
-optional trailing `?`. Unknown keys are rejected.
+optional trailing `?`. A `?` field may be left out of the answer or written as
+`null`, and both read as absent; a field without one must be present and must
+not be null. Unknown keys are rejected.
 
 ```markdown
 ---
@@ -218,4 +220,4 @@ Present the design and get approval before writing code.
 
 ## Decisions
 
-- none recorded yet
+- [0030 — An optional field may be written as null](../decisions/0030-an-optional-field-may-be-written-as-null.md)

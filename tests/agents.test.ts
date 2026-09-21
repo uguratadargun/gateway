@@ -74,6 +74,30 @@ describe("buildOutputSchema", () => {
     expect(schema.safeParse({}).success).toBe(false);
   });
 
+  /**
+   * A "?" field is a "say something only if there is a problem" field — every
+   * one a shipped agent declares is that kind. A model handed the key list
+   * writes all of them and spells the empty one null, which is the same
+   * answer as leaving it out. Refusing it threw away a verifier's finished
+   * work mid-run, and no test here had ever put a null against a "?" to
+   * notice.
+   */
+  it("reads null and absent as the same answer on an optional field", () => {
+    const schema = buildOutputSchema({
+      type: "json",
+      schema: { verified: "boolean", gaps: "string?", conflicts: "object[]?" },
+    });
+    expect(schema.parse({ verified: true, gaps: null, conflicts: null })).toEqual({ verified: true });
+    expect(schema.parse({ verified: true })).toEqual({ verified: true });
+    expect(schema.parse({ verified: true, gaps: "one task unproven" }).gaps).toBe("one task unproven");
+  });
+
+  it("still refuses null where the field is required, and a wrong type where it is not", () => {
+    const schema = buildOutputSchema({ type: "json", schema: { verified: "boolean", gaps: "string?" } });
+    expect(schema.safeParse({ verified: null }).success).toBe(false);
+    expect(schema.safeParse({ verified: true, gaps: 5 }).success).toBe(false);
+  });
+
   it("validates text output as a plain string", () => {
     expect(buildOutputSchema({ type: "text" }).parse("hello")).toBe("hello");
   });

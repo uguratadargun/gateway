@@ -21,8 +21,8 @@ output:
   type: json                        # or: type: text
   schema:
     verdict: string                 # string, number, boolean, string[], number[], object, object[], any
-    findings: "string[]"            #   a trailing "?" makes the field optional
-    notes: "string?"
+    findings: "string[]"            #   a trailing "?" makes the field optional: the
+    notes: "string?"                #   agent may leave the key out or write null
 timeoutMs: 3600000                  # DEFAULT when omitted, and what a new agent should
                                     # carry. Covers the whole node — every tool round,
                                     # not one model call. On the server the node is

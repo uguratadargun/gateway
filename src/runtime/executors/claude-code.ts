@@ -292,7 +292,7 @@ export async function runClaudeCodeNode(
         .map(([field, type]) => `  "${field}": ${type}`)
         .join("\n");
       appended.push(
-        `When you have finished the work, your final message must be a single JSON object and nothing else — no prose, no code fence. Fields:\n{\n${fields}\n}\nA type ending in "?" is optional.`,
+        `When you have finished the work, your final message must be a single JSON object and nothing else — no prose, no code fence. Fields:\n{\n${fields}\n}\nA type ending in "?" is optional: leave that key out, or write null — both say there was nothing to put there. Every other key is required, and null is not an answer for one.`,
       );
     }
     if (appended.length) args.push("--append-system-prompt", appended.join("\n\n"));

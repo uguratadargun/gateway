@@ -348,7 +348,7 @@ export function systemPrompt(
       .map(([field, type]) => `  "${field}": ${type}`)
       .join("\n");
     parts.push(
-      `${hasTools ? "When you are done working, your final message must be a single JSON object" : "Respond with a single JSON object"} and nothing else — no prose, no code fence. Fields:\n{\n${fields}\n}\nA type ending in "?" is optional.`,
+      `${hasTools ? "When you are done working, your final message must be a single JSON object" : "Respond with a single JSON object"} and nothing else — no prose, no code fence. Fields:\n{\n${fields}\n}\nA type ending in "?" is optional: leave that key out, or write null — both say there was nothing to put there. Every other key is required, and null is not an answer for one.`,
     );
   }
   return parts.join("\n\n");

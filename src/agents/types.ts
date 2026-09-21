@@ -11,8 +11,11 @@ import { SKILL_ID_RE } from "@/skills/types";
 /**
  * Field types an agent may declare for its structured output. A compact
  * vocabulary rather than full JSON Schema — enough to validate a model's
- * answer, short enough to write by hand. A trailing "?" marks a field
- * optional.
+ * answer, short enough to write by hand.
+ *
+ * A trailing "?" marks a field optional, and optional here means "there was
+ * nothing to say": the key may be left out or written as null, and the two
+ * are the same answer. See `buildOutputSchema`.
  */
 export const FIELD_TYPES = ["string", "number", "boolean", "string[]", "number[]", "object", "object[]", "any"] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
@@ -145,10 +148,31 @@ export function buildOutputSchema(spec: AgentOutputSpec): z.ZodTypeAny {
   for (const [field, raw] of Object.entries(spec.schema)) {
     const optional = raw.endsWith("?");
     const base = fieldValidator(raw.replace(/\?$/, "") as FieldType);
-    shape[field] = optional ? base.optional() : base;
+    shape[field] = optional ? optionalField(base) : base;
   }
   // Models routinely add commentary fields; extra keys are kept, not rejected.
   return z.object(shape).passthrough();
+}
+
+/**
+ * An optional field, in both the spellings a model actually writes.
+ *
+ * Every optional field a shipped agent declares is a "say something only if
+ * there is a problem" field — the verifier's `gaps`, the reviewer's
+ * `feedback`, the planner's `conflicts`. A model handed a list of keys and
+ * asked for a JSON object writes all of them and puts `null` in the empty
+ * one; that is the same answer as leaving the key out, and refusing it threw
+ * away a verifier's finished work mid-run rather than catching any mistake.
+ *
+ * Null is normalised to absent so that nothing downstream has to know which
+ * spelling arrived: an edge reading `outputs.verifier.gaps`, and a prompt
+ * interpolating it, see the field missing either way. A required field is
+ * untouched — there, null is still wrong, and saying so is the point.
+ */
+function optionalField(base: z.ZodTypeAny): z.ZodTypeAny {
+  return base
+    .nullish()
+    .transform((v) => v ?? undefined);
 }
 
 function fieldValidator(t: FieldType): z.ZodTypeAny {
