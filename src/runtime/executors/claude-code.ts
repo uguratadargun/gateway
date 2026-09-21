@@ -6,7 +6,7 @@ import { parseProviderRef } from "@/lib/providers";
 import { WorkflowError } from "@/runtime/errors";
 import type { NodeUsageRecord, ToolCallRecord } from "@/runtime/state";
 import type { RunWorkspace } from "@/runtime/workspace";
-import { backgroundSubagentNotice, buildSkillPlugin, skillsDirective, unattendedNotice } from "@/skills/inject";
+import { backgroundSubagentNotice, buildSkillPlugin, fileReadingNotice, skillsDirective, unattendedNotice } from "@/skills/inject";
 import type { SkillDefinition } from "@/skills/types";
 
 import { outputCorrection, parseOutput } from "./agent";
@@ -285,6 +285,7 @@ export async function runClaudeCodeNode(
     // headless child has nobody to answer it, whatever its skills expect.
     appended.push(unattendedNotice());
     appended.push(backgroundSubagentNotice());
+    appended.push(fileReadingNotice());
     if (skills.length) appended.push(skillsDirective(skills));
     if (agent.output.type === "json") {
       const fields = Object.entries(agent.output.schema)

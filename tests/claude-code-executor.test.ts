@@ -122,11 +122,21 @@ describe("claude-code executor", () => {
     expect(appended).toContain("the person decides, not you");
     // And told how its subagents behave here: dispatch returns at once and
     // the result comes as a notification at the next tool call — so neither
-    // minutes of sleeping for a report file, nor ending its turn, which for a
-    // headless process is finishing with the work half-built.
+    // minutes of passing time waiting for a report file, nor ending its turn,
+    // which for a headless process is finishing with the work half-built.
     expect(appended).toContain("run in the background");
     expect(appended).toContain("does not finish this node");
-    expect(appended).toContain("never sleep in a shell loop");
+    expect(appended).toContain("no loop around any of them");
+    // A context-copying subagent type copies the instruction to dispatch, so
+    // the ban is on the dispatch rather than on a depth a copy cannot know.
+    expect(appended).toContain("Never dispatch a subagent type that copies your own context");
+    // And that a result it asked for and did not read is a result it does not
+    // have, whatever its verdict says.
+    expect(appended).toContain("name every subagent you dispatched and what it returned");
+    // And what a read costs here, which is a fact about the harness rather
+    // than a method any one agent works by.
+    expect(appended).toContain("Read files with Read");
+    expect(appended).toContain("does not count as read");
   });
 
   it("reports each tool call as it comes back, so the run is watchable", async () => {

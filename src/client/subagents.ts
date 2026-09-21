@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { listAgents } from "@/agents/registry";
 import type { AgentDefinition } from "@/agents/types";
 import type { DefinitionScope } from "@/lib/def-root";
-import { backgroundSubagentNotice } from "@/skills/inject";
+import { backgroundSubagentNotice, fileReadingNotice } from "@/skills/inject";
 
 /**
  * The team's claude-code agents, as subagents of the person's own Claude Code.
@@ -52,6 +52,8 @@ it is the next pass of the same node: what you read and decided still stands, an
 carries what is new.
 
 ${backgroundSubagentNotice()}
+
+${fileReadingNotice()}
 `;
 }
 
