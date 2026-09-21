@@ -55,7 +55,7 @@ function migrateLegacyDefinitions() {
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join as join2, relative } from "node:path";
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/js-yaml/dist/js-yaml.mjs
+// node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
 function defineScalarTag(tagName, options) {
   return {
@@ -3151,7 +3151,7 @@ var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/external.js
+// node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -3263,7 +3263,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/util.js
+// node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -3397,7 +3397,7 @@ var getParsedType = (data) => {
   }
 };
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/ZodError.js
+// node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -3515,7 +3515,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/locales/en.js
+// node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -3618,7 +3618,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/errors.js
+// node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -3627,7 +3627,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/parseUtil.js
+// node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -3737,14 +3737,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/helpers/errorUtil.js
+// node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// ../../../Users/ugur/Projects/ulak/gateway/node_modules/zod/v3/types.js
+// node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -7876,7 +7876,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.41.0";
+var GATE_VERSION = "0.42.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -9548,7 +9548,10 @@ function unattendedNotice() {
   return "This node is running unattended: there is no person in this session, and a question you ask here reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait for a reply here. If the prompt below gives such questions a way out \u2014 an output field they go into, so that the run can put them to the person elsewhere \u2014 put them there, all of them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where the prompt gives no such way out, or tells you the person has already been asked and was not there, take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
 }
 function backgroundSubagentNotice() {
-  return "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent is launched, and its result reaches you as a notification. Ending your turn while one of yours is still running does not finish this node \u2014 you are resumed with the result when it completes. So after dispatching, do whatever work does not depend on the result, then say what you are waiting on and stop; never poll for its commits or a report file, and never sleep in a shell loop, because the result was on its way and a turn spent sleeping is one in which it cannot arrive. Your final answer comes only when nothing you dispatched is still running.";
+  return "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent is launched, and its result reaches you as a notification. Ending your turn while one of yours is still running does not finish this node \u2014 you are resumed with the result when it completes. So after dispatching, do whatever work does not depend on the result, then say what you are waiting on and stop; never poll for its commits or a report file, and never run a command whose only purpose is to let time pass \u2014 no `sleep`, no `true`, no `echo`, no `date`, and no loop around any of them \u2014 because the result was on its way and a turn spent passing time is one in which it cannot arrive.\n\nNever dispatch a subagent type that copies your own context. Your context contains your instruction to dispatch, so the copy dispatches too, and its copies do, and a copy cannot tell that it is one. Measured here: four such dispatches became sixteen, and one branch's tail was 40% of the node. Dispatch a named agent with a task written out in the prompt, so that what it was asked is something you decided and can read back.\n\nDispatch only when the work is bigger than the dispatch. A subagent starts cold: it reads what you have already read before it can begin, and a check you could run yourself in a minute costs more dispatched than done. Reading a handful of files, running this project's test command, answering a question you already know where to look for \u2014 do those yourself.\n\nBefore you give your final answer, name every subagent you dispatched and what it returned. If any of them has not returned, you have no final answer yet: say which one you are waiting on and stop. A verdict written without a result you asked for is wrong even when it happens to be right, because you did not know that when you wrote it.";
+}
+function fileReadingNotice() {
+  return 'Read files with Read, find them with Glob, and search them with Grep. Each is one call that returns what you asked for. A shell command that does the same thing \u2014 `cat`, `head`, `sed -n`, `find`, `grep` \u2014 opens a shell first, and here that costs more than the read: measured in one node, 43 Reads took a second between them while 107 shell calls took nearly four minutes, most of it startup. Shell is for commands that do something: tests, a build, git.\n\nA file read through the shell does not count as read. The next Edit to it is refused \u2014 "File has not been read yet" \u2014 and you pay for the read twice; measured in the same node, thirteen refused Edits. Read the whole file the first time rather than a window you will have to widen, and re-read only after something has changed it.';
 }
 function bundlesDir() {
   return join11(gateHome(), "skill-bundles");
@@ -9777,6 +9780,7 @@ async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
     const appended = [];
     appended.push(unattendedNotice());
     appended.push(backgroundSubagentNotice());
+    appended.push(fileReadingNotice());
     if (skills.length) appended.push(skillsDirective(skills));
     if (agent.output.type === "json") {
       const fields = Object.entries(agent.output.schema).map(([field2, type]) => `  "${field2}": ${type}`).join("\n");
@@ -10395,6 +10399,8 @@ it is the next pass of the same node: what you read and decided still stands, an
 carries what is new.
 
 ${backgroundSubagentNotice()}
+
+${fileReadingNotice()}
 `;
 }
 function removeSubagents() {
@@ -11454,7 +11460,8 @@ ${answerFileNotice(outputFile2, shape2)}`,
             `Tell it: end the final message with ${shape2}, and nothing after it.`,
             "It cannot ask the user anything. Do not answer for it either; what it needs settled goes into its answer the way the prompt says.",
             `The prompt tells it to write that answer to ${outputFile2} itself. The moment it returns, hand that file back as it is \u2014 before telling the user anything, and without retyping it \u2014 naming the subagent so the next pass of this node can continue it:`,
-            `  gate step ${executionId} ${node.id} --output-file ${outputFile2} --subagent <its agent id or name>`,
+            `  gate step ${executionId} ${node.id} --output-file ${outputFile2} --subagent <its agent id>`,
+            `The agent id is the short opaque id the Agent tool returned in its result. It is not "${subagent}": that is the type you started, and sending to it resolves to nobody, so the next pass would start over from nothing. \`gate step\` refuses that name rather than storing it.`,
             "If the file is not there, take the answer from its final message, write it to that path, and hand it back the same way."
           ]
         };
@@ -11587,6 +11594,13 @@ async function step(ctx, executionId, nodeId2, answer, opts = {}) {
     throw new WorkflowError(
       "WORKFLOW_ROUTING_ERROR",
       `this run is waiting on "${pending.nodeId}", not "${nodeId2}" \u2014 run \`gate next ${executionId}\` to see what it wants`
+    );
+  }
+  const mirrorPrefix = subagentName(ctx.team, "");
+  if (opts.subagent?.startsWith(mirrorPrefix)) {
+    throw new WorkflowError(
+      "WORKFLOW_ROUTING_ERROR",
+      `--subagent takes the agent id the Agent tool returned \u2014 the short opaque id in its result \u2014 not "${opts.subagent}", which is the subagent's type name in ~/.claude/agents/. Resuming by type name spawns a fresh subagent on every pass, which reads the whole worktree again. Hand this step back with that id, or without --subagent at all if you no longer have it.`
     );
   }
   const { execution, publish } = await ctx.client.execution(executionId);
@@ -12413,7 +12427,8 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
        --task-id <id>                           file this run under a cross-team task
   gate next <execution-id>                      what to do next
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
-        [--subagent <id>]                        which subagent did it, so its next pass continues it
+        [--subagent <id>]                        the agent id the Agent tool returned, so its next pass
+                                                 continues it \u2014 not the gate-<team>-<agent> type name
   gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
   gate continue <execution-id>                  pick a failed run back up at the node it failed on
   gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings

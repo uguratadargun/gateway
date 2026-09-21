@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.42.0 — 2026-09-21
+
 - Connecting a machine no longer needs Claude Code to be working. `/gate:login` is a prompt, so a Claude Code at its weekly limit refused the one command that would have put the person on the team's gateway instead — the way out was behind the account that was out of quota. The plugin now writes a `gate` command to `~/.local/bin` on every session start, and a key is handed out as two lines: the slash command, and `~/.local/bin/gate login <token>` for a terminal with Claude Code closed. Logging in spends no model call, so a spent limit cannot stop it. Logging in again also keeps this machine's workflow approvals and repository paths, which it used to drop.
 
 - `dev-auto`, a shipped road with nobody in the loop: `dev`'s plan, build, verify and review, with the planner's questions answered by the run itself — a new shipped `decide` agent rules from the planner's recommendation and the repository's record, and every ruling is written into the plan's assumptions — no plan review, no acceptance, and the reviewer's approval opens the merge request. A planner still asking after three rounds ends on `never-planned`; one that objects to another team's decision stops, since only a person raises an objection. A test holds its graph to `dev`'s, node by node, since it is written out rather than derived. Never picked on your behalf; `/gate:run dev-auto …` names it. `npm run defaults:restore` on a live gate writes the new agent and workflow.
