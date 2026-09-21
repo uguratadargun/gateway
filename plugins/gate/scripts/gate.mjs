@@ -12507,6 +12507,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
 
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task\u2026]                 start a run, print the first instruction
+       --input key=value                        (repeat for more than one input)
        --task-id <id>                           file this run under a cross-team task
   gate next <execution-id> [--full]             what to do next (--full: the whole
                                                 prompt again, for a node whose
@@ -13094,7 +13095,7 @@ function printInstruction(instruction) {
 }
 async function cmdBegin(args) {
   const [workflowId, ...trailing] = args.positional;
-  if (!workflowId) die("usage: gate begin <workflow> [task\u2026]");
+  if (!workflowId) die("usage: gate begin <workflow> [task\u2026] [--input key=value]");
   const { ctx, team } = await sessionContext();
   const manifest = readManifest(team);
   const entry = manifest?.workflows.find((w) => w.id === workflowId);
