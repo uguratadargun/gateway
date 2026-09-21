@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- An agent that answers an optional field with `null` is no longer refused. A `?` in an output schema means "say something only if there is something to say", and a model handed the key list writes all of them and spells the empty one `null` — which was rejected at the last gate, after the work, throwing away a finished verification. `null`, absent and `undefined` are now one answer on a `?` field; a field without one still refuses `null`. The six places the notation is explained say so in the same words.
+
+- A node's second pass is sent only what changed. The subagent that did the first pass still holds the worktree it read and the reasoning it did, and it was being handed its whole brief again — thousands of tokens it already had, which a model reads as an instruction to start the node over. gate now rebuilds the node's inputs as they stood at the previous visit, compares them to the inputs now, and sends the ones that differ under their own headings. `gate next <execution-id> --full` gives back the whole prompt, which is what to do when the subagent is gone.
+
+- The reviewer is no longer handed the whole diff as text. The `diff` node takes `--stat` — enough to say whether anything was built and in what shape — and the reviewer runs its own `git diff` in the worktree it is already sitting in.
+
+- `dev-auto` can stop at the commit. Start it with the run input `deliver` set to `"branch"` and the run ends on a new `committed` terminal, completed, with the work reviewed and on the branch and the push left to you — where before the only way to prevent a merge request was to break the git remote and read the failure. Left unset, the road is unchanged. `not-shipped` now says what is true when it is reached: reviewed and committed on the branch, the push or the merge request failed.
+
+- `/gate:run` no longer tells every node to ask the user. A node whose agent declares no `asks` is written to decide alone — the autonomous road's `decide` is one — and `remember` says which kind each node is. The command file and the `decide` agent were contradicting each other in front of the model.
+
 ## 0.42.0 — 2026-09-21
 
 - Connecting a machine no longer needs Claude Code to be working. `/gate:login` is a prompt, so a Claude Code at its weekly limit refused the one command that would have put the person on the team's gateway instead — the way out was behind the account that was out of quota. The plugin now writes a `gate` command to `~/.local/bin` on every session start, and a key is handed out as two lines: the slash command, and `~/.local/bin/gate login <token>` for a terminal with Claude Code closed. Logging in spends no model call, so a spent limit cannot stop it. Logging in again also keeps this machine's workflow approvals and repository paths, which it used to drop.
