@@ -162,14 +162,24 @@ reviewers, each with its own narrow agent and one job. Then:
   tool takes `diff.stdout` instead;
 - `executor: claude-code`, like the shipped one, if it has to read the
   repository around the diff; `timeoutMs: 3600000` either way;
-- give it the shipped reviewer's output shape, `replan` included — a
-  specialist reviewer's rejection is nearly always a bounded fix, so it
-  answers `replan: false` unless the plan itself is at fault;
+- give it the shipped reviewer's output shape, `replan` and `recordOnly`
+  included — a specialist reviewer's rejection is nearly always a bounded
+  fix, so it answers `replan: false` unless the plan itself is at fault, and
+  `recordOnly: true` only when *every* finding it is sending the change back
+  for is about the repository's record rather than its code. Both are
+  required fields, as they are on the shipped one: a reviewer that answers
+  one and not the other fails output validation rather than being read as
+  anything;
 - widen the verdict's condition so every reviewer has to approve:
   `outputs.reviewer.verdict == "approved" && outputs.<yours>.verdict == "approved"`,
   and the fix edge so either reviewer's bounded fix reaches the implementer:
   `outputs.reviewer.replan == false && outputs.<yours>.replan == false`.
-  The give-up edge (`visits.reviewer >= 4`) stays where it is.
+  Widen the record edges the same way — a round that skips the implementer
+  and the verifier is only safe when *no* reviewer wanted code changed:
+  `outputs.reviewer.recordOnly == true && outputs.<yours>.recordOnly == true`.
+  The give-up edges stay where they are, all three of them: they say
+  `visits.reviewer - visits.record-fix >= 4` in the only form the condition
+  language has, and a record round must not spend a review.
 
 The default reviewer stays a branch. It is not replaced, and it is not made
 optional.

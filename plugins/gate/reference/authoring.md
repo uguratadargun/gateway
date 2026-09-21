@@ -382,6 +382,20 @@ with a person in it and a pipeline node often has none. Three things the
   a skill would ask a way out (an output field the pipeline carries to the
   person). Never leave the agent to guess whether anyone is listening; it
   guesses "nobody", and approves its own plan.
+
+  That notice is one of three a `claude-code` node is given, and the other two
+  are about the machine rather than the skill, so no prompt has to repeat
+  them. A node that can dispatch **subagents** is told what one costs: never a
+  command whose only purpose is to let time pass, never a subagent type that
+  copies its own context — measured here, four dispatches became sixteen that
+  way, because the copy carried the instruction to fan out — and every
+  subagent it started named and accounted for before it gives a final answer.
+  A node that reads **files** is told to use Read, Glob and Grep rather than
+  the shell: each Bash call opens a shell, and a file read through one does
+  not count as read, so the next Edit to it is refused; measured in the same
+  run, thirteen rejected edits and five minutes of `cat` before the first
+  change. Both of those are harness facts rather than method, which is why
+  they live in gate rather than in any agent you write.
 - **They commit as they go.** Writing plans puts a commit step in every task;
   subagent-driven development commits after each one. A pipeline that then
   runs a plain `git diff` sees nothing. Diff against the run's base commit
@@ -424,6 +438,8 @@ base ─▶ plan-dir ─▶ planner ─▶ plan-check ─┬─ questions ─▶
           │                                                                        │                      └─ verified ─▶ stage ─▶ diff ─┬─ empty ─▶ nothing-changed
           │                                                                        │                                                    └─▶ reviewer ─▶ verdict ─┬─ approved ─▶ stage-all ─▶ staged ─┬─ nothing left ─┐
           │                                                                        │                                                                             ├─ 4th review ─▶ review-stuck     └─▶ commit ─────┤
+          │                                                                        │                                                                             ├─ record only ─────▶ record-fix ─▶ stage         │
+          │                                                                        │                                                                             ├─ 2nd record fix ─▶ record-wrong                 │
           │                                                                        └──────────────────────────────────────────── fix requested (replan: false) ──┤                                                 ▼
           │                                                                                                                                                      └─ plan changes requested ──▶ planner      acceptance ─▶ decision ─┬─ ship ─▶ merge-request ─▶ done
           │                                                                                                                                                                                                                        ├─ hold ─▶ awaiting-approval
@@ -484,9 +500,18 @@ The verifier stands between them and the
 review: it runs the project's own checks on the tree as it is and holds every
 task's requirement against it, so the reviewer reads a change that passed and
 the merge request carries a suite that was actually run; its gaps go back to
-the implementer as tasks. A rejected review goes where the reviewer says —
-`replan: false` sends a bounded fix straight to the implementer, `replan:
-true` sends a fault in the plan back to the planner. The person's request
+the implementer as tasks. A rejected review goes one of three ways, and the
+reviewer says which — `recordOnly: true`, when every finding is about the
+repository's record rather than its code, sends the change to `record-fix`, a
+small agent that may touch documents and nothing else and hands back to
+`stage`; `replan: false` sends a bounded fix straight to the implementer;
+`replan: true` sends a fault in the plan back to the planner. A record round
+skips the implementer and the verifier because it changes nothing they would
+have to re-check, and it does not spend a review: the give-up edges say
+`visits.reviewer - visits.record-fix >= 4`, written out as the three forms
+the condition language can express, so four real reviews stay four whether or
+not the run needed a document fixed. Two record rounds that still do not
+satisfy the reviewer end on `record-wrong` rather than looping. The person's request
 at `acceptance` goes the same way: the node answers `replan` too, and a
 wording, a name, a translation, a small fix in what the branch already has
 is one more task for the implementer — which continues where it stopped —
@@ -501,7 +526,24 @@ differs is inside the agents (a spec document, a ledger under
 code reviewer), and it is the only shipped pipeline that needs skills
 imported.
 
-The person is in the graph three times, and every one of those nodes runs
+`dev-auto` is `dev` with the three gates taken out: the planner's questions
+go to `decide`, an agent that reads the repository and rules on them instead
+of asking; the plan is not shown to anyone; and the reviewer's approval opens
+the merge request directly, with no `acceptance`. Everything else is `dev`
+node for node, and a test holds the two together body by body — what differs
+is only where six nodes route. `decide` is the one shipped agent that
+deliberately overrides the unattended notice, and it is `executor: gate` with
+reading tools only, so "you change nothing" is mechanical rather than a
+promise. What a gate would have caught ends the run instead: three rounds of
+questions the repository cannot answer lands on `never-planned`, and an
+objection the planner raises lands on `objection-needs-a-person`. It is never
+picked for a task on anyone's behalf — a run with nobody in it is the
+person's choice to make, and the merge request is where they read what it
+decided.
+
+The person is in the graph three times — in `dev`, `dev-super` and
+`dev-quick`; `dev-auto` is the one shipped pipeline with none of them. Every
+one of those nodes runs
 on the loop driving the run — the session — and decides nothing itself.
 `clarify` carries the planner's questions to them and their answers back:
 the planner runs in its own model and its own process and cannot ask from
@@ -598,16 +640,31 @@ a reviewer with no command tool needs `diff.stdout` handed over. The
 empty-diff edge matters too: an implementer that wrote nothing must fail the
 run, not hand the reviewers a blank page to approve.
 
-### Rejection goes where the reviewer says: a fix to the implementer, a fault to the planner
+### Rejection goes where the reviewer says: a document to record-fix, a fix to the implementer, a fault to the planner
 
 A failing test goes back to the **implementer** — the plan was fine, the code
-was not. A rejected review is either of two things, and the reviewer is the
-one that knows which, so it says so in its output (`replan`). A bounded fix
-— a bug, a missing test, a file the plan named and the diff did not touch —
-goes straight back to the **implementer** as a new task against the plan as
-it stands; measured here, sending those through the planner cost a ten-minute
-planning pass and a second plan approval for one missing call. A fault in the
-plan goes back to the **planner**, which hands a revised plan down.
+was not. A rejected review is one of three things, and the reviewer is the
+one that knows which, so it says so in its output (`replan`, `recordOnly`).
+A bounded fix — a bug, a missing test, a file the plan named and the diff did
+not touch — goes straight back to the **implementer** as a new task against
+the plan as it stands; measured here, sending those through the planner cost
+a ten-minute planning pass and a second plan approval for one missing call.
+A fault in the plan goes back to the **planner**, which hands a revised plan
+down.
+
+The third is the one that used to be charged as the second. When *every*
+finding is about the repository's record — a design doc's sentence that is no
+longer true, a missing decision record, a changelog line — `recordOnly: true`
+sends the change to **`record-fix`**, an agent that may touch `docs/`,
+`CHANGELOG.md`, the plugin's own prose and misleading comments, and nothing
+else. Measured here, a run whose code was already correct and verified spent
+three full turns of planner, implementer and verifier on three documentation
+sentences and then hit the give-up edge and ended `failed`: fifty minutes a
+turn to change prose nobody was going to run. The record round is one agent,
+no plan, no rebuild, no re-verify, and it hands back to `stage` so the diff
+is re-cut and the reviewer sees what was written. Keep both fields required
+on any reviewer you add: a reviewer that answers one and not the other fails
+output validation, which is louder than being read as "no".
 
 The reason for the second route is that such a rejection is very often "this
 was cut at the wrong seam", and the implementer cannot act on that: it is
@@ -681,6 +738,27 @@ the give-up edge goes after the success edge and before the loop-back fallback.
 Give the same treatment to the review-rejection loop (`visits.reviewer >= 4`,
 counted in reviews because the planner also runs for the person's questions)
 and to the verification loop (`visits.verifier >= 3`).
+
+A visit is counted when the node **runs**, before its edges are looked at, so
+a counter cannot be avoided by ordering an edge above the give-up one. When a
+loop has a cheap round that should not be charged against the budget — the
+record round is the shipped case — subtract it. The condition language has no
+arithmetic, so `visits.reviewer - visits.record-fix >= 4` is written as one
+edge per value of the cheap counter, in order, above the fallback:
+
+```yaml
+      - when: visits.record-fix == 0 && visits.reviewer >= 4
+        to: review-stuck
+      - when: visits.record-fix == 1 && visits.reviewer >= 5
+        to: review-stuck
+      - when: visits.reviewer >= 6
+        to: review-stuck
+```
+
+The last one is not the general case — it is the ceiling of the cheap loop's
+own give-up edge (two record rounds, then `record-wrong`), so the series
+terminates. A loop whose cheap round is unbounded cannot be written this way,
+which is the reason to bound it.
 
 ### Approved work has to ship
 
@@ -811,8 +889,11 @@ accept it. The server validates shape, not sense.
 - [ ] **The verifier stands between the implementer and `stage`**, its gaps
       route to the implementer, and a project's own test command goes between
       the verifier and `stage` as a deterministic node.
-- [ ] **Review rejection routes on `replan`** — `false` to the implementer,
-      `true` to the planner; test failure to the implementer.
+- [ ] **Review rejection routes on `recordOnly` and `replan`** — `recordOnly`
+      to `record-fix` and back to `stage`, `replan: false` to the implementer,
+      `replan: true` to the planner; test failure to the implementer. Both
+      fields are required on every reviewer in the graph, and the record edges
+      go above the give-up edges, which subtract the record rounds.
 - [ ] **The planner declares the optional review inputs** so a second pass can
       revise the plan.
 - [ ] **Command nodes that can fail feed both `stdout` and `stderr`** to whoever

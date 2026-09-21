@@ -41,7 +41,9 @@ rules in the file decide the rest.
 | **Plan review** | Shows the person the plan: "shall we do it this way?" |
 | **Implementer** | Does the plan step by step, test first, then the code; one commit per step |
 | **Verifier** | Runs the project's whole test suite and checks every item of the plan was done |
-| **Reviewer** | Reads the code and says "approved" or "fix this" |
+| **Reviewer** | Reads the code and says "approved" or "fix this", and whether the "this" is only the record |
+| **Record fix** | Rewrites the document, the changelog line or the spec a review rejected, and may touch nothing else |
+| **Decide** | Rules on the planner's questions where there is nobody to ask: `dev-auto` only |
 | **Acceptance** | Tells the person "ready, try it" and asks whether to open the merge request |
 
 The person is in the loop at three points — a **question** (clarify),
@@ -49,13 +51,25 @@ The person is in the loop at three points — a **question** (clarify),
 run waits until they answer. The plan is shown once: a revision of an
 approved plan goes straight to the implementer. A rejection goes where the
 reviewer says — a bounded fix to the implementer, a fault in the plan to
-the planner — and acceptance splits the person's requests the same way.
+the planner — and acceptance splits the person's requests the same way. A
+rejection whose findings are *all* about the record takes a third way: the
+reviewer sets `recordOnly`, the `record-fix` agent rewrites what it named
+and may not touch a line of source, and the diff goes straight back to
+review with no rebuild and no re-verification — a lap here is about fifty
+minutes whatever the size of the finding, and three documentation
+sentences once ended a run as failed with every code defect already fixed.
+Two such rounds are allowed; a record still wrong after them ends on
+`record-wrong`, which says the code was accepted and the writing was not.
 Before the plan is shown, the planner may report that another team's
 decision cannot be lived with here; the objection is put to the person
 and, if confirmed, the run stops at `blocked-by-objection` (see
 `memory.md`). There are no engine ceilings: loops end on the workflow's
-own give-up edges — `review-stuck`, `not-verified`, `no-spec`,
-`not-shipped`, `nothing-changed` — which say what is stuck. The starting
+own give-up edges — `review-stuck`, `record-wrong`, `not-verified`,
+`no-spec`, `not-shipped`, `nothing-changed` — which say what is stuck. The
+review loop's give-up edge is written three times over, because it means
+"four reviews that were not record rounds" and the condition language has
+no arithmetic: a visit is counted when a node runs, before its edges are
+read, so a record round would otherwise spend one of the four. The starting
 commit is recorded first and every diff is taken against it, because the
 implementer commits as it goes and a plain `git diff` would show a finished
 run as empty. The plan file stays under `docs/plans/`, ignored by a
@@ -111,8 +125,11 @@ merge request. Three rounds of answers that still end in a question end the
 run on `never-planned`, and a planner that objects to another team's
 decision ends it on `objection-needs-a-person` — an objection is a request
 to another team, and nobody on this road can confirm one, so that task goes
-through `dev`. The road is never picked on the person's behalf; they name it.
-All three roads read memory first. Two more roads build nothing. **`blame`** is
+through `dev`. It is written out rather than derived from `dev` — the
+difference is six nodes, not a renaming — and a test holds it to `dev`'s
+shape node by node. The road is never picked on the person's behalf; they
+name it.
+Every road that builds reads memory first. Two more roads build nothing. **`blame`** is
 for something that used to work: recall lists the runs, commits and
 decisions that touched the area, the investigator reads the code and the
 history against that and says how sure it is — *related*, *suspected*,
@@ -188,7 +205,12 @@ the `env` block of `~/.claude/settings.json`; `gate live` does the same per
 repository, `gate env` prints it as shell exports), and those nodes then
 run as subagents of the session, drawn live in the terminal, in the
 agent's model — gate keeps the team's agents under `~/.claude/agents/` for
-that, and a node's next pass continues the subagent that did its last one.
+that, and a node's next pass continues the subagent that did its last one —
+addressed by the agent id the Agent tool returned, never by the
+`gate-<team>-<agent>` type name of the file under `~/.claude/agents/`,
+which resolves to nobody and starts a fresh subagent that reads the whole
+worktree again. `gate step` refuses that name rather than recording a
+resume target that will not work.
 In a session not on the gateway they run as a detached worker (`gate
 work`) the session follows with `gate wait`. Either way those nodes do not
 ask; questions travel through `clarify`.
@@ -330,8 +352,8 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Key files
 
-- `src/workflows/defaults.ts` — the shipped pipelines: `dev`, `dev-super` derived from it, `dev-quick`, `dev-auto`, `blame`, `ask`, with the reasoning for each edge
-- `src/agents/defaults.ts` — the shipped agents and their `super-*` and `quick-*` counterparts, the three gates to the person and `decide` in their place on the autonomous road, the investigator, source-review
+- `src/workflows/defaults.ts` — the shipped pipelines: `dev`, `dev-super` derived from it, `dev-auto` written out and held to `dev`'s shape by a test, `dev-quick`, `blame`, `ask`, with the reasoning for each edge
+- `src/agents/defaults.ts` — the shipped agents and their `super-*` and `quick-*` counterparts, the three gates to the person and `decide` in their place on the autonomous road, `record-fix`, the investigator, source-review
 - `src/client/cli.ts`, `step.ts` — the `gate` command (login, the mirror, the first-run approval, every subcommand) and the session-driven loop: `begin` / `next` / `step` / `wait`, the definition pin, the session pointer, the worker
 - `src/client/walk.ts`, `run.ts`, `subagents.ts`, `cache.ts` — the replay, the headless engine, a claude-code node as a subagent, the mirror
 - `src/lib/protocol.ts`, `src/app/api/v1/` — the version headers and `MIN_CLIENT_VERSION`; the client API: identity, the bundle, run registration, progress, stop, continue

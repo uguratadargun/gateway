@@ -83,8 +83,29 @@ the same thing either way:
   the system prompt. Files a skill ships are named and explicitly marked
   unreadable, rather than being pointed at and quietly missing.
 
-Skills were written for a session with a person in it, so a node run headless
-is also told that nothing it asks can be answered and what to do instead.
+A `claude-code` node is also told three things about the machine it is
+running on, appended to whatever its own prompt says. Skills were written for
+a session with a person in it, so a node run **unattended** is told that
+nothing it asks can be answered and what to do instead. A node that can
+dispatch **subagents** is told what one costs: never a command whose only
+purpose is to let time pass, never a subagent type that copies its own
+context — measured here, four dispatches became sixteen that way, because the
+copy carried the instruction to fan out — and every subagent it started named
+and accounted for before it gives a final answer. And a node that reads
+**files** is told to use Read, Glob and Grep rather than the shell: each Bash
+call opens a shell, and a file read through one does not count as read, so the
+next Edit to it is refused.
+
+Those notices are issued at exactly two sites, and both get all of them but
+one: `src/runtime/executors/claude-code.ts`, for every `claude-code` node, and
+`src/client/subagents.ts`, which bakes them into the `~/.claude/agents/`
+mirror a person's own session starts. The mirror does not carry the unattended
+notice — that one is true of a node, not of a subagent, and the delegate
+instruction carries it per node. The invariant is about the sites, not the
+count: a notice added to one and not the other leaves a subagent without it,
+which is the site a person is actually watching, and `tests/inject.test.ts`
+is what says so.
+
 Skills ride along in the client bundle, so a run on a developer's own machine
 follows the same process the server would.
 
@@ -181,7 +202,7 @@ Present the design and get approval before writing code.
 - `src/skills/types.ts`, `src/skills/loader.ts` — the open `SKILL.md` frontmatter, content hashing
 - `src/skills/registry.ts` — the skill store per scope, `.gate-source.json` origin stamps
 - `src/skills/sources.ts` — libraries: sync, import states, prefixing, sibling-reference rewriting
-- `src/skills/inject.ts` — `skillsBriefing` for gate's loop, `buildSkillPlugin` and `skillsDirective` for a spawned Claude Code, the unattended notice
+- `src/skills/inject.ts` — `skillsBriefing` for gate's loop, `buildSkillPlugin` and `skillsDirective` for a spawned Claude Code, and the three notices: unattended, background subagents, file reading
 - `src/runtime/executors/agent.ts`, `src/runtime/executors/claude-code.ts` — the two loops the executor field chooses between
 - `src/runtime/tools/registry.ts` — the tool vocabulary an agent may name
 
