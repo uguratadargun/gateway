@@ -21,6 +21,12 @@ interface ActivityEvent {
   cacheReadTokens?: number;
   durationMs?: number;
   note?: string;
+  keyId?: string | null;
+  userId?: string | null;
+  accountId?: string | null;
+  providerId?: string | null;
+  caller?: string;
+  servedBy?: string;
 }
 
 const kindVariant: Record<ActivityEvent["kind"], "default" | "secondary" | "destructive" | "success"> = {
@@ -68,6 +74,16 @@ export function LiveActivity() {
                 <Badge variant={kindVariant[e.kind]}>{e.kind}</Badge>
                 {e.kind === "request" ? (
                   <>
+                    {e.caller && (
+                      <Badge variant="outline" className="max-w-[9rem] truncate" title={e.caller}>
+                        {e.caller}
+                      </Badge>
+                    )}
+                    {e.servedBy && (
+                      <span className="max-w-[9rem] truncate text-muted-foreground" title={e.servedBy}>
+                        {e.servedBy}
+                      </span>
+                    )}
                     <span className="text-muted-foreground">{e.endpoint}</span>
                     <span>{e.requested} → {e.model ?? e.tier}</span>
                     {e.model && e.tier && e.model !== e.tier && <span className="text-muted-foreground">as {e.tier}</span>}

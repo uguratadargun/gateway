@@ -18,6 +18,18 @@ export interface ActivityEvent {
   cacheReadTokens?: number;
   durationMs?: number;
   note?: string;
+  /** Who called and who served, as ids. Resolved to names only at read time. */
+  keyId?: string | null;
+  userId?: string | null;
+  accountId?: string | null;
+  providerId?: string | null;
+}
+
+/** An event with its ids resolved to names. Labels travel on the wire only —
+ *  never on the bus, and never looked up on the gateway's request path. */
+export interface ActivityEventOut extends ActivityEvent {
+  caller?: string;
+  servedBy?: string;
 }
 
 type Listener = (e: ActivityEvent) => void;

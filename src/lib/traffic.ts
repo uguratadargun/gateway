@@ -1,5 +1,5 @@
+import { callerLabel, servedByLabel } from "./attribution";
 import { getDb } from "./db";
-import { INTERNAL_KEY_ID, LOCAL_KEY_ID } from "./gate-auth";
 
 /**
  * Local request/response traffic log for debugging the gateway. Bodies are
@@ -73,26 +73,6 @@ export function recordTraffic(e: TrafficEntry): void {
   } catch {
     // best-effort
   }
-}
-
-/** The person behind the key, named as /team names them. */
-function callerLabel(r: any): string {
-  if (r.user_name) return r.user_name;
-  if (r.user_email) return r.user_email; // a person with no name set
-  if (r.key_name) return r.key_name; // a key with no owner
-  if (r.key_id === LOCAL_KEY_ID) return "local";
-  if (r.key_id === INTERNAL_KEY_ID) return "workflow";
-  if (r.key_id) return `key ${r.key_id}`; // the key went with its owner
-  return "unknown"; // written before the log named its callers
-}
-
-/** Never meaningless: the Claude account, else the provider that answered. */
-function servedByLabel(r: any): string {
-  if (r.account_label) return r.account_label;
-  if (r.account_id) return `removed account ${String(r.account_id).slice(0, 8)}`;
-  if (r.provider_label) return r.provider_label;
-  if (r.provider_id) return `removed provider ${String(r.provider_id).slice(0, 8)}`;
-  return "—";
 }
 
 export function readTraffic(limit = 100): TrafficRow[] {

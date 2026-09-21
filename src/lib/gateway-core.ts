@@ -708,7 +708,13 @@ export async function dispatch(
     if (!account) {
       const resetAt = readRateLimit()?.resetAt ?? null;
       const retryAfter = resetAt ? Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)) : 300;
-      publishActivity({ ts: Date.now(), kind: "throttle", note: `no account available (${pool.length} connected)` });
+      publishActivity({
+        ts: Date.now(),
+        kind: "throttle",
+        note: `no account available (${pool.length} connected)`,
+        keyId: opts.caller?.keyId ?? null,
+        userId: opts.caller?.userId ?? null,
+      });
       const now = Date.now();
       const reasons = pool
         .map((a) => `${a.label}: ${accountRefusalReason(a, route.model, settings, overCeiling.has(a.id), now)}`)
@@ -752,7 +758,13 @@ export async function dispatch(
   try {
     const limiter = getLimiter();
     if (limiter.stats().inFlight >= limiter.stats().max) {
-      publishActivity({ ts: Date.now(), kind: "queue", note: `queued (${limiter.stats().queued + 1} waiting)` });
+      publishActivity({
+        ts: Date.now(),
+        kind: "queue",
+        note: `queued (${limiter.stats().queued + 1} waiting)`,
+        keyId: opts.caller?.keyId ?? null,
+        userId: opts.caller?.userId ?? null,
+      });
     }
     release = await limiter.acquire(settings.concurrency.queueTimeoutMs);
   } catch {
@@ -845,6 +857,10 @@ export async function dispatch(
       outputTokens: usage.output,
       cacheReadTokens: usage.cacheRead,
       durationMs: Date.now() - t0,
+      accountId,
+      providerId,
+      keyId: opts.caller?.keyId ?? null,
+      userId: opts.caller?.userId ?? null,
     });
     return usage;
   };
@@ -899,7 +915,17 @@ export async function executeMessages(
           sessionId: opts.session.id,
           sessionTitle: opts.session.title,
         });
-        publishActivity({ ts: Date.now(), kind: "request", endpoint: "messages", model: hit.model, tier: route.tier, status: 200, fromCache: true });
+        publishActivity({
+          ts: Date.now(),
+          kind: "request",
+          endpoint: "messages",
+          model: hit.model,
+          tier: route.tier,
+          status: 200,
+          fromCache: true,
+          keyId: opts.caller?.keyId ?? null,
+          userId: opts.caller?.userId ?? null,
+        });
         return new Response(hit.body, {
           status: 200,
           headers: { "Content-Type": "application/json", "x-gate-model": hit.model, "x-gate-tier": route.tier, "x-gate-cache": "hit" },
