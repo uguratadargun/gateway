@@ -55,7 +55,7 @@ function migrateLegacyDefinitions() {
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join as join2, relative } from "node:path";
 
-// node_modules/js-yaml/dist/js-yaml.mjs
+// ../../../Projects/ulak/gateway/node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
 function defineScalarTag(tagName, options) {
   return {
@@ -3151,7 +3151,7 @@ var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
-// node_modules/zod/v3/external.js
+// ../../../Projects/ulak/gateway/node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -3263,7 +3263,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// node_modules/zod/v3/helpers/util.js
+// ../../../Projects/ulak/gateway/node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -3397,7 +3397,7 @@ var getParsedType = (data) => {
   }
 };
 
-// node_modules/zod/v3/ZodError.js
+// ../../../Projects/ulak/gateway/node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -3515,7 +3515,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// node_modules/zod/v3/locales/en.js
+// ../../../Projects/ulak/gateway/node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -3618,7 +3618,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// node_modules/zod/v3/errors.js
+// ../../../Projects/ulak/gateway/node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -3627,7 +3627,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// node_modules/zod/v3/helpers/parseUtil.js
+// ../../../Projects/ulak/gateway/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -3737,14 +3737,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// node_modules/zod/v3/helpers/errorUtil.js
+// ../../../Projects/ulak/gateway/node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// node_modules/zod/v3/types.js
+// ../../../Projects/ulak/gateway/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -7876,7 +7876,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.43.0";
+var GATE_VERSION = "0.44.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -8173,22 +8173,6 @@ function readAgentSource(id, scope = teamScope()) {
   return readFileSync3(file, "utf8");
 }
 
-// src/workflows/registry.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync4, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync4 } from "node:fs";
-import { join as join6 } from "node:path";
-
-// src/runtime/errors.ts
-var WorkflowError = class extends Error {
-  constructor(code, message, detail) {
-    super(message);
-    this.code = code;
-    this.detail = detail;
-    this.name = code;
-  }
-  code;
-  detail;
-};
-
 // src/workflows/condition.ts
 var ConditionError = class extends Error {
 };
@@ -8390,6 +8374,61 @@ function evaluateCondition(expr, ctx) {
   const ast = typeof expr === "string" ? parseCondition(expr) : expr;
   return truthy(evalNode(ast, ctx));
 }
+
+// src/workflows/inputs.ts
+function requiredRunInputs(wf, loadAgent) {
+  const keys = /* @__PURE__ */ new Set();
+  const add = (path) => {
+    if (!path.startsWith("input.")) return;
+    const key = path.slice("input.".length).split(".")[0];
+    if (key) keys.add(key);
+  };
+  for (const node of wf.nodes) {
+    if (node.type !== "agent") continue;
+    if (node.disabled) continue;
+    let agent;
+    try {
+      agent = loadAgent(node.agent);
+    } catch {
+      continue;
+    }
+    for (const path of templatePaths(agent.prompt)) add(path);
+    for (const declared of node.inputs ?? agent.inputs) add(declared.replace(/\?$/, ""));
+  }
+  if (wf.workspace && !wf.workspace.repo) keys.add("repo");
+  return [...keys].sort();
+}
+function optionalRunInputs(wf, loadAgent) {
+  const keys = /* @__PURE__ */ new Set();
+  for (const node of wf.nodes) {
+    if ("disabled" in node && node.disabled) continue;
+    for (const edge of node.edges) {
+      if (!edge.condition) continue;
+      for (const path of conditionPaths(edge.condition)) {
+        if (path[0] !== "input" || !path[1]) continue;
+        keys.add(path[1]);
+      }
+    }
+  }
+  const required = new Set(requiredRunInputs(wf, loadAgent));
+  return [...keys].filter((key) => !required.has(key)).sort();
+}
+
+// src/workflows/registry.ts
+import { existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync4, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join6 } from "node:path";
+
+// src/runtime/errors.ts
+var WorkflowError = class extends Error {
+  constructor(code, message, detail) {
+    super(message);
+    this.code = code;
+    this.detail = detail;
+    this.name = code;
+  }
+  code;
+  detail;
+};
 
 // src/workflows/types.ts
 var nodeId = external_exports.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/, "use lowercase letters, digits and dashes");
@@ -12740,20 +12779,30 @@ async function cmdUsage(args) {
   console.log(parts.join(" \xB7 "));
   return 0;
 }
+function inputSummary(required, optional) {
+  const base = `input: ${required.length ? required.join(", ") : "none"}`;
+  return optional.length ? `${base} \xB7 optional: ${optional.join(", ")}` : base;
+}
 async function cmdList() {
   const client = connect();
   const config = readConfig();
-  const manifest = await sync(client, await teamOf(client, config));
+  const team = await teamOf(client, config);
+  const manifest = await sync(client, team);
   if (!manifest.workflows.length) {
     console.log("no workflows defined for your team yet");
     return 0;
   }
+  const scope = cacheScope(team);
   for (const wf of manifest.workflows) {
-    const inputs = wf.inputs.length ? wf.inputs.join(", ") : "none";
+    let optional = [];
+    try {
+      optional = optionalRunInputs(getWorkflow(wf.id, scope), (id) => getAgent(id, scope));
+    } catch {
+    }
     const where = !wf.workspace ? "no workspace (agents cannot touch files)" : wf.workspace.repo ? `git worktree of ${wf.workspace.repo}` : "git worktree of the repo you run it in";
     console.log(wf.id);
     console.log(`  ${wf.name}${wf.description ? ` \u2014 ${wf.description}` : ""}`);
-    console.log(`  input: ${inputs} \xB7 ${wf.nodeCount} nodes \xB7 ${where}`);
+    console.log(`  ${inputSummary(wf.inputs, optional)} \xB7 ${wf.nodeCount} nodes \xB7 ${where}`);
   }
   return 0;
 }
@@ -12782,7 +12831,17 @@ async function cmdShow(args) {
   await sync(client, team, true);
   const scope = cacheScope(team);
   try {
-    console.log(readWorkflowSource(id, scope));
+    const source = readWorkflowSource(id, scope);
+    try {
+      const workflow = getWorkflow(id, scope);
+      const req = requiredRunInputs(workflow, (agentId) => getAgent(agentId, scope));
+      const opt = optionalRunInputs(workflow, (agentId) => getAgent(agentId, scope));
+      if (req.length) console.log(`# required input: ${req.join(", ")}`);
+      if (opt.length) console.log(`# optional input: ${opt.join(", ")}`);
+      if (req.length || opt.length) console.log();
+    } catch {
+    }
+    console.log(source);
   } catch {
     try {
       console.log(readAgentSource(id, scope));

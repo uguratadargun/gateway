@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.44.0 — 2026-09-21
+
+- A workflow's optional run inputs are listed alongside the required ones. `dev-auto`'s `deliver` — set it to `"branch"` and the run stops at the commit instead of opening a merge request — was findable nowhere but the workflow's description; `gate list`, `gate show` and the dashboard's workflow page now name every `input.*` key a workflow's guards read, taken from the guards already in the file. Nothing became required: a run that omits one of these keys still starts exactly as it did before.
+
 ## 0.43.0 — 2026-09-21
 
 - An agent that answers an optional field with `null` is no longer refused. A `?` in an output schema means "say something only if there is something to say", and a model handed the key list writes all of them and spells the empty one `null` — which was rejected at the last gate, after the work, throwing away a finished verification. `null`, absent and `undefined` are now one answer on a `?` field; a field without one still refuses `null`. The six places the notation is explained say so in the same words.
