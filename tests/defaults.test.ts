@@ -106,6 +106,7 @@ describe("what the shipped agents declare", () => {
       "quick-implementer",
       "quick-reviewer",
       "recall",
+      "record-fix",
       "reviewer",
       "source-review",
       "super-implementer",
@@ -128,6 +129,29 @@ describe("what the shipped agents declare", () => {
       expect(sup.inputs).toEqual(plain.inputs);
       expect(sup.output).toEqual(plain.output);
       expect(sup.tools).toEqual(plain.tools);
+    }
+    // The record fix has no super-* twin on purpose. The superpowers pipeline
+    // differs in how it reviews and implements, not in how a paragraph is
+    // rewritten, and a second copy of this prompt is a second copy to keep
+    // true: shipped agents are named, never copied. dev-super reaches this
+    // one by name, which is why the derivation leaves it alone.
+    expect(byId.has("super-record-fix")).toBe(false);
+    const recordFix = byId.get("record-fix")!;
+    // Cheap and bounded, because the judgement was made upstream: the
+    // reviewer already said which sentence is wrong and why.
+    expect(recordFix.model).toBe("sonnet");
+    expect(recordFix.timeoutMs).toBe(900_000);
+    expect(recordFix.executor).toBe("claude-code");
+    expect(recordFix.output).toEqual({ type: "json", schema: { summary: "string" } });
+    // It is told what it may write, and the list is the record and nothing
+    // else — a finding it cannot meet without source goes back, not applied.
+    expect(DEFAULT_AGENTS["record-fix"]).toContain("CHANGELOG.md");
+    expect(DEFAULT_AGENTS["record-fix"]).toContain("You may not change a line of source");
+    // And both reviewers say when to take that edge at all.
+    for (const id of ["reviewer", "super-reviewer"]) {
+      expect(byId.get(id)!.output.schema).toMatchObject({ recordOnly: "boolean" });
+      expect(byId.get(id)!.inputs).toContain("record-fix.summary?");
+      expect(DEFAULT_AGENTS[id]).toContain("every** finding you are sending it back for is a\nRecord finding");
     }
     // The skill-free planner keeps the rule that matters most: a plan, and
     // nothing else, in a place of its own.

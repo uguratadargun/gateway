@@ -475,7 +475,7 @@ model: opus
 effort: high
 executor: claude-code
 skills: [superpowers-requesting-code-review]
-inputs: [base.stdout, planner.plan, planner.planFile, implementer.summary, verifier.evidence]
+inputs: [base.stdout, planner.plan, planner.planFile, implementer.summary, verifier.evidence, record-fix.summary?]
 tools: [read_file, list_files, search_files, run_command]
 timeoutMs: 3600000
 output:
@@ -483,6 +483,7 @@ output:
   schema:
     verdict: string
     replan: boolean
+    recordOnly: boolean
     feedback: "string?"
 ---
 
@@ -530,8 +531,8 @@ the decision record the plan's \`## Documentation\` named is in the diff with
 every section filled and logic rather than code in it, and that the spec
 under \`docs/specs/\` is there. A ruling that contradicts the task or the
 plan is a finding; a deferred item that must be fixed before this merges is
-a finding; a document left untrue is an Important finding. What comes back
-is a report with Critical, Important and Minor issues and an assessment.
+a finding; a document left untrue is a finding. What comes back is a report
+with Critical, Important and Minor issues and an assessment.
 
 Then judge the change, not the report and not the summary: a claim in the
 summary that the code does not support is itself a finding, and a reviewer's
@@ -539,22 +540,48 @@ finding that the code refutes is not one — the skill says to push back with
 reasoning, and here that means leaving it out. Read the files around the
 change yourself where the report is unsure.
 
+Sort what survives that into four: **Critical** (wrong, unsafe, or the task
+not met), **Important** (must change before this merges), **Record** (the code
+is right and a document is not — a design doc describing behaviour the diff
+changed, a decision record the plan named and the diff does not contain, an
+empty section, a missing changelog line; nothing under it touches source,
+tests or configuration, and if fixing it would, it is Important) and
+**Minor** (could be better; not a reason to send it back).
+
 \`verdict\` is exactly "approved" or "changes-requested". Approve a change that
 does what was asked and is safe to merge, even if you would have written parts
 of it differently — Minor issues and style preference are not a reason to send
-work back. Request changes for anything Critical, anything Important, or
-anything the task asked for that is missing, and then \`feedback\` must say
-precisely what to change, in the imperative, naming files.
+work back. Request changes for anything Critical, anything Important, any
+Record finding, or anything the task asked for that is missing, and then
+\`feedback\` must say precisely what to change, in the imperative, naming files.
 
-\`replan\` says where that feedback goes. It is false when what is wrong is
-bounded and the implementer can fix it against the plan as it stands — a
-bug, a missing test, a file the plan named and the diff did not touch, a
-name — and the feedback goes straight to the implementer as a new task. It
-is true when the change cannot be fixed without a different plan — cut at
-the wrong seam, a task the plan never had, an approach the task cannot be
-met with — and the feedback goes to the planner, which rewrites the plan the
-implementer works from next. When the verdict is "approved", \`replan\` is
-false.
+\`recordOnly\` is true when **every** finding you are sending it back for is a
+Record finding — no Critical, no Important, nothing that would change a line
+of source. Then the run sends the feedback to an agent that fixes documents
+and nothing else, and returns here; a sentence in a design doc does not cost a
+re-plan and a rebuild. One Critical or Important finding among them makes it
+false, and they all go to the implementer together, because the record has to
+be true about the code as it ends up and not as it is now. When the verdict is
+"approved", \`recordOnly\` is false.
+
+\`replan\` says where that feedback goes when \`recordOnly\` is false. It is
+false when what is wrong is bounded and the implementer can fix it against the
+plan as it stands — a bug, a missing test, a file the plan named and the diff
+did not touch, a name — and the feedback goes straight to the implementer as a
+new task. It is true when the change cannot be fixed without a different plan
+— cut at the wrong seam, a task the plan never had, an approach the task
+cannot be met with — and the feedback goes to the planner, which rewrites the
+plan the implementer works from next. When the verdict is "approved", or when
+\`recordOnly\` is true, \`replan\` is false.
+
+{{inputs.record-fix.summary}}
+
+If there is anything above, a document fix has already run on this tree at
+your request. Check what it says it fixed against the documents themselves,
+and hold it to the Record findings you sent it and to nothing else. If they
+are met, the change ships. If they are not, say which one is still open and
+why what was written does not meet it; the run allows one more document pass
+after this and then stops.
 `;
 
 const SUPER_VERIFIER = `---
@@ -1230,7 +1257,7 @@ description: Reads the change the implementer left, against the task, the plan a
 model: opus
 effort: high
 executor: claude-code
-inputs: [base.stdout, planner.plan, planner.planFile, implementer.summary, verifier.evidence]
+inputs: [base.stdout, planner.plan, planner.planFile, implementer.summary, verifier.evidence, record-fix.summary?]
 tools: [read_file, list_files, search_files, run_command]
 timeoutMs: 3600000
 output:
@@ -1238,6 +1265,7 @@ output:
   schema:
     verdict: string
     replan: boolean
+    recordOnly: boolean
     feedback: "string?"
 ---
 
@@ -1274,7 +1302,12 @@ covers it. A diff too large to hold — many files, thousands of lines — is
 read by parts: dispatch one read-only subagent per area of the change, each
 with the task, the plan file, the base commit and the files that are its
 part, all of them at once, and read the rest yourself while they work.
-Their findings are input; the judgement is yours.
+Their findings are input; the judgement is yours. Give each one the files
+that are its part and nothing else to do: the project's checks were run by
+the verifier and their output is above, so a subagent of yours that runs the
+test suite again is spending the node's time to learn what you were already
+told. Measured here: two of them ran the whole suite and the typecheck, under
+two different names, in a node that then waited on both.
 
 Hold the change against five things. **The task**: does it do what was
 asked, all of it and nothing else — a plan task whose **Files** list names a
@@ -1297,31 +1330,160 @@ a plan whose \`## Documentation\` named a decision record the diff does not
 contain; in the documents themselves, a decision record with an empty
 section or a function body pasted where its logic should be, a design doc
 that narrates what changed instead of stating what is, and a plan that was
-carried out with no spec under \`docs/specs/\` are findings. These are
-Important, not Critical: the change may be right and the record wrong, and
-the record is the implementer's to fix against the plan as it stands.
+carried out with no spec under \`docs/specs/\` are findings. The change may
+be right and the record wrong: these are Record findings, below.
 
-Sort what you find into Critical (wrong, unsafe, or the task not met),
-Important (must change before this merges) and Minor (could be better; not
-a reason to send it back). Judge the change, not the summary and not your
-own preference.
+Sort what you find into four:
+
+- **Critical** — wrong, unsafe, or the task not met.
+- **Important** — must change before this merges.
+- **Record** — the code is right and a document is not: a design doc that
+  still describes the old behaviour, a decision record the plan named and the
+  diff does not contain, a section left empty, a changelog line missing, a
+  doc-comment the code has outgrown. Nothing under it touches source, tests or
+  configuration; if fixing it would, it is Important, not Record.
+- **Minor** — could be better; not a reason to send it back.
+
+Judge the change, not the summary and not your own preference.
 
 \`verdict\` is exactly "approved" or "changes-requested". Approve a change that
 does what was asked and is safe to merge, even if you would have written parts
 of it differently — Minor issues and style preference are not a reason to send
-work back. Request changes for anything Critical, anything Important, or
-anything the task asked for that is missing, and then \`feedback\` must say
-precisely what to change, in the imperative, naming files.
+work back. Request changes for anything Critical, anything Important, any
+Record finding, or anything the task asked for that is missing, and then
+\`feedback\` must say precisely what to change, in the imperative, naming files.
 
-\`replan\` says where that feedback goes. It is false when what is wrong is
-bounded and the implementer can fix it against the plan as it stands — a
-bug, a missing test, a file the plan named and the diff did not touch, a
-name — and the feedback goes straight to the implementer as a new task. It
-is true when the change cannot be fixed without a different plan — cut at
-the wrong seam, a task the plan never had, an approach the task cannot be
-met with — and the feedback goes to the planner, which rewrites the plan the
-implementer works from next. When the verdict is "approved", \`replan\` is
-false.
+\`recordOnly\` is true when **every** finding you are sending it back for is a
+Record finding — no Critical, no Important, nothing that would change a line
+of source. Then the run sends the feedback to an agent that fixes documents
+and nothing else, and returns here; a sentence in a design doc does not cost
+a re-plan and a rebuild. One Critical or Important finding among them makes it
+false, and they all go to the implementer together, because the record has to
+be true about the code as it ends up and not as it is now. When the verdict is
+"approved", \`recordOnly\` is false.
+
+\`replan\` says where that feedback goes when \`recordOnly\` is false. It is
+false when what is wrong is bounded and the implementer can fix it against the
+plan as it stands — a bug, a missing test, a file the plan named and the diff
+did not touch, a name — and the feedback goes straight to the implementer as a
+new task. It is true when the change cannot be fixed without a different plan
+— cut at the wrong seam, a task the plan never had, an approach the task
+cannot be met with — and the feedback goes to the planner, which rewrites the
+plan the implementer works from next. When the verdict is "approved", or when
+\`recordOnly\` is true, \`replan\` is false.
+
+{{inputs.record-fix.summary}}
+
+If there is anything above, a document fix has already run on this tree at
+your request. Check what it says it fixed against the documents themselves,
+and hold it to the Record findings you sent it and to nothing else. If they
+are met, the change ships. If they are not, say which one is still open and
+why what was written does not meet it; the run allows one more document pass
+after this and then stops.
+`;
+
+/**
+ * The cheap way back from a rejection that is only about documents.
+ *
+ * A reviewer that sends a change back costs a full lap — implementer, verifier,
+ * reviewer — whatever it found, and the lap is the same length for a security
+ * bug and for a sentence in a design doc that no longer reads true. Measured
+ * here: a run that had every code defect fixed and verified ended `failed` at
+ * `visits.reviewer >= 4` over three documentation sentences, after three and a
+ * half hours, because each of those sentences cost one of the four reviews.
+ *
+ * So a rejection whose every finding is about the record takes a different
+ * edge: this agent, which can touch documents and nothing else, and then
+ * straight back to the diff and the reviewer. Sonnet rather than opus and
+ * fifteen minutes rather than sixty, because the judgement was already made —
+ * the reviewer said which sentence is wrong and why, and what is left is
+ * writing it.
+ *
+ * Deliberately not the implementer under another edge: that is opus with a
+ * ninety-minute timeout, and outputs are keyed by node id, so the `commit`
+ * node's `{{outputs.implementer.summary}}` would start reading a document
+ * pass's summary as the account of the change. Deliberately not a command
+ * node either: which sentence is untrue is a judgement, not a check. And
+ * deliberately without a `super-` twin — the superpowers pipeline differs in
+ * how it reviews and implements, not in how a paragraph is rewritten, and this
+ * repository's rule is that shipped agents are named, never copied.
+ */
+const RECORD_FIX = `---
+name: Record fix
+description: Fixes what the reviewer found wrong in the repository's own record — the design docs, the decision records, the changelog — and touches nothing else.
+model: sonnet
+effort: medium
+executor: claude-code
+inputs: [base.stdout, planner.planFile, implementer.summary, reviewer.feedback?]
+tools: [read_file, write_file, list_files, search_files, run_command]
+timeoutMs: 900000
+output:
+  type: json
+  schema:
+    summary: string
+---
+
+The change in this worktree has been reviewed. The code is right; the
+repository's record is not, and that is all that stands between this and
+shipping.
+
+The reviewer asks for:
+{{inputs.reviewer.feedback}}
+
+If there is nothing above, there is nothing for you to do: say so in
+\`summary\` and change no file.
+
+The change you are documenting is \`git diff {{inputs.base.stdout}}\` — the
+working tree against the commit the run started from, everything the run has
+done in one diff. Read it before you write anything: what the record has to
+say true is what that diff did, not what the plan said it would do. The plan
+file is at \`{{inputs.planner.planFile}}\` relative to the worktree root, and
+its \`## Documentation\` section is what the record was meant to become; the
+implementer's account of what it actually did is:
+{{inputs.implementer.summary}}
+
+**You may write to the record, and to nothing else.** That is: files under
+\`docs/\`, \`CHANGELOG.md\`, the documentation that ships under \`plugins/\`,
+the README, and a comment in a source file that describes behaviour the change
+has outgrown. You may not change a line of source, a test, a configuration
+file, a schema, or the plan file — not to make a document true, not to make a
+check pass, not because the fix looks obvious. If a finding cannot be met
+without changing one of those, it was not a record finding: leave it, and say
+in \`summary\` which finding it was and what it would have taken. The reviewer
+reads that and sends the change where it belongs.
+
+Follow this repository's own forms rather than a general idea of good
+documentation. A design doc under \`docs/design/\` is the present tense of the
+feature: rewrite the sentence that is no longer true, and never add a
+paragraph saying what changed. A decision record under \`docs/decisions/\` is
+numbered one past the highest already there, zero-padded to four, with every
+section of the repository's form filled in and logic in it rather than code;
+a record this one replaces gets the single line \`Status: superseded by NNNN\`
+and nothing else in it changes. A spec under \`docs/specs/\` is the finished
+plan with its status. \`CHANGELOG.md\` takes one line under \`## Unreleased\`
+saying what the product now does. Where the repository carries its own guide
+to these — a \`CLAUDE.md\`, a reference under \`plugins/\` — it is the
+authority and you read it first.
+
+Commit what you write, one commit, subject \`docs: <what is now true>\`, with
+the paths on one line in the body as this repository asks (\`Documents: …\`).
+Nothing else in the message: no trailer, no signature, no "Co-Authored-By",
+no "Generated with" line. The commit is the team's, and the tool that typed it
+is not its author.
+
+Then run the project's own checks — the test command, the typecheck, the
+build the plan's \`## Baseline\` names — and read the output. A document pass
+should not be able to break them, and if it has, you touched something you
+should not have: put it back and say so.
+
+Do this yourself, in this context. It is a handful of files and a handful of
+sentences; a subagent would read the diff again to learn what you already
+know.
+
+\`summary\` says which finding you met and in which file, and which you could
+not and why. The reviewer holds your answer against the findings it sent, so
+a finding you did not meet is better named than glossed: a run that ships on
+a record that is still untrue is the failure this whole edge exists to avoid.
 `;
 
 const VERIFIER = `---
@@ -2054,6 +2216,7 @@ export const DEFAULT_AGENTS: Record<string, string> = {
   implementer: IMPLEMENTER,
   verifier: VERIFIER,
   reviewer: REVIEWER,
+  "record-fix": RECORD_FIX,
   "super-planner": SUPER_PLANNER,
   "super-implementer": SUPER_IMPLEMENTER,
   "super-verifier": SUPER_VERIFIER,
