@@ -319,12 +319,53 @@ nodes:
       - when: outputs.reviewer.verdict == "approved"
         to: stage-all
         label: approved
+      # A rejection that is only about the record takes the short way back:
+      # the document agent, then straight to the diff and this reviewer
+      # again, with no implementer and no verifier in between. Measured
+      # here: a run with every code defect fixed and verified ended failed
+      # at the give-up edge below over three documentation sentences, each
+      # of which had cost a full fifty-minute lap.
+      #
+      # Declared above the give-up edge so that a record round is never
+      # answered with review-stuck. Order alone does not pay for the round,
+      # though: a visit is counted when a node runs, before its edges are
+      # read, so a record round increments visits.reviewer exactly as a
+      # rejection does, and the give-up edge below has to say it does not
+      # count. That is what its three forms are: visits.reviewer minus
+      # visits.record-fix at four, written out, because the condition
+      # language has no arithmetic and record rounds are bounded at two.
+      - when: outputs.reviewer.recordOnly == true && visits.record-fix >= 2
+        to: record-wrong
+        label: record still wrong after 2 passes
+      # An older reviewer that a team has not refreshed answers no
+      # recordOnly at all, and an absent value compared against true is
+      # false: both of these fall through to the edges below, which is the
+      # behaviour that shipped before this existed.
+      - when: outputs.reviewer.recordOnly == true
+        to: record-fix
+        label: only the record is wrong
       # Declared after the success edge and before the loop-back: edges are
       # tried in order. Counted in reviews, not plans — the planner also runs
       # for the person's questions and plan revisions, which are not failures.
       # Four reviews without shipping is a change that is not converging, and
       # the branch is still there to be looked at.
-      - when: visits.reviewer >= 4
+      #
+      # Three forms of one sum. What this means is
+      # visits.reviewer - visits.record-fix >= 4, and the condition
+      # language has no arithmetic, so each value record-fix can hold is
+      # written out. It can hold three: the edge above stops the loop at
+      # two, so the last form closes that case and every case beyond it.
+      # Without the subtraction two record rounds would spend two of the
+      # four reviews, and a change whose code was rejected twice and whose
+      # documents were wrong twice would reach review-stuck with two real
+      # rejections — worse than before the record round existed.
+      - when: visits.record-fix == 0 && visits.reviewer >= 4
+        to: review-stuck
+        label: still rejected after 4 reviews
+      - when: visits.record-fix == 1 && visits.reviewer >= 5
+        to: review-stuck
+        label: still rejected after 4 reviews
+      - when: visits.reviewer >= 6
         to: review-stuck
         label: still rejected after 4 reviews
       # The reviewer says where its feedback goes. A bounded fix — a bug, a
@@ -336,6 +377,15 @@ nodes:
         label: fix requested
       - to: planner
         label: plan changes requested
+
+  # Back to stage rather than to record: the record node asks only whether a
+  # spec exists, which it does by now, and its own give-up edge would send
+  # this round to the implementer.
+  - id: record-fix
+    type: agent
+    agent: record-fix
+    label: Fix the record
+    next: stage
 
   - id: stage-all
     type: command
@@ -500,6 +550,14 @@ nodes:
   - id: review-stuck
     type: terminal
     label: Review never approved
+    status: failed
+
+  # Its own terminal rather than review-stuck: what is stuck here is the
+  # writing, not the change, and a person reading this knows the code was
+  # accepted and only the documents were not.
+  - id: record-wrong
+    type: terminal
+    label: The code was accepted, the record was not
     status: failed
 
   - id: not-verified

@@ -149,7 +149,9 @@ describe("what the shipped agents declare", () => {
     expect(DEFAULT_AGENTS["record-fix"]).toContain("You may not change a line of source");
     // And both reviewers say when to take that edge at all.
     for (const id of ["reviewer", "super-reviewer"]) {
-      expect(byId.get(id)!.output.schema).toMatchObject({ recordOnly: "boolean" });
+      const out = byId.get(id)!.output;
+      expect(out.type).toBe("json");
+      if (out.type === "json") expect(out.schema).toMatchObject({ recordOnly: "boolean" });
       expect(byId.get(id)!.inputs).toContain("record-fix.summary?");
       expect(DEFAULT_AGENTS[id]).toContain("every** finding you are sending it back for is a\nRecord finding");
     }
@@ -418,6 +420,21 @@ output:
 ---
 Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.verifier.evidence}}
 `,
+    // Kept at the shape the reviewer had before recordOnly existed, so that
+    // every test below this one is also a test that a team whose reviewer
+    // has not been refreshed keeps the pipeline it had: an absent key
+    // compared against true is false, and the record edges fall through.
+    // The tests that exercise the record round save a newer one over it.
+    "record-fix": `---
+name: Record fix
+inputs: [base.stdout, planner.planFile, implementer.summary, reviewer.feedback?]
+output:
+  type: json
+  schema:
+    summary: string
+---
+Fix the record for {{inputs.planner.planFile}} from {{inputs.base.stdout}}: {{inputs.reviewer.feedback}} {{inputs.implementer.summary}}
+`,
     acceptance: `---
 name: Acceptance
 inputs: [implementer.summary]
@@ -534,11 +551,44 @@ Try {{inputs.implementer.summary}}
           return reviews(visit);
         case "acceptance":
           return accepts(visit);
+        case "record-fix":
+          return JSON.stringify({ summary: `record pass ${visit}` });
         default:
           return req.context?.nodeId === "recall" ? RECALLED : "{}";
       }
     });
   }
+
+  /**
+   * The reviewer as it ships now. Saved over the stand-in by the tests that
+   * drive the record round, so that the stand-in itself stays at the older
+   * shape and every other test keeps proving the fall-through.
+   */
+  const REVIEWER_WITH_RECORD_ONLY = `---
+name: Reviewer
+inputs: [base.stdout, planner.plan, planner.planFile, implementer.summary, verifier.evidence, record-fix.summary?]
+output:
+  type: json
+  schema:
+    verdict: string
+    replan: boolean
+    recordOnly: boolean
+    feedback: "string?"
+---
+Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.verifier.evidence}} {{inputs.record-fix.summary}}
+`;
+
+  const RECORD_ONLY = () => JSON.stringify({ verdict: "changes-requested", replan: false, recordOnly: true, feedback: "docs/design/x.md says the old thing." });
+
+  /**
+   * An approval from that reviewer. `recordOnly` is required there, exactly as
+   * `replan` is, so an approval carries it too — the prompt says it is false
+   * when the verdict is approved, and a reply that leaves it out fails output
+   * validation rather than being read as anything. `APPROVED` above stays as
+   * it is: it is what an older team's reviewer answers, and the tests that use
+   * it are the ones proving that shape still works.
+   */
+  const APPROVED_WITH_RECORD_ONLY = () => JSON.stringify({ verdict: "approved", replan: false, recordOnly: false });
 
   it("loops back to the planner on a rejected review, then commits and opens the merge request", async () => {
     const workflow = standIn();
@@ -819,6 +869,94 @@ Try {{inputs.implementer.summary}}
     expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
   });
 
+  /**
+   * The lap a documentation finding used to cost.
+   *
+   * Before this edge, a reviewer that wanted one sentence in a design doc
+   * changed sent the whole change back through the implementer and the
+   * verifier — fifty minutes measured — and spent one of its four reviews
+   * doing it. Three such sentences ended a real run at review-stuck with
+   * every code defect already fixed.
+   */
+  it("sends a record-only rejection to the record fix and back, without rebuilding or re-verifying", async () => {
+    const workflow = standIn();
+    saveAgent(`${prefix}reviewer`, REVIEWER_WITH_RECORD_ONLY);
+
+    // First review: only the record is wrong. Second: it ships.
+    const provider = fakeTeam((visit) => (visit === 1 ? RECORD_ONLY() : APPROVED_WITH_RECORD_ONLY()));
+    const { ran, runCommand } = fakeGit({ staged: true });
+    const events: WorkflowEvent[] = [];
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    expect(terminalOf(events)).toBe("done");
+    expect(state.status).toBe("completed");
+    expect(state.visitCounts["record-fix"]).toBe(1);
+    expect(state.visitCounts.reviewer).toBe(2);
+    // The point of the edge: neither of these ran a second time.
+    expect(state.visitCounts[`${prefix}implementer`] ?? state.visitCounts.implementer).toBe(1);
+    expect(state.visitCounts[`${prefix}verifier`] ?? state.visitCounts.verifier).toBe(1);
+    expect(state.visitCounts.planner).toBe(1);
+    // It is given the reviewer's feedback, which is the whole of its brief.
+    expect(provider.callsFor("record-fix")[0].messages[0].content).toContain("docs/design/x.md says the old thing");
+    // And the second review is told what it wrote.
+    expect(provider.callsFor("reviewer")[1].messages[0].content).toContain("record pass 1");
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeDefined();
+  });
+
+  it("gives up on a record that is still wrong after two passes, on a terminal of its own", async () => {
+    const workflow = standIn();
+    saveAgent(`${prefix}reviewer`, REVIEWER_WITH_RECORD_ONLY);
+
+    const provider = fakeTeam(RECORD_ONLY);
+    const events: WorkflowEvent[] = [];
+    const state = await runWorkflow(workflow, {
+      provider,
+      runCommand: fakeGit({ staged: true }).runCommand,
+      input: { task: "Add a thing" },
+      emit: (e) => events.push(e),
+    });
+
+    expect(state.status).toBe("failed");
+    // Not review-stuck: the code was accepted and the writing was not.
+    expect(terminalOf(events)).toBe("record-wrong");
+    expect(state.visitCounts["record-fix"]).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(3);
+  });
+
+  /**
+   * The give-up arithmetic, and the reason the give-up edge is written three
+   * times. A visit is counted when a node runs, before its edges are read, so
+   * a record round increments visits.reviewer exactly as a rejection does —
+   * declaring the record edges above the give-up edge decides which edge wins
+   * but does not stop the counter. Written once as `visits.reviewer >= 4`,
+   * two record rounds would leave a change two real rejections, which is
+   * worse than not having the record round at all. So the give-up edge means
+   * `visits.reviewer - visits.record-fix >= 4`, spelled out per value of
+   * record-fix because the condition language has no arithmetic.
+   */
+  it("does not spend a review on a record round: four rejections still reach review-stuck after two", async () => {
+    const workflow = standIn();
+    saveAgent(`${prefix}reviewer`, REVIEWER_WITH_RECORD_ONLY);
+
+    // Two record rounds first, then nothing but ordinary rejections.
+    const provider = fakeTeam((visit) =>
+      visit <= 2 ? RECORD_ONLY() : JSON.stringify({ verdict: "changes-requested", replan: true, recordOnly: false, feedback: "No." }),
+    );
+    const events: WorkflowEvent[] = [];
+    const state = await runWorkflow(workflow, {
+      provider,
+      runCommand: fakeGit({ staged: true }).runCommand,
+      input: { task: "Add a thing" },
+      emit: (e) => events.push(e),
+    });
+
+    expect(state.status).toBe("failed");
+    expect(terminalOf(events)).toBe("review-stuck");
+    // Two record rounds plus the four reviews the pipeline has always had.
+    expect(state.visitCounts["record-fix"]).toBe(2);
+    expect(state.visitCounts.reviewer).toBe(6);
+  });
+
   it("carries the planner's questions to the person and their answers back, then shows the plan before building", async () => {
     const workflow = standIn();
 
@@ -986,6 +1124,10 @@ describe("the shipped super pipeline", () => {
       ["implementer", "super-implementer"],
       ["verifier", "super-verifier"],
       ["reviewer", "super-reviewer"],
+      // Not swapped, and there is no super-record-fix to swap it for: the
+      // derivation renames the four working agents, and fixing a paragraph
+      // is the same job whichever method built the change.
+      ["record-fix", "record-fix"],
       ["acceptance", "acceptance"],
     ]);
     // Everything but the agent names is byte-for-byte dev's: same nodes,
