@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Traffic gets two tabs, a filter bar, and a trace: the live feed and the
+  on-disk request log now share one page and one set of filters (person,
+  served-by, tier, request id), a logged row names the run it was made for
+  and links straight to it, its own request id copies and pastes back into
+  the filter to find it again, and the log's retention is a setting, raised
+  from 500 rows to 5,000.
+
 ## 0.42.0 — 2026-09-21
 
 - Connecting a machine no longer needs Claude Code to be working. `/gate:login` is a prompt, so a Claude Code at its weekly limit refused the one command that would have put the person on the team's gateway instead — the way out was behind the account that was out of quota. The plugin now writes a `gate` command to `~/.local/bin` on every session start, and a key is handed out as two lines: the slash command, and `~/.local/bin/gate login <token>` for a terminal with Claude Code closed. Logging in spends no model call, so a spent limit cannot stop it. Logging in again also keeps this machine's workflow approvals and repository paths, which it used to drop.

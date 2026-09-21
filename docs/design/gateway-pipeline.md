@@ -111,18 +111,25 @@ input, output, cache-read and cache-creation tokens — and priced at Anthropic
 list rates per tier (Haiku 1/5, Sonnet 2/10, Opus 5/25, Fable 10/50 USD per
 million in/out), cache reads at 10 % of input (2.5 % on Fable 5.1), cache
 writes at 1.25× for the 5m TTL and 2× for 1h, and a provider model at zero. A
-usage event, a traffic-log row (previews truncated to 2000 characters, 500
-rows kept, local only) and an activity event for the SSE live tail on
+usage event, a traffic-log row and an activity event for the SSE live tail on
 `/traffic` are written, and the concurrency slot is released. The traffic row
 names the key, the person and the team that called, and the account or the
 provider that served — as ids, which `/traffic` resolves to names as it reads,
-so a renamed account reads as it is now and a deleted one still reads. A
-workflow node names itself `workflow` with the run's own person and team,
-whether gate held the conversation itself or handed the node to a spawned
-Claude Code answering on the run's token — one run's spend reads as one
-caller either way, and a run with no person recorded reads as `workflow` with
-its team alone. A gate with no key issued and none configured names itself
-`local`. `/analytics`,
+so a renamed account reads as it is now and a deleted one still reads. It also
+carries its own request id, for a link straight back to the one exchange, and
+the execution id of the run it was made for, when it was made for one;
+`/traffic` resolves that id to the workflow and, from the step whose time
+window holds the request, the node — a row is a trace now, not only a line of
+accounting. Previews are truncated to 2000 characters; rows are kept up to
+`traffic.maxRows` (settings; 5,000 by default), oldest dropped first, on
+indexes over the columns `/api/traffic` and its export filter by — person,
+served-by, tier and request id — which is what the two tabs on `/traffic`
+both read through. A workflow node names itself `workflow` with the run's own
+person and team, whether gate held the conversation itself or handed the node
+to a spawned Claude Code answering on the run's token — one run's spend reads
+as one caller either way, and a run with no person recorded reads as
+`workflow` with its team alone. A gate with no key issued and none configured
+names itself `local`. `/analytics`,
 `/sessions` and the CSV/JSON exports are `GROUP BY`s over the usage table, so
 a budget check stays O(1) in request count.
 
@@ -161,11 +168,12 @@ request ─ auth ─ session ─ compress ─ resolve ─ account+throttle ─ p
 - Costs are API-list equivalents. On a subscription the real cost is flat; the numbers are for comparison, not an invoice.
 - A fallback changes the model after resolution; `x-gate-model` is what was actually used, `x-gate-route-reason` is how the requested name resolved.
 - Compression is lossy by design (blocks are trimmed) and off by default. Turning it on changes prompts and therefore prompt-cache hits.
-- The traffic log holds served exchanges, not every call. A response-cache hit, a refusal (400, 401, 402, 429, 503) and the proxied `/v1/models`, `count_tokens` and `batches/*` write no row at all, so counting callers there under-counts them — the throttle's 429s, the ones a question about quota is usually about, are exactly what is missing. `from_cache` is written false for the same reason.
+- The traffic log holds served exchanges, not every call. A response-cache hit, a refusal (400, 401, 402, 429, 503) and the proxied `/v1/models`, `count_tokens` and `batches/*` write no row at all, so counting callers there under-counts them — the throttle's 429s, the ones a question about quota is usually about, are exactly what is missing. `from_cache` is written false for the same reason. A row that is written, though, is a trace: its request id and the run it carries reach back to the execution and the node that caused it, not only to the caller and the account that answered.
 - A traffic row is best-effort: the insert swallows its errors so a log line can never fail a served request, which also means a missing row is silent.
 - A run's token lives in the process that minted it and in no other. A second gate process cannot resolve it, and a restart invalidates every token in flight — which is the design, since a run does not survive its process either.
 
 ## Decisions
 
+- [0030 — A traffic row names the run it came from](../decisions/0030-a-traffic-row-names-the-run-it-came-from.md)
 - [0023 — A run carries a token of its own](../decisions/0023-a-run-carries-a-token-of-its-own.md)
 - [0017 — The traffic log names who called and who served](../decisions/0017-the-traffic-log-names-who-called-and-who-served.md)
