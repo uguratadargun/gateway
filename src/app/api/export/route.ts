@@ -18,7 +18,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const what = url.searchParams.get("what") === "traffic" ? "traffic" : "usage";
   const format = url.searchParams.get("format") === "json" ? "json" : "csv";
-  const rows: Record<string, unknown>[] = what === "traffic" ? (readTraffic(500) as unknown as Record<string, unknown>[]) : exportUsage();
+  const rows: Record<string, unknown>[] = what === "traffic" ? (readTraffic({ limit: 500 }) as unknown as Record<string, unknown>[]) : exportUsage();
   const date = new Date().toISOString().slice(0, 10);
   const filename = `gate-${what}-${date}.${format}`;
   const body = format === "json" ? JSON.stringify(rows, null, 2) : toCsv(rows);
