@@ -1054,7 +1054,27 @@ nodes:
       - when: outputs.reviewer.verdict == "approved"
         to: stage-all
         label: approved
-      - when: visits.reviewer >= 4
+      # The record round, as on dev and for the same reason: a rejection
+      # that is only about documents does not cost a lap of the planner,
+      # the implementer and the verifier. It matters more here than on
+      # dev — nobody is watching this road, so a run that ends failed over
+      # a sentence is read hours later, if at all.
+      - when: outputs.reviewer.recordOnly == true && visits.record-fix >= 2
+        to: record-wrong
+        label: record still wrong after 2 passes
+      - when: outputs.reviewer.recordOnly == true
+        to: record-fix
+        label: only the record is wrong
+      # visits.reviewer - visits.record-fix >= 4, in the three forms the
+      # condition language can express. See dev's verdict for the whole of
+      # the reasoning; the edges are identical because the sum is.
+      - when: visits.record-fix == 0 && visits.reviewer >= 4
+        to: review-stuck
+        label: still rejected after 4 reviews
+      - when: visits.record-fix == 1 && visits.reviewer >= 5
+        to: review-stuck
+        label: still rejected after 4 reviews
+      - when: visits.reviewer >= 6
         to: review-stuck
         label: still rejected after 4 reviews
       - when: outputs.reviewer.replan == false
@@ -1062,6 +1082,12 @@ nodes:
         label: fix requested
       - to: planner
         label: plan changes requested
+
+  - id: record-fix
+    type: agent
+    agent: record-fix
+    label: Fix the record
+    next: stage
 
   - id: stage-all
     type: command
@@ -1147,6 +1173,11 @@ nodes:
   - id: review-stuck
     type: terminal
     label: Review never approved
+    status: failed
+
+  - id: record-wrong
+    type: terminal
+    label: The code was accepted, the record was not
     status: failed
 
   - id: not-verified

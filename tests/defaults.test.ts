@@ -1450,6 +1450,16 @@ output:
 ---
 Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.verifier.evidence}}
 `,
+    "record-fix": `---
+name: Record fix
+inputs: [base.stdout, planner.planFile, implementer.summary, reviewer.feedback?]
+output:
+  type: json
+  schema:
+    summary: string
+---
+Fix the record for {{inputs.planner.planFile}} from {{inputs.base.stdout}}: {{inputs.reviewer.feedback}} {{inputs.implementer.summary}}
+`,
   };
 
   const BASE = "abcdef0123456789abcdef0123456789abcdef01";
@@ -1506,6 +1516,8 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
           return verifies(visit);
         case "reviewer":
           return reviews(visit);
+        case "record-fix":
+          return JSON.stringify({ summary: `record pass ${visit}` });
         default:
           return node === "recall" ? RECALLED : "{}";
       }
@@ -1525,7 +1537,7 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
     for (const id of agents) expect(getAgent(id).asks).toBeUndefined();
     // The same working four as dev, no skill among them, and the answerer in
     // the clarify node's place — under that id, which is what the planner reads.
-    expect(agents).toEqual(["recall", "planner", "decide", "implementer", "verifier", "reviewer"]);
+    expect(agents).toEqual(["recall", "planner", "decide", "implementer", "verifier", "reviewer", "record-fix"]);
     expect(workflow.nodes.find((n) => n.id === "clarify")).toMatchObject({ agent: "decide" });
     expect(DEFAULT_WORKFLOWS["dev-auto"]).not.toContain("super-");
     expect(workflow.maxWorkflowSteps ?? 0).toBe(0);
@@ -1533,7 +1545,7 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
     expect(workflow.maxCostUsd ?? 0).toBe(0);
     // Every loop has its own way out, on a terminal that says what is stuck.
     const terminals = workflow.nodes.filter((n) => n.type === "terminal").map((n) => n.id);
-    expect(terminals).toEqual(expect.arrayContaining(["never-planned", "review-stuck", "not-verified", "no-spec", "objection-needs-a-person"]));
+    expect(terminals).toEqual(expect.arrayContaining(["never-planned", "review-stuck", "not-verified", "no-spec", "objection-needs-a-person", "record-wrong"]));
   });
 
   it("answers the planner's questions itself, builds, verifies, reviews, commits and opens the merge request", async () => {
@@ -1667,6 +1679,96 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
     expect(state.visitCounts.implementer).toBe(3);
     expect(state.visitCounts.reviewer ?? 0).toBe(0);
     expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
+  });
+
+  it("takes the record round, which is the loop it most needs with nobody to ask", async () => {
+    const workflow = auto();
+    const provider = fakeTeam((visit) =>
+      visit === 1
+        ? JSON.stringify({ verdict: "changes-requested", replan: false, recordOnly: true, feedback: "docs/design/x.md says the old thing." })
+        : APPROVED(),
+    );
+    const { ran, runCommand } = fakeGit();
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, { provider, runCommand, input: { task: "Add a thing" }, emit: (e) => events.push(e) });
+
+    // The record agent ran, the builders did not run again, and the branch
+    // still shipped. On this road that matters more than on dev: nobody is
+    // watching, so a run that ends failed over a sentence is read hours later.
+    expect(terminalOf(events)).toBe("done");
+    expect(state.visitCounts["record-fix"]).toBe(1);
+    expect(state.visitCounts.implementer).toBe(1);
+    expect(state.visitCounts.verifier).toBe(1);
+    expect(state.visitCounts.reviewer).toBe(2);
+    expect(ran.filter((c) => c.includes("gate-open-mr"))).toHaveLength(1);
+  });
+
+  /**
+   * What keeps this graph in step with dev, since it is written out rather
+   * than derived. Every node dev has is here with the same shape, bar the
+   * ones listed — and a change to dev that is not made here fails on the
+   * lists, not on a run months later.
+   */
+  it("is dev's graph with the person taken out of it, and nothing else differs", () => {
+    ensureDefaultWorkflows();
+    const dev = getWorkflow("dev");
+    const graph = getWorkflow("dev-auto");
+    const ids = (w: typeof dev) => w.nodes.map((n) => n.id);
+
+    // The person's three turns, and the terminals that exist only because a
+    // node can hold for them.
+    expect(ids(dev).filter((id) => !ids(graph).includes(id))).toEqual([
+      "conflict-review",
+      "conflict-decision",
+      "plan-review",
+      "plan-decision",
+      "acceptance",
+      "decision",
+      "awaiting-approval",
+      "awaiting-plan-approval",
+      "blocked-by-objection",
+      "awaiting-objection-answer",
+    ]);
+    // And the two terminals this road adds: a question it will not answer,
+    // and a plan it never reached.
+    expect(ids(graph).filter((id) => !ids(dev).includes(id))).toEqual(["objection-needs-a-person", "never-planned"]);
+
+    // Every node both have does the same thing: same type, same agent, same
+    // command, same terminal status. Only the routing may differ, and only
+    // where a node the person stood on was taken out.
+    const byId = new Map(dev.nodes.map((n) => [n.id, n]));
+    const body = (n: unknown) => {
+      const { label: _label, edges: _edges, next: _next, ...rest } = n as Record<string, unknown>;
+      return rest;
+    };
+    const routing = (n: unknown) => {
+      const { edges, next } = n as Record<string, unknown>;
+      return { edges, next };
+    };
+    // Named one by one rather than skipped by a flag: each is a node whose
+    // edges point at something this road does not have.
+    const REROUTED = new Set([
+      "clarify", // runs decide, and the agent is part of the body
+      "conflict-check", // objects to a terminal, not to the person
+      "plan-check", // no plan review to gate on
+      "verdict", // the record and give-up edges are dev's; the rest is not
+      "staged", // straight to the merge request, with no acceptance between
+      "commit", // the same
+    ]);
+    for (const node of graph.nodes) {
+      const twin = byId.get(node.id);
+      if (!twin) continue;
+      if (node.id !== "clarify") expect(body(node), `node ${node.id} has drifted from dev's`).toEqual(body(twin));
+      if (!REROUTED.has(node.id)) expect(routing(node), `node ${node.id} routes differently from dev's`).toEqual(routing(twin));
+    }
+    // And the rerouting is all of it: nothing else in the graph moved.
+    expect(graph.nodes.filter((n) => byId.has(n.id) && !REROUTED.has(n.id)).length).toBeGreaterThan(10);
+    expect(graph.entry).toBe(dev.entry);
+    // The merge request is dev's, whichever host it finds — the node is not
+    // in REROUTED, so the body check above already holds the two together,
+    // and a host added to one reaches the other or the test says so.
+    expect(DEFAULT_WORKFLOWS["dev-auto"]).not.toContain("super-");
   });
 });
 
