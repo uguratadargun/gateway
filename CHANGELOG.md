@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.43.0 — 2026-09-21
+
 - An agent that answers an optional field with `null` is no longer refused. A `?` in an output schema means "say something only if there is something to say", and a model handed the key list writes all of them and spells the empty one `null` — which was rejected at the last gate, after the work, throwing away a finished verification. `null`, absent and `undefined` are now one answer on a `?` field; a field without one still refuses `null`. The six places the notation is explained say so in the same words.
 
 - A node's second pass is sent only what changed. The subagent that did the first pass still holds the worktree it read and the reasoning it did, and it was being handed its whole brief again — thousands of tokens it already had, which a model reads as an instruction to start the node over. gate now rebuilds the node's inputs as they stood at the previous visit, compares them to the inputs now, and sends the ones that differ under their own headings. `gate next <execution-id> --full` gives back the whole prompt, which is what to do when the subagent is gone.

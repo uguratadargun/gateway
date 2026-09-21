@@ -7876,7 +7876,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.42.0";
+var GATE_VERSION = "0.43.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -8038,9 +8038,12 @@ function buildOutputSchema(spec) {
   for (const [field2, raw] of Object.entries(spec.schema)) {
     const optional = raw.endsWith("?");
     const base = fieldValidator(raw.replace(/\?$/, ""));
-    shape[field2] = optional ? base.optional() : base;
+    shape[field2] = optional ? optionalField(base) : base;
   }
   return external_exports.object(shape).passthrough();
+}
+function optionalField(base) {
+  return base.nullish().transform((v) => v ?? void 0);
 }
 function fieldValidator(t) {
   switch (t) {
@@ -9789,7 +9792,7 @@ async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
 {
 ${fields}
 }
-A type ending in "?" is optional.`
+A type ending in "?" is optional: leave that key out, or write null \u2014 both say there was nothing to put there. Every other key is required, and null is not an answer for one.`
       );
     }
     if (appended.length) args.push("--append-system-prompt", appended.join("\n\n"));
@@ -10133,7 +10136,7 @@ function systemPrompt(agent, hasTools, canWrite, skills = []) {
 {
 ${fields}
 }
-A type ending in "?" is optional.`
+A type ending in "?" is optional: leave that key out, or write null \u2014 both say there was nothing to put there. Every other key is required, and null is not an answer for one.`
     );
   }
   return parts.join("\n\n");
@@ -11305,7 +11308,7 @@ async function begin(ctx, workflowId, input, cwd, repos, opts = {}) {
   }
   return next(ctx, executionId);
 }
-async function next(ctx, executionId) {
+async function next(ctx, executionId, opts = {}) {
   for (; ; ) {
     const { execution, steps, publish } = await ctx.client.execution(executionId);
     const stopped = stoppedOutside(execution);
@@ -11426,12 +11429,30 @@ async function next(ctx, executionId) {
         return { id, description, path: resolveSkillDir(id, scope) };
       });
       if (prepared.agent.executor === "claude-code" && ctx.throughGateway) {
-        const shape2 = prepared.agent.output.type === "json" ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema).map(([k, t]) => `${k} (${t})`).join(", ")}` : "the answer as plain text";
+        const shape2 = outputShape(prepared.agent.output);
         const subagent = subagentName(ctx.team, prepared.agent.id);
         const outputFile2 = outputFileFor(executionId, node.id, position.visit);
         const resume = position.visit > 1 ? recallSubagent(executionId, node.id) : null;
+        let delta = null;
+        if (resume && !opts.full) {
+          const before = outputsBeforePreviousVisit(workflow, steps, node.id, position.stepIndex);
+          if (before) {
+            try {
+              const earlier = prepareAgentNode(node, stateFor(execution, before), (id) => getAgent(id, scope));
+              delta = resumePrompt(
+                node.id,
+                position.visit,
+                node.inputs ?? prepared.agent.inputs,
+                prepared.inputs,
+                earlier.inputs
+              );
+            } catch {
+              delta = null;
+            }
+          }
+        }
         ctx.say(
-          `  as subagent ${subagent} in ${prepared.agent.model} \xB7 live in this session` + (resume ? ` \xB7 continuing ${resume}` : "")
+          `  as subagent ${subagent} in ${prepared.agent.model} \xB7 live in this session` + (resume ? ` \xB7 continuing ${resume}${delta ? " \xB7 sending what is new" : ""}` : "")
         );
         return {
           do: "delegate",
@@ -11441,7 +11462,9 @@ async function next(ctx, executionId) {
           model: prepared.agent.model,
           subagent,
           resume,
-          prompt: `${prepared.prompt}
+          prompt: delta ? `${delta}
+
+${answerFileNotice(outputFile2, shape2)}` : `${prepared.prompt}
 
 ${unattendedNotice()}
 
@@ -11452,7 +11475,7 @@ ${answerFileNotice(outputFile2, shape2)}`,
           skills,
           timeoutMs: prepared.agent.timeoutMs ?? null,
           remember: [
-            resume ? `This node ran earlier in this run as subagent ${resume}. Continue that same agent with SendMessage (to: "${resume}"), giving it \`prompt\` whole and unchanged as the message: it keeps everything it read and decided last time, and the prompt carries what is new \u2014 the answers, the feedback. Only if the send fails because that agent is gone, start "${subagent}" fresh with the Agent tool instead.` : `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not pick a model for it: its file sets the agent's own model.`,
+            resume ? `This node ran earlier in this run as subagent ${resume}. Continue that same agent with SendMessage (to: "${resume}"), giving it \`prompt\` whole and unchanged as the message: it keeps everything it ` + (delta ? `read and decided last time, and the prompt is only what has changed since \u2014 the answers, the feedback, the gaps. It is deliberately not the whole brief again, so it is no use to a fresh agent. If the send fails because that agent is gone, run \`gate next ${executionId} --full\` for the whole brief and start the node over with that.` : `read and decided last time. If the send fails because that agent is gone, start "${subagent}" fresh with the Agent tool and this same prompt instead.`) : `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not pick a model for it: its file sets the agent's own model.`,
             workspace ? `Tell it: work in ${workspace.root} \u2014 the run's worktree, not the user's checkout \u2014 with absolute paths under it, and nowhere else.` : "Tell it: this node has no workspace; reason over the task, touch no files.",
             ...skills.length ? [
               `Tell it: read and follow, before starting, ${skills.length === 1 ? "this skill" : "these skills"}: ` + skills.map((s) => `${s.id} (${s.path ?? "not pulled"})`).join(", ") + ". They are part of the node."
@@ -11485,7 +11508,7 @@ ${answerFileNotice(outputFile2, shape2)}`,
         ctx.say(`  running on its own in ${prepared.agent.model} \xB7 log ${log}`);
         return waitInstruction(executionId, pending, prepared.agent);
       }
-      const shape = prepared.agent.output.type === "json" ? `a JSON object with exactly these keys: ${Object.entries(prepared.agent.output.schema).map(([k, t]) => `${k} (${t})`).join(", ")}` : "the answer as plain text";
+      const shape = outputShape(prepared.agent.output);
       const outputFile = outputFileFor(executionId, node.id, position.visit);
       return {
         do: "agent",
@@ -11503,7 +11526,14 @@ ${answerFileNotice(outputFile2, shape2)}`,
           workspace ? `Work in ${workspace.root} \u2014 the run's worktree, not the user's checkout.` : "This node has no workspace: reason over what the prompt gives you, do not touch files.",
           "Say what you are doing as you go; the user is watching this happen.",
           "What gate printed above this JSON \u2014 the command nodes it ran on the way here and their output \u2014 the user has not seen: relay those lines to them before you start, as they are.",
-          "Ask the user when the brief does not settle something, or something looks wrong. They can answer. Ask with AskUserQuestion, one question at a time, their own words through Other \u2014 never with a plain message that ends your turn: a question asked that way reaches only this terminal, and a person watching several runs from elsewhere never sees it.",
+          // Whether this node may ask is the agent's own `asks`, not a blanket
+          // rule about running in a session. Told to every gate-executor node,
+          // "ask the user" reached agents written to decide alone — the
+          // unattended road's `decide`, whose prompt says "You ask nobody" in
+          // its third sentence — so the instruction and the prompt arrived in
+          // the same breath contradicting each other, and which one won was
+          // left to the model.
+          personsTurn ? "Ask the user when the brief does not settle something, or something looks wrong. They can answer. Ask with AskUserQuestion, one question at a time, their own words through Other \u2014 never with a plain message that ends your turn: a question asked that way reaches only this terminal, and a person watching several runs from elsewhere never sees it." : "This node does not ask the user: its agent declares no `asks`, so nothing here pauses for a person. When the brief does not settle something, settle it on what you can read and say in your answer what you decided and why. If you find something genuinely wrong, that too goes in the answer \u2014 the edges read it, and that is how the run is stopped.",
           ...prepared.agent.tools.some((t) => t.startsWith("memory_")) ? [
             "This agent reads the team's memory, and here the memory tools are commands: `gate memory search \"<words>\"` and `gate memory search --path <prefix>` are memory_search, `gate memory feature <id>` is memory_feature. Run them, read what they print, and treat it as the tool's result. They read only; nothing you do here writes memory."
           ] : [],
@@ -11518,6 +11548,59 @@ ${answerFileNotice(outputFile2, shape2)}`,
     }
     await runControlNode(ctx, executionId, node, state, position, workspaceOf(execution));
   }
+}
+function outputsBeforePreviousVisit(workflow, steps, nodeId2, stepIndex) {
+  let previous = -1;
+  for (let i = 0; i < stepIndex && i < steps.length; i++) {
+    if (steps[i].nodeId === nodeId2) previous = i;
+  }
+  if (previous < 0) return null;
+  const outputs = {};
+  for (let i = 0; i < previous; i++) {
+    const node = findNode(workflow, steps[i].nodeId);
+    if (!node || node.type === "condition" || node.type === "parallel") continue;
+    outputs[steps[i].nodeId] = steps[i].output;
+  }
+  return outputs;
+}
+function readResolved(root, path) {
+  let cur = root;
+  for (const segment of path.split(".").filter(Boolean)) {
+    if (cur == null || typeof cur !== "object") return void 0;
+    cur = cur[segment];
+  }
+  return cur;
+}
+function renderValue(v) {
+  if (typeof v === "string") return v;
+  if (v === null || typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v, null, 2);
+}
+function resumePrompt(nodeId2, visit2, paths, current, previous) {
+  const changed = [];
+  for (const raw of paths) {
+    const path = raw.replace(/\?$/, "");
+    const now = readResolved(current, path);
+    if (now === void 0 || now === "" || Array.isArray(now) && !now.length) continue;
+    if (JSON.stringify(now) === JSON.stringify(readResolved(previous, path))) continue;
+    changed.push([path, now]);
+  }
+  if (!changed.length) return null;
+  return `Pass ${visit2} of the "${nodeId2}" node \u2014 the same node you worked on before, continued.
+
+Everything you were given last time still holds: the task, the brief, and what you read and decided while doing it. Do not start the node over and do not ask for any of it again; go on from where you left off.
+
+What is new since your last pass:
+
+` + changed.map(([path, value]) => `## ${path}
+
+${renderValue(value)}`).join("\n\n");
+}
+function outputShape(output) {
+  if (output.type !== "json") return "the answer as plain text";
+  const fields = Object.entries(output.schema).map(([key, type]) => type.endsWith("?") ? `${key} (${type.slice(0, -1)}, optional)` : `${key} (${type})`).join(", ");
+  const anyOptional = Object.values(output.schema).some((type) => type.endsWith("?"));
+  return `a JSON object with these keys: ${fields}` + (anyOptional ? " \u2014 an optional key may be left out or written as null when there is nothing to say, and every other key is required" : ", and nothing else");
 }
 function answerFileNotice(outputFile, shape) {
   return `When you are done, write your answer \u2014 ${shape}, exactly what your final message ends with, and nothing else \u2014 to the file ${outputFile} (create the directory if it is missing), then end your final message with that same answer. The file is what the run reads; the message is for the person watching.`;
@@ -12425,7 +12508,9 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task\u2026]                 start a run, print the first instruction
        --task-id <id>                           file this run under a cross-team task
-  gate next <execution-id>                      what to do next
+  gate next <execution-id> [--full]             what to do next (--full: the whole
+                                                prompt again, for a node whose
+                                                subagent is gone)
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
         [--subagent <id>]                        the agent id the Agent tool returned, so its next pass
                                                  continues it \u2014 not the gate-<team>-<agent> type name
@@ -13023,9 +13108,9 @@ async function cmdBegin(args) {
 }
 async function cmdNext(args) {
   const [executionId] = args.positional;
-  if (!executionId) die("usage: gate next <execution-id>");
+  if (!executionId) die("usage: gate next <execution-id> [--full]");
   const { ctx } = await sessionContext();
-  return printInstruction(await next(ctx, executionId));
+  return printInstruction(await next(ctx, executionId, { full: args.flags.full === true }));
 }
 async function cmdStep(args) {
   const [executionId, nodeId2] = args.positional;
