@@ -200,7 +200,10 @@ bump: installs are cached by version
 (`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>`), so changed
 contents under the same number are fetched and ignored, and `npm run
 build:cli` refuses to build when `plugin.json`, the marketplace entry and
-`GATE_VERSION` disagree. Every `/api/v1` response carries `x-gate-server`
+`GATE_VERSION` disagree. The bundle it writes is committed, so it is built
+with symlinks left unresolved and comes out byte-identical wherever it is
+run — a run rebuilding it inside its own worktree, whose `node_modules` is a
+link to the checkout's, produces the same file the checkout does. Every `/api/v1` response carries `x-gate-server`
 and `x-gate-min-cli`; a client below the minimum is refused with
 `CLIENT_TOO_OLD` and the command that fixes it; `MIN_CLIENT_VERSION` in
 `src/lib/protocol.ts` is raised only by a change that breaks older clients.

@@ -94,6 +94,15 @@ await build({
   // node:sqlite has been imported by mistake, and the build should say so
   // rather than quietly producing a CLI that cannot start.
   external: ["next/*", "next"],
+  // The bundle is committed, so the same source has to produce the same bytes
+  // wherever it is built. esbuild labels each module with its path relative to
+  // the working directory, and it resolves symlinks before doing so: a gate run
+  // builds in a worktree whose node_modules is a link to this checkout's, and
+  // the labels come out as `../../../Projects/...` — with as many `..` as the
+  // worktree happens to sit deep, so two runs disagree with each other as well
+  // as with a build from here. Keeping the link unresolved keeps every label
+  // `node_modules/...`, which is what the path means to a reader anyway.
+  preserveSymlinks: true,
   alias: { "@": resolve(root, "src") },
   banner: { js: "#!/usr/bin/env node" },
   logLevel: "info",
