@@ -297,8 +297,13 @@ nodes:
     type: command
     label: Diff against the starting commit
     # The working tree against the base commit: what the implementer committed
-    # and what it left uncommitted, in one diff.
-    command: [git, diff, "{{outputs.base.stdout}}"]
+    # and what it left uncommitted. Only the stat — the file list and the line
+    # counts. One edge reads this output, and it reads it for emptiness; the
+    # reviewer is told to run "git diff" itself, inside its own node, where the
+    # diff is its business and not the whole run's. Printed in full here it was
+    # forty thousand tokens of the driving session's context that nothing ever
+    # read.
+    command: [git, diff, --stat, "{{outputs.base.stdout}}"]
     edges:
       - when: outputs.diff.stdout == ""
         to: nothing-changed
@@ -572,7 +577,11 @@ nodes:
 
   - id: not-shipped
     type: terminal
-    label: Reviewed, but not shipped
+    # Failed, and the label says which half failed: the work stands, committed
+    # on the branch, and it is the delivery that did not happen. Without that
+    # distinction a push against a remote nobody had signed into read exactly
+    # like a review that rejected the work.
+    label: Reviewed and committed on the branch — the push or the merge request failed
     status: failed
 `;
 
@@ -706,7 +715,9 @@ nodes:
   - id: diff
     type: command
     label: Diff against the starting commit
-    command: [git, diff, "{{outputs.base.stdout}}"]
+    # Only the stat: the one edge below reads it for emptiness, and the
+    # reviewer runs its own "git diff" inside its node.
+    command: [git, diff, --stat, "{{outputs.base.stdout}}"]
     edges:
       - when: outputs.diff.stdout == ""
         to: nothing-changed
@@ -845,7 +856,11 @@ nodes:
 
   - id: not-shipped
     type: terminal
-    label: Reviewed, but not shipped
+    # Failed, and the label says which half failed: the work stands, committed
+    # on the branch, and it is the delivery that did not happen. Without that
+    # distinction a push against a remote nobody had signed into read exactly
+    # like a review that rejected the work.
+    label: Reviewed and committed on the branch — the push or the merge request failed
     status: failed
 `;
 
@@ -889,7 +904,7 @@ nodes:
  * pipeline nobody can read.
  */
 const DEV_AUTO = `name: Dev auto
-description: Plan, build, verify and review a change with nobody in the loop — the planner's questions are answered by the run itself, the plan is not shown, and the reviewer's approval opens the merge request. For a task settled well enough to hand over; the person reads the merge request, where every decision the run made is written down.
+description: Plan, build, verify and review a change with nobody in the loop — the planner's questions are answered by the run itself, the plan is not shown, and the reviewer's approval opens the merge request. For a task settled well enough to hand over; the person reads the merge request, where every decision the run made is written down. Start it with the run input deliver set to "branch" to stop at the commit instead, leaving the push and the merge request to them.
 entry: base
 workspace: {}
 # No engine ceilings, as in dev: every loop ends on its own give-up edge,
@@ -1031,7 +1046,9 @@ nodes:
   - id: diff
     type: command
     label: Diff against the starting commit
-    command: [git, diff, "{{outputs.base.stdout}}"]
+    # Only the stat: the one edge below reads it for emptiness, and the
+    # reviewer runs its own "git diff" inside its node.
+    command: [git, diff, --stat, "{{outputs.base.stdout}}"]
     edges:
       - when: outputs.diff.stdout == ""
         to: nothing-changed
@@ -1101,7 +1118,7 @@ nodes:
     command: [git, diff, --cached, --quiet]
     edges:
       - when: outputs.staged.ok == true
-        to: merge-request
+        to: delivery
         label: already committed
       - to: commit
         label: has staged changes
@@ -1112,10 +1129,31 @@ nodes:
     command: [git, commit, -m, "{{input.task}}", -m, "{{outputs.implementer.summary}}"]
     edges:
       - when: outputs.commit.ok == true
-        to: merge-request
+        to: delivery
         label: committed
       - to: not-shipped
         label: commit failed
+
+  # How far the run delivers, said when it is started and not in the middle.
+  # A deliver input of "branch" stops here, with the work committed on the
+  # branch and the merge request the person's to open; anything else —
+  # including the ordinary case of not passing it at all — opens it, which
+  # is what this road is for.
+  #
+  # It is a gate and not an edit to the file because the alternative, tried
+  # once, was to break the git remote so the push would fail: the run then
+  # ended on not-shipped, reading as a failure to anyone looking at it later,
+  # when every node had in fact passed. A run that was asked to stop here
+  # stops here, and says so by finishing.
+  - id: delivery
+    type: condition
+    label: Deliver how?
+    edges:
+      - when: input.deliver == "branch"
+        to: committed
+        label: the branch is the delivery
+      - to: merge-request
+        label: open the merge request
 
   - id: merge-request
     type: command
@@ -1155,6 +1193,13 @@ nodes:
     label: Merge request opened
     status: completed
 
+  # Completed, not failed: everything the run was asked to do is done, and the
+  # push is the one thing it was asked not to do.
+  - id: committed
+    type: terminal
+    label: Committed on the branch — the merge request is yours to open
+    status: completed
+
   - id: objection-needs-a-person
     type: terminal
     label: Stopped — the plan objects to another team's decision; only a person raises one
@@ -1192,7 +1237,11 @@ nodes:
 
   - id: not-shipped
     type: terminal
-    label: Reviewed, but not shipped
+    # Failed, and the label says which half failed: the work stands, committed
+    # on the branch, and it is the delivery that did not happen. Without that
+    # distinction a push against a remote nobody had signed into read exactly
+    # like a review that rejected the work.
+    label: Reviewed and committed on the branch — the push or the merge request failed
     status: failed
 `;
 

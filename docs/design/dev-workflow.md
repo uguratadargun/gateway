@@ -72,7 +72,10 @@ no arithmetic: a visit is counted when a node runs, before its edges are
 read, so a record round would otherwise spend one of the four. The starting
 commit is recorded first and every diff is taken against it, because the
 implementer commits as it goes and a plain `git diff` would show a finished
-run as empty. The plan file stays under `docs/plans/`, ignored by a
+run as empty. That diff is taken `--stat`: the node's one job is to say
+whether anything was built and in what shape, and the reviewer runs its own
+full `git diff` inside its own node, where the reading is its business
+rather than the whole run's. The plan file stays under `docs/plans/`, ignored by a
 `.gitignore` of `*`; its reasoning travels in the implementer's summary,
 the commit's body, and the plan itself, as finished, is copied by the
 implementer to `docs/specs/` as the run's last commit. Between the verifier
@@ -105,7 +108,7 @@ makes the change, runs the project's own check for the files it touched,
 keeps the design doc's sentence true when the behaviour it describes
 changed, and writes a short spec under `docs/specs/` — the task as given
 and what was done — which the same `record` node checks for; the quick
-reviewer reads the diff itself, and the person is in it once, at
+reviewer runs its own `git diff`, and the person is in it once, at
 acceptance. A task that turns out not to be small, or that would need a
 decision record, ends at `nothing-changed` with the reason, so it can go
 through `dev` instead.
@@ -120,13 +123,24 @@ from the planner's own recommendation, the repository's record and memory,
 handing the answers back marked as the run's so the planner writes them into
 the plan's assumptions; they reach the person in the spec and the merge
 request, where they can be undone. Nothing is shown before the build and
-nothing is tried before the push: the reviewer's approval is what opens the
-merge request. Three rounds of answers that still end in a question end the
+nothing is tried before the push: the reviewer's approval is what reaches
+the `delivery` gate, and the gate reads the run input `deliver`. Left
+unset it means the whole road — push, then the merge request. Set to
+`branch` it stops at the commit, on the terminal `committed`, which is a
+`completed` run: the work is done and reviewed, and the push is the
+person's. It is a run input no agent node reads, so it never becomes
+required and every existing `gate begin dev-auto` call still means what it
+meant. When the push or the merge request itself fails the run ends on
+`not-shipped`, which says what is true — reviewed and committed on the
+branch, the delivery is what broke — rather than describing the whole run
+as a failure. Three rounds of answers that still end in a question end the
 run on `never-planned`, and a planner that objects to another team's
 decision ends it on `objection-needs-a-person` — an objection is a request
 to another team, and nobody on this road can confirm one, so that task goes
 through `dev`. It is written out rather than derived from `dev` — the
-difference is six nodes, not a renaming — and a test holds it to `dev`'s
+difference is the person's six turns, the four terminals that exist only to
+hold for them, and the four ids this road adds, not a renaming — and a test
+holds it to `dev`'s
 shape node by node. The road is never picked on the person's behalf; they
 name it.
 Every road that builds reads memory first. Two more roads build nothing. **`blame`** is
@@ -210,14 +224,23 @@ addressed by the agent id the Agent tool returned, never by the
 `gate-<team>-<agent>` type name of the file under `~/.claude/agents/`,
 which resolves to nobody and starts a fresh subagent that reads the whole
 worktree again. `gate step` refuses that name rather than recording a
-resume target that will not work.
+resume target that will not work. A continued pass is sent only what
+changed: gate rebuilds the node's inputs as they stood at its previous
+visit, compares them to the inputs now, and the prompt is the ones that
+differ under their own headings — the task, the brief and everything the
+subagent read and decided are already in that conversation, and sending
+them again was measured at thousands of tokens a pass and read by the
+subagent as an instruction to start over. When nothing differs the whole
+prompt is sent, as before; and `gate next <execution-id> --full` gives it
+back deliberately, which is what to do when the subagent is gone and the
+pass has to start fresh.
 In a session not on the gateway they run as a detached worker (`gate
 work`) the session follows with `gate wait`. Either way those nodes do not
 ask; questions travel through `clarify`.
 
 ```bash
 gate begin <workflow> "<task>"          # → the first instruction, as JSON
-gate next <execution-id>                # → what to do now (no side effects)
+gate next <execution-id> [--full]       # → what to do now (no side effects)
 gate step <execution-id> <node> --output-file <file>   # → hand back an answer
 gate wait <execution-id>                # → follow a node running in its own model
 gate live [--global] [--off]            # → put Claude Code here on the gateway, by its settings
@@ -369,6 +392,8 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Decisions
 
+- [0032 — The autonomous road can stop at the commit](../decisions/0032-the-autonomous-road-can-stop-at-the-commit.md)
+- [0031 — A prompt carries what is new, not what was already read](../decisions/0031-a-prompt-carries-what-is-new-not-what-was-already-read.md)
 - [0025 — The autonomous road answers the planner's questions itself](../decisions/0025-the-autonomous-road-answers-the-planners-questions-itself.md)
 - [0004 — The plan file is never committed](../decisions/0004-the-plan-file-is-never-committed.md)
 - [0001 — The engine routes, never a model](../decisions/0001-the-engine-routes-never-a-model.md)

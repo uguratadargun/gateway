@@ -620,11 +620,14 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
     expect(plans[0]).not.toContain("Rename");
     expect(plans[1]).toContain("Rename `x` to `count`.");
 
-    // The reviewer is handed the base commit; the diff node diffs against it.
+    // The reviewer is handed the base commit; the diff node diffs against it,
+    // and only for the stat. The reviewer runs its own diff inside its node —
+    // the full one printed here was forty thousand tokens of the driving
+    // session's context that no node and no edge ever read.
     const reviews = provider.callsFor("reviewer").map((c) => c.messages[0].content);
     expect(reviews[0]).toContain(BASE);
-    const diff = ran.find((c) => c[0] === "git" && c[1] === "diff" && c.length === 3)!;
-    expect(diff).toEqual(["git", "diff", BASE]);
+    const diff = ran.find((c) => c[0] === "git" && c[1] === "diff" && c[2] === "--stat")!;
+    expect(diff).toEqual(["git", "diff", "--stat", BASE]);
 
     const mr = ran.find((c) => c.includes("gate-open-mr"))!;
     expect(mr).toBeDefined();
@@ -1280,7 +1283,7 @@ Try {{inputs.implementer.summary}}
 
     // The reviewer reads the diff itself, from the base it was handed.
     expect(provider.callsFor("reviewer")[0].messages[0].content).toContain(BASE);
-    expect(ran.find((c) => c[0] === "git" && c[1] === "diff" && c.length === 3)).toEqual(["git", "diff", BASE]);
+    expect(ran.find((c) => c[0] === "git" && c[1] === "diff" && c[2] === "--stat")).toEqual(["git", "diff", "--stat", BASE]);
     // The ending is dev's: the task and the summary on the commit, the task
     // as an argument to the merge request, the commit before the push.
     const commit = ran.find((c) => c[0] === "git" && c[1] === "commit")!;
@@ -1593,6 +1596,50 @@ Fix the record for {{inputs.planner.planFile}} from {{inputs.base.stdout}}: {{in
     expect(ran.find((c) => c.includes("gate-open-mr"))).toBeDefined();
   });
 
+  /**
+   * How far the run delivers is said when it is started. Before this gate the
+   * only way to build a branch without pushing it was to break the git remote
+   * so the push would fail — which worked, and left the run sitting on
+   * `not-shipped` reading as a failure when every node had passed.
+   */
+  it("stops at the commit when it was started with deliver: branch, and calls that completed", async () => {
+    const workflow = auto();
+    const { ran, runCommand } = fakeGit();
+    const events: WorkflowEvent[] = [];
+
+    const state = await runWorkflow(workflow, {
+      provider: fakeTeam(),
+      runCommand,
+      input: { task: "Add a thing", deliver: "branch" },
+      emit: (e) => events.push(e),
+    });
+
+    expect(state.status).toBe("completed");
+    expect(terminalOf(events)).toBe("committed");
+    // Everything up to the commit still happened; only the push did not.
+    expect(state.visitCounts.reviewer).toBe(1);
+    expect(ran.find((c) => c[0] === "git" && c[1] === "commit")).toBeDefined();
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
+  });
+
+  it("opens the merge request when nothing says otherwise", async () => {
+    const workflow = auto();
+    const { ran, runCommand } = fakeGit();
+    const events: WorkflowEvent[] = [];
+
+    // Not passing the input at all is the ordinary case, and it delivers.
+    const state = await runWorkflow(workflow, {
+      provider: fakeTeam(),
+      runCommand,
+      input: { task: "Add a thing" },
+      emit: (e) => events.push(e),
+    });
+
+    expect(terminalOf(events)).toBe("done");
+    expect(ran.find((c) => c.includes("gate-open-mr"))).toBeDefined();
+    expect(state.status).toBe("completed");
+  });
+
   it("gives up when the planner is still asking after three rounds of answers", async () => {
     const workflow = auto();
     const provider = fakeTeam(APPROVED, ASK);
@@ -1730,9 +1777,17 @@ Fix the record for {{inputs.planner.planFile}} from {{inputs.base.stdout}}: {{in
       "blocked-by-objection",
       "awaiting-objection-answer",
     ]);
-    // And the two terminals this road adds: a question it will not answer,
-    // and a plan it never reached.
-    expect(ids(graph).filter((id) => !ids(dev).includes(id))).toEqual(["objection-needs-a-person", "never-planned"]);
+    // And what this road adds: two terminals — a question it will not answer,
+    // and a plan it never reached — plus the gate that says how far it
+    // delivers and the terminal that gate lands on. dev needs neither: its
+    // acceptance node is where a person already says stop, and holding there
+    // is what `awaiting-approval` is.
+    expect(ids(graph).filter((id) => !ids(dev).includes(id))).toEqual([
+      "delivery",
+      "committed",
+      "objection-needs-a-person",
+      "never-planned",
+    ]);
 
     // Every node both have does the same thing: same type, same agent, same
     // command, same terminal status. Only the routing may differ, and only
