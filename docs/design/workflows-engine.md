@@ -33,7 +33,11 @@ declaration order, then the single edge without a `when` as the fallback.
 Conditions read `outputs.*`, `input.*` and `visits.*` with
 `== != > >= < <= && || !` over literals; they are tokenized, parsed into a
 small AST and interpreted — there is no `eval` or `new Function` anywhere in
-that path, so an untrusted workflow file cannot execute JavaScript. A
+that path, so an untrusted workflow file cannot execute JavaScript. The
+`input.*` keys a guard reads this way — on any node's edges, not only a
+`condition` node's — are the workflow's optional run inputs: kept apart from
+the required ones an agent declares, since a guard decides where the run goes
+rather than whether it can start. A
 `command` node is spawned from an argv array in the YAML, never a shell
 string built from model output. There are no ceilings a workflow file cannot
 raise: `maxWorkflowSteps`, `maxVisits` and `maxCostUsd` default to `0`,
@@ -181,7 +185,7 @@ and `next` (one unconditional edge) or `edges` (up to 20: `to`, optional
 - `src/workflows/condition.ts` — the condition tokenizer, parser and interpreter
 - `src/workflows/registry.ts` — the file store per scope, validated against that scope's agents
 - `src/workflows/serialize.ts`, `graph-view.ts`, `routing.ts` — graph → canonical YAML for **Save graph**; what the canvas draws, which links loop back, what a transition was
-- `src/workflows/inputs.ts`, `src/workflows/snapshot.ts`, `src/workflows/usage.ts` — required run inputs, the definitions a run is frozen to, which workflows name each agent
+- `src/workflows/inputs.ts`, `src/workflows/snapshot.ts`, `src/workflows/usage.ts` — required and optional run inputs, the definitions a run is frozen to, which workflows name each agent
 - `src/workflows/defaults.ts` — the shipped `dev`, `dev-super`, `dev-quick` and `dev-auto` pipelines
 - `src/runtime/engine.ts` — the walk: entry to terminal, parallel fan-out and join, cancellation, resume
 - `src/runtime/executors/condition.ts` — `selectEdge`, the one place the next node is chosen; `agent.ts`, `claude-code.ts`, `command.ts` beside it are the node executors
@@ -195,8 +199,10 @@ and `next` (one unconditional edge) or `edges` (up to 20: `to`, optional
 - A branch may not be pointed at from outside its fan-out node, and may not contain a terminal. Adding `next: done` inside a branch is refused with the branch named.
 - Saving from the canvas discards YAML comments. Keep hand-written commentary in `description` or in the labels.
 - A workflow saved without `workspace` gives its agents no tools at all; they reason over what the graph hands them and nothing else.
+- A guard on a switched-off node contributes no optional input: the run takes `skipTo` and never evaluates that node's edges, so asking for a value nothing will read is noise.
 
 ## Decisions
 
+- [0033 — An input only a guard reads is optional](../decisions/0033-an-input-only-a-guard-reads-is-optional.md)
 - [0009 — A run is judged by the definitions it started with](../decisions/0009-a-run-is-judged-by-the-definitions-it-started-with.md)
 - [0001 — The engine routes, never a model](../decisions/0001-the-engine-routes-never-a-model.md)

@@ -56,9 +56,15 @@ marks an agent whose job is to put
 something in front of the person and carry back their answer; a run driven
 from a session is paused while such a node is out, and its clock stops.
 
-A workflow's run input is checked before anything starts: `/workflows/<id>`
-pre-fills the box with the `input.*` keys its agents read, and a run missing
-one is refused with `RUN_INPUT_MISSING` instead of failing at the first node.
+A workflow's run input is checked before anything starts: the `input.*` keys
+its agents read are required, `/workflows/<id>` pre-fills the box with them,
+and a run missing one is refused with `RUN_INPUT_MISSING` instead of failing
+at the first node. A key that only an edge guard reads — `dev-auto`'s
+`deliver`, which decides whether the run stops at the commit or opens a merge
+request — is optional: it changes where the run goes, not whether it can
+start, so it is never pre-filled and can never refuse a run. `gate list`,
+`gate show` and `/workflows/<id>` all name it beside the required keys, each
+time saying it is optional.
 
 **Skills** live at `~/.gate/teams/<team>/skills/<id>/SKILL.md`, a directory
 per skill with whatever files the process points at beside it. `name` and
