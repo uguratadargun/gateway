@@ -5,7 +5,7 @@ import { getAgent } from "@/agents/registry";
 import { getLayout } from "@/executions/store";
 import { WorkflowError } from "@/runtime/errors";
 import { ensureDefaultWorkflows } from "@/workflows/defaults";
-import { requiredRunInputs } from "@/workflows/inputs";
+import { optionalRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { deleteWorkflow, getWorkflow, readWorkflowSource, saveWorkflow } from "@/workflows/registry";
 import { scopeFromRequest } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
@@ -46,6 +46,7 @@ export async function GET(req: Request, { params }: Params) {
       source: readWorkflowSource(id, scope),
       layout: getLayout(id),
       requiredInput: requiredRunInputs(workflow, (agentId) => getAgent(agentId, scope)),
+      optionalInput: optionalRunInputs(workflow, (agentId) => getAgent(agentId, scope)),
     });
   } catch (e) {
     return fail(e);

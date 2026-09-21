@@ -115,6 +115,7 @@ export default function WorkflowDetailPage() {
   const [showSource, setShowSource] = useState(false);
   const [input, setInput] = useState("{}");
   const [requiredInput, setRequiredInput] = useState<string[]>([]);
+  const [optionalInput, setOptionalInput] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   /** While the canvas is full screen the page chrome is covered, so it moves onto the canvas. */
   const [canvasFull, setCanvasFull] = useState(false);
@@ -135,6 +136,7 @@ export default function WorkflowDetailPage() {
     setLayout(data.layout ?? {});
     const required: string[] = data.requiredInput ?? [];
     setRequiredInput(required);
+    setOptionalInput(data.optionalInput ?? []);
     if (required.length) {
       setInput((current) =>
         current.trim() === "{}" ? JSON.stringify(Object.fromEntries(required.map((k) => [k, ""])), null, 2) : current,
@@ -525,6 +527,13 @@ export default function WorkflowDetailPage() {
                   <>
                     {" "}
                     This workflow needs <span className="font-mono">{requiredInput.join(", ")}</span>.
+                  </>
+                )}
+                {optionalInput.length > 0 && (
+                  <>
+                    {" "}
+                    It also reads <span className="font-mono">{optionalInput.join(", ")}</span> where the run
+                    branches on it — optional, and leaving it out never refuses the run.
                   </>
                 )}
               </p>
