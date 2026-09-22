@@ -83,8 +83,8 @@ describe("cache (sqlite)", () => {
 describe("traffic + ratelimit (sqlite)", () => {
   it("records, reads newest-first, and clears traffic", () => {
     clearTraffic();
-    recordTraffic({ ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" });
-    recordTraffic({ ts: 2, endpoint: "messages", requested: "b", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" });
+    recordTraffic({ ts: Date.now() - 3000, endpoint: "messages", requested: "a", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" });
+    recordTraffic({ ts: Date.now() - 2000, endpoint: "messages", requested: "b", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" });
     const t = readTraffic();
     expect(t.map((e) => e.requested)).toEqual(["b", "a"]);
     clearTraffic();
@@ -107,7 +107,7 @@ describe("traffic + ratelimit (sqlite)", () => {
       },
       "work",
     );
-    const row = { ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
+    const row = { ts: Date.now() - 3000, endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
     recordTraffic({ ...row, keyId: key.id, userId: user.id, teamId: DEFAULT_TEAM_ID, accountId: account.id });
 
     const named = readTraffic()[0];
@@ -126,9 +126,9 @@ describe("traffic + ratelimit (sqlite)", () => {
   it("falls back to the sentinel key ids, then to unknown", () => {
     clearTraffic();
     const row = { endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
-    recordTraffic({ ...row, ts: 1 });
-    recordTraffic({ ...row, ts: 2, keyId: "workflow" });
-    recordTraffic({ ...row, ts: 3, keyId: "local" });
+    recordTraffic({ ...row, ts: Date.now() - 3000 });
+    recordTraffic({ ...row, ts: Date.now() - 2000, keyId: "workflow" });
+    recordTraffic({ ...row, ts: Date.now() - 1000, keyId: "local" });
     expect(readTraffic().map((e) => e.caller)).toEqual(["local", "workflow", "unknown"]);
     // A caller with no account and no provider still reads.
     expect(readTraffic()[0].servedBy).toBe("—");

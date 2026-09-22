@@ -1,5 +1,6 @@
 import { getDb } from "./db";
 import { INTERNAL_KEY_ID, LOCAL_KEY_ID } from "./gate-auth";
+import { loadSettings } from "./settings";
 
 /**
  * Local request/response traffic log for debugging the gateway. Bodies are
@@ -35,13 +36,37 @@ export interface TrafficRow extends TrafficEntry {
   /** The account that served it, else the provider that did. Never empty. */
   servedBy: string;
   team: string;
+  /** The table's own autoincrement id. Part of the (ts, id) paging cursor,
+   *  and the page's React key and expanded-row identity. Last on purpose:
+   *  this key order is the CSV header of `/api/export?what=traffic` —
+   *  append, never reorder. */
+  id: number;
 }
 
 const MAX_PREVIEW = 2000;
-const MAX_ROWS = 500;
 
 export function truncatePreview(s: string): string {
   return s.length > MAX_PREVIEW ? `${s.slice(0, MAX_PREVIEW)}…[+${s.length - MAX_PREVIEW}]` : s;
+}
+
+/** Rows older than the retention window are gone. Returns how many went. */
+export function pruneTraffic(now = Date.now()): number {
+  const days = loadSettings().traffic.retentionDays;
+  const cutoff = now - days * 86_400_000;
+  return Number(getDb().prepare("DELETE FROM traffic WHERE ts < ?").run(cutoff).changes);
+}
+
+/** The position of a row in the (ts, id) order, opaque to the client. */
+export function trafficCursor(row: { ts: number; id: number }): string {
+  return `${row.ts}:${row.id}`;
+}
+
+/** null for no cursor; throws nothing — an unparseable cursor is undefined. */
+export function parseTrafficCursor(s: string | null | undefined): { ts: number; id: number } | null {
+  if (!s) return null;
+  const m = /^(\d+):(\d+)$/.exec(s);
+  if (!m) return null;
+  return { ts: Number(m[1]), id: Number(m[2]) };
 }
 
 export function recordTraffic(e: TrafficEntry): void {
@@ -66,10 +91,9 @@ export function recordTraffic(e: TrafficEntry): void {
       e.userId ?? null,
       e.teamId ?? null,
     );
-    // Bound the table; cheap because of the ts index.
-    db.prepare(
-      "DELETE FROM traffic WHERE id NOT IN (SELECT id FROM traffic ORDER BY ts DESC LIMIT ?)",
-    ).run(MAX_ROWS);
+    // The window is the only bound now; the indexed ts range delete is
+    // strictly cheaper than sorting the whole table on every insert.
+    pruneTraffic();
   } catch {
     // best-effort
   }
@@ -95,12 +119,18 @@ function servedByLabel(r: any): string {
   return "—";
 }
 
-export function readTraffic(limit = 100): TrafficRow[] {
+/** Newest first. `before` is a cursor from `trafficCursor`; it does not prune. */
+export function readTraffic(limit = 100, before?: { ts: number; id: number } | null): TrafficRow[] {
   // One join rather than five lookups: a deleted account, person or team yields
   // NULL by construction, which is exactly what the labels above degrade to.
+  // The (ts, id) predicate is exact where ts alone is not: ts is a millisecond
+  // epoch and not unique, so a ts-only cursor either drops or repeats every
+  // row sharing the boundary millisecond.
+  const where = before ? "WHERE t.ts < ? OR (t.ts = ? AND t.id < ?)" : "";
+  const params = before ? [before.ts, before.ts, before.id, limit] : [limit];
   const rows = getDb()
     .prepare(
-      `SELECT t.ts, t.endpoint, t.requested, t.routed, t.tier, t.status, t.stream,
+      `SELECT t.id, t.ts, t.endpoint, t.requested, t.routed, t.tier, t.status, t.stream,
               t.from_cache, t.request_preview, t.response_preview,
               t.account_id, t.provider_id, t.key_id, t.user_id, t.team_id,
               a.label AS account_label, p.label AS provider_label,
@@ -112,9 +142,10 @@ export function readTraffic(limit = 100): TrafficRow[] {
          LEFT JOIN users     u ON u.id = t.user_id
          LEFT JOIN apikeys   k ON k.id = t.key_id
          LEFT JOIN teams     m ON m.id = t.team_id
-        ORDER BY t.ts DESC LIMIT ?`,
+        ${where}
+        ORDER BY t.ts DESC, t.id DESC LIMIT ?`,
     )
-    .all(limit) as any[];
+    .all(...params) as any[];
   // This key order is the CSV header of /api/export?what=traffic — append,
   // never reorder, and set every key on every row: the header is read off the
   // first one.
@@ -137,6 +168,7 @@ export function readTraffic(limit = 100): TrafficRow[] {
     caller: callerLabel(r),
     servedBy: servedByLabel(r),
     team: r.team_name ?? r.team_id ?? "",
+    id: Number(r.id),
   }));
 }
 
