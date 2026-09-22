@@ -18,6 +18,9 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const what = url.searchParams.get("what") === "traffic" ? "traffic" : "usage";
   const format = url.searchParams.get("format") === "json" ? "json" : "csv";
+  // Deliberately bounded to the newest 500 rows, not the whole retention
+  // window: this builds the entire response body in memory as one string,
+  // and the window is no longer capped at a row count.
   const rows: Record<string, unknown>[] = what === "traffic" ? (readTraffic(500) as unknown as Record<string, unknown>[]) : exportUsage();
   const date = new Date().toISOString().slice(0, 10);
   const filename = `gate-${what}-${date}.${format}`;

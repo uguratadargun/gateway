@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { GET as getTraffic } from "@/app/api/traffic/route";
+import { PUT as putSettings } from "@/app/api/settings/route";
 import { loadSettings, saveSettings } from "@/lib/settings";
 import { settingsPatchSchema } from "@/lib/schemas";
 import {
@@ -142,5 +144,65 @@ describe("trafficCursor / parseTrafficCursor", () => {
   it("round-trips trafficCursor", () => {
     const c = trafficCursor({ ts: 12345, id: 7 });
     expect(parseTrafficCursor(c)).toEqual({ ts: 12345, id: 7 });
+  });
+});
+
+describe("GET /api/traffic: a page on the wire", () => {
+  it("pages forward with no overlap and ends on nextCursor: null", async () => {
+    saveSettings({ traffic: { retentionDays: 7 } });
+    clearTraffic();
+    const now = Date.now();
+    for (let i = 0; i < 5; i++) recordTraffic(row(now - i * 1000, { requested: `r${i}` }));
+
+    const first = await getTraffic(new Request("http://gate.test/api/traffic?limit=2")).then((r) => r.json());
+    expect(first.entries.length).toBe(2);
+    expect(first.nextCursor).not.toBeNull();
+
+    const second = await getTraffic(
+      new Request(`http://gate.test/api/traffic?limit=2&before=${first.nextCursor}`),
+    ).then((r) => r.json());
+    expect(second.entries.length).toBe(2);
+    const firstIds = first.entries.map((e: { id: number }) => e.id);
+    const secondIds = second.entries.map((e: { id: number }) => e.id);
+    expect(secondIds.some((id: number) => firstIds.includes(id))).toBe(false);
+
+    const third = await getTraffic(
+      new Request(`http://gate.test/api/traffic?limit=2&before=${second.nextCursor}`),
+    ).then((r) => r.json());
+    expect(third.entries.length).toBe(1);
+    expect(third.nextCursor).toBeNull();
+  });
+
+  it("400s a malformed cursor rather than silently returning the newest page", async () => {
+    const res = await getTraffic(new Request("http://gate.test/api/traffic?before=nonsense"));
+    expect(res.status).toBe(400);
+  });
+
+  it("clamps limit to 500", async () => {
+    saveSettings({ traffic: { retentionDays: 7 } });
+    clearTraffic();
+    const now = Date.now();
+    for (let i = 0; i < 10; i++) recordTraffic(row(now - i * 1000));
+    const res = await getTraffic(new Request("http://gate.test/api/traffic?limit=99999")).then((r) => r.json());
+    expect(res.entries.length).toBeLessThanOrEqual(500);
+  });
+});
+
+describe("PUT /api/settings prunes traffic when the patch touches it", () => {
+  it("removes a row outside the newly-saved window at once", async () => {
+    saveSettings({ traffic: { retentionDays: 7 } });
+    clearTraffic();
+    recordTraffic(row(Date.now() - 2 * DAY, { requested: "old" }));
+    expect(readTraffic(10).length).toBe(1);
+
+    const res = await putSettings(
+      new Request("http://gate.test/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ traffic: { retentionDays: 1 } }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(readTraffic(10).length).toBe(0);
   });
 });
