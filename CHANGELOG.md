@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Traffic gets two tabs, a filter bar, and a trace: the live feed and the
+  on-disk request log now share one page and one set of filters (person,
+  served-by, tier, request id), a logged row names the run it was made for
+  and links straight to it, its own request id copies and pastes back into
+  the filter to find it again, and the log's retention is a setting, raised
+  from 500 rows to 5,000.
+
 ## 0.44.0 — 2026-09-21
 
 - A workflow's optional run inputs are listed alongside the required ones. `dev-auto`'s `deliver` — set it to `"branch"` and the run stops at the commit instead of opening a merge request — was findable nowhere but the workflow's description; `gate list`, `gate show` and the dashboard's workflow page now name every `input.*` key a workflow's guards read, taken from the guards already in the file. Nothing became required: a run that omits one of these keys still starts exactly as it did before.

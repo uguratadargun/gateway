@@ -21,6 +21,12 @@ interface ActivityEvent {
   cacheReadTokens?: number;
   durationMs?: number;
   note?: string;
+  keyId?: string | null;
+  userId?: string | null;
+  accountId?: string | null;
+  providerId?: string | null;
+  caller?: string;
+  servedBy?: string;
 }
 
 const kindVariant: Record<ActivityEvent["kind"], "default" | "secondary" | "destructive" | "success"> = {
@@ -30,7 +36,41 @@ const kindVariant: Record<ActivityEvent["kind"], "default" | "secondary" | "dest
   fallback: "default",
 };
 
-export function LiveActivity() {
+/** "" means unset. A field this event's kind never carries is `undefined` —
+ *  distinct from `null`, which means the kind carries it but it has no value
+ *  (an unkeyed request, say) — and an `undefined` field always passes: a
+ *  tier-filtered feed keeps showing `queue`/`throttle` (no tier), and a
+ *  person- or served-filtered feed keeps showing `fallback` (neither). */
+function idMatches(value: string | null | undefined, filter: string): boolean {
+  return value === undefined || value === filter;
+}
+function personMatches(e: ActivityEvent, person: string): boolean {
+  if (!person) return true;
+  if (person.startsWith("user:")) return idMatches(e.userId, person.slice("user:".length));
+  if (person.startsWith("key:")) return idMatches(e.keyId, person.slice("key:".length));
+  return true;
+}
+function servedMatches(e: ActivityEvent, served: string): boolean {
+  if (!served) return true;
+  if (served.startsWith("account:")) return idMatches(e.accountId, served.slice("account:".length));
+  if (served.startsWith("provider:")) return idMatches(e.providerId, served.slice("provider:".length));
+  return true;
+}
+function tierMatches(e: ActivityEvent, tier: string): boolean {
+  return !tier || e.tier === undefined || e.tier === tier;
+}
+
+export function LiveActivity({
+  person = "",
+  served = "",
+  tier = "",
+}: {
+  /** "user:<id>" / "key:<id>", or "" for no filter. */
+  person?: string;
+  /** "account:<id>" / "provider:<id>", or "" for no filter. */
+  served?: string;
+  tier?: string;
+} = {}) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [connected, setConnected] = useState(false);
 
@@ -49,6 +89,10 @@ export function LiveActivity() {
     return () => es.close();
   }, []);
 
+  // The 40-event window is kept unfiltered so a filter change re-shows
+  // whatever of it already matches, rather than only what arrives after.
+  const visible = events.filter((e) => personMatches(e, person) && servedMatches(e, served) && tierMatches(e, tier));
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -58,16 +102,28 @@ export function LiveActivity() {
         <span className="text-xs text-muted-foreground">{connected ? "streaming" : "connecting…"}</span>
       </CardHeader>
       <CardContent>
-        {events.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Waiting for requests…</p>
+        {visible.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {events.length === 0 ? "Waiting for requests…" : "Nothing in view matches the filter."}
+          </p>
         ) : (
           <ul className="space-y-1 font-mono text-xs">
-            {events.map((e, i) => (
+            {visible.map((e, i) => (
               <li key={`${e.ts}-${i}`} className="flex flex-wrap items-center gap-2 border-t py-1 first:border-t-0">
                 <span className="tabular-nums text-muted-foreground">{new Date(e.ts).toLocaleTimeString()}</span>
                 <Badge variant={kindVariant[e.kind]}>{e.kind}</Badge>
                 {e.kind === "request" ? (
                   <>
+                    {e.caller && (
+                      <Badge variant="outline" className="max-w-[9rem] truncate" title={e.caller}>
+                        {e.caller}
+                      </Badge>
+                    )}
+                    {e.servedBy && (
+                      <span className="max-w-[9rem] truncate text-muted-foreground" title={e.servedBy}>
+                        {e.servedBy}
+                      </span>
+                    )}
                     <span className="text-muted-foreground">{e.endpoint}</span>
                     <span>{e.requested} → {e.model ?? e.tier}</span>
                     {e.model && e.tier && e.model !== e.tier && <span className="text-muted-foreground">as {e.tier}</span>}

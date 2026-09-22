@@ -7924,6 +7924,7 @@ var DEFAULT_SETTINGS = {
   throttle: { enabled: true, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5e3 },
   memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5 },
+  traffic: { maxRows: 5e3 },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
   accountPool: { strategy: "fill-first", stickyRoundRobinLimit: 3, quotaMinRemainingPercent: 0, quotaRefreshMinutes: 30 }

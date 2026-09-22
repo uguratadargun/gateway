@@ -83,8 +83,8 @@ describe("cache (sqlite)", () => {
 describe("traffic + ratelimit (sqlite)", () => {
   it("records, reads newest-first, and clears traffic", () => {
     clearTraffic();
-    recordTraffic({ ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" });
-    recordTraffic({ ts: 2, endpoint: "messages", requested: "b", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" });
+    recordTraffic({ ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r", requestId: "r1" });
+    recordTraffic({ ts: 2, endpoint: "messages", requested: "b", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r", requestId: "r2" });
     const t = readTraffic();
     expect(t.map((e) => e.requested)).toEqual(["b", "a"]);
     clearTraffic();
@@ -107,7 +107,7 @@ describe("traffic + ratelimit (sqlite)", () => {
       },
       "work",
     );
-    const row = { ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
+    const row = { ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r", requestId: "r1" };
     recordTraffic({ ...row, keyId: key.id, userId: user.id, teamId: DEFAULT_TEAM_ID, accountId: account.id });
 
     const named = readTraffic()[0];
@@ -126,13 +126,31 @@ describe("traffic + ratelimit (sqlite)", () => {
   it("falls back to the sentinel key ids, then to unknown", () => {
     clearTraffic();
     const row = { endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
-    recordTraffic({ ...row, ts: 1 });
-    recordTraffic({ ...row, ts: 2, keyId: "workflow" });
-    recordTraffic({ ...row, ts: 3, keyId: "local" });
+    recordTraffic({ ...row, ts: 1, requestId: "r1" });
+    recordTraffic({ ...row, ts: 2, keyId: "workflow", requestId: "r2" });
+    recordTraffic({ ...row, ts: 3, keyId: "local", requestId: "r3" });
     expect(readTraffic().map((e) => e.caller)).toEqual(["local", "workflow", "unknown"]);
     // A caller with no account and no provider still reads.
     expect(readTraffic()[0].servedBy).toBe("—");
     clearTraffic();
+  });
+  it("keeps only as many rows as the settings say", () => {
+    // maxRows is clamped to a floor of 100 (mergeSettings), so the smallest
+    // value that actually narrows anything is 100 itself.
+    clearTraffic();
+    saveSettings({ traffic: { maxRows: 100 } });
+    try {
+      const row = { endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
+      const total = 105;
+      for (let i = 1; i <= total; i++) recordTraffic({ ...row, ts: i, requestId: `r${i}` });
+      const kept = readTraffic({ limit: 1000 });
+      expect(kept).toHaveLength(100);
+      expect(kept[0].requestId).toBe(`r${total}`);
+      expect(kept[kept.length - 1].requestId).toBe(`r${total - 100 + 1}`);
+    } finally {
+      saveSettings({ traffic: { maxRows: 5_000 } });
+      clearTraffic();
+    }
   });
   it("persists the latest rate-limit snapshot", () => {
     recordRateLimit(new Headers({ "anthropic-ratelimit-unified-status": "allowed", "anthropic-ratelimit-tokens-remaining": "1234" }));

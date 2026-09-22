@@ -32,11 +32,14 @@ describe("a served request leaves a row naming its caller", () => {
     clearTraffic();
     ensureDefaultTeam();
     for (const a of listAccounts()) deleteAccount(a.id);
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    // A fresh Response per call: a body can only be read once, and this
+    // suite's newest test drives executeMessages twice in one it().
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     );
   });
 
@@ -81,5 +84,37 @@ describe("a served request leaves a row naming its caller", () => {
     });
 
     expect(readTraffic()[0].caller).toBe("unknown");
+  });
+
+  it("carries the run it came from and an id of its own", async () => {
+    addAccount(creds("e2e-account-3"), "work");
+    const user = createUser({ email: "ada@example.test", name: "Ada", teamId: DEFAULT_TEAM_ID });
+    const { key } = createKey({ name: "ada-laptop", userId: user.id, teamId: DEFAULT_TEAM_ID });
+
+    await executeMessages(body(), {
+      stream: false,
+      clientBeta: null,
+      effortHeader: null,
+      session: { id: null, title: null },
+      requestPreview: "{}",
+      caller: { keyId: key.id, userId: user.id, teamId: DEFAULT_TEAM_ID, scopes: ["gateway"], executionId: "exec-1" },
+    });
+
+    const first = readTraffic()[0];
+    expect(first.executionId).toBe("exec-1");
+    expect(first.requestId).toMatch(/^[0-9a-f]{16}$/);
+
+    await executeMessages(body(), {
+      stream: false,
+      clientBeta: null,
+      effortHeader: null,
+      session: { id: null, title: null },
+      requestPreview: "{}",
+      caller: { keyId: key.id, userId: user.id, teamId: DEFAULT_TEAM_ID, scopes: ["gateway"], executionId: "exec-1" },
+    });
+
+    expect(readTraffic()[0].requestId).not.toBe(first.requestId);
+
+    deleteUser(user.id);
   });
 });

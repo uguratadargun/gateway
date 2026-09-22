@@ -70,6 +70,7 @@ export const settingsPatchSchema = z
         consolidateEvery: z.number().int().min(0).max(1000),
       })
       .partial(),
+    traffic: z.object({ maxRows: z.number().int().min(100).max(1_000_000) }).partial(),
     accountPool: z
       .object({
         strategy: z.enum(["fill-first", "round-robin", "least-used", "p2c", "random"]),

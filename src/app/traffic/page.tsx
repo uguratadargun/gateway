@@ -4,72 +4,131 @@ import { useEffect, useState } from "react";
 import { Download, RefreshCw, Trash2 } from "lucide-react";
 
 import { LiveActivity } from "@/components/live-activity";
-import { Badge } from "@/components/ui/badge";
+import { TrafficLog } from "@/components/traffic-log";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Tabs } from "@/components/ui/tabs";
 
-interface TrafficEntry {
-  ts: number;
-  endpoint: string;
-  requested: string;
-  routed: string;
-  tier: string;
-  status: number;
-  stream: boolean;
-  fromCache: boolean;
-  requestPreview: string;
-  responsePreview: string;
-  accountId: string | null;
-  providerId: string | null;
-  keyId: string | null;
-  /** The person behind the key, and the account or provider that answered. */
-  caller: string;
-  servedBy: string;
-  team: string;
+/**
+ * Two tabs on one route: `live`, the in-process feed of the last 40 events,
+ * lost on restart; `log`, what was actually served, on disk, retained up to
+ * settings' `traffic.maxRows` rows (5,000 by default). One filter bar above
+ * both narrows both — the log server-side, the live feed over its own buffer.
+ */
+
+type Tab = "live" | "log";
+
+interface Facets {
+  people: Array<{ value: string; label: string }>;
+  served: Array<{ value: string; label: string }>;
+  tiers: string[];
 }
 
-function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex gap-2">
-      <dt className="shrink-0 text-muted-foreground">{label}</dt>
-      <dd className={`truncate ${mono ? "font-mono" : ""}`} title={value}>
-        {value}
-      </dd>
-    </div>
-  );
+const EMPTY_FACETS: Facets = { people: [], served: [], tiers: [] };
+
+function trafficExportUrl(f: { person: string; served: string; tier: string; request: string }): string {
+  const p = new URLSearchParams({ what: "traffic", format: "json" });
+  if (f.person) p.set("person", f.person);
+  if (f.served) p.set("served", f.served);
+  if (f.tier) p.set("tier", f.tier);
+  if (f.request) p.set("request", f.request);
+  return `/api/export?${p.toString()}`;
 }
 
 export default function TrafficPage() {
-  const [entries, setEntries] = useState<TrafficEntry[]>([]);
-  const [open, setOpen] = useState<number | null>(null);
+  const [ready, setReady] = useState(false);
+  const [tab, setTab] = useState<Tab>("live");
+  const [person, setPerson] = useState("");
+  const [served, setServed] = useState("");
+  const [tier, setTier] = useState("");
+  const [request, setRequest] = useState("");
+  const [facets, setFacets] = useState<Facets>(EMPTY_FACETS);
 
-  async function load() {
-    const r = await fetch("/api/traffic");
-    setEntries((await r.json()).entries);
-  }
+  // Read once from the URL — these pages are statically prerendered, so
+  // useSearchParams would need a Suspense boundary around each of them.
   useEffect(() => {
-    load();
-    const t = setInterval(load, 6000);
-    return () => clearInterval(t);
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("tab") === "log") setTab("log");
+    setPerson(q.get("person") ?? "");
+    setServed(q.get("served") ?? "");
+    setTier(q.get("tier") ?? "");
+    setRequest(q.get("request") ?? "");
+    setReady(true);
   }, []);
 
+  // Write every change back, deleting a parameter once it is back at its default.
+  useEffect(() => {
+    if (!ready) return;
+    const url = new URL(window.location.href);
+    const set = (key: string, value: string, isDefault: boolean) => {
+      if (isDefault) url.searchParams.delete(key);
+      else url.searchParams.set(key, value);
+    };
+    set("tab", tab, tab === "live");
+    set("person", person, person === "");
+    set("served", served, served === "");
+    set("tier", tier, tier === "");
+    set("request", request, request === "");
+    window.history.replaceState(null, "", url.toString());
+  }, [ready, tab, person, served, tier, request]);
+
+  // The filter bar's options come from `/api/traffic`'s facets, computed over
+  // the whole table — fetched here, independent of which tab is open, so the
+  // bar has something to offer even while the live tab is the one showing.
+  async function loadFacets() {
+    const r = await fetch("/api/traffic?limit=1");
+    const d = await r.json();
+    setFacets(d.facets ?? EMPTY_FACETS);
+  }
+  useEffect(() => {
+    if (!ready) return;
+    loadFacets();
+    const t = setInterval(loadFacets, 6000);
+    return () => clearInterval(t);
+  }, [ready]);
+
+  // Refresh and Clear are the two places a person asks for the list to be
+  // current. Reloading the facets alone left the rows themselves up to six
+  // seconds behind — after a Clear, showing the traffic that was just deleted.
+  // Bumping this key re-runs the log's own fetch.
+  const [reload, setReload] = useState(0);
+  async function refresh() {
+    setReload((n) => n + 1);
+    await loadFacets();
+  }
   async function clear() {
     await fetch("/api/traffic", { method: "DELETE" });
-    await load();
+    setReload((n) => n + 1);
+    await loadFacets();
   }
+
+  const filtered = person !== "" || served !== "" || tier !== "" || request !== "";
+  function clearFilters() {
+    setPerson("");
+    setServed("");
+    setTier("");
+    setRequest("");
+  }
+
+  if (!ready) return null;
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-6 py-8">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Traffic</h1>
-          <p className="text-sm text-muted-foreground">Live feed and local request/response log (truncated).</p>
+          <p className="text-sm text-muted-foreground">
+            The live feed is this process&apos;s last events, lost on restart. The log is what was served, on disk,
+            up to 5,000 rows — different data, not two views of one thing.
+          </p>
         </div>
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => (window.location.href = "/api/export?what=traffic&format=json")}>
+          <Button variant="ghost" size="sm" onClick={() => (window.location.href = trafficExportUrl({ person, served, tier, request }))}>
             <Download /> Export
           </Button>
-          <Button variant="ghost" size="icon" onClick={load} aria-label="Refresh">
+          <Button variant="ghost" size="icon" onClick={refresh} aria-label="Refresh">
             <RefreshCw />
           </Button>
           <Button variant="ghost" size="icon" onClick={clear} aria-label="Clear">
@@ -78,52 +137,67 @@ export default function TrafficPage() {
         </div>
       </header>
 
-      <LiveActivity />
+      <Card className="space-y-3 p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={person} onChange={(e) => setPerson(e.target.value)} aria-label="Person">
+            <option value="">Any person</option>
+            {facets.people.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </Select>
+          <Select value={served} onChange={(e) => setServed(e.target.value)} aria-label="Served by">
+            <option value="">Any account/provider</option>
+            {facets.served.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </Select>
+          <Select value={tier} onChange={(e) => setTier(e.target.value)} aria-label="Tier">
+            <option value="">Any tier</option>
+            {facets.tiers.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </Select>
+          <Input
+            className="w-64 font-mono text-xs"
+            placeholder="Request id"
+            value={request}
+            onChange={(e) => setRequest(e.target.value)}
+          />
+          {filtered && (
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              Clear
+            </Button>
+          )}
+        </div>
+      </Card>
 
-      {entries.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No traffic yet.</p>
+      <Tabs
+        tabs={[
+          { id: "live", label: "Live" },
+          { id: "log", label: "Log" },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+
+      {tab === "live" ? (
+        <LiveActivity person={person} served={served} tier={tier} />
       ) : (
         <div className="space-y-2">
-          {entries.map((e, i) => (
-            <Card key={i} className="overflow-hidden">
-              <button className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-muted/40" onClick={() => setOpen(open === i ? null : i)}>
-                <span className="text-xs tabular-nums text-muted-foreground">{new Date(e.ts).toLocaleTimeString()}</span>
-                <Badge variant="outline" className="max-w-[9rem] truncate" title={e.caller}>
-                  {e.caller}
-                </Badge>
-                <Badge variant="secondary">{e.tier}</Badge>
-                {e.fromCache && <Badge variant="success">cache</Badge>}
-                <span className="font-mono text-xs text-muted-foreground">{e.routed}</span>
-                <span className="text-xs text-muted-foreground">→</span>
-                <span className="max-w-[9rem] truncate text-xs text-muted-foreground" title={e.servedBy}>
-                  {e.servedBy}
-                </span>
-                <span className={`ml-auto text-xs ${e.status < 300 ? "text-emerald-500" : "text-destructive"}`}>{e.status}</span>
-              </button>
-              {open === i && (
-                <CardContent className="space-y-3 border-t bg-muted/20 pt-3 text-xs">
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-                    <Detail label="Caller" value={e.caller} />
-                    <Detail label="Team" value={e.team || "—"} />
-                    <Detail label="Key" value={e.keyId ?? "—"} mono />
-                    <Detail label="Endpoint" value={e.endpoint} />
-                    <Detail label="Requested" value={e.requested} mono />
-                    <Detail label="Served by" value={e.servedBy} />
-                    <Detail label="Routed" value={e.routed} mono />
-                    <Detail label="Account / provider" value={e.accountId ?? e.providerId ?? "—"} mono />
-                  </dl>
-                  <div>
-                    <div className="mb-1 font-medium text-muted-foreground">Request</div>
-                    <pre className="overflow-x-auto rounded bg-background p-2">{e.requestPreview}</pre>
-                  </div>
-                  <div>
-                    <div className="mb-1 font-medium text-muted-foreground">Response</div>
-                    <pre className="overflow-x-auto rounded bg-background p-2">{e.responsePreview}</pre>
-                  </div>
-                </CardContent>
-              )}
-            </Card>
-          ))}
+          <div>
+            <h2 className="text-sm font-medium">Request log</h2>
+            <p className="text-xs text-muted-foreground">
+              Does not include cache hits, refusals (400/401/402/429/503), or the proxied /v1/models, count_tokens
+              and batches/* calls.
+            </p>
+          </div>
+          <TrafficLog person={person} served={served} tier={tier} requestId={request} reloadKey={reload} />
         </div>
       )}
     </main>

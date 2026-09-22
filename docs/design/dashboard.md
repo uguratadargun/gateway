@@ -66,9 +66,20 @@ what a real client would get.
 ### Live updates
 
 Gate is one process, so live updates arrive over two in-process buses and no
-broker. Gateway requests publish to an activity feed with a short replay, which
-the home page tails. Run events publish per execution and are buffered, so a
-page opened mid-run still renders the path already taken. The execution page
+broker. Gateway requests publish to an activity feed with a short replay;
+`/traffic`'s live tab tails it, over an in-browser window of the last 40
+events that is lost on restart. The same page's log tab reads the on-disk
+request/response history instead — what was actually served, kept up to
+5,000 rows — and one filter bar above both tabs (person, served-by, tier, a
+request id) narrows whichever is showing: the live tab drops non-matching
+events from its own buffer, the log tab asks the database again. The log
+tab's heading says what it does not hold — a cache hit, a refusal, or a
+proxied `/v1/models`, `count_tokens` or `batches/*` call — since none of
+those write a row (`gateway-pipeline.md`). A row that is there names the run
+it was made for and links to it, and its own request id copies out of the
+expanded detail and back into the filter to find the same row again. Run
+events publish per execution and are buffered, so a page opened mid-run still
+renders the path already taken. The execution page
 opens its stream only while a run is running and closes it the moment the run
 settles; it marks nodes and edges as they fire, shows a step that has started
 but has no record yet using the engine's own clock, and re-reads the run's row
@@ -85,8 +96,9 @@ person's connect token are plaintext exactly once, in the answer to the call
 that created them, shown next to the line meant to be sent — reload the page
 and they are gone for good. Forgetting a memory record is possible only from
 here: no key, agent or run can delete one. The traffic log and its export are
-the one place on this surface that carries people's names and email addresses —
-not secrets, but the reason that page and that download stay behind the cookie.
+the one place on this surface that carries people's names and email addresses,
+for up to 5,000 requests now rather than 500 — not secrets, but the reason
+that page and that download stay behind the cookie.
 
 ## Key files
 
