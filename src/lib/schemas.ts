@@ -62,6 +62,11 @@ export const settingsPatchSchema = z
         maxRateLimitWaitMs: z.number().int().min(0).max(60_000),
       })
       .partial(),
+    traffic: z
+      .object({
+        retentionDays: z.number().int().min(1).max(3650),
+      })
+      .partial(),
     memory: z
       .object({
         enabled: z.boolean(),

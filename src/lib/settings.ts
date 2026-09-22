@@ -71,6 +71,12 @@ export interface GateSettings {
     maxRetries: number;
     maxRateLimitWaitMs: number;
   };
+  /** How long the local request/response log is kept. Age is the only bound;
+   *  there is no row limit. */
+  traffic: {
+    /** Rows older than this many days are deleted as new rows arrive. */
+    retentionDays: number;
+  };
   /**
    * The memory layer: a finished run is read by the recorder, which writes
    * the decisions it made — logic, not code — for the runs that come after.
@@ -133,6 +139,7 @@ export const DEFAULT_SETTINGS: GateSettings = {
   concurrency: { maxInFlight: 4, queueTimeoutMs: 60_000 },
   throttle: { enabled: true, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
+  traffic: { retentionDays: 7 },
   memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5 },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
@@ -172,6 +179,7 @@ export interface SettingsPatch {
   concurrency?: Partial<GateSettings["concurrency"]>;
   throttle?: Partial<GateSettings["throttle"]>;
   retry?: Partial<GateSettings["retry"]>;
+  traffic?: Partial<GateSettings["traffic"]>;
   memory?: Partial<Omit<GateSettings["memory"], "embeddings">> & { embeddings?: Partial<GateSettings["memory"]["embeddings"]> };
   accountPool?: Partial<GateSettings["accountPool"]>;
 }
@@ -205,6 +213,14 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
     concurrency: { ...base.concurrency, ...patch.concurrency },
     throttle: { ...base.throttle, ...patch.throttle },
     retry: { ...base.retry, ...patch.retry },
+    traffic: {
+      // A hand-edited or malformed value must not reach the pruner: clamp to
+      // the floor of 1 day rather than trust anything that is not a finite
+      // number.
+      retentionDays: Number.isFinite(patch.traffic?.retentionDays)
+        ? Math.max(1, Math.floor(patch.traffic!.retentionDays as number))
+        : base.traffic.retentionDays,
+    },
     memory: {
       enabled: patch.memory?.enabled ?? base.memory.enabled,
       model: patch.memory?.model?.trim() || base.memory.model,
