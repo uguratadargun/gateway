@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpen, Coins, Gauge, Layers, Puzzle, Route } from "lucide-react";
+import { BookOpen, Coins, Gauge, Layers, Puzzle, Route, ScrollText } from "lucide-react";
 
 import { SaveRow } from "@/components/save-row";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,7 @@ interface Settings {
   retry: { maxRetries: number; maxRateLimitWaitMs: number };
   memory: { enabled: boolean; model: string; embeddings: { provider: string; model: string }; consolidateEvery: number };
   plugin: { source: string };
+  traffic: { retentionDays: number };
 }
 
 /** The memory section as an older server may leave it: every field with a default. */
@@ -32,6 +33,13 @@ function memoryOf(s: Settings): Settings["memory"] {
     model: s.memory?.model ?? "sonnet",
     embeddings: { provider: s.memory?.embeddings?.provider ?? "", model: s.memory?.embeddings?.model ?? "" },
     consolidateEvery: s.memory?.consolidateEvery ?? 5,
+  };
+}
+
+/** The traffic section as an older server may leave it: every field with a default. */
+function trafficOf(s: Settings): Settings["traffic"] {
+  return {
+    retentionDays: s.traffic?.retentionDays ?? 7,
   };
 }
 
@@ -93,22 +101,25 @@ const OWNS = {
   memory: ["memory"],
   precision: ["reasoning"],
   plugin: ["plugin"],
+  trafficLog: ["traffic"],
 } as const satisfies Record<string, readonly (keyof Settings)[]>;
 
 type GroupKey = keyof typeof OWNS;
 
-/** The card's own keys, with memory normalised the way the server expects. */
+/** The card's own keys, with memory and traffic normalised the way the server expects. */
 function sliceOf(s: Settings, keys: readonly (keyof Settings)[]) {
-  return Object.fromEntries(keys.map((k) => [k, k === "memory" ? memoryOf(s) : s[k]]));
+  return Object.fromEntries(
+    keys.map((k) => [k, k === "memory" ? memoryOf(s) : k === "traffic" ? trafficOf(s) : s[k]]),
+  );
 }
 
 /**
- * The knobs here answer six unrelated questions (what is cached, what happens
- * as the quota fills, what happens when upstream fails, what memory records,
- * how precise routing is, where the plugin comes from), so there is one card
- * per question and each saves the keys it shows. They share one settings
- * document, but the server merges group by group, so a narrow write is the
- * safe one.
+ * The knobs here answer seven unrelated questions (what is cached, what
+ * happens as the quota fills, what happens when upstream fails, what memory
+ * records, how precise routing is, where the plugin comes from, how long the
+ * traffic log is kept), so there is one card per question and each saves the
+ * keys it shows. They share one settings document, but the server merges
+ * group by group, so a narrow write is the safe one.
  */
 export function SettingsPanel() {
   const [s, setS] = useState<Settings | null>(null);
@@ -376,6 +387,20 @@ export function SettingsPanel() {
                 className="w-24"
                 value={s.memory?.consolidateEvery ?? 5}
                 onChange={(e) => setS({ ...s, memory: { ...memoryOf(s), consolidateEvery: Number(e.target.value) } })}
+              />
+            </Row>
+          </div>
+        </Group>
+
+        <Group icon={ScrollText} title="Traffic log" description="How much of the local request/response log is kept." {...groupProps("trafficLog")}>
+          <div className="pt-2">
+            <Row>
+              <Head label="Keep for (days)" hint="Days of traffic log kept; older rows are removed as new ones arrive. There is no row limit." />
+              <Input
+                type="number"
+                className="h-8 w-20"
+                value={trafficOf(s).retentionDays}
+                onChange={(e) => setS({ ...s, traffic: { ...trafficOf(s), retentionDays: Number(e.target.value) } })}
               />
             </Row>
           </div>
