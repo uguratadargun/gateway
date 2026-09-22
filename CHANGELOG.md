@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The Traffic page loads older entries as you scroll instead of stopping at the newest 100, and the log is kept for a number of days you choose from the settings panel instead of a fixed 500 rows.
+
 ## 0.43.0 — 2026-09-21
 
 - An agent that answers an optional field with `null` is no longer refused. A `?` in an output schema means "say something only if there is something to say", and a model handed the key list writes all of them and spells the empty one `null` — which was rejected at the last gate, after the work, throwing away a finished verification. `null`, absent and `undefined` are now one answer on a `?` field; a field without one still refuses `null`. The six places the notation is explained say so in the same words.

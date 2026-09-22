@@ -47,7 +47,7 @@ differs from what was loaded. It PUTs those keys alone; the routing and settings
 endpoints both merge a patch key by key, so a card never writes a field it does
 not render, and one panel cannot put back a stale copy of another's. A write
 that fails says so next to the button rather than flashing "Saved" regardless.
-The home page carries one such card for the model behind each tier, six for
+The home page carries one such card for the model behind each tier, seven for
 settings, and one for account rotation.
 
 ### Where a panel's rules live
@@ -73,8 +73,13 @@ opens its stream only while a run is running and closes it the moment the run
 settles; it marks nodes and edges as they fire, shows a step that has started
 but has no record yet using the engine's own clock, and re-reads the run's row
 on each completion rather than deriving state from events. Panels with no
-events behind them poll on a timer. Nothing on this surface decides anything: a
-Stop button asks, and the run settles itself.
+events behind them poll on a timer, and a poll is not always a replace: the
+Traffic page's log is paged, the poll fetches only the newest page and merges
+what is new into the top, and the pages already scrolled into place stay where
+they are rather than being dropped and re-fetched. The end of what is loaded
+carries a sentinel that loads the next page itself as it nears the viewport, so
+the log has no separate "load more" control. Nothing on this surface decides
+anything: a Stop button asks, and the run settles itself.
 
 ### What it must never show
 
@@ -99,6 +104,7 @@ not secrets, but the reason that page and that download stay behind the cookie.
 - `src/lib/activity.ts` — the gateway activity feed the live tail reads
 - `src/events/bus.ts` — run events with their per-execution replay buffer
 - `src/app/executions/[id]/page.tsx` — the live run: stream, graph, steps, stop
+- `src/app/traffic/page.tsx` — the paged log: the sentinel that loads the next page, the poll that merges without moving the reader
 - `src/components/workflow-graph.tsx` — the canvas, shared by the definition and execution views; it renders, never routes
 - `src/components/save-row.tsx` — the footer an editable card ends in: the dirty-aware Save and the error a failed write returned
 - `src/components/ui/` — the shared primitives everything is built from; colours come from CSS variables, both schemes
@@ -111,6 +117,7 @@ not secrets, but the reason that page and that download stay behind the cookie.
 - Editors pass a half-finished definition through on purpose: the file is re-parsed on save, so the error shown is the real one and an invalid edit is refused at the server, not in the form.
 - A key or connect token not copied from the panel that issued it cannot be recovered — issue another one.
 - A control added to a card whose key is not in that card's owned set will appear to save and not persist: the card PUTs its declared keys, nothing more.
+- Content inserted above the viewport moves the reader unless the scroll position is corrected for it: Safari has no scroll anchoring, so the Traffic page compensates explicitly for a prepend and would visibly jump without it.
 
 ## Decisions
 

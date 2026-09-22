@@ -111,9 +111,10 @@ input, output, cache-read and cache-creation tokens — and priced at Anthropic
 list rates per tier (Haiku 1/5, Sonnet 2/10, Opus 5/25, Fable 10/50 USD per
 million in/out), cache reads at 10 % of input (2.5 % on Fable 5.1), cache
 writes at 1.25× for the 5m TTL and 2× for 1h, and a provider model at zero. A
-usage event, a traffic-log row (previews truncated to 2000 characters, 500
-rows kept, local only) and an activity event for the SSE live tail on
-`/traffic` are written, and the concurrency slot is released. The traffic row
+usage event, a traffic-log row (previews truncated to 2000 characters, kept
+for `traffic.retentionDays` (7) days, local only) and an activity event for
+the SSE live tail on `/traffic` are written, and the concurrency slot is
+released. The traffic row
 names the key, the person and the team that called, and the account or the
 provider that served — as ids, which `/traffic` resolves to names as it reads,
 so a renamed account reads as it is now and a deleted one still reads. A
@@ -164,8 +165,10 @@ request ─ auth ─ session ─ compress ─ resolve ─ account+throttle ─ p
 - The traffic log holds served exchanges, not every call. A response-cache hit, a refusal (400, 401, 402, 429, 503) and the proxied `/v1/models`, `count_tokens` and `batches/*` write no row at all, so counting callers there under-counts them — the throttle's 429s, the ones a question about quota is usually about, are exactly what is missing. `from_cache` is written false for the same reason.
 - A traffic row is best-effort: the insert swallows its errors so a log line can never fail a served request, which also means a missing row is silent.
 - A run's token lives in the process that minted it and in no other. A second gate process cannot resolve it, and a restart invalidates every token in flight — which is the design, since a run does not survive its process either.
+- The retention window is enforced when a row is written, not on a timer: an idle gate holds its last rows past the window until the next request writes one, or a person clears the log.
 
 ## Decisions
 
+- [0033 — The traffic log is kept by time, not by row count](../decisions/0033-the-traffic-log-is-kept-by-time-not-by-row-count.md)
 - [0023 — A run carries a token of its own](../decisions/0023-a-run-carries-a-token-of-its-own.md)
 - [0017 — The traffic log names who called and who served](../decisions/0017-the-traffic-log-names-who-called-and-who-served.md)
