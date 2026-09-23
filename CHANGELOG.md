@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.45.0 — 2026-09-23
+
 - The newest models are reachable through the gateway again. gate rebuilds every
   request's wire image and stamped it `claude-cli/2.1.259`, a number pinned when
   that release was captured; Anthropic gates its newest models on it and answered
@@ -10,6 +12,24 @@
   nothing when the gateway speaks for you. The pin is now 2.1.280, which is what
   `claude-opus-5-5` asks for. A live gate that is not being rebuilt takes
   `CLAUDE_CODE_VERSION` from its environment.
+
+- Memory reads every connected repository's own record. On a timer (Settings → Memory, every 15 minutes by default) and on **Read repositories** on `/memory`, the gate reads each base branch's design docs, decision records and specs by code, no model. A sibling team's recall finds your design doc whether or not a run ever wrote it. A design doc's file name is its feature's id across the tree, and its new optional `## Interfaces` section (`provides:` / `consumes:` lines) makes "who uses this endpoint, and how did they integrate it" a search.
+
+- The same read says what landed. A recorded decision becomes `merged` when its work is on the base branch, including when a failed run was merged by hand or a branch was squashed. A decision whose record was renumbered follows it. A decision record marked superseded on the branch closes the decisions written from it. A decision whose every file is gone is shown as describing code that no longer exists.
+
+- An unfinished run is no longer a closed road. `abandoned` only ever meant the run stopped, and recall told the planner never to try it again. Whether an approach was refused (by the reviewer, the verifier or a person) is now its own mark, with the reason, and only a refusal closes a road. The recorder also stops recording housekeeping like updated test mocks as decisions.
+
+- Recall shows who else in the tree is building the same thing right now, first in the brief. When a run starts on work another team is already running, both people get a Telegram message once. `gate memory activity` lists everything in flight.
+
+- `gate memory history --path <dir> --since 30d` and the recall node's new `memory_history` tool list every commit on the base branch under a path, including a person's, each with the record its `Documents:` line names and the run it came from. It is the list to read when something that used to work broke.
+
+- A search in words reads every repository of the team tree and names each hit's repository. A run in the desktop repository asking how android built something used to have android's decisions filtered out. Path searches still stay in their own repository.
+
+- Work done in another team's repository is that team's record, with your team kept as the author, so they can supersede it and objections to it reach them.
+
+- The pipeline's `record` node now also checks that no decision record the branch added takes a number the remote's base branch already gave another record, and sends the implementer back to renumber before the branch is offered.
+
+- Optional: with Settings → Memory → **Record merges made without gate** on, every merge on a connected repository's base branch that no gate run made is recorded like a run, one model call per merge. Off by default.
 
 - Traffic gets two tabs, a filter bar, and a trace: the live feed and the
   on-disk request log now share one page and one set of filters (person,

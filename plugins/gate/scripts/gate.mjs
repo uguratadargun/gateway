@@ -7323,6 +7323,7 @@ function clip(s, max = MAX_FIELD) {
 }
 function describeSearch(result) {
   const out = [];
+  if (result.inFlight?.length) out.push(describeActivity(result.inFlight, "Running right now elsewhere in the tree, on work with the same words:"), "");
   if (result.features.length) {
     out.push("Features in the catalogue that match:");
     for (const f of result.features) {
@@ -7331,8 +7332,17 @@ function describeSearch(result) {
     }
     out.push("");
   }
+  if (result.documents?.length) {
+    out.push("The repositories' own record \u2014 documents on their base branches that match:");
+    for (const d of result.documents) out.push(describeDocument(d));
+    out.push("");
+  }
+  if (result.interfaces?.length) {
+    out.push(describeInterfaces(result.interfaces), "");
+  }
   if (!result.decisions.length) {
-    out.push(result.features.length ? "No decisions matched the text or paths; use memory_feature on a feature above for its decisions." : "Nothing in memory matches. The team has no recorded decision about this.");
+    const anything = result.features.length || result.documents?.length || result.inFlight?.length;
+    out.push(anything ? "No recorded decisions matched the text or paths; use memory_feature on a feature above for its decisions." : "Nothing in memory matches. The team has no recorded decision about this.");
   } else {
     out.push(`${result.decisions.length} decision${result.decisions.length === 1 ? "" : "s"} (searched teams: ${result.scope.teams.join(", ")}; own team ${result.scope.own} first):`);
     for (const d of result.decisions) out.push(describeDecision(d));
@@ -7374,13 +7384,25 @@ Note: ${heldAnswers} answer${heldAnswers === 1 ? " was" : "s were"} recorded for
   }
   return lines.join("\n");
 }
+function outcomeLabel(d) {
+  if (d.verdict === "rejected") return `${d.outcome} \xB7 refused`;
+  if (d.outcome === "abandoned") return "abandoned (the run did not finish \u2014 not a refusal)";
+  return d.outcome;
+}
 function describeDecision(d) {
+  const who = d.author && d.author !== d.team ? `team: ${d.team} (made by ${d.author})` : `team: ${d.team}`;
   const lines = [
     `
 ## ${d.title}`,
-    `id: ${d.id} \xB7 team: ${d.team} \xB7 ${d.outcome} \xB7 from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` \xB7 feature: ${d.featureId}` : ""}${d.supersedes ? ` \xB7 supersedes ${d.supersedes}` : ""}`,
+    `id: ${d.id} \xB7 ${who}${d.repo ? ` \xB7 repo: ${d.repo}` : ""} \xB7 ${outcomeLabel(d)} \xB7 from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` \xB7 feature: ${d.featureId}` : ""}${d.supersedes ? ` \xB7 supersedes ${d.supersedes}` : ""}`,
     `run: ${d.executionId}${d.commits.base || d.commits.head ? ` \xB7 commits ${d.commits.base ?? "?"}..${d.commits.head ?? "?"}` : ""}`
   ];
+  if (d.verdict === "rejected") {
+    lines.push(`\u2717 refused${d.verdictReason ? `: ${clip(d.verdictReason, 600)}` : ""} \u2014 a road already found closed; taking it again needs a reason the refusal did not have.`);
+  }
+  if (d.checked?.allGone) {
+    lines.push(`\u26A0 every file it touched is gone from the base branch at ${d.checked.commit.slice(0, 8)} \u2014 it describes code that no longer exists; check the code before relying on it.`);
+  }
   if (d.outcome === "in-progress") {
     lines.push(
       `\u26A0 work in progress: the team that taught this says it is not finished. Build on it only if you mean to, and raise an objection now rather than after it settles.`
@@ -7393,6 +7415,51 @@ function describeDecision(d) {
   if (d.consequences) lines.push(`consequences: ${clip(d.consequences)}`);
   if (d.touches.length) lines.push(`touches: ${d.touches.slice(0, 30).join(", ")}${d.touches.length > 30 ? ` (+${d.touches.length - 30})` : ""}`);
   return lines.join("\n");
+}
+function describeDocument(d) {
+  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind;
+  const lines = [
+    `- ${kind} ${d.path} \u2014 ${d.title}`,
+    `  repo: ${d.repoId ?? d.repo}${d.team ? ` \xB7 team: ${d.team}` : ""}${d.status ? ` \xB7 ${d.status}` : ""}${d.date ? ` \xB7 ${d.date}` : ""} \xB7 at ${d.commit.slice(0, 8)}`
+  ];
+  if (d.summary) lines.push(`  ${clip(d.summary.replace(/\s+/g, " "), 500)}`);
+  for (const i of d.interfaces ?? []) lines.push(`  ${i.role} ${i.name}${i.note ? ` \u2014 ${clip(i.note, 200)}` : ""}`);
+  return lines.join("\n");
+}
+function describeInterfaces(list) {
+  const byName = /* @__PURE__ */ new Map();
+  for (const i of list) byName.set(i.name, [...byName.get(i.name) ?? [], i]);
+  const out = ["Interfaces between repositories that this names:"];
+  for (const [name, users] of byName) {
+    out.push(`- ${name}`);
+    for (const u of users) {
+      out.push(`  ${u.role} \xB7 ${u.team ?? "no team"} \xB7 ${u.repoId ?? u.repo} \xB7 ${u.path} (feature ${u.feature})${u.note ? ` \u2014 ${clip(u.note, 200)}` : ""}`);
+    }
+  }
+  return out.join("\n");
+}
+function describeActivity(list, heading = "Running right now in the tree:") {
+  if (!list.length) return "Nothing is running in the tree right now.";
+  const out = [heading];
+  for (const a of list) {
+    out.push(
+      `- run ${a.executionId} \xB7 ${a.team}${a.person ? ` \xB7 ${a.person}` : ""} \xB7 ${a.workflow} \xB7 ${a.status} since ${a.startedAt.slice(0, 16).replace("T", " ")}${a.repo ? ` \xB7 repo ${a.repo}` : ""}${a.branch ? ` \xB7 branch ${a.branch}` : ""}${a.taskId ? ` \xB7 task ${a.taskId}` : ""}`
+    );
+    out.push(`  ${clip(a.task.replace(/\s+/g, " "), 300)}`);
+    if (a.shared.length) out.push(`  in common: ${a.shared.join(", ")}`);
+  }
+  return out.join("\n");
+}
+function describeHistory(h) {
+  if (h.unavailable) return `No history: ${h.unavailable}`;
+  if (!h.commits.length) return `No commit on ${h.repoId ?? h.repo}'s ${h.ref ?? "base branch"} (at ${h.commit?.slice(0, 8)}) touched these paths in that window.`;
+  const out = [`${h.commits.length} commit${h.commits.length === 1 ? "" : "s"} on ${h.repoId ?? h.repo}'s ${h.ref ?? "base branch"} at ${h.commit?.slice(0, 8)}, newest first:`];
+  for (const c of h.commits) {
+    out.push(`- ${c.sha.slice(0, 10)} \xB7 ${c.date.slice(0, 10)} \xB7 ${c.author} \xB7 ${c.subject}`);
+    if (c.documents.length) out.push(`  record: ${c.documents.join(", ")}`);
+    if (c.runs.length) out.push(`  run: ${c.runs.join(", ")}`);
+  }
+  return out.join("\n");
 }
 function describeFeature(detail) {
   const { feature } = detail;
@@ -7410,8 +7477,12 @@ function describeFeature(detail) {
       out.push(i.summary || "(no summary yet)");
       if (i.pitfalls) out.push(`pitfalls: ${i.pitfalls}`);
     }
-  } else {
+  } else if (!detail.documents?.length) {
     out.push("No team has recorded an implementation of it yet.");
+  }
+  if (detail.documents?.length) {
+    out.push("\nEach repository's design doc for it:");
+    for (const d of detail.documents) out.push(describeDocument(d));
   }
   if (detail.decisions.length) {
     out.push(`
@@ -7442,7 +7513,7 @@ function parseSince(v, now = Date.now()) {
 }
 var memorySearch = {
   name: "memory_search",
-  description: "Search the team's memory of past runs: what was decided, why and how, and which files or areas each decision touched. Reads the whole team tree (sibling teams included), own team first. Give a query in words, path prefixes, or both; narrow with a time. Every hit names the run and the commits it came from. The answer also carries any open cross-team objection touching what you asked about \u2014 another team finding one of these decisions unworkable on their side. An objection against this team's own decision is a revision request to plan for, not a note.",
+  description: "Search the team's memory: what past runs decided (why, how, which files), and each repository's own record \u2014 design docs, decision records and specs as their base branches have them. Reads the whole team tree (sibling teams' repositories included), own team and repository first; a path search stays in this repository. Give a query in words, path prefixes, or both; narrow with a time. Every hit names its repository, its run and its commits. The answer also carries runs of other people in the tree going right now on work with the same words, interfaces the words name with who provides and consumes each, and any open cross-team objection touching what you asked about. An objection against this team's own decision is a revision request to plan for, not a note.",
   mutates: false,
   workspaceFree: true,
   inputSchema: {
@@ -7475,7 +7546,7 @@ var memorySearch = {
 };
 var memoryFeature = {
   name: "memory_feature",
-  description: "Read one catalogue feature in full: what it is, how each team in the tree built it (summary and pitfalls), and every decision filed under it. Use it after memory_search names a feature, before planning the same thing on another platform.",
+  description: "Read one catalogue feature in full: what it is, how each team in the tree built it (summary and pitfalls), each repository's design doc for it with the interfaces it provides and consumes, and every decision filed under it. Use it after memory_search names a feature, before planning the same thing on another platform.",
   mutates: false,
   workspaceFree: true,
   inputSchema: {
@@ -7492,7 +7563,31 @@ var memoryFeature = {
     return describeFeature(detail);
   }
 };
-var MEMORY_TOOLS = [memorySearch, memoryFeature];
+var memoryHistory = {
+  name: "memory_history",
+  description: "What changed under some paths on this repository's base branch, newest first: every commit \u2014 gate's or a person's \u2014 with the record it names on its Documents: line and the gate run it came from. The list to read when something that used to work does not: narrow it with since, then read the commits' records and diffs.",
+  mutates: false,
+  workspaceFree: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      paths: { type: "array", items: { type: "string" }, description: 'Repository path prefixes, e.g. ["src/sync"]. Empty means the whole repository.' },
+      since: { type: "string", description: 'Only commits from this time on: "30d", "6 months", or a date.' },
+      limit: { type: "integer", description: "How many commits at most (default 30, max 200)." }
+    }
+  },
+  async execute(input, ctx) {
+    if (!ctx.memory) throw new ToolError("memory is not reachable from this run");
+    const paths = Array.isArray(input.paths) ? input.paths.filter((p) => typeof p === "string" && !!p.trim()) : [];
+    const result = await ctx.memory.history({
+      paths,
+      since: parseSince(input.since) ?? void 0,
+      limit: typeof input.limit === "number" ? input.limit : void 0
+    });
+    return describeHistory(result);
+  }
+};
+var MEMORY_TOOLS = [memorySearch, memoryFeature, memoryHistory];
 
 // src/runtime/tools/workspace-tools.ts
 import { execFile } from "node:child_process";
@@ -7876,7 +7971,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.44.0";
+var GATE_VERSION = "0.45.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -7923,7 +8018,7 @@ var DEFAULT_SETTINGS = {
   concurrency: { maxInFlight: 4, queueTimeoutMs: 6e4 },
   throttle: { enabled: true, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5e3 },
-  memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5 },
+  memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5, indexEveryMinutes: 15, recordMerges: false },
   traffic: { maxRows: 5e3 },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
@@ -9268,8 +9363,9 @@ var GateClient = class {
     )).body;
   }
   /** The team's memory: decisions and features matching words, paths, or a time. */
-  async memorySearch(req, remoteUrl) {
+  async memorySearch(req, remoteUrl, executionId) {
     const params = new URLSearchParams();
+    if (executionId) params.set("run", executionId);
     if (req.query) params.set("q", req.query);
     for (const p of req.paths ?? []) params.append("path", p);
     if (remoteUrl) params.set("remote", remoteUrl);
@@ -9278,6 +9374,23 @@ var GateClient = class {
     if (req.since != null) params.set("since", String(req.since));
     if (req.limit != null) params.set("limit", String(req.limit));
     return (await this.request(`/api/v1/memory/search?${params}`)).body;
+  }
+  /**
+   * A repository's base-branch history under some paths: the checkout's own
+   * remote when there is one, else a repository named `host/owner/name`.
+   */
+  async memoryHistory(req, remoteUrl) {
+    const params = new URLSearchParams();
+    for (const p of req.paths ?? []) params.append("path", p);
+    if (remoteUrl) params.set("remote", remoteUrl);
+    else if (req.repoId) params.set("repo", req.repoId);
+    if (req.since != null) params.set("since", String(req.since));
+    if (req.limit != null) params.set("limit", String(req.limit));
+    return (await this.request(`/api/v1/memory/history?${params}`)).body;
+  }
+  /** Every run of the tree going right now, except this person's own. */
+  async memoryActivity() {
+    return (await this.request("/api/v1/memory/activity")).body.activity;
   }
   /** One feature in full; null when the team's catalogue has no such id. */
   async memoryFeature(id) {
@@ -9703,7 +9816,7 @@ var ANTHROPIC_API_BASE = "https://api.anthropic.com";
 var ANTHROPIC_MESSAGES_URL = `${ANTHROPIC_API_BASE}/v1/messages`;
 var ANTHROPIC_BOOTSTRAP_URL = `${ANTHROPIC_API_BASE}/api/claude_cli/bootstrap`;
 var ANTHROPIC_OAUTH_USAGE_URL = `${ANTHROPIC_API_BASE}/api/oauth/usage`;
-var CLAUDE_CODE_VERSION = process.env.CLAUDE_CODE_VERSION || "2.1.259";
+var CLAUDE_CODE_VERSION = process.env.CLAUDE_CODE_VERSION || "2.1.280";
 var CLAUDE_CODE_STAINLESS_VERSION = process.env.CLAUDE_CODE_STAINLESS_VERSION || "0.112.1";
 
 // src/lib/providers.ts
@@ -10957,19 +11070,28 @@ var HttpMemoryAccess = class {
    * `remoteUrl` is the origin of the repository the run works in, sent with
    * every search so the answer is about this codebase and not the one next to
    * it with the same file names. Raw, for the server to name — and never
-   * asked of the model, which has no way to know it.
+   * asked of the model, which has no way to know it. `executionId` is the run
+   * asking, which the server leaves out of what is in flight.
    */
-  constructor(client, remoteUrl = null) {
+  constructor(client, remoteUrl = null, executionId = null) {
     this.client = client;
     this.remoteUrl = remoteUrl;
+    this.executionId = executionId;
   }
   client;
   remoteUrl;
+  executionId;
   search(req) {
-    return this.client.memorySearch(req, this.remoteUrl);
+    return this.client.memorySearch(req, this.remoteUrl, this.executionId);
   }
   feature(id) {
     return this.client.memoryFeature(id);
+  }
+  history(req) {
+    return this.client.memoryHistory(req, this.remoteUrl);
+  }
+  activity() {
+    return this.client.memoryActivity();
   }
 };
 
@@ -11063,7 +11185,7 @@ async function runLocal(client, opts) {
       // with the same key, so its calls are metered like every other call.
       claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
       // The team's memory, read through the same key.
-      memory: new HttpMemoryAccess(client, repo ? readRemoteUrl(repo) : null),
+      memory: new HttpMemoryAccess(client, repo ? readRemoteUrl(repo) : null, executionId),
       emit: (event) => {
         reporter.event(event);
         opts.onEvent?.(event);
@@ -12391,8 +12513,17 @@ var memorySearchSchema = external_exports.object({
   featureId: external_exports.string().max(100).optional(),
   asOf: epochMs,
   since: epochMs,
-  limit: external_exports.string().transform((v) => Number(v)).refine((n) => Number.isInteger(n) && n > 0, "not a count").optional()
+  limit: external_exports.string().transform((v) => Number(v)).refine((n) => Number.isInteger(n) && n > 0, "not a count").optional(),
+  /** The run asking, so it is not shown to itself as work in flight. */
+  run: external_exports.string().max(100).optional()
 }).refine((v) => v.query || v.paths.length || v.featureId, { message: "give q, path, or feature" });
+var memoryHistorySchema = external_exports.object({
+  paths: external_exports.array(external_exports.string().max(500)).max(50).default([]),
+  remoteUrl: external_exports.string().max(500).optional(),
+  repo: external_exports.string().max(300).optional(),
+  since: epochMs,
+  limit: external_exports.string().transform((v) => Number(v)).refine((n) => Number.isInteger(n) && n > 0, "not a count").optional()
+}).refine((v) => v.remoteUrl || v.repo, { message: "give remote or repo" });
 var askSchema = external_exports.object({
   question: external_exports.string().min(1).max(4e3),
   /** `host/owner/name`, or a connected repository's own id. */
@@ -12567,6 +12698,9 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate memory search [words\u2026] [--path <prefix>]\u2026 [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]
                                                 what your team's tree decided before: why, how, where, which commits
   gate memory feature <id> [--json]             one feature: how each team built it, and every decision under it
+  gate memory history [--path <prefix>]\u2026 [--since 30d] [--repo <host/owner/name>] [--limit n] [--json]
+                                                what changed there on the base branch: commits, their record, their run
+  gate memory activity [--json]                 what the rest of your team's tree is running right now
   gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
        \u2026or --run <id>                           ask another team what their code does; answered from one commit, with files
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
@@ -13275,15 +13409,38 @@ async function cmdMemory(args) {
     if (one(args.flags.since) && since == null) die(`--since: not a time: ${args.flags.since}`);
     if (one(args.flags["as-of"]) && asOf == null) die(`--as-of: not a time: ${args.flags["as-of"]}`);
     const limit = args.flags.limit ? Number(args.flags.limit) : void 0;
-    const result = await client.memorySearch({
-      query: query || void 0,
-      paths: paths.length ? paths : void 0,
-      featureId,
-      since: since ?? void 0,
-      asOf: asOf ?? void 0,
-      limit: Number.isFinite(limit) ? limit : void 0
-    });
+    const result = await client.memorySearch(
+      {
+        query: query || void 0,
+        paths: paths.length ? paths : void 0,
+        featureId,
+        since: since ?? void 0,
+        asOf: asOf ?? void 0,
+        limit: Number.isFinite(limit) ? limit : void 0
+      },
+      readRemoteUrl(process.cwd())
+    );
     console.log(json ? JSON.stringify(result, null, 2) : describeSearch(result));
+    return 0;
+  }
+  if (sub === "history") {
+    const paths = [...many(args.flags.path), ...rest.filter(Boolean)];
+    const since = parseSince(one(args.flags.since));
+    if (one(args.flags.since) && since == null) die(`--since: not a time: ${args.flags.since}`);
+    const repo = one(args.flags.repo);
+    const remote = repo ? null : readRemoteUrl(process.cwd());
+    if (!repo && !remote) die("usage: gate memory history [--path <prefix>]\u2026 [--since 30d] [--repo <host/owner/name>] \u2014 outside a checkout, name the repository with --repo");
+    const limit = args.flags.limit ? Number(args.flags.limit) : void 0;
+    const result = await client.memoryHistory(
+      { paths, since: since ?? void 0, repoId: repo ?? null, limit: Number.isFinite(limit) ? limit : void 0 },
+      remote
+    );
+    console.log(json ? JSON.stringify(result, null, 2) : describeHistory(result));
+    return result.unavailable ? 1 : 0;
+  }
+  if (sub === "activity") {
+    const activity = await client.memoryActivity();
+    console.log(json ? JSON.stringify(activity, null, 2) : describeActivity(activity));
     return 0;
   }
   if (sub === "feature") {
@@ -13297,7 +13454,7 @@ async function cmdMemory(args) {
     console.log(json ? JSON.stringify(detail, null, 2) : describeFeature(detail));
     return 0;
   }
-  die("usage: gate memory search <words\u2026> | gate memory feature <id>");
+  die("usage: gate memory search <words\u2026> | gate memory feature <id> | gate memory history --path <prefix> | gate memory activity");
 }
 var TEACH_WAIT_MS = 5 * 6e4;
 async function cmdTeach(args) {
