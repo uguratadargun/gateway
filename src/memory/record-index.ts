@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { getDb } from "@/lib/db";
 import { loadSettings } from "@/lib/settings";
 import { teamFamily, teamRoot } from "@/lib/teams";
-import { listRepos, repoByIdentity, type RepoRecord } from "@/repos/store";
+import { listRepos, readRemote, repoByIdentity, type RepoRecord } from "@/repos/store";
 
 import type { DocumentCard, HistoryCommit, HistoryResult, InterfaceCard, RepoRecordCard } from "./cards";
 import { deleteEmbedding } from "./embeddings";
@@ -251,7 +251,7 @@ export interface IndexOutcome {
 
 /** The base branch as the repository's remote has it, fetched into the index's own ref. */
 async function resolveBase(repo: RepoRecord): Promise<{ commit: string; ref: string } | { error: string }> {
-  const remote = repo.publicationRemote?.trim() || "origin";
+  const remote = readRemote(repo);
   let ref = repo.baseRef?.trim() || "";
   if (!ref) {
     // The remote's default branch: `ref: refs/heads/main	HEAD`.

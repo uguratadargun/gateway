@@ -103,10 +103,14 @@ publish` commits the worktree as a checkpoint that says so in its own message,
 then pushes the same way. Work never pushed is unreachable to another team's
 question, and is answered as unreachable rather than never built.
 
+Publishing is about pushing, not reading. A repository that names no
+publication remote is still read, from its `origin`, by another team's
+question and by the record index.
+
 ## Key files
 
 - `src/repos/identity.ts` — the canonical name: what a remote parses to, what is refused, when two remotes are one
-- `src/repos/store.ts` — the record, the identity that cannot move, whether this repository publishes
+- `src/repos/store.ts` — the record, the identity that cannot move, whether this repository publishes, and which remote it is read from
 - `src/repos/detect.ts` — guessing setup and prepare; which directories a worktree borrows
 - `src/repos/setup.ts` — connecting, cloning, setup, pull, worktree preparation, naming repos registered before names
 - `src/repos/publish.ts` — the branch policy, the verified push, the mid-run checkpoint
@@ -131,6 +135,7 @@ question, and is answered as unreachable rather than never built.
 
 ## Decisions
 
+- [0044 — A repository that does not publish is read from its origin](../decisions/0044-a-repository-that-does-not-publish-is-read-from-its-origin.md)
 - [0014 — A checkout gate cloned goes with the record](../decisions/0014-a-checkout-gate-cloned-goes-with-the-record.md)
 - [0012 — A push is verified against the remote, and a failed one is not a failed run](../decisions/0012-a-push-is-verified-against-the-remote.md)
 - [0007 — A repository is named by its remote, and unknown is never guessed](../decisions/0007-a-repository-is-named-by-its-remote.md)

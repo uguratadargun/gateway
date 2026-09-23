@@ -162,16 +162,31 @@ describe("resolving a question to one commit", () => {
     expect(resolved.status === "source_unavailable" && resolved.publish).toEqual({ repo: repo.id, ref: "feature/pq-rekey" });
   });
 
-  it("names the repository that has to publish before it can be read", () => {
-    const { remote } = makeUpstream();
+  it("reads a repository that does not publish from its origin", () => {
+    const { remote, work } = makeUpstream();
     const repo = connect({ root: makeCheckout(remote), publicationRemote: null });
+    const head = pushCommit(work, remote, "main", "landed after the clone");
+
+    const resolved = resolveAskSource({ question, repo: repo.repoId, ref: "main" }, "srv");
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    // No publication remote means gate never pushes, not that nobody does:
+    // the base branch is on origin, and the record index reads it there too.
+    expect(resolved.source.remote).toBe("origin");
+    expect(resolved.source.commit).toBe(head);
+  });
+
+  it("names the repository whose origin cannot be read", () => {
+    const root = temp("gate-ask-no-origin-");
+    git(root, "init", "-q", "-b", "main");
+    const repo = connect({ root, publicationRemote: null });
 
     const resolved = resolveAskSource({ question, repo: repo.repoId, ref: "main" }, "srv");
     expect(resolved.ok).toBe(false);
     if (resolved.ok || resolved.status !== "source_unavailable") return;
     // Whoever reads this has to go and do something to a named repository.
     expect(resolved.reason).toContain(repo.id);
-    expect(resolved.publish).toEqual({ repo: repo.id, ref: "main" });
+    expect(resolved.reason).toContain("origin");
   });
 
   it("takes a well-formed commit as given, without asking the remote about it", () => {

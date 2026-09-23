@@ -27,10 +27,13 @@ Everything resolves to **one commit before anything is read**, and that commit
 is quoted back, so the same question asked twice either gives the same answer
 or says why the source moved. A branch is resolved once, to what the remote
 holds now; a run is answered at the commit its publication was verified at, not
-where its branch points today. What makes a repository readable at all is
-publication: a run's branch is pushed to its repository's publication remote
-when the run ends, within a branch glob, and the commit recorded is what the
-remote reports holding afterwards, never the local head.
+where its branch points today. A repository is read from its publication
+remote, or from its `origin` when it names none: not publishing means gate
+never pushes there, not that nobody does, and the base branch its team pushed
+is readable either way. A run's branch is different. Only gate could have
+pushed it, so it is readable once the run has published it to the publication
+remote, within a branch glob, and the commit recorded is what the remote
+reports holding afterwards, never the local head.
 
 Three refusals, each a different fact, never conflated. **Outside the family**:
 the asker's team tree is the boundary memory uses, and a repository outside it
@@ -180,6 +183,7 @@ it, and closing leaves every objection under it standing.
 
 ## Decisions
 
+- [0044 — A repository that does not publish is read from its origin](../decisions/0044-a-repository-that-does-not-publish-is-read-from-its-origin.md)
 - [0039 — Work in flight is part of recall, and an overlap is told to both people](../decisions/0039-work-in-flight-is-part-of-recall.md)
 - [0037 — Words read every repository of the tree, paths stay in their own](../decisions/0037-words-read-every-repository-paths-stay-in-their-own.md)
 - [0036 — A decision belongs to the repository's team](../decisions/0036-a-decision-belongs-to-the-repositorys-team.md)

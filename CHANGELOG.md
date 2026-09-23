@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `gate ask` reads a repository that has no publication remote from its `origin`, so every connected repository can be asked about. Before this it answered `"<repo>" does not publish, so nothing in it can be read from here`, even for a base branch that the record index was already reading. The publication remote is still what lets gate push run branches, and asking about a run still needs that run to have been published.
+
 ## 0.46.0 — 2026-09-23
 
 - `/gate:init` names each design doc after the feature the rest of your team tree already has, so the android and desktop write-ups of one feature meet in recall instead of living under two names. It first checks whether the gate reads this repository (`gate memory repo`) and what the tree already calls things (`gate memory features`, `gate memory search`), and reads the writing already under `docs/` before writing anything. It commits on a `gate-init` branch and no longer teaches every feature through a model: once the branch is merged and the repository is connected, the gate reads the documents itself. Teaching remains for a repository the gate cannot connect.

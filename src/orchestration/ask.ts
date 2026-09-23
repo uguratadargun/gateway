@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { getExecution } from "@/executions/store";
 import { teamFamily } from "@/lib/teams";
 import { LocalMemoryAccess, type DecisionCard, type IssueCard } from "@/memory/access";
-import { getRepo, listRepos, repoByIdentity, type RepoRecord } from "@/repos/store";
+import { getRepo, listRepos, readRemote, repoByIdentity, type RepoRecord } from "@/repos/store";
 
 /**
  * Asking another team what they did, and being answered from something.
@@ -39,7 +39,7 @@ export interface AskRequest {
   repo?: string | null;
   /** A run whose published branch is the thing being asked about. */
   run?: string | null;
-  /** A branch or tag on the repository's publication remote. */
+  /** A branch or tag on the remote the repository is read from. */
   ref?: string | null;
   /** An exact commit, when the asker already has one. */
   commit?: string | null;
@@ -56,7 +56,7 @@ export interface AskSource {
   ref: string;
   /** The fixed commit everything else is about. */
   commit: string;
-  /** Where it was read from: the repository's publication remote. */
+  /** Where it was read from: the repository's publication remote, or its origin. */
   remote: string;
   /** How the commit was arrived at, for the answer to quote. */
   via: "run" | "ref" | "commit";
@@ -138,15 +138,10 @@ export function resolveAskSource(req: AskRequest, askerTeamId: string): AskResol
     // shape of a refusal.
     return { ok: false, status: "not_found", reason: `gate has no repository called "${name}"` };
   }
-  const remote = repo.publicationRemote?.trim();
-  if (!remote) {
-    return {
-      ok: false,
-      status: "source_unavailable",
-      reason: `"${repo.id}" does not publish, so nothing in it can be read from here — give it a publication remote on the Repos page`,
-      publish: { repo: repo.id, ref: req.ref?.trim() || null },
-    };
-  }
+  // A repository that does not publish is still read: its branches are on its
+  // origin, pushed there by the people who work on it. Only a run's branch
+  // needs gate to have pushed it (`fromRun`).
+  const remote = readRemote(repo);
 
   const commit = req.commit?.trim();
   if (commit) {

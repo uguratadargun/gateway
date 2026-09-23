@@ -250,6 +250,20 @@ export function publicationTarget(repo: RepoRecord | null | undefined): Publicat
   return remote ? { remote, branchPolicy: repo!.branchPolicy } : undefined;
 }
 
+/**
+ * Where this repository's branches are read from: its publication remote, or
+ * else its origin.
+ *
+ * Reading is not publishing. The publication remote says where gate may push
+ * a run's branch, and leaving it unset is how a repository says "never push".
+ * Its branches are on its origin all the same, pushed there by the people who
+ * work on it, and refusing to read them because gate may not push would make
+ * every repository that never opted into pushing unaskable.
+ */
+export function readRemote(repo: RepoRecord): string {
+  return repo.publicationRemote?.trim() || "origin";
+}
+
 /** The registered repo with this identity, if gate knows one. */
 export function repoByIdentity(repoId: string): RepoRecord | null {
   const r = getDb().prepare("SELECT * FROM repos WHERE repo_id = ?").get(repoId) as unknown as Row | undefined;

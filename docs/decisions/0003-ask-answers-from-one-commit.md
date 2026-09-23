@@ -1,6 +1,6 @@
 # 0003. Ask answers from one commit
 
-Status: accepted
+Status: superseded by 0044
 Date: 2026-09-15
 Run: 814ac19
 
