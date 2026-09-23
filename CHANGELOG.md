@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The newest models are reachable through the gateway again. gate rebuilds every
+  request's wire image and stamped it `claude-cli/2.1.259`, a number pinned when
+  that release was captured; Anthropic gates its newest models on it and answered
+  `400 Claude Code 2.1.259 does not support this model; version 2.1.280 or newer
+  is required` — advice nobody can act on, since updating your own CLI changes
+  nothing when the gateway speaks for you. The pin is now 2.1.280, which is what
+  `claude-opus-5-5` asks for. A live gate that is not being rebuilt takes
+  `CLAUDE_CODE_VERSION` from its environment.
+
 - Traffic gets two tabs, a filter bar, and a trace: the live feed and the
   on-disk request log now share one page and one set of filters (person,
   served-by, tier, request id), a logged row names the run it was made for

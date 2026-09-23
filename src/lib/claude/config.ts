@@ -39,9 +39,11 @@ export const ANTHROPIC_OAUTH_USAGE_URL = `${ANTHROPIC_API_BASE}/api/oauth/usage`
  * genuine Claude Code session — required for the `user:sessions:claude_code`
  * scope to be accepted. Bump in lockstep when a newer CLI release is captured.
  */
-// Pinned to the installed Claude Code CLI (2.1.259) so gate's wire image matches
-// the real client. 2.1.251+ is required by Anthropic for the newest models.
-export const CLAUDE_CODE_VERSION = process.env.CLAUDE_CODE_VERSION || "2.1.259";
+// Pinned to the installed Claude Code CLI (2.1.280) so gate's wire image matches
+// the real client. Anthropic gates its newest models on this number and answers
+// 400 "Claude Code <pin> does not support this model" when it lags: 2.1.280+ is
+// what `claude-opus-5-5` requires.
+export const CLAUDE_CODE_VERSION = process.env.CLAUDE_CODE_VERSION || "2.1.280";
 export const CLAUDE_CODE_STAINLESS_VERSION =
   process.env.CLAUDE_CODE_STAINLESS_VERSION || "0.112.1";
 export const CLAUDE_CLI_STAINLESS_RUNTIME_VERSION = "v22.14.0";
