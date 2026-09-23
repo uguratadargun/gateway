@@ -101,7 +101,7 @@ agent file is saved, so a typo fails in the editor rather than mid-run.
 | --- | --- |
 | `read_file` | read a file (line-numbered, optional offset/limit) |
 | `list_files` | list the tree, skipping `.git`, `node_modules`, build output |
-| `search_files` | regex search across files |
+| `search_files` | regex search across a directory, or within one file |
 | `write_file` | create or replace a file |
 | `edit_file` | exact-string replace, refusing an ambiguous match |
 | `run_command` | run argv in the worktree (no shell string) |
@@ -115,7 +115,11 @@ any program, which is what makes `npm test` and everything else work. The
 isolation that makes that acceptable is the worktree, not a command filter.
 A command has five minutes by default and its output is capped at 30 000
 characters; a read is capped at 200 000 bytes, a listing at 500 entries, a
-search at 100 matches.
+search at 100 matches and 20 000 files. A search does not stop at the
+listing's 500: it walks the whole tree until it has its matches, and it
+names every limit that hid something — the match cap, the file cap, and each
+file over 200 000 bytes it did not read — so "(no matches)" is only ever
+said of files that were read.
 
 A tool that fails hands its error back to the model as a tool result, so an
 agent can correct itself. There is no tool-round ceiling by default: a fixed

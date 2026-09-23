@@ -118,4 +118,29 @@ describe("tool regressions", () => {
     expect(await run("list_files", { depth: 5 })).not.toContain("linked/secret.txt");
     expect(await run("search_files", { pattern: "TOPSECRET" })).toBe("(no matches)");
   });
+
+  it("search_files searches the one file a path names", async () => {
+    expect(await run("search_files", { pattern: "const b", path: "src/a.ts" })).toBe("src/a.ts:2:export const b = 2;");
+  });
+
+  it("search_files reaches files past the listing cap", async () => {
+    // Alphabetically before the target, and more of them than list_files shows.
+    mkdirSync(join(root, "assets"));
+    for (let i = 0; i < 600; i++) writeFileSync(join(root, "assets", `icon-${i}.svg`), "<svg/>");
+    mkdirSync(join(root, "ts"));
+    writeFileSync(join(root, "ts", "receiver.ts"), "function handleSyncMessage() {}\n");
+    expect(await run("search_files", { pattern: "handleSyncMessage" })).toBe("ts/receiver.ts:1:function handleSyncMessage() {}");
+  });
+
+  it("search_files says where it stopped and what it did not read", async () => {
+    writeFileSync(join(root, "many.txt"), Array.from({ length: 150 }, (_, i) => `hit ${i}`).join("\n"));
+    const many = await run("search_files", { pattern: "hit", path: "many.txt" });
+    expect(many.split("\n").filter((l) => l.startsWith("many.txt:"))).toHaveLength(100);
+    expect(many).toContain("stopped at 100 matches");
+
+    writeFileSync(join(root, "src", "huge.ts"), `const needle = 1;\n${"x".repeat(250_000)}\n`);
+    const huge = await run("search_files", { pattern: "needle", path: "src" });
+    expect(huge).toContain("(no matches)");
+    expect(huge).toContain("src/huge.ts");
+  });
 });

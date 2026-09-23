@@ -11,6 +11,7 @@ const MAX_READ_BYTES = 200_000;
 const MAX_WRITE_BYTES = 2_000_000;
 const MAX_LIST_ENTRIES = 500;
 const MAX_MATCHES = 100;
+const MAX_SEARCH_FILES = 20_000;
 const MAX_COMMAND_OUTPUT = 30_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 300_000;
 const SKIP_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".venv", "__pycache__", ".turbo"]);
@@ -138,6 +139,36 @@ function walk(root: string, dir: string, depth: number, out: string[]): void {
   }
 }
 
+/**
+ * The files a search reads, in the order `walk` lists them but without its
+ * cap. The listing cap is about what fits in an answer; a search's answer is
+ * its matches, and a walk that stops at 500 entries never reaches `ts/` in a
+ * repository whose `images/` holds more than that.
+ */
+function* filesUnder(root: string, dir: string, depth: number): Generator<string> {
+  if (depth < 0) return;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir).sort();
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (SKIP_DIRS.has(entry) || entry.startsWith(".DS_Store")) continue;
+    const full = join(dir, entry);
+    let isDir = false;
+    try {
+      const st = lstatSync(full);
+      if (st.isSymbolicLink()) continue;
+      isDir = st.isDirectory();
+    } catch {
+      continue;
+    }
+    if (isDir) yield* filesUnder(root, full, depth - 1);
+    else yield relative(root, full);
+  }
+}
+
 const listFiles: AgentTool = {
   name: "list_files",
   description: "List files and directories in the workspace. Skips .git, node_modules and build output.",
@@ -168,13 +199,14 @@ const searchFiles: AgentTool = {
     type: "object",
     properties: {
       pattern: { type: "string", description: "JavaScript regular expression." },
-      path: { type: "string", description: "Directory to search in (default: the workspace root)." },
+      path: { type: "string", description: "Directory or single file to search (default: the workspace root)." },
       extension: { type: "string", description: 'Only search files with this extension, e.g. "ts" (optional).' },
     },
     required: ["pattern"],
   },
   async execute(input, ctx) {
-    const dir = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
+    const target = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
+    if (!existsSync(target)) throw new ToolError(`no such file or directory: ${String(input.path)}`);
     let re: RegExp;
     try {
       re = new RegExp(str(input, "pattern"));
@@ -182,27 +214,48 @@ const searchFiles: AgentTool = {
       throw new ToolError(`invalid regular expression: ${(e as Error).message}`);
     }
     const ext = typeof input.extension === "string" ? input.extension.replace(/^\./, "") : null;
-    const files: string[] = [];
-    walk(ctx.root, dir, 12, files);
+    // A path that names a file searches that file: an agent narrowing to the
+    // file it is reading must not be told the file has no matches.
+    const files = statSync(target).isDirectory() ? filesUnder(ctx.root, target, 12) : [relative(ctx.root, target)];
     const matches: string[] = [];
+    const tooLarge: string[] = [];
+    let searched = 0;
+    let filesCut = false;
     for (const rel of files) {
-      if (rel.endsWith("/")) continue;
       if (ext && !rel.endsWith(`.${ext}`)) continue;
       if (matches.length >= MAX_MATCHES) break;
+      if (searched >= MAX_SEARCH_FILES) {
+        filesCut = true;
+        break;
+      }
       let content: string;
       try {
         const full = join(ctx.root, rel);
-        if (statSync(full).size > MAX_READ_BYTES) continue;
+        if (statSync(full).size > MAX_READ_BYTES) {
+          tooLarge.push(rel);
+          continue;
+        }
         content = readFileSync(full, "utf8");
       } catch {
         continue;
       }
+      searched++;
       content.split("\n").forEach((line, i) => {
         if (matches.length >= MAX_MATCHES || !re.test(line)) return;
         matches.push(`${rel}:${i + 1}:${line.trim().slice(0, 200)}`);
       });
     }
-    return matches.length ? matches.join("\n") : "(no matches)";
+    // Every limit that hid something is said. "(no matches)" from a search
+    // that skipped the file holding the answer reads as "it is not there",
+    // and a reviewer reports exactly that.
+    const notes: string[] = [];
+    if (matches.length >= MAX_MATCHES) notes.push(`… [stopped at ${MAX_MATCHES} matches; narrow the pattern or the path for the rest]`);
+    if (filesCut) notes.push(`… [stopped after searching ${MAX_SEARCH_FILES} files; narrow the path for the rest]`);
+    if (tooLarge.length) {
+      const shown = tooLarge.slice(0, 10).join(", ");
+      notes.push(`… [not searched, over ${MAX_READ_BYTES} bytes: ${shown}${tooLarge.length > 10 ? ` and ${tooLarge.length - 10} more` : ""}; read_file them in parts]`);
+    }
+    return [matches.length ? matches.join("\n") : "(no matches)", ...notes].join("\n");
   },
 };
 
