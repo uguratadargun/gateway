@@ -1,6 +1,6 @@
 import { renderTemplate, TemplateError } from "@/agents/template";
 import { buildOutputSchema, type AgentDefinition, type AgentOutputSpec } from "@/agents/types";
-import type { ModelProvider, ModelProviderMessage, ProviderContentBlock, ToolUseBlock } from "@/providers/types";
+import type { ModelProvider, ModelProviderMessage, ProviderContentBlock, ToolResultBlock, ToolUseBlock } from "@/providers/types";
 import type { MemoryAccess } from "@/memory/cards";
 import { WorkflowError } from "@/runtime/errors";
 import { resolveInputs, type NodeUsageRecord, type ToolCallRecord, type WorkflowState } from "@/runtime/state";
@@ -61,6 +61,24 @@ const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
  */
 const RECON_ROUNDS_BEFORE_NUDGE = 12;
 const NUDGE_EVERY_ROUNDS = 10;
+
+/**
+ * This loop re-sends the whole conversation every round, and every tool result
+ * stays in it: an `ask` reviewer measured here re-read 8.4M cached tokens over
+ * 119 rounds to answer one question, and a longer node reaches the model's
+ * context window and fails. Claude Code compacts; this loop clears instead.
+ * Once one round's context passes the threshold, every tool result older than
+ * the last few rounds is replaced by a note naming the call, so the agent can
+ * make it again if it still needs it. All of them at once, not one per round:
+ * each rewrite of an earlier message costs a prompt-cache miss from that point
+ * on, so clearing in one batch pays that once and then lets the context grow
+ * back from a small base.
+ */
+const CLEAR_CONTEXT_AT_TOKENS = 100_000;
+const KEEP_RECENT_TOOL_ROUNDS = 5;
+/** A result this short costs less to keep than the note that would replace it. */
+const MIN_CLEARED_RESULT_CHARS = 1_000;
+const CLEARED_MARK = "[cleared";
 
 /**
  * How many times an agent may be shown its own validation error and asked again.
@@ -205,6 +223,7 @@ export async function executeAgentNode(
 
   const messages: ModelProviderMessage[] = [{ role: "user", content: prompt }];
   const toolCalls: ToolCallRecord[] = [];
+  const callsByUseId = new Map<string, ToolCallRecord>();
   let writes = 0;
   const usage: NodeUsageRecord = { model: agent.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
   const deadline = nodeDeadline;
@@ -268,6 +287,7 @@ export async function executeAgentNode(
       for (const use of result.toolUses) {
         const record = await runTool(use, toolCtx, agent);
         toolCalls.push(record);
+        callsByUseId.set(use.id, record);
         deps.onToolCall?.(record);
         if (record.ok && WRITE_TOOLS.has(use.name)) writes++;
         results.push({ type: "tool_result", toolUseId: use.id, content: record.result, isError: !record.ok });
@@ -277,6 +297,9 @@ export async function executeAgentNode(
       const nudge = canWrite && writes === 0 ? reconNudge(iteration + 1, toolCalls.length) : null;
       if (nudge) results.push({ type: "text", text: nudge });
       messages.push({ role: "user", content: results });
+      if (result.usage.inputTokens + result.usage.cacheReadTokens >= CLEAR_CONTEXT_AT_TOKENS) {
+        clearOldToolResults(messages, callsByUseId);
+      }
     }
   } catch (e) {
     // A node that fails partway through has still made real tool calls and
@@ -302,6 +325,37 @@ async function runTool(use: ToolUseBlock, ctx: ToolContext | null, agent: AgentD
     const message = e instanceof ToolError ? e.message : `${(e as Error).message}`;
     return { ...base, ok: false, durationMs: Date.now() - startedAt, result: `error: ${message}` };
   }
+}
+
+/**
+ * Replaces every tool result older than the last few rounds with a note that
+ * names the call. Messages are replaced, never mutated: the step's own record
+ * of each call keeps the full result, only what the model is re-sent shrinks.
+ */
+function clearOldToolResults(messages: ModelProviderMessage[], callsByUseId: Map<string, ToolCallRecord>): void {
+  const rounds = messages
+    .map((_, i) => i)
+    .filter((i) => {
+      const c = messages[i].content;
+      return messages[i].role === "user" && Array.isArray(c) && c.some((b) => b.type === "tool_result");
+    });
+  for (const i of rounds.slice(0, Math.max(0, rounds.length - KEEP_RECENT_TOOL_ROUNDS))) {
+    const content = messages[i].content as ProviderContentBlock[];
+    if (!content.some(clearable)) continue;
+    messages[i] = {
+      ...messages[i],
+      content: content.map((b) => (clearable(b) ? { ...b, content: clearedNote(callsByUseId.get(b.toolUseId), b.content.length) } : b)),
+    };
+  }
+}
+
+function clearable(b: ProviderContentBlock): b is ToolResultBlock {
+  return b.type === "tool_result" && b.content.length > MIN_CLEARED_RESULT_CHARS && !b.content.startsWith(CLEARED_MARK);
+}
+
+function clearedNote(call: ToolCallRecord | undefined, chars: number): string {
+  const what = call ? `${call.tool} ${JSON.stringify(call.input ?? {}).slice(0, 200)}` : "this call";
+  return `${CLEARED_MARK} to keep the conversation small: ${what} returned ${chars} characters here. If you still need them, call it again.]`;
 }
 
 /** Null until the agent has surveyed for too long; then the same reminder, periodically. */

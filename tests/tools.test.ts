@@ -138,10 +138,16 @@ describe("tool regressions", () => {
     expect(many.split("\n").filter((l) => l.startsWith("many.txt:"))).toHaveLength(100);
     expect(many).toContain("stopped at 100 matches");
 
-    writeFileSync(join(root, "src", "huge.ts"), `const needle = 1;\n${"x".repeat(250_000)}\n`);
+    writeFileSync(join(root, "src", "huge.ts"), `const needle = 1;\n${"x".repeat(5_100_000)}\n`);
     const huge = await run("search_files", { pattern: "needle", path: "src" });
     expect(huge).toContain("(no matches)");
     expect(huge).toContain("src/huge.ts");
+  });
+
+  it("search_files reads a file larger than read_file returns, and skips binaries", async () => {
+    writeFileSync(join(root, "src", "server.ts"), `${"// filler\n".repeat(30_000)}export function needle() {}\n`);
+    writeFileSync(join(root, "logo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65]));
+    expect(await run("search_files", { pattern: "needle" })).toBe("src/server.ts:30001:export function needle() {}");
   });
 
   it("list_files shows every top-level entry before it runs out", async () => {

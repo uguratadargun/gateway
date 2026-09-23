@@ -12,6 +12,12 @@ const MAX_WRITE_BYTES = 2_000_000;
 const MAX_LIST_ENTRIES = 500;
 const MAX_MATCHES = 100;
 const MAX_SEARCH_FILES = 20_000;
+/**
+ * A search reads a file to test it, not to hand it over, so it can afford far
+ * more than `read_file` returns: ulak-desktop's `ts/sql/Server.ts` is past
+ * 200 KB and was never searched while that was the limit.
+ */
+const MAX_SEARCH_FILE_BYTES = 5_000_000;
 const MAX_COMMAND_OUTPUT = 30_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 300_000;
 const SKIP_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".venv", "__pycache__", ".turbo"]);
@@ -257,11 +263,14 @@ const searchFiles: AgentTool = {
       let content: string;
       try {
         const full = join(ctx.root, rel);
-        if (statSync(full).size > MAX_READ_BYTES) {
+        if (statSync(full).size > MAX_SEARCH_FILE_BYTES) {
           tooLarge.push(rel);
           continue;
         }
-        content = readFileSync(full, "utf8");
+        const raw = readFileSync(full);
+        // Images, archives and fonts: a regex over their bytes finds noise.
+        if (raw.subarray(0, 8_000).includes(0)) continue;
+        content = raw.toString("utf8");
       } catch {
         continue;
       }
@@ -279,7 +288,7 @@ const searchFiles: AgentTool = {
     if (filesCut) notes.push(`… [stopped after searching ${MAX_SEARCH_FILES} files; narrow the path for the rest]`);
     if (tooLarge.length) {
       const shown = tooLarge.slice(0, 10).join(", ");
-      notes.push(`… [not searched, over ${MAX_READ_BYTES} bytes: ${shown}${tooLarge.length > 10 ? ` and ${tooLarge.length - 10} more` : ""}; read_file them in parts]`);
+      notes.push(`… [not searched, over ${MAX_SEARCH_FILE_BYTES} bytes: ${shown}${tooLarge.length > 10 ? ` and ${tooLarge.length - 10} more` : ""}; read_file them in parts]`);
     }
     return [matches.length ? matches.join("\n") : "(no matches)", ...notes].join("\n");
   },

@@ -121,8 +121,10 @@ walks level by level, so a root listing shows every top-level entry before a
 large directory can use up the 500, and when it is cut it says to what depth
 it is complete. A search does not stop at the listing's 500: it walks the
 whole tree until it has its matches, and it names every limit that hid
-something — the match cap, the file cap, and each file over 200 000 bytes it
-did not read — so "(no matches)" is only ever said of files that were read.
+something — the match cap, the file cap, and each file over 5 MB it did not
+read — so "(no matches)" is only ever said of files that were read. It reads
+files well past `read_file`'s 200 000 bytes, because it only tests them, and
+skips binary files (a NUL byte in the first 8 KB).
 A path that names a file is searched as that file; `list_files` on a file
 says to use `read_file` instead of answering "(empty)".
 
@@ -138,6 +140,14 @@ reminded, in the loop, that the worktree is the deliverable, and again every
 ten rounds until it starts. Tool calls are recorded on the step and streamed
 live, so `/executions/<id>` shows exactly what each agent read, wrote and
 ran.
+
+The loop re-sends the whole conversation every round. Once a round's context
+reaches 100 000 tokens, every tool result older than the last five rounds is
+replaced in one batch by a note naming the call and saying to make it again
+if it is still needed. The step keeps the full results. Clearing in one batch
+costs one prompt-cache miss, where a little every round would cost one every
+round. Nodes on the `claude-code` executor are untouched: Claude Code
+compacts its own conversation.
 
 Two more tools, `memory_search` and `memory_feature`, need no worktree and
 never write; they are the team's memory and are described in `memory.md`.
@@ -177,4 +187,4 @@ an error it cannot fix.
 
 ## Decisions
 
-- none recorded yet
+- [0045 — Gate's own agent loop clears old tool results instead of re-sending them](../decisions/0045-gate-agents-clear-old-tool-results.md)

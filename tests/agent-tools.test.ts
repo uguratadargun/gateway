@@ -352,3 +352,60 @@ describe("reconnaissance nudge", () => {
     expect(provider.calls[0].system).toContain("what you actually read");
   });
 });
+
+describe("context clearing", () => {
+  it("clears old tool results once the conversation is large, and keeps the recent ones", async () => {
+    writeFileSync(join(root, "big.txt"), "y".repeat(5_000));
+    // Copied at call time: the loop appends later rounds to the same array.
+    const snapshots: Array<Array<{ role: string; content: unknown }>> = [];
+    const provider = new FakeModelProvider((req, i) => {
+      snapshots.push(JSON.parse(JSON.stringify(req.messages)));
+      // The model reports a large context from the eighth call on.
+      const usage = { inputTokens: 1_000, outputTokens: 10, cacheReadTokens: i >= 7 ? 150_000 : 1_000 };
+      if (i < 10) return { toolUses: [toolUse("read_file", { path: "big.txt" }, `tu_${i}`)], usage };
+      return { text: JSON.stringify({ summary: "read it" }), usage };
+    });
+
+    const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), {
+      provider,
+      loadAgent: (id) => parseAgent(id, READER, meta),
+      workspace,
+    });
+    expect(state.status).toBe("completed");
+
+    const results = (messages: Array<{ role: string; content: unknown }>) =>
+      messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b: { type: string }) => b.type === "tool_result") as Array<{
+        toolUseId: string;
+        content: string;
+      }>;
+
+    // Before the threshold nothing is touched.
+    expect(results(snapshots[7]).every((r) => r.content.includes("yyyy"))).toBe(true);
+    // After it, all but the last five rounds are a note that says how to get them back.
+    const after = results(snapshots[8]);
+    expect(after).toHaveLength(8);
+    for (const r of after.slice(0, 3)) {
+      expect(r.content).not.toContain("yyyy");
+      expect(r.content).toMatch(/^\[cleared.*read_file.*big\.txt.*call it again/s);
+    }
+    for (const r of after.slice(3)) expect(r.content).toContain("yyyy");
+    // A cleared result stays cleared, and is not rewritten on the next round.
+    expect(results(snapshots[9]).slice(0, 3)).toEqual(after.slice(0, 3));
+    // The step keeps the full results; only what the model is re-sent shrinks.
+    expect(state.history[0].toolCalls?.every((c) => c.result.includes("yyyy"))).toBe(true);
+  });
+
+  it("leaves a small conversation exactly as it was", async () => {
+    writeFileSync(join(root, "big.txt"), "y".repeat(5_000));
+    const snapshots: string[] = [];
+    const provider = new FakeModelProvider((req, i) => {
+      snapshots.push(JSON.stringify(req.messages));
+      if (i < 10) return { toolUses: [toolUse("read_file", { path: "big.txt" }, `tu_${i}`)] };
+      return JSON.stringify({ summary: "read it" });
+    });
+
+    await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent: (id) => parseAgent(id, READER, meta), workspace });
+
+    expect(snapshots.at(-1)).not.toContain("cleared");
+  });
+});
