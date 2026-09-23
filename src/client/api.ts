@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import type { AskBody, TeachRequest } from "@/lib/client-api-schemas";
 import { isProviderModelId } from "@/lib/model-picker";
 import { GATE_VERSION, isOlderThan, VERSION_HEADERS } from "@/lib/protocol";
-import type { ActivityCard, FeatureDetail, HistoryResult, MemoryHistoryRequest, MemorySearchRequest, MemorySearchResult } from "@/memory/cards";
+import type { ActivityCard, FeatureCard, FeatureDetail, HistoryResult, MemoryHistoryRequest, MemorySearchRequest, MemorySearchResult, RepoRecordCard } from "@/memory/cards";
 
 import type { ClientConfig } from "./config";
 
@@ -339,6 +339,18 @@ export class GateClient {
     if (req.since != null) params.set("since", String(req.since));
     if (req.limit != null) params.set("limit", String(req.limit));
     return (await this.request<HistoryResult>(`/api/v1/memory/history?${params}`)).body;
+  }
+
+  /** The tree's feature catalogue: every id a design doc could be named, and who built each. */
+  async memoryFeatures(): Promise<FeatureCard[]> {
+    return (await this.request<{ features: FeatureCard[] }>("/api/v1/memory/features")).body.features;
+  }
+
+  /** Whether this checkout's repository is connected on the gate and read, and where its last read stands. */
+  async memoryRepo(remoteUrl: string | null): Promise<RepoRecordCard> {
+    const params = new URLSearchParams();
+    if (remoteUrl) params.set("remote", remoteUrl);
+    return (await this.request<RepoRecordCard>(`/api/v1/memory/repo?${params}`)).body;
   }
 
   /** Every run of the tree going right now, except this person's own. */

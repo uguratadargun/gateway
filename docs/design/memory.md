@@ -205,6 +205,12 @@ merges are skipped, and the history before the first read is left to
 
 ### Teaching work from before
 
+A repository's documents are not taught: once on a connected repository's
+base branch, the record index reads them, and `/gate:init` leaves them to it
+([0042](../decisions/0042-init-names-features-after-the-tree-and-leaves-reading-to-the-index.md)).
+Teaching is for the reasons that are only in a branch's history.
+
+
 Work finished before the team used gate has no run. `/gate:teach`, on the
 finished task's branch, fills that in: `gate teach` works out the range —
 the fork point from the default branch, or for merged work the point the

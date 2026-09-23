@@ -77,12 +77,15 @@ export interface DocumentCard {
   repoId: string | null;
   team: string | null;
   path: string;
-  kind: "design" | "decision" | "spec" | "architecture";
+  /** `note`: any other Markdown under docs/, written outside the convention. */
+  kind: "design" | "decision" | "spec" | "architecture" | "note";
   title: string;
   /** A decision record's Status line, a spec's Status. */
   status: string | null;
   date: string | null;
   summary: string;
+  /** A design doc's Pitfalls section, when it has one. */
+  pitfalls?: string;
   /** The base-branch commit it was read at. */
   commit: string;
   interfaces?: InterfaceCard[];
@@ -115,6 +118,52 @@ export interface ActivityCard {
   taskId: string | null;
   /** The words it shares with what was asked, when something was. */
   shared: string[];
+}
+
+/**
+ * Whether the checkout a person stands in is a repository the gate reads:
+ * connected on the server, whose team, and where its last read stands.
+ */
+export interface RepoRecordCard {
+  /** `host/owner/name`, as the server named the checkout's remote. */
+  repoId: string | null;
+  connected: boolean;
+  /** The connected repository's id on the Repos page. */
+  repo: string | null;
+  team: string | null;
+  ref: string | null;
+  commit: string | null;
+  indexedAt: string | null;
+  error: string | null;
+  /** Documents read from its base branch, by kind. */
+  documents: Partial<Record<DocumentCard["kind"], number>>;
+  /** What to do when it is not read: in the words of whoever has to do it. */
+  advice: string | null;
+}
+
+export function describeRepoRecord(r: RepoRecordCard): string {
+  if (!r.connected) return `${r.repoId ?? "This checkout"} is not read by the gate: ${r.advice ?? "connect it on the Repos page"}`;
+  const counts = Object.entries(r.documents)
+    .map(([k, n]) => `${n} ${k}`)
+    .join(", ");
+  const lines = [
+    `${r.repoId ?? r.repo} is connected as "${r.repo}"${r.team ? `, team ${r.team}` : ", with no team (every team on the gate reads it)"}.`,
+    r.commit
+      ? `Last read: ${r.ref} at ${r.commit.slice(0, 8)}${r.indexedAt ? `, ${r.indexedAt.slice(0, 16).replace("T", " ")}` : ""} — ${counts || "no documents"}.`
+      : "Not read yet: the record index reads it on its next pass.",
+  ];
+  if (r.error) lines.push(`The last read failed: ${r.error}`);
+  if (r.advice) lines.push(r.advice);
+  return lines.join("\n");
+}
+
+export function describeFeatureList(list: FeatureCard[]): string {
+  if (!list.length) return "The tree's catalogue is empty: no team has a design doc or a recorded feature yet.";
+  const out = [`${list.length} feature${list.length === 1 ? "" : "s"} in the tree's catalogue — a design doc named <id>.md is that feature:`];
+  for (const f of list) {
+    out.push(`- ${f.id} — ${f.name}${f.aliases.length ? ` (also: ${f.aliases.join(", ")})` : ""} · built by: ${f.teams.join(", ") || "nobody yet"}`);
+  }
+  return out.join("\n");
 }
 
 export interface MemoryHistoryRequest {
@@ -413,12 +462,13 @@ export function describeDecision(d: DecisionCard): string {
 }
 
 export function describeDocument(d: DocumentCard): string {
-  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind;
+  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind === "note" ? "note (outside the convention)" : d.kind;
   const lines = [
     `- ${kind} ${d.path} — ${d.title}`,
     `  repo: ${d.repoId ?? d.repo}${d.team ? ` · team: ${d.team}` : ""}${d.status ? ` · ${d.status}` : ""}${d.date ? ` · ${d.date}` : ""} · at ${d.commit.slice(0, 8)}`,
   ];
   if (d.summary) lines.push(`  ${clip(d.summary.replace(/\s+/g, " "), 500)}`);
+  if (d.pitfalls) lines.push(`  pitfalls: ${clip(d.pitfalls.replace(/\s+/g, " "), 500)}`);
   for (const i of d.interfaces ?? []) lines.push(`  ${i.role} ${i.name}${i.note ? ` — ${clip(i.note, 200)}` : ""}`);
   return lines.join("\n");
 }

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.46.0 — 2026-09-23
+
+- `/gate:init` names each design doc after the feature the rest of your team tree already has, so the android and desktop write-ups of one feature meet in recall instead of living under two names. It first checks whether the gate reads this repository (`gate memory repo`) and what the tree already calls things (`gate memory features`, `gate memory search`), and reads the writing already under `docs/` before writing anything. It commits on a `gate-init` branch and no longer teaches every feature through a model: once the branch is merged and the repository is connected, the gate reads the documents itself. Teaching remains for a repository the gate cannot connect.
+
+- Writing a repository already has outside the convention is found too. Any other Markdown under `docs/` (a feature write-up, a test plan, a `superpowers` spec) is read as a note: searchable by every team in the tree, shown as written outside the convention, and never taken for a feature's page or a decision. A design doc's Pitfalls now appear with it on the feature's page.
+
+- `gate memory features` lists the tree's feature catalogue with who built each, and `gate memory repo` says whether the gate reads the checkout you are in, whose team it is, and what it has read of it.
+
 ## 0.45.0 — 2026-09-23
 
 - The newest models are reachable through the gateway again. gate rebuilds every

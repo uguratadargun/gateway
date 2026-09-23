@@ -13,7 +13,7 @@ import { windowLabel } from "@/lib/account-pool";
 import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 import { pickerRow, type PickerRow } from "@/lib/model-picker";
-import { describeActivity, describeFeature, describeHistory, describeSearch } from "@/memory/cards";
+import { describeActivity, describeFeature, describeFeatureList, describeHistory, describeRepoRecord, describeSearch } from "@/memory/cards";
 import { parseSince } from "@/runtime/tools/memory-tools";
 import { LINKED_DIRECTORIES } from "@/repos/detect";
 import { checkpointWork, publishBranch } from "@/repos/publish";
@@ -91,6 +91,8 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate memory history [--path <prefix>]… [--since 30d] [--repo <host/owner/name>] [--limit n] [--json]
                                                 what changed there on the base branch: commits, their record, their run
   gate memory activity [--json]                 what the rest of your team's tree is running right now
+  gate memory features [--json]                 the tree's feature catalogue: the ids a design doc is named by
+  gate memory repo [--json]                     whether this checkout's repository is connected and read by the gate
   gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
        …or --run <id>                           ask another team what their code does; answered from one commit, with files
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
@@ -1126,6 +1128,18 @@ async function cmdMemory(args: Args): Promise<number> {
     console.log(json ? JSON.stringify(result, null, 2) : describeHistory(result));
     return result.unavailable ? 1 : 0;
   }
+  if (sub === "features") {
+    const features = await client.memoryFeatures();
+    console.log(json ? JSON.stringify(features, null, 2) : describeFeatureList(features));
+    return 0;
+  }
+  if (sub === "repo") {
+    const record = await client.memoryRepo(readRemoteUrl(process.cwd()));
+    // Not being read is an answer, not a failure: /gate:init prints this
+    // before it writes anything and goes on either way.
+    console.log(json ? JSON.stringify(record, null, 2) : describeRepoRecord(record));
+    return 0;
+  }
   if (sub === "activity") {
     const activity = await client.memoryActivity();
     console.log(json ? JSON.stringify(activity, null, 2) : describeActivity(activity));
@@ -1142,7 +1156,7 @@ async function cmdMemory(args: Args): Promise<number> {
     console.log(json ? JSON.stringify(detail, null, 2) : describeFeature(detail));
     return 0;
   }
-  die("usage: gate memory search <words…> | gate memory feature <id> | gate memory history --path <prefix> | gate memory activity");
+  die("usage: gate memory search <words…> | feature <id> | history --path <prefix> | activity | features | repo");
 }
 
 /** How long `gate teach` waits to show what the recorder wrote. */

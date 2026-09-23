@@ -532,7 +532,7 @@ CREATE TABLE IF NOT EXISTS record_docs (
   path TEXT NOT NULL,
   repo_id TEXT,
   team_id TEXT,
-  kind TEXT NOT NULL,              -- design | decision | spec | architecture
+  kind TEXT NOT NULL,              -- design | decision | spec | architecture | note
   slug TEXT NOT NULL,              -- the file name without number or date
   number INTEGER,                  -- a decision record's NNNN
   title TEXT NOT NULL,
@@ -759,6 +759,11 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // exists is said to be so rather than handed to a planner as current.
   ["memory_decisions", "checked_commit", "checked_commit TEXT"],
   ["memory_decisions", "missing_touches", "missing_touches INTEGER NOT NULL DEFAULT 0"],
+  // A design doc's Pitfalls, kept apart from its Summary: what a sibling team
+  // building the same feature must not miss, shown with the doc rather than
+  // buried in its body. NULL on a row read before it was kept, which the
+  // index reads again.
+  ["record_docs", "pitfalls", "pitfalls TEXT"],
 ];
 
 let db: SqlDatabase | null = null;

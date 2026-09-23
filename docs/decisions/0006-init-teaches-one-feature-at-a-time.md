@@ -1,6 +1,6 @@
 # 0006. A repository is taught one feature at a time, not all at once
 
-Status: accepted
+Status: superseded by 0042
 Date: 2026-09-16
 Run: manual
 

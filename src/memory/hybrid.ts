@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db";
 
 import { configuredEmbedder, decisionText, docText, featureText, fuseRanks, nearest, storeEmbedding, unembeddedIds, type Embedder } from "./embeddings";
-import { searchRecordDocs, type RecordDocHit, type RecordDocSearch } from "./record-index";
+import { rowToDoc, searchRecordDocs, type RecordDocHit, type RecordDocSearch } from "./record-index";
 import { getDecision, getFeature, searchDecisions, searchFeatures } from "./store";
 import type { DecisionHit, DecisionSearch, FeatureHit, MemoryScope } from "./types";
 
@@ -114,23 +114,8 @@ export async function hybridSearchDocs(scope: MemoryScope, search: RecordDocSear
 }
 
 function docByKey(key: string): RecordDocHit | null {
-  const r = getDb().prepare("SELECT * FROM record_docs WHERE repo || ':' || path = ?").get(key) as any;
-  if (!r) return null;
-  return {
-    repo: r.repo,
-    repoId: r.repo_id ?? null,
-    teamId: r.team_id ?? null,
-    path: r.path,
-    kind: r.kind,
-    slug: r.slug,
-    number: r.number == null ? null : Number(r.number),
-    title: r.title,
-    status: r.status ?? null,
-    date: r.date ?? null,
-    summary: r.summary ?? "",
-    commit: r.commit_sha,
-    score: 0,
-  };
+  const r = getDb().prepare("SELECT * FROM record_docs WHERE repo || ':' || path = ?").get(key);
+  return r ? { ...rowToDoc(r), score: 0 } : null;
 }
 
 /**

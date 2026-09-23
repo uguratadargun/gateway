@@ -15,6 +15,11 @@ Four questions come up, and each has one place:
 And a map: `docs/ARCHITECTURE.md` — the modules, their boundaries, and the
 invariants that hold everywhere. One or two pages, rewritten in place.
 
+Other Markdown under `docs/` — a write-up from before the convention, a
+test plan — is read by gate too, as a note: found by search, never taken for
+a feature's page or a decision. It is worth moving into the convention when
+the feature it describes is next changed.
+
 `docs/plans/` is the pipeline's working directory. The planner writes there,
 the implementer, verifier and reviewer read there, and the pipeline keeps it
 out of the commit with a `.gitignore` of `*`. Nothing under it is ever the
@@ -218,11 +223,15 @@ the product, not which file moved.
   commit, the commit body to the record, and the record to the decision that
   made it so.
 - `/gate:init` writes the record for the first time, for a repository that
-  has none: it reads the code, writes the map, a design doc per key part and
-  the decisions the code and the history show, adds `CLAUDE.md` and the
-  skeleton, and — with the person's word — commits each feature and teaches
-  it, so memory holds what was built before gate. It writes no specs: a spec
-  is what one run set out to do, and the first run writes the first one.
+  has none. It reads the code and the writing already there, and names each
+  design doc after the feature the rest of the team tree already has, where
+  one does. It writes the map, a design doc per key part and the decisions
+  the code and the history show, adds `CLAUDE.md` and the skeleton, and,
+  with the person's word, commits each feature on a branch of its own. Once
+  that branch is merged and the repository is connected on the gate, the
+  record index reads it. Nothing is taught unless the repository cannot be
+  connected. It writes no specs: a spec is what one run set out to do, and
+  the first run writes the first one.
 
 ## The repository's `CLAUDE.md`
 

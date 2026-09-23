@@ -17,6 +17,7 @@ import {
   interfaceUsers,
   parseInterfaces,
   parseRecordDoc,
+  repoRecordFor,
   searchRecordDocs,
 } from "@/memory/record-index";
 import { getDecision, getFeature, memoryScopeFor, replaceDecisions, searchDecisions } from "@/memory/store";
@@ -224,10 +225,20 @@ describe("reading a record document", () => {
     ]);
   });
 
-  it("knows nothing else under docs/ as a record", () => {
+  it("reads other writing under docs/ as a note, and never the plans or a misnamed record", () => {
     expect(parseRecordDoc("docs/plans/2026-09-01-x.md", "# x")).toBeNull();
-    expect(parseRecordDoc("docs/research/x.md", "# x")).toBeNull();
+    expect(parseRecordDoc("docs/decisions/notes.md", "# x")).toBeNull();
+    expect(parseRecordDoc("docs/design/sub/x.md", "# x")).toBeNull();
+    const note = parseRecordDoc("docs/superpowers/specs/2026-06-10-ptt-invite-removal-design.md", "# PTT invite removal\n\nThe invite goes; the call stays.\n")!;
+    expect(note).toMatchObject({ kind: "note", slug: "2026-06-10-ptt-invite-removal-design", title: "PTT invite removal", date: "2026-06-10" });
+    expect(note.summary).toBe("The invite goes; the call stays.");
     expect(parseRecordDoc("docs/specs/2026-09-01-thing.md", "Status: done\n\n# Thing\n\nWhat it did.")?.date).toBe("2026-09-01");
+    expect(parseRecordDoc("README.md", "# x")).toBeNull();
+  });
+
+  it("keeps a design doc's pitfalls apart from its summary", () => {
+    expect(parseRecordDoc("docs/design/offline-sync.md", DESIGN)!.pitfalls).toBe("- Device clocks lie.");
+    expect(parseRecordDoc("docs/decisions/0001-a.md", decisionRecord("0001", "A"))!.pitfalls).toBe("");
   });
 
   it("reads the Documents line of a commit body", () => {
@@ -389,6 +400,34 @@ describe("the record index", () => {
     const detail = await new LocalMemoryAccess("ri-desktop").feature("offline-sync");
     expect(detail?.documents?.some((d) => d.repo === repo.id)).toBe(true);
     expect(detail?.feature.teams).toContain("ri-android");
+  });
+
+  it("reads a repository's writing from before the convention, as notes a sibling finds", async () => {
+    const { work, repo } = makeRepo();
+    write(work, "docs/mention-system.md", "# Mention system\n\nAn @ opens a picker of the group's members; the choice is stored as a user id, not a name.\n");
+    write(work, "docs/plans/2026-09-01-scratch.md", "# Scratch mention picker\n");
+    commit(work, "notes");
+    push(work);
+    await indexRepo(repo);
+    const hits = searchRecordDocs(memoryScopeFor("ri-desktop"), { query: "mention picker members" });
+    const note = hits.find((h) => h.repo === repo.id && h.path === "docs/mention-system.md");
+    expect(note?.kind).toBe("note");
+    expect(hits.some((h) => h.path.startsWith("docs/plans/"))).toBe(false);
+    // A note is never a feature's page.
+    expect(getFeature("mention-system")).toBeNull();
+    const detail = await new LocalMemoryAccess("ri-desktop").feature("offline-sync");
+    expect(detail?.documents?.find((d) => d.repo === repo.id)?.pitfalls).toContain("Device clocks lie.");
+  });
+
+  it("tells a checkout whether the gate reads it, within the family only", async () => {
+    const { repo } = makeRepo();
+    await indexRepo(repo);
+    const mine = repoRecordFor(memoryScopeFor("ri-desktop"), repo.repoId);
+    expect(mine).toMatchObject({ connected: true, repo: repo.id, team: "ri-android", ref: "main" });
+    expect(mine.documents).toMatchObject({ design: 1, decision: 1 });
+    expect(repoRecordFor(memoryScopeFor("ri-elsewhere"), repo.repoId).connected).toBe(false);
+    expect(repoRecordFor(memoryScopeFor("ri-desktop"), "github.com/nobody/nothing")).toMatchObject({ connected: false });
+    expect(repoRecordFor(memoryScopeFor("ri-desktop"), null).advice).toContain("no remote");
   });
 
   it("says what went wrong when the checkout is not there, and does not throw", async () => {

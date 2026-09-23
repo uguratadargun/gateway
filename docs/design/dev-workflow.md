@@ -340,13 +340,21 @@ part, the decision records the code and the history actually show — marked
 as inferred where the reason was never stated — `CLAUDE.md`, the changelog
 and `docs/plans/.gitignore`. It never overwrites a document that is already
 there, so running it again only fills gaps, and it commits nothing on its
-own. Asked, it then puts the work on a `gate-init` branch and teaches it:
-one commit and one `gate teach --base HEAD~1` per feature, because a teach
-records one feature and a single teach of everything would file the whole
-repository under one card (see
-[0006](../decisions/0006-init-teaches-one-feature-at-a-time.md)). After it,
-recall answers about work that was finished long before gate. `/gate:design`
-comes next, and the first `/gate:run` writes the first spec.
+own. Before it names anything, it asks the gate two things: whether this
+repository is connected and read (`gate memory repo`), and which features
+the rest of the tree already has (`gate memory features`, then `gate memory
+search` per part). A design doc for a feature a sibling already built takes
+that feature's id as its file name, and an interface a sibling already lists
+is written under the same name. The notes already under `docs/` are its
+first reading.
+
+Asked, it puts the work on a `gate-init` branch, one commit per feature with
+its `Documents:` line and one for the skeleton, and pushes nothing. Once the
+branch is merged and the repository is connected, the record index reads it
+by code. Teaching is left for a repository the gate cannot connect
+([0042](../decisions/0042-init-names-features-after-the-tree-and-leaves-reading-to-the-index.md)).
+After it, recall answers about work that was finished long before gate.
+`/gate:design` comes next, and the first `/gate:run` writes the first spec.
 
 ### An example, across teams
 
@@ -399,6 +407,7 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Decisions
 
+- [0042 — /gate:init names features after the tree, and leaves reading them to the index](../decisions/0042-init-names-features-after-the-tree-and-leaves-reading-to-the-index.md)
 - [0040 — A decision number is checked against the remote before the branch is offered](../decisions/0040-a-decision-number-is-checked-against-the-remote.md)
 - [0032 — The autonomous road can stop at the commit](../decisions/0032-the-autonomous-road-can-stop-at-the-commit.md)
 - [0031 — A prompt carries what is new, not what was already read](../decisions/0031-a-prompt-carries-what-is-new-not-what-was-already-read.md)

@@ -1,15 +1,25 @@
 ---
-description: Set this repository up for gate — read it, write its architecture, design docs and decisions, and teach them to your team's memory
+description: Set this repository up for gate — read it, write its architecture, design docs and decisions under the names the rest of your team tree uses, so every team's recall reads them
 argument-hint: [what this repository is, if the code does not say]
 ---
 
 <!-- No allowed-tools on purpose: reading a whole repository, writing its
-     documents and, with the user's word, committing and teaching them, needs
-     the ordinary set. -->
+     documents and, with the user's word, committing them, needs the
+     ordinary set. -->
 
 Who this machine is connected as, and to which team:
 
 !`node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" whoami`
+
+Whether the gate reads this repository — connected on its Repos page, whose
+team, what it has read of it so far:
+
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" memory repo`
+
+The features the rest of the team tree already has — the ids a design doc is
+named by:
+
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" memory features`
 
 What a repository keeps written down, and where — the forms below are this
 file's, and yours to follow exactly:
@@ -29,9 +39,21 @@ years.
 
 This command writes that record once, from the code as it stands: the map,
 a design doc per key part, the decisions the code and the history actually
-show, and the skeleton the pipeline expects. Then, if the user says so, it
-teaches those documents to the team's memory, so recall answers from the
-first run — including about everything built before gate.
+show, and the skeleton the pipeline expects.
+
+Memory does not need to be taught these files. Once they are on the
+repository's base branch and the repository is connected on the gate, the
+gate reads them itself, by code, on a timer. Recall then answers from them
+for every team in the tree, including about everything built before gate.
+Two things decide whether that reading is any use to a sibling team:
+
+- **The names.** A design doc's file name is its feature's id across the
+  whole tree: `offline-sync.md` here and `offline-sync.md` in the android
+  repository are one feature, built twice, and the android team's recall
+  finds this one. A second name for the same feature is two features that
+  never meet.
+- **The Interfaces section.** It says what this repository provides to the
+  others and consumes from them, named as both sides write it.
 
 It writes files. **It does not commit anything on its own**, and it never
 overwrites a document that is already there.
@@ -51,7 +73,17 @@ Look for `docs/ARCHITECTURE.md`, `docs/design/`, `docs/decisions/`,
   know which of the changes are theirs.
 - If `whoami` above printed an error, say which: `not connected` means
   `/gate:login <token>` with a token from the dashboard. Write the documents
-  anyway — they are worth having — and skip step 6, saying so at the end.
+  anyway — they are worth having — and say at the end that nobody else in
+  the tree will read them until the machine is connected and step 6 is done.
+- Read what `memory repo` printed. When the repository is not connected, or
+  has no team, say so now, with its advice. The documents are still worth
+  writing, but step 6 is where they reach anyone.
+- Look for writing that is already there under other names: Markdown
+  elsewhere under `docs/` (a feature write-up, a `docs/superpowers/specs/`
+  design, a test plan), an ADR directory, a design section in the README.
+  It is left where it is. It is the first thing you read in step 2, and the
+  gate already reads Markdown under `docs/` as notes. The design docs you
+  write point to it rather than repeat it or contradict it.
 
 ## 2. Read the repository
 
@@ -67,9 +99,22 @@ Do not design against assumptions. Establish, from the files:
 - how changes reach it: the remote, the default branch, whether merge
   requests are used, and the shape of its commit subjects
   (`git log --format=%s -50`);
-- where reasoning is already written down: a README section, design notes,
-  an `ADR`-like directory under another name, long comments that explain a
-  choice, commit messages that argue for one.
+- where reasoning is already written down: the notes found in step 1, a
+  README section, an `ADR`-like directory under another name, long comments
+  that explain a choice, commit messages that argue for one. What those say
+  outranks what you infer from the code, and where they disagree with the
+  code, the code is what is true today and the note is history;
+- what the rest of the tree already calls the same things. For each part you
+  find, search the team tree's memory for it by its product name and its
+  likely other names, in both languages the team writes in:
+
+      node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" memory search "<part, in words>"
+
+  A feature in the catalogue above, or another repository's design doc,
+  that is the same thing means this repository's design doc takes **that
+  id** as its file name, even where this repository calls it something else
+  internally. An interface another repository already lists — the server's
+  `POST /v1/sync` — is written here under exactly that name.
 
 Where the repository is large, send subagents: one area each, all at once,
 each reporting what it found rather than pasting files back. Read the rest
@@ -77,15 +122,23 @@ yourself while they work.
 
 ## 3. Show what you would write, and let them choose
 
-List the key parts you found — one line each, named as the product names
-them (`offline sync`, `account pool`), not as a task (`refactor of sync`).
+List the key parts you found, one line each. For each line give:
+
+- its name, as the product names it (`offline sync`, `account pool`), not
+  as a task (`refactor of sync`);
+- the file name you will give its design doc;
+- whether that name is an existing feature of the tree, and whose, or a new
+  one.
+
 A part is worth a design doc when someone maintaining this repository would
 ask "how does this work"; a utility file is not.
 
 Then ask with AskUserQuestion: write all of them, or a subset. Say plainly
-what each line costs — one `docs/design/<feature>.md`, and, if they choose
-to teach in step 6, one teach run apiece — so the size of the job is theirs
-to decide. Do not start writing before they answer.
+what each line costs: one `docs/design/<feature>.md`, and no model call
+after that, because the gate reads it by code. The size of the job is theirs
+to decide. Also ask whether any file name should be different; a person on
+the team knows which sibling feature is really the same one. Do not start
+writing before they answer.
 
 ## 4. Write the documents
 
@@ -101,18 +154,21 @@ The forms are in the reference above. Follow them section for section.
   still true. No history, no "this was changed". Logic, not code: a path is a
   pointer, a function body is not. Where the part talks to another
   repository — an endpoint it serves or calls, an event, a schema — add the
-  `## Interfaces` section, one `provides:` or `consumes:` line each, named
-  the way the code names it. Name the file for the feature as the product
-  calls it, the same name another team's repository would use, because the
-  file name is the feature's id across the tree. Dispatch one subagent per
-  design doc where there are several — each gets the part, the paths to
-  read, the template and these rules — and write the map yourself while they
-  work.
+  `## Interfaces` section, one `provides:` or `consumes:` line each, under
+  the name another repository already gives it where one does, else the way
+  the code names it. The file name is the one agreed in step 3. Where a note
+  already describes the part, read it first, keep what is still true, and
+  list it under Key files as the older write-up, so a reader finds both.
+  Dispatch one subagent per design doc where there are several. Each gets
+  the part, the agreed file name, the paths and notes to read, the sibling
+  design doc when there is one, the template and these rules. Write the map
+  yourself while they work.
 - **`docs/decisions/NNNN-<slug>.md`** — the choices the code and the history
   actually show: a comment that says why something is done the hard way, a
   commit message that argues for an approach, a design note in the
   repository, a pattern that was clearly abandoned. All eight sections
-  filled, numbered from `0001` upward. Two rules that matter here:
+  filled, numbered from the next free number (`0001` in a repository that has
+  none). Two rules that matter here:
   - Where the reason is not stated anywhere and you worked it out from the
     code, say so in `Rationale`, in those words: *inferred from the code, not
     stated*. An alternative nobody considered is not an alternative — leave
@@ -143,68 +199,73 @@ there; no decision the history supports), and say in as many words: **nothing
 has been committed**. The user reviews what is on disk before it goes
 anywhere.
 
-## 6. Teach it to the team's memory
+## 6. Put it where the gate reads it
 
-This writes to the whole team's memory, and it needs commits, because
-`gate teach` reads a range of history. So ask, with AskUserQuestion: commit
-these and teach them, or stop here.
+The gate reads a repository's base branch. Documents on a laptop, or on a
+branch nobody merged, reach nobody. So ask, with AskUserQuestion: commit
+these on a branch of their own, or stop here.
 
 **If they say no**, print what they can run later, and finish.
 
 **If they say yes**, put the work on a branch of its own —
-`git switch -c gate-init` — and then, for each feature, in turn:
+`git switch -c gate-init` — and commit:
 
-1. Commit that feature's design doc together with the decision records that
-   belong to it: subject `docs: <feature> — how it works today, and the
+1. One commit per feature: its design doc together with the decision records
+   that belong to it. Subject `docs: <feature> — how it works today, and the
    decisions behind it`, and in the body a `Documents:` line naming the
    files. Nothing else in the message: no trailer, no signature, no
-   "Co-Authored-By", no "Generated with" line.
-2. Write the account for it to a file of your own, e.g.
+   "Co-Authored-By", no "Generated with" line. One commit each keeps
+   `git blame` on a design doc pointing at the one commit that explains it.
+2. One last commit for the skeleton: the map, `CLAUDE.md`, the changelog and
+   `docs/plans/.gitignore`.
+
+Nothing is pushed and no merge request is opened. The branch is the user's,
+and it reaches the base branch the way their other work does. Tell them what
+happens then:
+
+- **When the repository is connected** (what `memory repo` printed), the
+  gate reads the merged documents on its next pass (every 15 minutes by
+  default, or **Read repositories** on its Memory page). `gate memory repo`
+  shows the documents it read. Nothing is taught, and no model is called.
+- **When it is not connected**, connecting it on the Repos page, with its
+  team, is the step that matters. Until then these documents reach nobody.
+
+Teach only when the repository cannot be connected on the gate at all: the
+server cannot fetch it, or it lives only on laptops. Then, and only with the
+user's word, teach each feature commit on its own, never all of them in one
+teach:
+
+1. Write the account to a file of your own, e.g.
    `$TMPDIR/gate-init-<feature>.json`, with the seven fields `/gate:teach`
-   uses — `task`, `plan`, `decisions`, `implementation`, `verification`,
-   `pitfalls`, `evidence`. For an init the shape is:
-   - `task`: what this part of the repository is for, as the person who
-     asked for it would have put it, and that it is being recorded as it
-     stands before gate;
+   uses:
+   - `task`: what the part is for, recorded as it stands before gate;
    - `implementation`: the design doc's *How it works*;
-   - `decisions`: one paragraph per decision record, saying which reasons
-     are inferred;
+   - `decisions`: one paragraph per record, saying which reasons are
+     inferred;
    - `pitfalls`: the design doc's *Pitfalls*;
-   - `verification`: how this part is tested today, with the command;
-   - `plan`: how it is put together, in order, where that is not already the
+   - `verification`: how this part is tested, with the command;
+   - `plan`: how it is put together, where that is not already the
      implementation;
-   - `evidence`: the paths you read and the commit range.
-3. Teach that one commit:
+   - `evidence`: the paths read and the commit.
+2. Check out that commit and run:
 
        node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" teach --base HEAD~1 --account-file <file>
 
-   `HEAD` is the commit you just made and `HEAD~1` is the one before it, so
-   the range is exactly this feature and nothing else.
-4. Say what the recorder wrote — the decisions, and the feature it filed them
-   under — and go on to the next.
-
-One feature at a time, and never all of them in one teach: a teach records
-**one** feature, so a single teach of everything would file the whole
-repository under one card and the catalogue would be useless to a sibling
-team asking how you built a thing.
-
-The map, `CLAUDE.md`, the changelog and the `.gitignore` go in one last
-commit and are not taught: they are the skeleton, not a feature.
-
-Nothing is pushed and no merge request is opened. The branch is the user's.
+   A teach records one feature, so one teach of everything would file the
+   whole repository under one card.
 
 What can go wrong, and what it means:
 
-- **no remote** — the decisions are recorded without a repository name, so a
-  path in them means less than it could. Say so; it does not stop anything.
-- **`already worked on this branch`** — a run recorded this range before. Add
-  `--force` only if the user asks for it.
-- **a design doc that will not fit** — the recorder reads 6 000 characters of
-  one document and 60 000 of all of them together. A design doc over that is
-  too long to be read by anyone either; cut it to what is true and
-  load-bearing.
-- **`the recorder failed`** — say what it said. It retries on its own, and
-  the run's page has "Record again".
+- **`memory repo` says not connected, or no team.** Say it plainly: the
+  documents are worth having, and they reach the rest of the tree once the
+  repository is connected with its team.
+- **A sibling's feature under a name this repository does not use.** Take
+  the sibling's id anyway. The product name can differ inside the doc, and
+  the file name is the join.
+- **A name the user rejects in step 3.** Theirs wins. Say that the two
+  features will not meet in recall until one of the files is renamed.
+- **No remote.** The gate cannot name the repository, so it cannot connect
+  or read it. Say so; the documents are still worth writing.
 
 ## 7. Say what comes next
 
@@ -213,9 +274,8 @@ What can go wrong, and what it means:
 - From now on the record is kept by the pipeline and by `CLAUDE.md`: a change
   that alters behaviour updates its design doc, a real choice writes a
   decision record, and the reviewer sends back work that does not.
-- Once these documents are on the repository's base branch and the
-  repository is connected on the gate's Repos page (with its team), the gate
-  reads them itself, by code, on a timer. Every team in the tree then finds
-  the design docs and the interfaces they list, whether or not this
-  repository's own work ever runs through gate. A repository nobody connected
-  is only in memory through what is taught.
+- Once the `gate-init` branch is merged and the repository is connected on
+  the gate's Repos page (with its team), the gate reads the documents itself,
+  by code, on a timer. Every team in the tree then finds the design docs and
+  the interfaces they list, whether or not this repository's own work ever
+  runs through gate. `gate memory repo` shows what it read.

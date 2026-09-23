@@ -7317,6 +7317,25 @@ function getSkill(id, scope = teamScope()) {
 }
 
 // src/memory/cards.ts
+function describeRepoRecord(r) {
+  if (!r.connected) return `${r.repoId ?? "This checkout"} is not read by the gate: ${r.advice ?? "connect it on the Repos page"}`;
+  const counts = Object.entries(r.documents).map(([k, n]) => `${n} ${k}`).join(", ");
+  const lines = [
+    `${r.repoId ?? r.repo} is connected as "${r.repo}"${r.team ? `, team ${r.team}` : ", with no team (every team on the gate reads it)"}.`,
+    r.commit ? `Last read: ${r.ref} at ${r.commit.slice(0, 8)}${r.indexedAt ? `, ${r.indexedAt.slice(0, 16).replace("T", " ")}` : ""} \u2014 ${counts || "no documents"}.` : "Not read yet: the record index reads it on its next pass."
+  ];
+  if (r.error) lines.push(`The last read failed: ${r.error}`);
+  if (r.advice) lines.push(r.advice);
+  return lines.join("\n");
+}
+function describeFeatureList(list) {
+  if (!list.length) return "The tree's catalogue is empty: no team has a design doc or a recorded feature yet.";
+  const out = [`${list.length} feature${list.length === 1 ? "" : "s"} in the tree's catalogue \u2014 a design doc named <id>.md is that feature:`];
+  for (const f of list) {
+    out.push(`- ${f.id} \u2014 ${f.name}${f.aliases.length ? ` (also: ${f.aliases.join(", ")})` : ""} \xB7 built by: ${f.teams.join(", ") || "nobody yet"}`);
+  }
+  return out.join("\n");
+}
 var MAX_FIELD = 1200;
 function clip(s, max = MAX_FIELD) {
   return s.length > max ? `${s.slice(0, max)}\u2026` : s;
@@ -7417,12 +7436,13 @@ function describeDecision(d) {
   return lines.join("\n");
 }
 function describeDocument(d) {
-  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind;
+  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind === "note" ? "note (outside the convention)" : d.kind;
   const lines = [
     `- ${kind} ${d.path} \u2014 ${d.title}`,
     `  repo: ${d.repoId ?? d.repo}${d.team ? ` \xB7 team: ${d.team}` : ""}${d.status ? ` \xB7 ${d.status}` : ""}${d.date ? ` \xB7 ${d.date}` : ""} \xB7 at ${d.commit.slice(0, 8)}`
   ];
   if (d.summary) lines.push(`  ${clip(d.summary.replace(/\s+/g, " "), 500)}`);
+  if (d.pitfalls) lines.push(`  pitfalls: ${clip(d.pitfalls.replace(/\s+/g, " "), 500)}`);
   for (const i of d.interfaces ?? []) lines.push(`  ${i.role} ${i.name}${i.note ? ` \u2014 ${clip(i.note, 200)}` : ""}`);
   return lines.join("\n");
 }
@@ -7971,7 +7991,7 @@ function windowLabel(name, scope) {
 }
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.45.0";
+var GATE_VERSION = "0.46.0";
 var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
@@ -9387,6 +9407,16 @@ var GateClient = class {
     if (req.since != null) params.set("since", String(req.since));
     if (req.limit != null) params.set("limit", String(req.limit));
     return (await this.request(`/api/v1/memory/history?${params}`)).body;
+  }
+  /** The tree's feature catalogue: every id a design doc could be named, and who built each. */
+  async memoryFeatures() {
+    return (await this.request("/api/v1/memory/features")).body.features;
+  }
+  /** Whether this checkout's repository is connected on the gate and read, and where its last read stands. */
+  async memoryRepo(remoteUrl) {
+    const params = new URLSearchParams();
+    if (remoteUrl) params.set("remote", remoteUrl);
+    return (await this.request(`/api/v1/memory/repo?${params}`)).body;
   }
   /** Every run of the tree going right now, except this person's own. */
   async memoryActivity() {
@@ -12701,6 +12731,8 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate memory history [--path <prefix>]\u2026 [--since 30d] [--repo <host/owner/name>] [--limit n] [--json]
                                                 what changed there on the base branch: commits, their record, their run
   gate memory activity [--json]                 what the rest of your team's tree is running right now
+  gate memory features [--json]                 the tree's feature catalogue: the ids a design doc is named by
+  gate memory repo [--json]                     whether this checkout's repository is connected and read by the gate
   gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
        \u2026or --run <id>                           ask another team what their code does; answered from one commit, with files
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
@@ -13438,6 +13470,16 @@ async function cmdMemory(args) {
     console.log(json ? JSON.stringify(result, null, 2) : describeHistory(result));
     return result.unavailable ? 1 : 0;
   }
+  if (sub === "features") {
+    const features = await client.memoryFeatures();
+    console.log(json ? JSON.stringify(features, null, 2) : describeFeatureList(features));
+    return 0;
+  }
+  if (sub === "repo") {
+    const record2 = await client.memoryRepo(readRemoteUrl(process.cwd()));
+    console.log(json ? JSON.stringify(record2, null, 2) : describeRepoRecord(record2));
+    return 0;
+  }
   if (sub === "activity") {
     const activity = await client.memoryActivity();
     console.log(json ? JSON.stringify(activity, null, 2) : describeActivity(activity));
@@ -13454,7 +13496,7 @@ async function cmdMemory(args) {
     console.log(json ? JSON.stringify(detail, null, 2) : describeFeature(detail));
     return 0;
   }
-  die("usage: gate memory search <words\u2026> | gate memory feature <id> | gate memory history --path <prefix> | gate memory activity");
+  die("usage: gate memory search <words\u2026> | feature <id> | history --path <prefix> | activity | features | repo");
 }
 var TEACH_WAIT_MS = 5 * 6e4;
 async function cmdTeach(args) {

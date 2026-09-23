@@ -20,8 +20,16 @@ For each connected repository with a checkout on the server, the index resolves 
 - `docs/decisions/NNNN-<slug>.md`: a **decision record**, with its number, Status and Date.
 - `docs/specs/YYYY-MM-DD-<topic>.md`: a **spec**.
 - `docs/ARCHITECTURE.md`: the **map**.
+- any other Markdown under `docs/`: a **note**. A write-up from before the
+  convention, a test plan, a `superpowers` spec. Up to 400 per repository,
+  newest-named first.
 
-Nothing else under `docs/` is a record. Each document is kept as one row: kind, slug, number, title, status, date, a summary (a design doc's Summary section, a decision's Decision section), the whole text, git's blob hash, and the commit it was read at. A full-text row is kept beside it. A document whose blob hash has not changed is not read again. A document gone from the branch is deleted, with its full-text row, its vector and its interfaces.
+Two things are never read: `docs/plans/`, which is the pipeline's scratch
+space, and a misnamed file under `docs/design/` or `docs/decisions/`, which
+is a mistake in the record, not a note. A note is found by search and shown
+as written outside the convention. It is never a feature's page, never a
+decision, and never reconciled against
+([0043](../decisions/0043-writing-outside-the-convention-is-read-as-notes.md)). Each document is kept as one row: kind, slug, number, title, status, date, a summary (a design doc's Summary section, a decision's Decision section), a design doc's Pitfalls kept apart so they are shown with the doc, the whole text, git's blob hash, and the commit it was read at. A full-text row is kept beside it. A document whose blob hash has not changed is not read again. A document gone from the branch is deleted, with its full-text row, its vector and its interfaces.
 
 Reading is code: the documents have a form that `scripts/check-docs.mjs` holds (0021), so nothing here asks a model anything. Every row is derived, and dropping them all and reading again loses nothing.
 
@@ -87,10 +95,14 @@ With `memory.recordMerges` on, the same pass turns each first-parent commit that
 - The squash-merge rule trusts a decision record's slug: a different record with the same slug on the base branch would promote a decision that never landed.
 - A repository with no team is readable by every team on the gate, the same rule `ask` keeps. Give it a team on the Repos page to scope it.
 - The fetch is `git fetch` against the repository's publication remote, or `origin`. A checkout whose credentials have lapsed keeps answering from the last commit it fetched, and says so on the Memory page.
+- A note can be out of date: nothing reconciles it against the code. Move it into the convention when its feature is next changed.
+- `/gate:init` names design docs after the features the tree already has (`gate memory features`), because a second name for the same feature is two features that never meet. See [dev workflow](dev-workflow.md).
 - Interfaces are matched by name as written. `POST /v1/sync` and `/v1/sync POST` are two interfaces, so write the name the same way on both sides.
 
 ## Decisions
 
+- [0043 — Writing outside the convention is read as notes](../decisions/0043-writing-outside-the-convention-is-read-as-notes.md)
+- [0042 — /gate:init names features after the tree, and leaves reading them to the index](../decisions/0042-init-names-features-after-the-tree-and-leaves-reading-to-the-index.md)
 - [0038 — The repositories' record is read by code, and the base branch settles what landed](../decisions/0038-the-repositories-record-is-read-by-code.md)
 - [0041 — Merges made without gate are recorded only when the gate is set to](../decisions/0041-merges-made-without-gate-are-recorded-when-asked.md)
 - [0021 — The record's form is checked by code, its truth by a reviewer](../decisions/0021-the-records-form-is-checked-by-code.md)

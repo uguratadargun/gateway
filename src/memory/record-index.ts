@@ -7,7 +7,7 @@ import { loadSettings } from "@/lib/settings";
 import { teamFamily, teamRoot } from "@/lib/teams";
 import { listRepos, repoByIdentity, type RepoRecord } from "@/repos/store";
 
-import type { DocumentCard, HistoryCommit, HistoryResult, InterfaceCard } from "./cards";
+import type { DocumentCard, HistoryCommit, HistoryResult, InterfaceCard, RepoRecordCard } from "./cards";
 import { deleteEmbedding } from "./embeddings";
 import {
   closeByRecord,
@@ -57,7 +57,10 @@ const GIT_TIMEOUT_MS = 60_000;
 const BASE_REF = "refs/gate/record/base";
 /** One document is read whole up to this; a design doc is pages, not megabytes. */
 const MAX_BODY_CHARS = 60_000;
-const DOC_PATHS = ["docs/design", "docs/decisions", "docs/specs", "docs/ARCHITECTURE.md"];
+/** Everything under docs/ is listed; `recordKindOf` says which files are record. */
+const DOC_PATHS = ["docs"];
+/** Past this many notes a repository's docs/ is an archive, not a record; the newest-named are kept. */
+const MAX_NOTES = 400;
 
 async function git(cwd: string, args: string[], timeout = GIT_TIMEOUT_MS): Promise<string> {
   const { stdout } = await exec("git", args, { cwd, timeout, maxBuffer: 256 * 1024 * 1024, encoding: "utf8" });
@@ -82,7 +85,14 @@ const SHA = /^[0-9a-f]{7,40}$/;
 
 // ── Reading one document ─────────────────────────────────────────────────────
 
-export type RecordDocKind = "design" | "decision" | "spec" | "architecture";
+/**
+ * The four kinds the convention names, and `note`: any other Markdown under
+ * `docs/` — a design note written before the convention, a feature write-up
+ * under a name of its own, a `superpowers` spec. Read so that a repository's
+ * existing writing is found before anybody rewrites it into the convention;
+ * never taken for a feature's page or a decision.
+ */
+export type RecordDocKind = "design" | "decision" | "spec" | "architecture" | "note";
 
 export interface RecordInterface {
   role: "provides" | "consumes";
@@ -99,6 +109,8 @@ export interface ParsedRecordDoc {
   date: string | null;
   /** What a reader needs first: a design doc's Summary, a decision's Decision. */
   summary: string;
+  /** A design doc's Pitfalls section: what a sibling building the same thing must not miss. */
+  pitfalls: string;
   body: string;
   sections: Record<string, string>;
   interfaces: RecordInterface[];
@@ -113,6 +125,12 @@ export function recordKindOf(path: string): { kind: RecordDocKind; slug: string;
   if (m) return { kind: "decision", slug: m[2], number: Number(m[1]), date: null };
   m = path.match(/^docs\/specs\/(\d{4}-\d{2}-\d{2})-([^/]+)\.md$/);
   if (m) return { kind: "spec", slug: m[2], number: null, date: m[1] };
+  // The pipeline's scratch space is never the record, whatever is in it; and
+  // a file under design/ or decisions/ that misses the convention's name is
+  // a mistake in the record, not a note beside it.
+  if (/^docs\/(plans|design|decisions)\//.test(path)) return null;
+  m = path.match(/^docs\/(?:.+\/)?([^/]+)\.md$/i);
+  if (m) return { kind: "note", slug: m[1].toLowerCase(), number: null, date: path.match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? null };
   return null;
 }
 
@@ -178,7 +196,7 @@ export function parseRecordDoc(path: string, text: string): ParsedRecordDoc | nu
 
   const firstParagraph = (s: string) => s.split(/\n\s*\n/).map((p) => p.trim()).find((p) => p && !/^#/.test(p) && !/^\w+:\s/.test(p)) ?? "";
   let summary = "";
-  if (kind.kind === "design") summary = sections.Summary ?? firstParagraph(text);
+  if (kind.kind === "design" || kind.kind === "note") summary = sections.Summary ?? sections.Özet ?? firstParagraph(text);
   else if (kind.kind === "decision") summary = sections.Decision ?? "";
   else if (kind.kind === "spec") summary = firstParagraph(lines.slice(Math.max(firstSection, 0)).join("\n")) || firstParagraph(text);
   else summary = firstParagraph(text);
@@ -191,6 +209,7 @@ export function parseRecordDoc(path: string, text: string): ParsedRecordDoc | nu
     status: header("Status"),
     date: header("Date") ?? kind.date,
     summary: summary.slice(0, 2_000),
+    pitfalls: kind.kind === "design" ? (sections.Pitfalls ?? "").slice(0, 2_000) : "",
     body: text.slice(0, MAX_BODY_CHARS),
     sections,
     interfaces: kind.kind === "design" ? parseInterfaces(sections.Interfaces ?? "") : [],
@@ -314,14 +333,14 @@ function writeDoc(repo: RepoRecord, path: string, blob: string, commit: string, 
   const db = getDb();
   const key = `${repo.id}:${path}`;
   db.prepare(
-    `INSERT INTO record_docs (repo, path, repo_id, team_id, kind, slug, number, title, status, date, summary, body, blob, commit_sha, indexed_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO record_docs (repo, path, repo_id, team_id, kind, slug, number, title, status, date, summary, pitfalls, body, blob, commit_sha, indexed_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(repo, path) DO UPDATE SET
        repo_id = excluded.repo_id, team_id = excluded.team_id, kind = excluded.kind, slug = excluded.slug,
        number = excluded.number, title = excluded.title, status = excluded.status, date = excluded.date,
-       summary = excluded.summary, body = excluded.body, blob = excluded.blob, commit_sha = excluded.commit_sha,
-       indexed_at = excluded.indexed_at`,
-  ).run(repo.id, path, repo.repoId, repo.teamId, doc.kind, doc.slug, doc.number, doc.title, doc.status, doc.date, doc.summary, doc.body, blob, commit, now);
+       summary = excluded.summary, pitfalls = excluded.pitfalls, body = excluded.body, blob = excluded.blob,
+       commit_sha = excluded.commit_sha, indexed_at = excluded.indexed_at`,
+  ).run(repo.id, path, repo.repoId, repo.teamId, doc.kind, doc.slug, doc.number, doc.title, doc.status, doc.date, doc.summary, doc.pitfalls, doc.body, blob, commit, now);
   db.prepare("DELETE FROM record_docs_fts WHERE key = ?").run(key);
   db.prepare("INSERT INTO record_docs_fts (key, title, summary, body, path) VALUES (?,?,?,?,?)").run(key, doc.title, doc.summary, doc.body, path);
   db.prepare("DELETE FROM record_interfaces WHERE repo = ? AND path = ?").run(repo.id, path);
@@ -352,13 +371,23 @@ function linkFeature(repo: RepoRecord, design: { slug: string; title: string; su
 async function readDocs(repo: RepoRecord, commit: string, now: number): Promise<{ read: number; removed: number }> {
   const listing = await git(repo.root, ["ls-tree", "-r", commit, "--", ...DOC_PATHS]);
   const onBranch = new Map<string, string>();
+  const notes: Array<[string, string]> = [];
   for (const line of listing.split("\n")) {
     const m = line.match(/^\d+\s+blob\s+([0-9a-f]+)\t(.+)$/);
-    if (m && recordKindOf(m[2])) onBranch.set(m[2], m[1]);
+    const kind = m ? recordKindOf(m[2]) : null;
+    if (!m || !kind) continue;
+    if (kind.kind === "note") notes.push([m[2], m[1]]);
+    else onBranch.set(m[2], m[1]);
   }
+  // The newest-named first, where a docs/ holds years of dated write-ups.
+  for (const [path, blob] of notes.sort((a, b) => b[0].localeCompare(a[0])).slice(0, MAX_NOTES)) onBranch.set(path, blob);
   const db = getDb();
+  // A row read before the index kept a design doc's pitfalls, or before a
+  // path counted as a note, is read again: same blob, less kept.
   const indexed = new Map(
-    (db.prepare("SELECT path, blob FROM record_docs WHERE repo = ?").all(repo.id) as Array<{ path: string; blob: string }>).map((r) => [r.path, r.blob]),
+    (
+      db.prepare("SELECT path, blob, kind, pitfalls FROM record_docs WHERE repo = ?").all(repo.id) as Array<{ path: string; blob: string; kind: string; pitfalls: string | null }>
+    ).map((r) => [r.path, r.kind === "design" && r.pitfalls == null ? "" : r.blob]),
   );
   let read = 0;
   let removed = 0;
@@ -553,12 +582,14 @@ export interface RecordDocHit {
   status: string | null;
   date: string | null;
   summary: string;
+  pitfalls: string;
   commit: string;
   score: number;
 }
 
-function rowToDoc(r: any): RecordDocHit {
+export function rowToDoc(r: any): RecordDocHit {
   return {
+    pitfalls: r.pitfalls ?? "",
     repo: r.repo,
     repoId: r.repo_id ?? null,
     teamId: r.team_id ?? null,
@@ -656,6 +687,7 @@ export function toDocumentCard(d: RecordDocHit, interfaces?: RecordInterface[]):
     status: d.status,
     date: d.date,
     summary: d.summary,
+    ...(d.kind === "design" && d.pitfalls ? { pitfalls: d.pitfalls } : {}),
     commit: d.commit,
     ...(interfaces?.length
       ? { interfaces: interfaces.map((i) => ({ ...i, repo: d.repo, repoId: d.repoId, team: d.teamId, path: d.path, feature: d.slug })) }
@@ -810,3 +842,50 @@ export function recordIndexStatus(): RecordRepoStatus[] {
     };
   });
 }
+
+/**
+ * Whether a repository is one the gate reads, for the person standing in its
+ * checkout: `/gate:init` asks before it writes documents nobody would read.
+ * Outside the asker's family it is answered as not connected, in the same
+ * words a repository nobody connected gets.
+ */
+export function repoRecordFor(scope: MemoryScope, repoId: string | null): RepoRecordCard {
+  const none = (advice: string): RepoRecordCard => ({
+    repoId,
+    connected: false,
+    repo: null,
+    team: null,
+    ref: null,
+    commit: null,
+    indexedAt: null,
+    error: null,
+    documents: {},
+    advice,
+  });
+  if (!repoId) return none("the checkout has no remote the gate can name — give it an origin, then connect it on the Repos page");
+  const repo = repoByIdentity(repoId);
+  if (!repo || (repo.teamId && !teamFamily(scope.own).includes(repo.teamId))) {
+    return none(`connect ${repoId} on the gate's Repos page, with its team, so its record is read`);
+  }
+  const db = getDb();
+  const state = db.prepare("SELECT ref, commit_sha, indexed_at, error FROM record_repos WHERE repo = ?").get(repo.id) as
+    | { ref: string | null; commit_sha: string | null; indexed_at: number | null; error: string | null }
+    | undefined;
+  const documents: RepoRecordCard["documents"] = {};
+  for (const r of db.prepare("SELECT kind, COUNT(*) AS n FROM record_docs WHERE repo = ? GROUP BY kind").all(repo.id) as Array<{ kind: RecordDocKind; n: number }>) {
+    documents[r.kind] = Number(r.n);
+  }
+  return {
+    repoId,
+    connected: true,
+    repo: repo.id,
+    team: repo.teamId,
+    ref: state?.ref ?? null,
+    commit: state?.commit_sha ?? null,
+    indexedAt: state?.indexed_at ? new Date(state.indexed_at).toISOString() : null,
+    error: state?.error ?? null,
+    documents,
+    advice: repo.teamId ? null : "give it a team on the Repos page: without one, every team on the gate reads it",
+  };
+}
+
