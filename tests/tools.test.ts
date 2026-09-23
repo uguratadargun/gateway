@@ -143,4 +143,29 @@ describe("tool regressions", () => {
     expect(huge).toContain("(no matches)");
     expect(huge).toContain("src/huge.ts");
   });
+
+  it("list_files shows every top-level entry before it runs out", async () => {
+    // A deep directory early in the alphabet used to eat the whole listing.
+    mkdirSync(join(root, "assets", "icons"), { recursive: true });
+    for (let i = 0; i < 600; i++) writeFileSync(join(root, "assets", "icons", `icon-${i}.svg`), "<svg/>");
+    mkdirSync(join(root, "ts"));
+    writeFileSync(join(root, "ts", "receiver.ts"), "");
+    const listing = (await run("list_files", { depth: 3 })).split("\n");
+    expect(listing).toContain("ts/");
+    expect(listing).toContain("ts/receiver.ts");
+    expect(listing).toContain("src/a.ts");
+    expect(listing.at(-1)).toMatch(/listing truncated at 500 entries.*depth 2/);
+  });
+
+  it("list_files on a file says so instead of listing nothing", async () => {
+    await expect(run("list_files", { path: "src/a.ts" })).rejects.toThrow(/is a file; use read_file/);
+  });
+
+  it("run_command keeps the end of a long output, where the summary is", async () => {
+    const script = "for (let i = 0; i < 5000; i++) console.log('line ' + i + ' ' + 'x'.repeat(20)); console.log('SUMMARY: 3 failed');";
+    const out = await run("run_command", { command: ["node", "-e", script] });
+    expect(out).toContain("line 0 ");
+    expect(out).toContain("SUMMARY: 3 failed");
+    expect(out).toMatch(/characters of stdout cut from the middle/);
+  });
 });

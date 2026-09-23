@@ -114,12 +114,17 @@ model writes is ever handed to a shell for interpretation; it can still run
 any program, which is what makes `npm test` and everything else work. The
 isolation that makes that acceptable is the worktree, not a command filter.
 A command has five minutes by default and its output is capped at 30 000
-characters; a read is capped at 200 000 bytes, a listing at 500 entries, a
-search at 100 matches and 20 000 files. A search does not stop at the
-listing's 500: it walks the whole tree until it has its matches, and it
-names every limit that hid something — the match cap, the file cap, and each
-file over 200 000 bytes it did not read — so "(no matches)" is only ever
-said of files that were read.
+characters, cut from the middle so the end — where a test runner or a
+compiler prints its verdict — is kept. A read is capped at 200 000 bytes, a
+listing at 500 entries, a search at 100 matches and 20 000 files. A listing
+walks level by level, so a root listing shows every top-level entry before a
+large directory can use up the 500, and when it is cut it says to what depth
+it is complete. A search does not stop at the listing's 500: it walks the
+whole tree until it has its matches, and it names every limit that hid
+something — the match cap, the file cap, and each file over 200 000 bytes it
+did not read — so "(no matches)" is only ever said of files that were read.
+A path that names a file is searched as that file; `list_files` on a file
+says to use `read_file` instead of answering "(empty)".
 
 A tool that fails hands its error back to the model as a tool result, so an
 agent can correct itself. There is no tool-round ceiling by default: a fixed

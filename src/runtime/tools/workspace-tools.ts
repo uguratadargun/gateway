@@ -27,6 +27,17 @@ function truncate(s: string, max: number, what: string): string {
   return s.length > max ? `${s.slice(0, max)}\n… [${what} truncated at ${max} characters]` : s;
 }
 
+/**
+ * A command's output cut in the middle, not at the end. A test runner, a
+ * compiler and a build all print their verdict last; keeping only the head
+ * of a long run hands the agent the progress lines and drops the failures.
+ */
+function truncateMiddle(s: string, max: number, what: string): string {
+  if (s.length <= max) return s;
+  const head = Math.floor(max / 3);
+  return `${s.slice(0, head)}\n… [${s.length - max} characters of ${what} cut from the middle] …\n${s.slice(s.length - (max - head))}`;
+}
+
 const readFile: AgentTool = {
   name: "read_file",
   description: "Read a file from the workspace. Returns its content with 1-based line numbers.",
@@ -112,31 +123,45 @@ const editFile: AgentTool = {
   },
 };
 
-function walk(root: string, dir: string, depth: number, out: string[]): void {
-  if (out.length >= MAX_LIST_ENTRIES || depth < 0) return;
-  let entries: string[];
-  try {
-    entries = readdirSync(dir).sort();
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (out.length >= MAX_LIST_ENTRIES) return;
-    if (SKIP_DIRS.has(entry) || entry.startsWith(".DS_Store")) continue;
-    const full = join(dir, entry);
-    let isDir = false;
-    try {
-      // lstat, not stat: a symlink is never followed, so listing and searching
-      // cannot walk out of the workspace the way resolveInWorkspace forbids.
-      const st = lstatSync(full);
-      if (st.isSymbolicLink()) continue;
-      isDir = st.isDirectory();
-    } catch {
-      continue;
+/**
+ * Entries under `dir`, level by level, sorted for display. A listing that runs
+ * out of room runs out in its deepest level: depth first, a large `assets/`
+ * early in the alphabet pushed `ts/` off a root listing entirely. `complete`
+ * is how many levels were listed whole, or -1 when nothing was cut.
+ */
+function walk(root: string, dir: string, depth: number): { entries: string[]; complete: number } {
+  const entries: string[] = [];
+  let level = [dir];
+  for (let d = 0; d <= depth && level.length; d++) {
+    const next: string[] = [];
+    for (const parent of level) {
+      let names: string[];
+      try {
+        names = readdirSync(parent).sort();
+      } catch {
+        continue;
+      }
+      for (const entry of names) {
+        if (SKIP_DIRS.has(entry) || entry.startsWith(".DS_Store")) continue;
+        const full = join(parent, entry);
+        let isDir = false;
+        try {
+          // lstat, not stat: a symlink is never followed, so listing and searching
+          // cannot walk out of the workspace the way resolveInWorkspace forbids.
+          const st = lstatSync(full);
+          if (st.isSymbolicLink()) continue;
+          isDir = st.isDirectory();
+        } catch {
+          continue;
+        }
+        if (entries.length >= MAX_LIST_ENTRIES) return { entries: entries.sort(), complete: d };
+        entries.push(relative(root, full) + (isDir ? "/" : ""));
+        if (isDir) next.push(full);
+      }
     }
-    out.push(relative(root, full) + (isDir ? "/" : ""));
-    if (isDir) walk(root, full, depth - 1, out);
+    level = next;
   }
+  return { entries: entries.sort(), complete: -1 };
 }
 
 /**
@@ -183,11 +208,12 @@ const listFiles: AgentTool = {
   async execute(input, ctx) {
     const dir = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
     if (!existsSync(dir)) throw new ToolError(`no such directory: ${String(input.path)}`);
-    const out: string[] = [];
-    walk(ctx.root, dir, Math.max(0, Number(input.depth ?? 2) - 1), out);
-    if (!out.length) return "(empty)";
-    const capped = out.length >= MAX_LIST_ENTRIES ? `\n… [listing truncated at ${MAX_LIST_ENTRIES} entries]` : "";
-    return out.join("\n") + capped;
+    if (!statSync(dir).isDirectory()) throw new ToolError(`"${String(input.path)}" is a file; use read_file`);
+    const { entries, complete } = walk(ctx.root, dir, Math.max(0, Number(input.depth ?? 2) - 1));
+    if (!entries.length) return "(empty)";
+    if (complete < 0) return entries.join("\n");
+    const shown = complete ? `complete to depth ${complete}, deeper entries partly shown` : "the top level is partly shown";
+    return `${entries.join("\n")}\n… [listing truncated at ${MAX_LIST_ENTRIES} entries; ${shown} — list a subdirectory for the rest]`;
   },
 };
 
@@ -295,8 +321,8 @@ const runCommandTool: AgentTool = {
           return;
         }
         const exitCode = typeof err?.code === "number" ? err.code : 0;
-        const out = truncate(String(stdout).trim(), MAX_COMMAND_OUTPUT, "stdout");
-        const errOut = truncate(String(stderr).trim(), MAX_COMMAND_OUTPUT, "stderr");
+        const out = truncateMiddle(String(stdout).trim(), MAX_COMMAND_OUTPUT, "stdout");
+        const errOut = truncateMiddle(String(stderr).trim(), MAX_COMMAND_OUTPUT, "stderr");
         resolvePromise(
           [`exit code: ${exitCode}`, out && `stdout:\n${out}`, errOut && `stderr:\n${errOut}`].filter(Boolean).join("\n\n"),
         );
