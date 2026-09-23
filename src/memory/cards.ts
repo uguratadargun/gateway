@@ -35,7 +35,12 @@ export interface MemorySearchRequest {
 /** A decision as a tool hands it to a model: the record, without the bulk. */
 export interface DecisionCard {
   id: string;
+  /** Whose record it is: the team whose repository the work was in. */
   team: string;
+  /** The team whose run made it, when that is another team; absent from older servers. */
+  author?: string | null;
+  /** `host/owner/name` of the repository its paths are in; absent from older servers. */
+  repo?: string | null;
   featureId: string | null;
   title: string;
   decision: string;
@@ -51,6 +56,96 @@ export interface DecisionCard {
   supersedes: string | null;
   executionId: string;
   commits: { base: string | null; head: string | null };
+  /**
+   * "rejected" when the approach itself was refused — a road found closed.
+   * Null when nobody refused it, whatever the run's outcome; an unfinished
+   * run is not a verdict. Absent from older servers.
+   */
+  verdict?: "rejected" | null;
+  verdictReason?: string | null;
+  /**
+   * The record index checked its file touches against the base branch: how
+   * many were gone at which commit, and whether that was all of them.
+   */
+  checked?: { commit: string; missing: number; allGone: boolean } | null;
+}
+
+/** A document of a repository's own record, as the record index read it from the base branch. */
+export interface DocumentCard {
+  /** The connected repository's id, and its `host/owner/name`. */
+  repo: string;
+  repoId: string | null;
+  team: string | null;
+  path: string;
+  kind: "design" | "decision" | "spec" | "architecture";
+  title: string;
+  /** A decision record's Status line, a spec's Status. */
+  status: string | null;
+  date: string | null;
+  summary: string;
+  /** The base-branch commit it was read at. */
+  commit: string;
+  interfaces?: InterfaceCard[];
+}
+
+/** One line of a design doc's Interfaces section: what a feature offers or uses. */
+export interface InterfaceCard {
+  name: string;
+  role: "provides" | "consumes";
+  note: string;
+  repo: string;
+  repoId: string | null;
+  team: string | null;
+  path: string;
+  /** The design doc's slug, which is its feature's id. */
+  feature: string;
+}
+
+/** A run going right now somewhere in the tree. */
+export interface ActivityCard {
+  executionId: string;
+  team: string;
+  workflow: string;
+  task: string;
+  repo: string | null;
+  branch: string | null;
+  person: string | null;
+  status: "running" | "paused";
+  startedAt: string;
+  taskId: string | null;
+  /** The words it shares with what was asked, when something was. */
+  shared: string[];
+}
+
+export interface MemoryHistoryRequest {
+  /** Path prefixes; none means the whole repository. */
+  paths?: string[];
+  since?: number;
+  /** For callers outside a run; a run's own repository is carried by the access object. */
+  repoId?: string | null;
+  limit?: number;
+}
+
+export interface HistoryCommit {
+  sha: string;
+  date: string;
+  author: string;
+  subject: string;
+  /** The record the commit names on its `Documents:` line. */
+  documents: string[];
+  /** Gate runs whose work this commit is, when one is known (an id or its first eight characters). */
+  runs: string[];
+}
+
+export interface HistoryResult {
+  /** The repository read, and the base-branch commit the read is of. */
+  repo: string | null;
+  repoId: string | null;
+  ref: string | null;
+  commit: string | null;
+  commits: HistoryCommit[];
+  /** Why there is no history, when there is none to give. */
+  unavailable: string | null;
 }
 
 export interface FeatureCard {
@@ -102,6 +197,12 @@ export interface MemorySearchResult {
   decisions: DecisionCard[];
   /** Objections still standing, either against these teams or raised by them. */
   issues: IssueCard[];
+  /** The repositories' own documents that match, read from their base branches. Absent from older servers. */
+  documents?: DocumentCard[];
+  /** Interfaces the words name, with who provides and who consumes each. Absent from older servers. */
+  interfaces?: InterfaceCard[];
+  /** Runs of the tree going right now on work with the same words. Absent from older servers. */
+  inFlight?: ActivityCard[];
   /**
    * Answers this scope's runs took whose objection never reached the server.
    * Not a number to act on — a reason not to read an empty list as agreement.
@@ -117,6 +218,8 @@ export interface FeatureDetail {
   decisions: DecisionCard[];
   /** Objections standing against this feature's decisions, from any team in the tree. */
   issues: IssueCard[];
+  /** Every repository's design doc for this feature, as its base branch has it. Absent from older servers. */
+  documents?: DocumentCard[];
   /** The consolidation passes made over it, newest first. Absent over the client API. */
   consolidations?: Array<{ team: string; status: string; at: string; model: string | null; costUsd: number | null; decisionsRead: number; superseded: number; error: string | null }>;
 }
@@ -124,6 +227,10 @@ export interface FeatureDetail {
 export interface MemoryAccess {
   search(req: MemorySearchRequest): Promise<MemorySearchResult>;
   feature(id: string): Promise<FeatureDetail | null>;
+  /** A repository's base-branch history under some paths, each commit with its record and its run. */
+  history(req: MemoryHistoryRequest): Promise<HistoryResult>;
+  /** Every run of the tree going right now. */
+  activity(): Promise<ActivityCard[]>;
 }
 
 function iso(ms: number | null): string | null {
@@ -131,9 +238,12 @@ function iso(ms: number | null): string | null {
 }
 
 export function toDecisionCard(d: Decision | DecisionHit): DecisionCard {
+  const files = d.touches.filter((t) => t.kind === "file").length;
   return {
     id: d.id,
     team: d.teamId,
+    author: d.authorTeamId,
+    repo: d.repoId,
     featureId: d.featureId,
     title: d.title,
     decision: d.decision,
@@ -148,6 +258,9 @@ export function toDecisionCard(d: Decision | DecisionHit): DecisionCard {
     supersedes: d.supersedes ?? null,
     executionId: d.executionId,
     commits: { base: d.baseCommit, head: d.headCommit },
+    verdict: d.verdict,
+    verdictReason: d.verdictReason,
+    checked: d.checkedCommit ? { commit: d.checkedCommit, missing: d.missingTouches, allGone: files > 0 && d.missingTouches >= files } : null,
   };
 }
 
@@ -189,6 +302,9 @@ function clip(s: string, max = MAX_FIELD): string {
 /** A search result as the text a tool hands back: compact, every id present. */
 export function describeSearch(result: MemorySearchResult): string {
   const out: string[] = [];
+  // First: somebody in the tree may be building this right now, and every
+  // other line here is about work that has already ended.
+  if (result.inFlight?.length) out.push(describeActivity(result.inFlight, "Running right now elsewhere in the tree, on work with the same words:"), "");
   if (result.features.length) {
     out.push("Features in the catalogue that match:");
     for (const f of result.features) {
@@ -196,8 +312,17 @@ export function describeSearch(result: MemorySearchResult): string {
     }
     out.push("");
   }
+  if (result.documents?.length) {
+    out.push("The repositories' own record — documents on their base branches that match:");
+    for (const d of result.documents) out.push(describeDocument(d));
+    out.push("");
+  }
+  if (result.interfaces?.length) {
+    out.push(describeInterfaces(result.interfaces), "");
+  }
   if (!result.decisions.length) {
-    out.push(result.features.length ? "No decisions matched the text or paths; use memory_feature on a feature above for its decisions." : "Nothing in memory matches. The team has no recorded decision about this.");
+    const anything = result.features.length || result.documents?.length || result.inFlight?.length;
+    out.push(anything ? "No recorded decisions matched the text or paths; use memory_feature on a feature above for its decisions." : "Nothing in memory matches. The team has no recorded decision about this.");
   } else {
     out.push(`${result.decisions.length} decision${result.decisions.length === 1 ? "" : "s"} (searched teams: ${result.scope.teams.join(", ")}; own team ${result.scope.own} first):`);
     for (const d of result.decisions) out.push(describeDecision(d));
@@ -249,12 +374,26 @@ export function describeIssues(issues: IssueCard[], own: string, heldAnswers = 0
   return lines.join("\n");
 }
 
+/** The outcome as a reader has to take it: "abandoned" alone reads as a verdict, and is not one. */
+function outcomeLabel(d: DecisionCard): string {
+  if (d.verdict === "rejected") return `${d.outcome} · refused`;
+  if (d.outcome === "abandoned") return "abandoned (the run did not finish — not a refusal)";
+  return d.outcome;
+}
+
 export function describeDecision(d: DecisionCard): string {
+  const who = d.author && d.author !== d.team ? `team: ${d.team} (made by ${d.author})` : `team: ${d.team}`;
   const lines = [
     `\n## ${d.title}`,
-    `id: ${d.id} · team: ${d.team} · ${d.outcome} · from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` · feature: ${d.featureId}` : ""}${d.supersedes ? ` · supersedes ${d.supersedes}` : ""}`,
+    `id: ${d.id} · ${who}${d.repo ? ` · repo: ${d.repo}` : ""} · ${outcomeLabel(d)} · from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` · feature: ${d.featureId}` : ""}${d.supersedes ? ` · supersedes ${d.supersedes}` : ""}`,
     `run: ${d.executionId}${d.commits.base || d.commits.head ? ` · commits ${d.commits.base ?? "?"}..${d.commits.head ?? "?"}` : ""}`,
   ];
+  if (d.verdict === "rejected") {
+    lines.push(`✗ refused${d.verdictReason ? `: ${clip(d.verdictReason, 600)}` : ""} — a road already found closed; taking it again needs a reason the refusal did not have.`);
+  }
+  if (d.checked?.allGone) {
+    lines.push(`⚠ every file it touched is gone from the base branch at ${d.checked.commit.slice(0, 8)} — it describes code that no longer exists; check the code before relying on it.`);
+  }
   // The outcome word alone is a label in a line of labels, and this is the
   // one that changes what the reader should do. A choice still moving is the
   // moment an objection is cheap for everybody; after it sets it is a
@@ -273,6 +412,56 @@ export function describeDecision(d: DecisionCard): string {
   return lines.join("\n");
 }
 
+export function describeDocument(d: DocumentCard): string {
+  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind;
+  const lines = [
+    `- ${kind} ${d.path} — ${d.title}`,
+    `  repo: ${d.repoId ?? d.repo}${d.team ? ` · team: ${d.team}` : ""}${d.status ? ` · ${d.status}` : ""}${d.date ? ` · ${d.date}` : ""} · at ${d.commit.slice(0, 8)}`,
+  ];
+  if (d.summary) lines.push(`  ${clip(d.summary.replace(/\s+/g, " "), 500)}`);
+  for (const i of d.interfaces ?? []) lines.push(`  ${i.role} ${i.name}${i.note ? ` — ${clip(i.note, 200)}` : ""}`);
+  return lines.join("\n");
+}
+
+/** Interfaces grouped by name: who offers it, who uses it, and where each says so. */
+export function describeInterfaces(list: InterfaceCard[]): string {
+  const byName = new Map<string, InterfaceCard[]>();
+  for (const i of list) byName.set(i.name, [...(byName.get(i.name) ?? []), i]);
+  const out = ["Interfaces between repositories that this names:"];
+  for (const [name, users] of byName) {
+    out.push(`- ${name}`);
+    for (const u of users) {
+      out.push(`  ${u.role} · ${u.team ?? "no team"} · ${u.repoId ?? u.repo} · ${u.path} (feature ${u.feature})${u.note ? ` — ${clip(u.note, 200)}` : ""}`);
+    }
+  }
+  return out.join("\n");
+}
+
+export function describeActivity(list: ActivityCard[], heading = "Running right now in the tree:"): string {
+  if (!list.length) return "Nothing is running in the tree right now.";
+  const out = [heading];
+  for (const a of list) {
+    out.push(
+      `- run ${a.executionId} · ${a.team}${a.person ? ` · ${a.person}` : ""} · ${a.workflow} · ${a.status} since ${a.startedAt.slice(0, 16).replace("T", " ")}${a.repo ? ` · repo ${a.repo}` : ""}${a.branch ? ` · branch ${a.branch}` : ""}${a.taskId ? ` · task ${a.taskId}` : ""}`,
+    );
+    out.push(`  ${clip(a.task.replace(/\s+/g, " "), 300)}`);
+    if (a.shared.length) out.push(`  in common: ${a.shared.join(", ")}`);
+  }
+  return out.join("\n");
+}
+
+export function describeHistory(h: HistoryResult): string {
+  if (h.unavailable) return `No history: ${h.unavailable}`;
+  if (!h.commits.length) return `No commit on ${h.repoId ?? h.repo}'s ${h.ref ?? "base branch"} (at ${h.commit?.slice(0, 8)}) touched these paths in that window.`;
+  const out = [`${h.commits.length} commit${h.commits.length === 1 ? "" : "s"} on ${h.repoId ?? h.repo}'s ${h.ref ?? "base branch"} at ${h.commit?.slice(0, 8)}, newest first:`];
+  for (const c of h.commits) {
+    out.push(`- ${c.sha.slice(0, 10)} · ${c.date.slice(0, 10)} · ${c.author} · ${c.subject}`);
+    if (c.documents.length) out.push(`  record: ${c.documents.join(", ")}`);
+    if (c.runs.length) out.push(`  run: ${c.runs.join(", ")}`);
+  }
+  return out.join("\n");
+}
+
 export function describeFeature(detail: FeatureDetail): string {
   const { feature } = detail;
   const out = [
@@ -288,8 +477,14 @@ export function describeFeature(detail: FeatureDetail): string {
       out.push(i.summary || "(no summary yet)");
       if (i.pitfalls) out.push(`pitfalls: ${i.pitfalls}`);
     }
-  } else {
+  } else if (!detail.documents?.length) {
     out.push("No team has recorded an implementation of it yet.");
+  }
+  if (detail.documents?.length) {
+    // The design doc is each team's own statement of how the feature works,
+    // read from its base branch; the summaries above are memory's.
+    out.push("\nEach repository's design doc for it:");
+    for (const d of detail.documents) out.push(describeDocument(d));
   }
   if (detail.decisions.length) {
     out.push(`\nDecisions (${detail.decisions.length}):`);

@@ -37,12 +37,19 @@ recorder reads it from the run's diff and records it as the run's decision,
 with the file's own path among the places it touches — so
 `gate memory search --path docs/decisions/0007` finds the record the file
 made, and a recall before the next run cites the file for the planner to
-read. The file in the repository is the source; memory is the index.
+read. Gate also reads every connected repository's record from its base
+branch, by code, whoever wrote it and however: a sibling team's recall finds
+your design doc whether or not a run ever wrote it. The file in the
+repository is the source; memory is the index.
 
 ## `docs/design/<feature>.md` — how it works today
 
 One file per feature, named for the feature the product has (`memory.md`,
-`account-pool.md`), not for the task that built it. It describes the feature
+`account-pool.md`), not for the task that built it. The file name is the
+feature's id in gate's catalogue, shared by every repository of the team
+tree: when the android and desktop repositories both have `offline-sync.md`,
+that is one feature, built twice. Name a feature the same way the other
+teams do. It describes the feature
 as it stands: rewrite the sentence that is no longer true, do not add a
 paragraph that says what changed. History is what `git log` on the file is
 for, and what the decisions are for.
@@ -59,6 +66,10 @@ The flow, the states, the invariants. Logic, not code: what happens in what
 order, what is true before and after, what can never happen. A path is a
 pointer; a function body is not.
 
+## Interfaces
+- provides: `POST /v1/sync` — what another repository calls, and what for
+- consumes: sync.accepted event — what this feature uses from another
+
 ## Key files
 - `path/to/file.ts` — what it owns
 
@@ -71,6 +82,14 @@ pointer; a function body is not.
 - newest first
 ```
 
+`## Interfaces` is optional, and it is the one section written for other
+repositories. Give it one line per endpoint, event, schema or file format the
+feature offers another repository (`provides`) or uses from one
+(`consumes`), named the way both sides write it. Gate matches the name as
+written, so a team changing `POST /v1/sync` finds every repository that
+consumes it, and a team integrating it finds how the others did. Leave the
+section out when the feature talks to nothing outside its repository.
+
 ## `docs/decisions/NNNN-<slug>.md` — why
 
 One file per real choice: a point where something else could have been done
@@ -80,6 +99,12 @@ task that reverses an earlier decision is one, and the earlier record gets a
 was true when it was written is the point of keeping it.
 
 `NNNN` is the next free number under `docs/decisions/`, zero-padded to four.
+Two branches open at once can take the same number. Before a run offers its
+branch, the pipeline's `record` node checks every number the branch added
+against the remote's base branch, and asks for the record to be renumbered
+when another branch took the number first. Renumbering means the file
+name, the number in its first line, and every pointer to it that the
+branch changed.
 The sections are the fields of a decision in gate's memory, in the same
 order, so a record can travel between the two without translation.
 
@@ -173,15 +198,22 @@ the product, not which file moved.
   committed, copies the plan to `docs/specs/` as one more commit. Its summary
   names the documents it wrote, and that line becomes part of the commit body.
 - The **record** node, a command after the verifier, checks that the spec
-  is there and sends the implementer back with what to write when it is not.
+  is there and that no decision record the branch added takes a number the
+  remote's base branch already holds, and sends the implementer back with
+  what to write or renumber when either is wrong.
 - The **reviewer** holds the change against the documents: behaviour that
   changed while the design doc describing it did not is a finding, and so is
   a decision record with an empty section or code pasted into it.
 - The **recorder** reads the decision records and design docs from the run's
   diff and records them as the run's decisions and the feature's summary, with
   the files' paths among the touches.
+- The **record index** reads every connected repository's base branch, with
+  code: every design doc, decision record and spec, the interfaces each
+  design doc lists, and which recorded work landed.
 - **Recall**, before the next run, cites the file when a decision touches one,
-  so the planner reads the record rather than a summary of it.
+  so the planner reads the record rather than a summary of it. It also
+  brings the other repositories' design docs for the same feature, and the
+  history of a path, commit by commit, with each commit's `Documents:` line.
 - The **investigator**, when something broke, follows `git blame` to the
   commit, the commit body to the record, and the record to the decision that
   made it so.

@@ -64,11 +64,22 @@ describe("the same path in two repositories", () => {
     expect(inSdk.map((d) => d.executionId).sort()).toEqual(["rs-old-1", "rs-sdk-1"]);
   });
 
-  it("filters the text search too, not only the path one", () => {
+  it("answers a question in words from every repository, this one's first", () => {
     seed();
-    // The FTS branch reaches paths through a text column no join can filter,
-    // so it has to be the decision's own repo that limits it.
-    const hits = searchDecisions(mobile(), { query: "entry point export surface", repoId: APP });
+    // "How did the SDK do its entry point" is asked from the app on purpose:
+    // words are how a sibling's decision is found, so they are not scoped to
+    // the asker's repository. Each hit carries its repository, and the
+    // asker's own ranks ahead of an equal match elsewhere.
+    const hits = searchDecisions(mobile(), { query: "entry point export surface splash controller", repoId: APP });
+    const ids = hits.map((d) => d.executionId);
+    expect(ids).toContain("rs-sdk-1");
+    expect(ids.indexOf("rs-app-1")).toBeLessThan(ids.indexOf("rs-sdk-1"));
+    expect(hits.find((d) => d.executionId === "rs-sdk-1")!.repoId).toBe(SDK);
+  });
+
+  it("keeps a path question inside its repository even when words come with it", () => {
+    seed();
+    const hits = searchDecisions(mobile(), { query: "entry point", paths: ["src/index.ts"], repoId: APP });
     expect(hits.map((d) => d.executionId)).not.toContain("rs-sdk-1");
   });
 

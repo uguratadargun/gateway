@@ -177,7 +177,7 @@ export async function runLocal(client: GateClient, opts: LocalRunOptions): Promi
       // with the same key, so its calls are metered like every other call.
       claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
       // The team's memory, read through the same key.
-      memory: new HttpMemoryAccess(client, repo ? readRemoteUrl(repo) : null),
+      memory: new HttpMemoryAccess(client, repo ? readRemoteUrl(repo) : null, executionId),
       emit: (event) => {
         reporter.event(event);
         opts.onEvent?.(event);

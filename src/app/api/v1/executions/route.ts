@@ -6,6 +6,7 @@ import { getAgent } from "@/agents/registry";
 import { startRunSchema } from "@/lib/client-api-schemas";
 import { requireClient, scopeForPrincipal } from "@/lib/tenancy";
 import { createExecution, listExecutions } from "@/executions/store";
+import { scheduleOverlapCheck } from "@/memory/activity";
 import { taskVisibleTo } from "@/orchestration/tasks";
 import { canonicalRepoId } from "@/repos/identity";
 import { publicationTarget, repoByIdentity } from "@/repos/store";
@@ -113,6 +114,9 @@ export async function POST(req: Request) {
         session: parsed.data.client.session ?? null,
       },
     });
+    // Another team in the tree may be on the same work right now: the people
+    // on both sides hear about it once, without this request waiting.
+    scheduleOverlapCheck(executionId);
     // Told back to the client so it can publish its own branch at the end of
     // the run — a client has no `RepoRecord` and cannot look this up itself,
     // and asking here means an old client that never heard of publishing

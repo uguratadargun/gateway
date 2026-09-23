@@ -5,11 +5,14 @@
 Several teams build one product in codebases of their own. A person on one of
 them finds out what another's code does without waiting for anybody on that
 team to be awake: the question is answered by reading their published code at
-one fixed version, and the answer names the files it came from. When a team's
-plan cannot live with another team's decision, the disagreement is written
-where that team's next plan will read it. And work several teams have a hand in
-gets a name of its own, so what is unsettled between them outlives the runs
-that served it.
+one fixed version, and the answer names the files it came from. What each
+team's repository says about itself — how a feature works, what it provides
+and consumes — is read from its base branch for everyone in the tree. Work
+another team is doing right now is shown before anyone plans the same thing,
+and the two people are told. When a team's plan cannot live with another
+team's decision, the disagreement is written where that team's next plan will
+read it. And work several teams have a hand in gets a name of its own, so
+what is unsettled between them outlives the runs that served it.
 
 ## How it works
 
@@ -77,6 +80,35 @@ neither side of reads as absent. No run closes one: a run finishing on either
 side is not evidence the other team was satisfied. A closed objection leaves
 both teams' recall and keeps its row, with who closed it and why.
 
+### Work in flight, and who integrates what
+
+Memory is written when a run ends, so on its own it cannot say that another
+team started the same feature this morning. The runs going right now can: a
+search's words are matched against the tasks of other people's running runs
+in the tree, and recall puts the ones that share enough of them first in the
+brief, before any decision. When a run starts, it is matched against other
+teams' running runs, and against their work taught as unfinished. On a
+strong overlap, the two people get one message where they linked gate:
+
+- each run's person;
+- or, when a run has no person, everyone linked on its team.
+
+The match is shared words cut to a six-letter stem and counted, never a
+model. `gate memory activity` lists everything in flight in the tree
+([0039](../decisions/0039-work-in-flight-is-part-of-recall.md)).
+
+Between repositories, the question is usually not "what did they decide"
+but "who uses this, and how did they wire it in". A design doc's
+`## Interfaces` section says what its feature provides and consumes. The
+[record index](record-index.md) keeps each line, and a search whose words
+name an interface returns every repository on each side of it, with the
+design doc where each says how. A search in words reads every repository
+of the tree, and a path search stays in the asker's own
+([0037](../decisions/0037-words-read-every-repository-paths-stay-in-their-own.md)).
+The decisions a person makes in another team's repository are that team's
+record, with the person's team kept as the author
+([0036](../decisions/0036-a-decision-belongs-to-the-repositorys-team.md)).
+
 ### The task ledger
 
 A task is opened by a person: an owning team, a title, a status, visible to
@@ -103,6 +135,8 @@ it, and closing leaves every objection under it standing.
 - `src/orchestration/ask.ts` — a question resolved to one commit, the family
   check, the fetch, memory split by that commit's history
 - `src/orchestration/tasks.ts` — the task record and the runs filed under it
+- `src/memory/activity.ts` — the tree's runs in flight, matched by words, and the overlap told to both people
+- `src/memory/record-index.ts` — interfaces and design docs across the tree's repositories
 - `src/memory/issues.ts` — objections and the answers people give them
 - `src/executions/record.ts` — an objection written with the step that raised
   it; answers matched to it
@@ -138,9 +172,17 @@ it, and closing leaves every objection under it standing.
   started after it.
 - A replacement ask pipeline whose agent holds a write, edit or command tool
   turns a question into a change to someone else's checkout.
+- The overlap message goes only to people who linked Telegram, and once per
+  pair per server process. Without a bot the only place an overlap shows is
+  the next recall in the same words.
+- An interface is matched by its name as written. Two teams writing the same
+  endpoint two ways are two interfaces.
 
 ## Decisions
 
+- [0039 — Work in flight is part of recall, and an overlap is told to both people](../decisions/0039-work-in-flight-is-part-of-recall.md)
+- [0037 — Words read every repository of the tree, paths stay in their own](../decisions/0037-words-read-every-repository-paths-stay-in-their-own.md)
+- [0036 — A decision belongs to the repository's team](../decisions/0036-a-decision-belongs-to-the-repositorys-team.md)
 - [0016 — An objection is closed by the side it belongs to](../decisions/0016-an-objection-is-closed-by-the-side-it-belongs-to.md)
 - [0008 — A task is a label, never a key](../decisions/0008-a-task-is-a-label-never-a-key.md)
 - [0003 — Ask answers from one commit](../decisions/0003-ask-answers-from-one-commit.md)

@@ -19,7 +19,8 @@ import { loadSettings } from "@/lib/settings";
  * know.
  */
 
-export type EmbeddingKind = "feature" | "decision";
+/** A catalogue feature, a recorded decision, or a document of a repository's record (`<repo>:<path>`). */
+export type EmbeddingKind = "feature" | "decision" | "doc";
 
 export interface Embedder {
   model: string;
@@ -114,7 +115,8 @@ export function deleteEmbedding(kind: EmbeddingKind, id: string): void {
 
 /** Ids of this kind that have no vector for the model in use, or an older model's. */
 export function unembeddedIds(kind: EmbeddingKind, model: string, limit = 200): string[] {
-  const table = kind === "feature" ? "memory_features" : "memory_decisions";
+  // A document's id is its repository and path; the others have their own.
+  const table = kind === "feature" ? "memory_features" : kind === "decision" ? "memory_decisions" : "(SELECT repo || ':' || path AS id FROM record_docs)";
   const rows = getDb()
     .prepare(
       `SELECT b.id FROM ${table} b
@@ -157,6 +159,10 @@ export function nearest(kind: EmbeddingKind, model: string, query: Float32Array,
 /** The text a feature or a decision is embedded as. */
 export function featureText(f: { name: string; aliases: string[]; summary: string }): string {
   return [f.name, f.aliases.join(", "), f.summary].filter(Boolean).join("\n");
+}
+
+export function docText(d: { title: string; summary: string; path: string }): string {
+  return [d.title, d.summary, d.path].filter(Boolean).join("\n");
 }
 
 export function decisionText(d: { title: string; context: string; decision: string; how: string; touches: Array<{ ref: string }> }): string {

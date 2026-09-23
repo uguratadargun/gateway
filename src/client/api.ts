@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import type { AskBody, TeachRequest } from "@/lib/client-api-schemas";
 import { isProviderModelId } from "@/lib/model-picker";
 import { GATE_VERSION, isOlderThan, VERSION_HEADERS } from "@/lib/protocol";
-import type { FeatureDetail, MemorySearchRequest, MemorySearchResult } from "@/memory/cards";
+import type { ActivityCard, FeatureDetail, HistoryResult, MemoryHistoryRequest, MemorySearchRequest, MemorySearchResult } from "@/memory/cards";
 
 import type { ClientConfig } from "./config";
 
@@ -312,8 +312,10 @@ export class GateClient {
   }
 
   /** The team's memory: decisions and features matching words, paths, or a time. */
-  async memorySearch(req: MemorySearchRequest, remoteUrl?: string | null): Promise<MemorySearchResult> {
+  async memorySearch(req: MemorySearchRequest, remoteUrl?: string | null, executionId?: string | null): Promise<MemorySearchResult> {
     const params = new URLSearchParams();
+    // The run asking, so the server leaves it out of what is in flight.
+    if (executionId) params.set("run", executionId);
     if (req.query) params.set("q", req.query);
     for (const p of req.paths ?? []) params.append("path", p);
     // The remote as git gives it; the server is what turns it into a name.
@@ -323,6 +325,25 @@ export class GateClient {
     if (req.since != null) params.set("since", String(req.since));
     if (req.limit != null) params.set("limit", String(req.limit));
     return (await this.request<MemorySearchResult>(`/api/v1/memory/search?${params}`)).body;
+  }
+
+  /**
+   * A repository's base-branch history under some paths: the checkout's own
+   * remote when there is one, else a repository named `host/owner/name`.
+   */
+  async memoryHistory(req: MemoryHistoryRequest, remoteUrl?: string | null): Promise<HistoryResult> {
+    const params = new URLSearchParams();
+    for (const p of req.paths ?? []) params.append("path", p);
+    if (remoteUrl) params.set("remote", remoteUrl);
+    else if (req.repoId) params.set("repo", req.repoId);
+    if (req.since != null) params.set("since", String(req.since));
+    if (req.limit != null) params.set("limit", String(req.limit));
+    return (await this.request<HistoryResult>(`/api/v1/memory/history?${params}`)).body;
+  }
+
+  /** Every run of the tree going right now, except this person's own. */
+  async memoryActivity(): Promise<ActivityCard[]> {
+    return (await this.request<{ activity: ActivityCard[] }>("/api/v1/memory/activity")).body.activity;
   }
 
   /** One feature in full; null when the team's catalogue has no such id. */

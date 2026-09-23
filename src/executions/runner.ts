@@ -28,6 +28,7 @@ import { snapshotDefinitions } from "@/workflows/snapshot";
 import type { WorkflowDefinition, WorkspaceSpec } from "@/workflows/types";
 
 import { assertResumable, planResume } from "./resume";
+import { scheduleOverlapCheck } from "@/memory/activity";
 import { LocalMemoryAccess } from "@/memory/access";
 import { scheduleExtraction } from "@/memory/queue";
 
@@ -154,6 +155,7 @@ export function startExecution(
     teamId: scope.teamId,
     definitions: snapshotDefinitions(workflow.id, scope),
   });
+  scheduleOverlapCheck(executionId);
 
   // The worktree is created before the first node runs: a workflow that cannot
   // get its workspace fails immediately rather than half-way through a plan.
@@ -336,7 +338,7 @@ async function launch(
         // Memory answers as the run's team: its own tree, nothing else — and
         // about the repository this run is actually in, which the run knows and
         // the model does not have to be asked for.
-        memory: new LocalMemoryAccess(scope.teamId ?? DEFAULT_TEAM, connected?.repoId ?? null),
+        memory: new LocalMemoryAccess(scope.teamId ?? DEFAULT_TEAM, connected?.repoId ?? null, { executionId }),
         emit: publishWorkflowEvent,
         // Through the same door a reported step comes in by, so a node that
         // raises an objection has it written with the step here too — the

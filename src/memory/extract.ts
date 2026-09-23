@@ -1,14 +1,17 @@
 import { z } from "zod";
 
 import { getExecution, getExecutionDiff, getExecutionLineage } from "@/executions/store";
+import { teamFamily } from "@/lib/teams";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 import { costForUsage, tierOf } from "@/lib/pricing";
 import { loadSettings } from "@/lib/settings";
 import type { ModelProvider } from "@/providers/types";
+import { repoByIdentity } from "@/repos/store";
 
 import { hybridSearchDecisions, hybridSearchFeatures } from "./hybrid";
 import {
   claimExtraction,
+  getFeature,
   getImplementation,
   memoryScopeFor,
   replaceDecisions,
@@ -17,7 +20,7 @@ import {
   upsertFeature,
   upsertImplementation,
 } from "./store";
-import { TEACH_WORKFLOW_ID, type DecisionOutcome, type Extraction, type FeatureHit } from "./types";
+import { MERGE_WORKFLOW_ID, TEACH_WORKFLOW_ID, type DecisionOutcome, type Extraction, type FeatureHit } from "./types";
 
 /**
  * The recorder: reads what a run's nodes produced and writes what was decided.
@@ -66,6 +69,13 @@ const draftSchema = z.object({
   consequences: z.string().max(4000).default(""),
   touches: z.array(touchSchema).max(100).default([]),
   supersedes: z.string().max(100).nullish(),
+  // Anything but an explicit refusal is no verdict: a model that writes
+  // "failed" or "stopped" here is describing the run, not the idea.
+  verdict: z
+    .string()
+    .nullish()
+    .transform((v) => (v === "rejected" ? ("rejected" as const) : null)),
+  verdictReason: z.string().max(2000).nullish(),
 });
 
 const answerSchema = z.object({
@@ -186,6 +196,9 @@ export function readableSteps(steps: ExecutionStepRecord[]): ExecutionStepRecord
  */
 export function outcomeOf(execution: ExecutionRecord, steps: ExecutionStepRecord[]): DecisionOutcome {
   if (execution.status !== "completed") return "abandoned";
+  // A merge the record index found on the base branch is the one case gate
+  // saw land with its own eyes.
+  if (execution.workflowId === MERGE_WORKFLOW_ID) return "merged";
   // A taught branch is the one case where a person is asserting how far the
   // work got — it is their claim and not gate's observation, which is why it
   // is `shipped` and not `merged`. A teaching that says the branch is not
@@ -208,6 +221,8 @@ Rules:
 - Logic, not code. Describe flows, states, invariants, trade-offs, the shape of the data. Never paste code, never describe syntax. A file path is fine as a pointer; a function body is not.
 - One decision per real choice. A run that did one thing has one decision; a run that chose a storage model, a retry policy and a conflict rule has three. Do not pad. A run that changed nothing, or was stopped before it decided anything, has zero decisions — say so with an empty list.
 - A run that failed or was stopped still made decisions: record what was tried and why it did not ship, with the reviewer's or verifier's reason in "consequences". That is often the most useful record of all.
+- "verdict" is "rejected" only when the approach itself was refused: the reviewer or verifier turned it down on its merits, or a person said no to it — and "verdictReason" then says who and why, in a sentence. A run that ran out of time, hit a flaky check, lost its machine or was stopped by a person without a word about the idea has no verdict: null. An unfinished attempt is not a closed road, and a later planner reads "rejected" as one. When a run refused one approach and then shipped another, the refused one is its own decision with "rejected", and the shipped one has none.
+- Housekeeping is not a decision: updating tests to match code that already changed, regenerating build output, renaming, reformatting, bumping a dependency with no choice in it. Record none of it. A run that only did housekeeping has zero decisions.
 - An investigation (a "blame" run) that established a cause is a decision too: title it "Cause of <symptom>", put the cause in "decision" with its certainty stated in the first words (suspected / confirmed / verified), the evidence in "rationale", the proposed fix in "how", and name the decision it found at fault in "supersedes" only when the cause was confirmed. An investigation that found nothing related has no decisions.
 - "how" is the part that lets someone rebuild it elsewhere: the sequence, the components and what each is responsible for, the edge cases handled and how, the ones deliberately not handled.
 - "touches" lists the files and areas the decision lives in, as paths relative to the repository root and short area names (e.g. "sync", "auth"). Take the paths from the run's changed files where they apply, and from the record's Touches section.
@@ -228,7 +243,9 @@ Answer with one JSON object and nothing else — no prose before or after, no co
       "how": "...",
       "consequences": "...",
       "touches": [{"kind": "file" | "area", "ref": "..."}],
-      "supersedes": "<decision id>" | null
+      "supersedes": "<decision id>" | null,
+      "verdict": "rejected" | null,
+      "verdictReason": "..." | null
     }
   ],
   "feature": {
@@ -252,11 +269,17 @@ export function recorderPrompt(input: {
   implementationsSoFar: Array<{ featureId: string; summary: string; pitfalls: string }>;
 }): string {
   const { execution, steps } = input;
-  const taught = execution.workflowId === TEACH_WORKFLOW_ID;
+  const taught = execution.workflowId === TEACH_WORKFLOW_ID || execution.workflowId === MERGE_WORKFLOW_ID;
   const stepChars = taught ? MAX_TAUGHT_STEP_CHARS : MAX_STEP_CHARS;
   const parts: string[] = [];
   parts.push(`# The run\n`);
-  if (taught) {
+  if (execution.workflowId === MERGE_WORKFLOW_ID) {
+    parts.push(
+      "This is not a run of a workflow. It is a merge the team made on its repository's base branch without gate: " +
+        'the "merge" step is the merged commits\' own messages and the files they changed, and the diff is what the merge brought in. ' +
+        "Record the choices the commits and the documents show; where a reason is not written anywhere, say it is not known rather than supplying one.\n",
+    );
+  } else if (taught) {
     parts.push(
       "This is not a run of a workflow. It is work finished before the team recorded its runs, taught to memory from its branch: " +
         'the "teach" step is an engineer\'s session\'s account of that branch, read from its commits, its diff and the code, ' +
@@ -329,6 +352,30 @@ export function recorderPrompt(input: {
 }
 
 /**
+ * Whose record a run's decisions are: the team whose repository the work was
+ * in, when the repository names one inside the run's own tree — else the
+ * team that ran it.
+ *
+ * A person on desktop fixing something in the server's repository has made
+ * a decision about the server's code. Filed under desktop, the server team's
+ * next run could not supersede it (only a team closes its own decisions),
+ * objections against it would go to the wrong team, and the server's page on
+ * the feature would never learn of it. The run's own team is kept beside it
+ * as the author.
+ */
+export function ownerTeamOf(execution: Pick<ExecutionRecord, "teamId" | "repoId">): string {
+  const repo = execution.repoId ? repoByIdentity(execution.repoId) : null;
+  if (repo?.teamId && repo.teamId !== execution.teamId && teamFamily(execution.teamId).includes(repo.teamId)) return repo.teamId;
+  return execution.teamId;
+}
+
+/** `docs/design/offline-sync.md` → `offline-sync`: a design doc's file name is its feature's id. */
+export function designSlug(path: string): string | null {
+  const m = path.match(/^docs\/design\/([a-z0-9][a-z0-9-]*)\.md$/);
+  return m ? m[1] : null;
+}
+
+/**
  * Records one run, if it is this call's to record.
  *
  * Claims the ledger row first — so two servers, or a retry racing the first
@@ -351,6 +398,7 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
     }
 
     const scope = memoryScopeFor(execution.teamId);
+    const owner = ownerTeamOf(execution);
     const diff = getExecutionDiff(executionId);
     const changedFiles = execution.workspace?.changedFiles?.length ? execution.workspace.changedFiles : pathsInDiff(diff);
     const docs = docsInDiff(diff);
@@ -364,7 +412,7 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
       .slice(0, 20)
       .map((d) => ({ id: d.id, title: d.title, decision: d.decision, teamId: d.teamId }));
     const implementationsSoFar = candidates
-      .map((f) => getImplementation(f.id, execution.teamId))
+      .map((f) => getImplementation(f.id, owner))
       .filter((x): x is NonNullable<typeof x> => !!x)
       .map((impl) => ({ featureId: impl.featureId, summary: impl.summary, pitfalls: impl.pitfalls }));
 
@@ -414,9 +462,23 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
       return { status: "failed", reason: (e as Error).message, decisionCount: 0 };
     }
 
-    // The feature first, so the decisions can point at it.
+    // The feature first, so the decisions can point at it. A run that wrote
+    // exactly one design doc has said which feature it is — the doc's file
+    // name is the feature's id in every repository of the tree — and that is
+    // taken over the model's reading. Otherwise the model's match stands.
     let featureId: string | null = null;
-    if (answer.feature) {
+    const designs = [...new Set(docs.map((d) => designSlug(d.path)).filter((x): x is string => !!x))];
+    const bySlug = designs.length === 1 ? getFeature(designs[0]) : null;
+    if (designs.length === 1 && (!bySlug || bySlug.orgId === scope.orgId)) {
+      featureId = upsertFeature({
+        id: designs[0],
+        orgId: scope.orgId,
+        name: bySlug?.name ?? (answer.feature?.name.trim() || designs[0].replace(/-/g, " ")),
+        aliases: answer.feature?.aliases ?? [],
+        summary: bySlug?.summary || answer.feature?.description.trim() || "",
+        now: now(),
+      }).id;
+    } else if (answer.feature) {
       const matched = answer.feature.match ? candidates.find((c) => c.id === answer.feature!.match) : null;
       // The catalogue line: the model's description, or failing that the
       // first sentence of the implementation summary — never left blank.
@@ -439,7 +501,8 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
     const decisions = replaceDecisions(
       {
         executionId,
-        teamId: execution.teamId,
+        teamId: owner,
+        authorTeamId: execution.teamId,
         userId: execution.userId,
         featureId,
         // Whatever repository the run named itself; never inferred from the
@@ -456,7 +519,7 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
     if (featureId && answer.feature) {
       upsertImplementation({
         featureId,
-        teamId: execution.teamId,
+        teamId: owner,
         summary: answer.feature.summary,
         pitfalls: answer.feature.pitfalls,
         now: now(),

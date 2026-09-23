@@ -1,4 +1,7 @@
-import { configuredEmbedder, decisionText, featureText, fuseRanks, nearest, storeEmbedding, unembeddedIds, type Embedder } from "./embeddings";
+import { getDb } from "@/lib/db";
+
+import { configuredEmbedder, decisionText, docText, featureText, fuseRanks, nearest, storeEmbedding, unembeddedIds, type Embedder } from "./embeddings";
+import { searchRecordDocs, type RecordDocHit, type RecordDocSearch } from "./record-index";
 import { getDecision, getFeature, searchDecisions, searchFeatures } from "./store";
 import type { DecisionHit, DecisionSearch, FeatureHit, MemoryScope } from "./types";
 
@@ -75,6 +78,62 @@ export async function hybridSearchFeatures(scope: MemoryScope, text: string, lim
 }
 
 /**
+ * The repositories' documents, by words and — when there is an embedder — by
+ * meaning: a sibling's `push-notifications.md` for a task that says "alerts".
+ * The candidates are the documents the scope may read, as for decisions.
+ */
+export async function hybridSearchDocs(scope: MemoryScope, search: RecordDocSearch, embedder: Embedder | null = configuredEmbedder()): Promise<RecordDocHit[]> {
+  const limit = Math.min(Math.max(search.limit ?? 8, 1), 50);
+  const words = searchRecordDocs(scope, { ...search, limit: Math.max(limit * 3, 20) });
+  if (!embedder || !search.query?.trim() || search.paths?.length) return words.slice(0, limit);
+  let query: Float32Array;
+  try {
+    [query] = await embedder.embed([search.query]);
+  } catch {
+    return words.slice(0, limit);
+  }
+  const allowed = new Set(
+    (
+      getDb()
+        .prepare(`SELECT repo || ':' || path AS id FROM record_docs WHERE team_id IS NULL OR team_id IN (${scope.teams.map(() => "?").join(",")})`)
+        .all(...scope.teams) as Array<{ id: string }>
+    ).map((r) => r.id),
+  );
+  const keyOf = (d: RecordDocHit) => `${d.repo}:${d.path}`;
+  const vectors = nearest("doc", embedder.model, query, allowed, Math.max(limit * 3, 20));
+  const fused = fuseRanks([words.map(keyOf), vectors.map((v) => v.id)]);
+  const byKey = new Map(words.map((d) => [keyOf(d), d]));
+  const hits: RecordDocHit[] = [];
+  for (const f of fused) {
+    const known = byKey.get(f.id);
+    const doc = known ?? docByKey(f.id);
+    if (doc) hits.push({ ...doc, score: f.score });
+    if (hits.length >= limit) break;
+  }
+  return hits;
+}
+
+function docByKey(key: string): RecordDocHit | null {
+  const r = getDb().prepare("SELECT * FROM record_docs WHERE repo || ':' || path = ?").get(key) as any;
+  if (!r) return null;
+  return {
+    repo: r.repo,
+    repoId: r.repo_id ?? null,
+    teamId: r.team_id ?? null,
+    path: r.path,
+    kind: r.kind,
+    slug: r.slug,
+    number: r.number == null ? null : Number(r.number),
+    title: r.title,
+    status: r.status ?? null,
+    date: r.date ?? null,
+    summary: r.summary ?? "",
+    commit: r.commit_sha,
+    score: 0,
+  };
+}
+
+/**
  * Embeds what has no vector yet for the model in use — new decisions and
  * features after a recording, everything after the provider was first set.
  * Bounded per call; the drain asks again next time.
@@ -93,6 +152,12 @@ export async function embedMissing(embedder: Embedder | null = configuredEmbedde
     const vectors = await embedder.embed(decisions.map(decisionText));
     decisions.forEach((d, i) => storeEmbedding("decision", d.id, embedder.model, vectors[i]));
     done += decisions.length;
+  }
+  const docs = unembeddedIds("doc", embedder.model, perKind).map(docByKey).filter((d): d is RecordDocHit => !!d);
+  if (docs.length) {
+    const vectors = await embedder.embed(docs.map(docText));
+    docs.forEach((d, i) => storeEmbedding("doc", `${d.repo}:${d.path}`, embedder.model, vectors[i]));
+    done += docs.length;
   }
   return done;
 }

@@ -61,10 +61,13 @@ and traffic logging. → `design/gateway-pipeline.md`
   to work in it. → `design/workspaces.md`
 - **Executions.** Every run is recorded step by step, with what it cost and
   which account's window it used. → `design/executions.md`
-- **Memory.** What a run decided is recorded when it finishes, and read by
-  the next run before it plans. → `design/memory.md`
+- **Memory.** What a run decided is recorded when it finishes; what every
+  connected repository's record says is read from its base branch by code;
+  both, and the runs going right now, are read by the next run before it
+  plans. → `design/memory.md`, `design/record-index.md`
 - **Cross-team collaboration.** One team asks another what its code does at a
-  named commit, objects to a decision it cannot live with, and files both
+  named commit, sees what the others are building now and who provides and
+  consumes what, objects to a decision it cannot live with, and files both
   under a task that outlives the runs. → `design/cross-team.md`
 - **The dev workflow.** The shipped pipeline: recall, plan, approve,
   implement, verify, review, try, merge request — run on the developer's own
@@ -117,13 +120,16 @@ not as a log to be reconstructed.
 **The repository keeps its own record.** How a feature works is in
 `docs/design/`, why in `docs/decisions/`, what a run set out to do in
 `docs/specs/`. The pipeline writes them with the code and holds a change
-against them; memory indexes them, it does not replace them. The form of
-the record is checked by code inside `npm test`; its truth by the reviewer.
-→ `decisions/0005-docs-as-code-in-every-repository.md`, `design/the-record.md`
+against them; memory indexes them, it does not replace them — the record
+index reads them from each repository's base branch by code, and every row
+it keeps can be dropped and read again. The form of the record is checked by
+code inside `npm test`; its truth by the reviewer.
+→ `decisions/0005-docs-as-code-in-every-repository.md`, `design/the-record.md`,
+`design/record-index.md`
 
 ## Storage
 
-Usage, traffic, cache, API keys, connected accounts, providers, memory and
+Usage, traffic, cache, API keys, connected accounts, providers, memory (the record index with it) and
 the rate-limit snapshot live in SQLite (`~/.gate/gate.db`, WAL) through
 Node's built-in `node:sqlite`; no native build. Teams, people and their keys
 live in the same database. Definitions do not: `~/.gate/teams/<team>/agents/*.md`,
@@ -150,7 +156,7 @@ upgrade.
 - `src/skills/` — the skill library: the `SKILL.md` directory format, the team-scoped registry, git-backed sources with import provenance (`sources.ts`), and how a skill reaches each executor (`inject.ts`)
 - `src/runtime/` — the deterministic engine, node executors, agent tools (`tools/`) and per-run worktrees (`workspace.ts`) · `src/providers/` — the `ModelProvider` seam onto the gateway
 - `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
-- `src/memory/` — what a run decided: the recorder, the store, recall, consolidation, teaching, forgetting, and cross-team objections
+- `src/memory/` — what a run decided: the recorder, the store, recall, consolidation, teaching, forgetting, and cross-team objections; the record index (`record-index.ts`) and merges made without gate (`merges.ts`); the tree's runs in flight (`activity.ts`)
 - `src/orchestration/` — one team asking another (`ask.ts`) and the task ledger between teams
 - `src/repos/` — a repository's identity, setup and publishing
 - `src/remote/` — a Claude Code session on the server, driven over the client API · `src/telegram/` — the bot

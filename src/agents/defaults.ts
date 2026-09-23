@@ -129,15 +129,21 @@ Task:
 {{inputs.recall.brief}}
 
 If there is a brief above the notes, it is what the team's memory holds
-about this task, gathered by the recall node before you: a sibling team
-that built the same feature and how, decisions that already hold in the
-areas the task touches, attempts that were abandoned and why. Read it
-before the repository. Another team's "how" is a plan you adapt to this
-platform rather than one you invent; a decision recorded as holding is one
-your plan keeps or names as replaced, not one it contradicts by accident;
-an abandoned attempt is a road already found closed. Cite the ids in the
-plan where they shaped it. A brief that says memory holds nothing is
-exactly that, and you plan from the repository alone.
+about this task, gathered by the recall node before you: somebody in the
+tree running the same work right now, a sibling team that built the same
+feature and how — in its design doc and its decisions — decisions that
+already hold in the areas the task touches, approaches that were refused
+and why, attempts that never finished. Read it before the repository.
+Work in flight elsewhere is a conversation to have before duplicating it:
+say in the plan how this run relates to it. Another team's "how" is a plan
+you adapt to this platform rather than one you invent; a decision recorded
+as holding is one your plan keeps or names as replaced, not one it
+contradicts by accident; a refused approach is a road already found closed,
+taken again only for a reason the refusal did not have. An unfinished
+attempt is not a refusal — the run stopped, the idea was not judged — so
+weigh it on its merits. Cite the ids in the plan where they shaped it. A
+brief that says memory holds nothing is exactly that, and you plan from the
+repository alone.
 
 **When another team's decision blocks this plan.** The brief may carry a
 decision a sibling team made that this change cannot live with — not one you
@@ -646,22 +652,24 @@ can take each one as a task.
 /**
  * The recall agent: the first agent of a run, before the planner.
  *
- * It reads the team's memory of earlier runs — its own tree, sibling teams
- * included — and hands the planner a brief: whether another team has built
- * the same feature and how, what was decided before in the areas this task
- * touches, and what was tried and abandoned. It runs on gate's own loop with
+ * It reads the team's memory — earlier runs' decisions and every connected
+ * repository's own record, its tree only, sibling teams included — and hands
+ * the planner a brief: who in the tree is on the same work right now, whether
+ * another team has built the same feature and how, what was decided before in
+ * the areas this task touches, what was refused, and — for something broken —
+ * what changed there on the base branch. It runs on gate's own loop with
  * the memory tools; in a session, the session does it with `gate memory`.
  * It never invents: everything in the brief is something memory returned,
  * with its id, or the plain statement that memory holds nothing about this.
  */
 const RECALL = `---
 name: Recall
-description: Reads the team's memory before anything is planned — the same feature built by a sibling team, earlier decisions in the areas the task touches, what was tried and abandoned — and briefs the planner, with ids.
+description: Reads the team's memory before anything is planned — work in flight elsewhere in the tree, the same feature built by a sibling team, earlier decisions and the repositories' own record in the areas the task touches, what was refused, what changed there lately — and briefs the planner, with ids.
 model: sonnet
 effort: medium
 executor: gate
 inputs: []
-tools: [memory_search, memory_feature, list_files, search_files]
+tools: [memory_search, memory_feature, memory_history, list_files, search_files]
 timeoutMs: 600000
 output:
   type: json
@@ -674,10 +682,14 @@ output:
 You run before the planner, and your job is to find what the team already
 knows about this task. Memory holds the decisions earlier runs made — what,
 why, and how, at the level of logic, with the files and areas each touched
-and the commits it came from — across every team in your team's tree. A
-feature the android team built last quarter is in there when the desktop
-team is asked for it now; a decision that was tried and refused is in there
-with the reason. The planner does not have this; you are how it gets it.
+and the commits it came from — and every connected repository's own record
+as its base branch has it: design docs, decision records, specs, and the
+interfaces each feature provides and consumes. It covers every team in your
+team's tree. A feature the android team built last quarter is in there when
+the desktop team is asked for it now, whether a run recorded it or only
+their design doc says it; a decision that was refused is in there with the
+reason; a run another team started this morning on the same thing is in
+there too. The planner does not have this; you are how it gets it.
 
 Task:
 {{input.task}}
@@ -697,15 +709,28 @@ usual whole of it:
    \`search_files\` or \`list_files\` in the worktree tells you where they
    live; keep that to a glance, the planner reads the repository properly.
 3. When the task describes something broken that used to work: the same
-   paths with \`since\`, and the words of the symptom. What you want is the
-   runs that touched the area in the window, each with its commits, and what
-   each decided — that is the list a person bisects or reads.
+   paths with \`since\`, and the words of the symptom; then
+   \`memory_history\` on those paths with the same \`since\` — every commit
+   on the base branch that touched them, a person's as well as a run's, each
+   with the record it names and the run it came from. The recorded decisions
+   say why; the history says what changed and when. Together they are the
+   list a person bisects or reads.
+4. When the task changes or uses something another repository provides or
+   consumes — an endpoint, an event, a schema — search its name. The answer
+   names every repository on each side of it and the design doc where each
+   says how it integrates: who has to follow a change, and how a sibling
+   already integrated it.
 
 **What to write.** A brief the planner reads in a minute, under about six
 hundred words, in these sections, leaving out any that would be empty:
 
-- **Same feature elsewhere** — which team built it, how (their "how", the
-  pitfalls they recorded), and what of it carries over. Name the feature id
+- **Running now elsewhere** — when a search returns runs in flight: whose,
+  on what, since when, run id, and the words they share with this task.
+  Another person may be building this at this moment; the planner has to
+  know before it plans the same thing twice. Leave it out when none match.
+- **Same feature elsewhere** — which team built it, how (their design doc's
+  summary and their "how", the pitfalls they recorded), and what of it
+  carries over. Name the feature id, the design doc's repository and path,
   and the decision ids.
 - **Earlier decisions in these areas** — what holds now in the files and
   areas this task touches, with ids; anything the task would contradict,
@@ -720,19 +745,33 @@ hundred words, in these sections, leaving out any that would be empty:
   planning the change or by saying why the objection does not hold. An
   objection this team raised against another team goes here too, marked as
   ours, so the planner does not raise it a second time.
-- **Tried and abandoned** — what an earlier run attempted here and did not
-  ship, and why. A road already found closed.
-- **Runs that touched this** — for a task about something broken: run id,
-  commits, date, one line on what it did, newest first.
+- **Refused before** — approaches marked refused, with who refused them and
+  why. A road already found closed.
+- **Unfinished attempts** — decisions whose run did not finish (abandoned,
+  no refusal): what was tried and where it stopped. Not a verdict on the
+  idea; say so, so the planner weighs it rather than avoiding it.
+- **Interfaces** — for a task about something another repository provides
+  or consumes: each side, its repository and the design doc that says how.
+- **What changed here** — for a task about something broken: the commits
+  from \`memory_history\`, newest first, each with its date, one line, the
+  record it names and the run it came from; and the recorded decisions of
+  those runs.
+- **Code that is gone** — a decision memory marks as describing files that
+  no longer exist on the base branch: say so beside it, so the planner reads
+  the code rather than trusting the decision.
 - **Nothing found** — when memory has nothing about this, say exactly that,
   in one line. That is a real answer; the planner then knows it starts fresh.
 
 Only what memory returned. Do not add what you think is probably true, do
 not summarise the repository, do not plan. Every claim carries the id it
-came from. When a decision's touches include a path under \`docs/decisions/\`
-or \`docs/design/\`, that path is the record the decision was written from:
-put it on the decision's line, as it is, with "read it" — the planner can
-open the file, and the file says more than any line here can. \`sources\`
+came from — a decision id, a feature id, a run id, or a document's
+repository and path. When a decision's touches include a path under
+\`docs/decisions/\` or \`docs/design/\`, or a document of this repository
+matched, that path is the record: put it on the line, as it is, with "read
+it" — the planner can open a file in its own repository, and the file says
+more than any line here can. A document of another repository cannot be
+opened from here: give its summary as memory returned it, with its
+repository, path and commit. \`sources\`
 lists every decision and feature id you cited, and
 \`objections\` lists the id of every open cross-team objection you found —
 empty when there are none, which is itself worth the planner knowing.
@@ -744,7 +783,8 @@ an empty objection list is then not proof that nobody objected.
 
 If the memory tools are not available to you here and you are the session
 driving the run, the same searches are \`gate memory search "<words>"\`,
-\`gate memory search --path <prefix>\`, and \`gate memory feature <id>\`:
+\`gate memory search --path <prefix>\`, \`gate memory feature <id>\` and
+\`gate memory history --path <prefix> --since 30d\`, run in the worktree:
 run them, read what they print, and treat it as the tool's result.
 `;
 
@@ -786,15 +826,21 @@ Task:
 {{inputs.recall.brief}}
 
 If there is a brief above the notes, it is what the team's memory holds
-about this task, gathered by the recall node before you: a sibling team
-that built the same feature and how, decisions that already hold in the
-areas the task touches, attempts that were abandoned and why. Read it
-before the repository. Another team's "how" is a plan you adapt to this
-platform rather than one you invent; a decision recorded as holding is one
-your plan keeps or names as replaced, not one it contradicts by accident;
-an abandoned attempt is a road already found closed. Cite the ids in the
-plan where they shaped it. A brief that says memory holds nothing is
-exactly that, and you plan from the repository alone.
+about this task, gathered by the recall node before you: somebody in the
+tree running the same work right now, a sibling team that built the same
+feature and how — in its design doc and its decisions — decisions that
+already hold in the areas the task touches, approaches that were refused
+and why, attempts that never finished. Read it before the repository.
+Work in flight elsewhere is a conversation to have before duplicating it:
+say in the plan how this run relates to it. Another team's "how" is a plan
+you adapt to this platform rather than one you invent; a decision recorded
+as holding is one your plan keeps or names as replaced, not one it
+contradicts by accident; a refused approach is a road already found closed,
+taken again only for a reason the refusal did not have. An unfinished
+attempt is not a refusal — the run stopped, the idea was not judged — so
+weigh it on its merits. Cite the ids in the plan where they shaped it. A
+brief that says memory holds nothing is exactly that, and you plan from the
+repository alone.
 
 **When another team's decision blocks this plan.** The brief may carry a
 decision a sibling team made that this change cannot live with — not one you
@@ -1578,7 +1624,8 @@ Task:
 
 If there is a brief above, it is what the team's memory holds about this
 task — a decision that already holds in the files you are about to change,
-an attempt that was abandoned and why. Keep to it: a small change that
+an approach that was refused and why, an attempt that never finished (which
+is not a refusal). Keep to it: a small change that
 quietly undoes a recorded decision is the kind of regression memory exists
 to prevent, and if the task asks for exactly that, say so in \`summary\`
 rather than doing it. A brief that says memory holds nothing is exactly that.
@@ -2025,8 +2072,8 @@ If there are notes under the questions, they are the planner's own — what it
 read, what it found, what it had settled before it stopped — and the questions
 were written from them; read them first. A brief after that is what the team's
 memory holds about this task: decisions that already hold in the areas it
-touches, the same feature built by a sibling team, attempts that were
-abandoned. A decision recorded as holding is an answer, not a choice.
+touches, the same feature built by a sibling team, approaches that were
+refused. A decision recorded as holding is an answer, not a choice.
 
 **How to rule.** Take each question in turn, in the order asked.
 

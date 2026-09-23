@@ -99,9 +99,15 @@ The forms are in the reference above. Follow them section for section.
   it works, Key files, Pitfalls, Decisions. The present tense of the feature:
   what it does, the flow, the states, the invariants, the traps that are
   still true. No history, no "this was changed". Logic, not code: a path is a
-  pointer, a function body is not. Dispatch one subagent per design doc where
-  there are several — each gets the part, the paths to read, the template and
-  these rules — and write the map yourself while they work.
+  pointer, a function body is not. Where the part talks to another
+  repository — an endpoint it serves or calls, an event, a schema — add the
+  `## Interfaces` section, one `provides:` or `consumes:` line each, named
+  the way the code names it. Name the file for the feature as the product
+  calls it, the same name another team's repository would use, because the
+  file name is the feature's id across the tree. Dispatch one subagent per
+  design doc where there are several — each gets the part, the paths to
+  read, the template and these rules — and write the map yourself while they
+  work.
 - **`docs/decisions/NNNN-<slug>.md`** — the choices the code and the history
   actually show: a comment that says why something is done the hard way, a
   commit message that argues for an approach, a design note in the
@@ -207,3 +213,9 @@ What can go wrong, and what it means:
 - From now on the record is kept by the pipeline and by `CLAUDE.md`: a change
   that alters behaviour updates its design doc, a real choice writes a
   decision record, and the reviewer sends back work that does not.
+- Once these documents are on the repository's base branch and the
+  repository is connected on the gate's Repos page (with its team), the gate
+  reads them itself, by code, on a timer. Every team in the tree then finds
+  the design docs and the interfaces they list, whether or not this
+  repository's own work ever runs through gate. A repository nobody connected
+  is only in memory through what is taught.

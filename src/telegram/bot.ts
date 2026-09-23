@@ -237,6 +237,15 @@ export class TelegramBot {
     await this.api.sendMessage(chatId, text);
   }
 
+  /**
+   * A note from elsewhere in gate — two teams starting the same work — sent
+   * on the chat's own chain, so it never lands in the middle of a question
+   * being asked there.
+   */
+  notify(chatId: string, text: string): Promise<void> {
+    return this.run(chatId, () => this.say(chatId, text));
+  }
+
   /** Follows the chat's person's sessions; what is waiting arrives at once. */
   attach(chatId: string): void {
     const s = this.state(chatId);

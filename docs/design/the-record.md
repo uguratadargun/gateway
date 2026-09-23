@@ -59,10 +59,21 @@ because which of two records keeps the number is a judgement about which
 came first.
 
 The check is this repository's, not the shipped pipeline's. The `record`
-command node in the shipped workflows checks one fact about any repository's
-record — that a spec was written — and the reviewer judges the rest; a
-project that wants its record's form checked on every run adds a command
+command node in the shipped workflows checks two facts about any
+repository's record, and the reviewer judges the rest:
+
+- that a spec was written;
+- that no decision record the branch added takes a number the remote's
+  base branch already holds.
+
+A project that wants its record's form checked on every run adds a command
 node for it, as it would for `npm test`.
+
+Gate reads every connected repository's record from its base branch, by
+code, into the [record index](record-index.md). There a sibling team's
+recall finds it. When a decision record was renumbered after its run
+recorded it, the run's decision follows the record to its new number by
+slug.
 
 ## Key files
 
@@ -73,18 +84,22 @@ node for it, as it would for `npm test`.
 
 ## Pitfalls
 
-- Renumbering a decision record does not reach gate's memory: the recorder
-  stored the old path among the decision's touches, so `gate memory search
-  --path docs/decisions/<old>` still finds it and the new path finds nothing
-  until the run is recorded again.
+- A renumbered decision record reaches gate's memory at the record index's
+  next read of the base branch, not before. Until then, a path search finds
+  the decision under the record's old number.
 - A decision superseded in part still gets `Status: superseded by NNNN`; the
   new record's `Supersedes` says what still holds. The check wants the two
   lines to agree and does not read the nuance.
 - The gap check reads all of `docs/decisions/`: two branches each taking the
   next free number merge into a duplicate, which the check reports on the
-  branch that merged second, not on either alone.
+  branch that merged second, not on either alone. The pipeline's `record`
+  node narrows this by checking against the remote before the branch is
+  offered. Two branches that pass that check at the same moment can still
+  collide.
 
 ## Decisions
 
+- [0040 — A decision number is checked against the remote before the branch is offered](../decisions/0040-a-decision-number-is-checked-against-the-remote.md)
+- [0038 — The repositories' record is read by code, and the base branch settles what landed](../decisions/0038-the-repositories-record-is-read-by-code.md)
 - [0021 — The record's form is checked by code, its truth by a reviewer](../decisions/0021-the-records-form-is-checked-by-code.md)
 - [0005 — The repository keeps its own record, and the pipeline writes it with the code](../decisions/0005-docs-as-code-in-every-repository.md)

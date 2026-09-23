@@ -317,8 +317,30 @@ export const memorySearchSchema = z
       .transform((v) => Number(v))
       .refine((n) => Number.isInteger(n) && n > 0, "not a count")
       .optional(),
+    /** The run asking, so it is not shown to itself as work in flight. */
+    run: z.string().max(100).optional(),
   })
   .refine((v) => v.query || v.paths.length || v.featureId, { message: "give q, path, or feature" });
+
+/**
+ * `GET /api/v1/memory/history` — a repository's base-branch history under
+ * some paths. The repository is named the way a search names it: by the raw
+ * remote of the checkout asking, or, for a person outside one, by
+ * `host/owner/name`.
+ */
+export const memoryHistorySchema = z
+  .object({
+    paths: z.array(z.string().max(500)).max(50).default([]),
+    remoteUrl: z.string().max(500).optional(),
+    repo: z.string().max(300).optional(),
+    since: epochMs,
+    limit: z
+      .string()
+      .transform((v) => Number(v))
+      .refine((n) => Number.isInteger(n) && n > 0, "not a count")
+      .optional(),
+  })
+  .refine((v) => v.remoteUrl || v.repo, { message: "give remote or repo" });
 
 /**
  * `POST /api/v1/ask` — one team asking another about their code.

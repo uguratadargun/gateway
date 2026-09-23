@@ -9,6 +9,7 @@ import { approvalsForExecution, issuesForExecution, type DecisionIssue, type Iss
 import type {
   Decision,
   DecisionDraft,
+  DecisionVerdict,
   DecisionHit,
   DecisionOutcome,
   DecisionSearch,
@@ -73,6 +74,11 @@ export function toMatchQuery(text: string): string | null {
     if (raw.length < 2 || STOPWORDS.has(raw)) continue;
     if (/^\d+$/.test(raw)) continue;
     terms.add(raw.length >= 4 ? `"${raw}"*` : `"${raw}"`);
+    // Porter stems English and nothing else: "bildirimleri" never reaches
+    // "bildirim". A long word also asks for its first part as a prefix, which
+    // reaches the root through a suffix in any language; bm25 still ranks the
+    // whole-word match first, and an English word's stem already matched.
+    if (raw.length >= 8) terms.add(`"${raw.slice(0, Math.max(5, raw.length - 4))}"*`);
     if (terms.size >= 24) break;
   }
   return terms.size ? [...terms].join(" OR ") : null;
@@ -162,10 +168,17 @@ export function upsertFeature(input: {
   return created;
 }
 
+/** Which teams have built a feature: a page of their own on it, or a design doc for it in their repository. */
 function teamsOfFeature(featureId: string): string[] {
-  return (getDb().prepare("SELECT team_id FROM memory_feature_impls WHERE feature_id = ? ORDER BY team_id").all(featureId) as Array<{ team_id: string }>).map(
-    (r) => r.team_id,
-  );
+  return (
+    getDb()
+      .prepare(
+        `SELECT team_id FROM memory_feature_impls WHERE feature_id = ?
+         UNION SELECT team_id FROM record_docs WHERE kind = 'design' AND slug = ? AND team_id IS NOT NULL
+         ORDER BY team_id`,
+      )
+      .all(featureId, featureId) as Array<{ team_id: string }>
+  ).map((r) => r.team_id);
 }
 
 export function listFeatures(scope: MemoryScope, limit = 500): FeatureHit[] {
@@ -250,6 +263,7 @@ function rowToDecision(r: any): Decision {
     id: r.id,
     executionId: r.execution_id,
     teamId: r.team_id,
+    authorTeamId: r.author_team_id ?? null,
     userId: r.user_id ?? null,
     featureId: r.feature_id ?? null,
     repoId: r.repo_id ?? null,
@@ -269,6 +283,10 @@ function rowToDecision(r: any): Decision {
     validTo: r.valid_to == null ? null : Number(r.valid_to),
     recordedAt: Number(r.recorded_at),
     retractedAt: r.retracted_at == null ? null : Number(r.retracted_at),
+    verdict: r.verdict === "rejected" ? "rejected" : null,
+    verdictReason: r.verdict_reason ?? null,
+    checkedCommit: r.checked_commit ?? null,
+    missingTouches: Number(r.missing_touches ?? 0),
   };
 }
 
@@ -341,7 +359,10 @@ function supersedableBy(run: { teamId: string; repoId: string | null }, id: stri
 export function replaceDecisions(
   run: {
     executionId: string;
+    /** The team the decisions belong to: the repository's, when it has one. */
     teamId: string;
+    /** The team whose run made them, when that is a different team. */
+    authorTeamId?: string | null;
     userId: string | null;
     featureId: string | null;
     /** The repository the run worked in, or null when it is not known. */
@@ -370,10 +391,12 @@ export function replaceDecisions(
       let id = `${run.executionId.slice(0, 8)}-${n + 1}-${randomBytes(4).toString("hex")}`;
       while (getDecision(id)) id = `${run.executionId.slice(0, 8)}-${n + 1}-${randomBytes(4).toString("hex")}`;
       const supersedes = supersedableBy(run, draft.supersedes);
+      const verdict: DecisionVerdict | null = draft.verdict === "rejected" ? "rejected" : null;
       const d: Decision = {
         id,
         executionId: run.executionId,
         teamId: run.teamId,
+        authorTeamId: run.authorTeamId && run.authorTeamId !== run.teamId ? run.authorTeamId : null,
         userId: run.userId,
         featureId: run.featureId,
         repoId: run.repoId,
@@ -393,16 +416,21 @@ export function replaceDecisions(
         validTo: null,
         recordedAt: now,
         retractedAt: null,
+        verdict,
+        verdictReason: verdict ? draft.verdictReason?.trim() || null : null,
+        checkedCommit: null,
+        missingTouches: 0,
       };
       db.prepare(
         `INSERT INTO memory_decisions
-           (id, execution_id, team_id, user_id, feature_id, repo_id, title, context, decision, rationale, alternatives, how,
-            consequences, touches_json, base_commit, head_commit, outcome, supersedes, valid_from, valid_to, recorded_at, retracted_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           (id, execution_id, team_id, author_team_id, user_id, feature_id, repo_id, title, context, decision, rationale, alternatives, how,
+            consequences, touches_json, base_commit, head_commit, outcome, supersedes, valid_from, valid_to, recorded_at, retracted_at,
+            verdict, verdict_reason)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
-        d.id, d.executionId, d.teamId, d.userId, d.featureId, d.repoId, d.title, d.context, d.decision, d.rationale, d.alternatives,
-        d.how, d.consequences, JSON.stringify(d.touches), d.baseCommit, d.headCommit, d.outcome, d.supersedes,
-        d.validFrom, d.validTo, d.recordedAt, d.retractedAt,
+        d.id, d.executionId, d.teamId, d.authorTeamId, d.userId, d.featureId, d.repoId, d.title, d.context, d.decision, d.rationale,
+        d.alternatives, d.how, d.consequences, JSON.stringify(d.touches), d.baseCommit, d.headCommit, d.outcome, d.supersedes,
+        d.validFrom, d.validTo, d.recordedAt, d.retractedAt, d.verdict, d.verdictReason,
       );
       writeDecisionIndex(d);
       // A superseded decision stops holding when the new one starts; its row
@@ -418,6 +446,96 @@ export function replaceDecisions(
     db.exec("ROLLBACK");
     throw e;
   }
+}
+
+// ── What the record index learns about decisions ────────────────────────────
+//
+// The index reads a repository's base branch, and three things it finds there
+// are facts about decisions recorded from runs: the work landed, a decision
+// record moved to another number, a file the decision lived in is gone. Each
+// is written here, where every other write to a decision is, and none of them
+// touches what the decision *says*.
+
+/** Outcomes the base branch can still promote: the work may have landed since. */
+export const PROMOTABLE_OUTCOMES = ["pr-open", "completed", "unshipped", "abandoned"] as const;
+
+/**
+ * Decisions in one repository whose work may since have landed: not refused,
+ * not retracted, with an outcome the base branch can still promote.
+ */
+export function decisionsAwaitingMerge(repoId: string): Decision[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT * FROM memory_decisions
+          WHERE repo_id = ? AND retracted_at IS NULL AND verdict IS NULL
+            AND outcome IN (${placeholders(PROMOTABLE_OUTCOMES.length)})`,
+      )
+      .all(repoId, ...PROMOTABLE_OUTCOMES) as any[]
+  ).map(rowToDecision);
+}
+
+/**
+ * The base branch holds the work: `merged`, whatever the run that made it
+ * reported. A refused approach is never promoted — the branch landing says
+ * the final version shipped, not the attempt the reviewer turned down.
+ */
+export function markMerged(ids: string[]): number {
+  if (!ids.length) return 0;
+  return Number(
+    getDb()
+      .prepare(`UPDATE memory_decisions SET outcome = 'merged' WHERE verdict IS NULL AND id IN (${placeholders(ids.length)})`)
+      .run(...ids).changes,
+  );
+}
+
+/** Every decision recorded in one repository, for the index's checks. */
+export function decisionsInRepo(repoId: string): Decision[] {
+  return (getDb().prepare("SELECT * FROM memory_decisions WHERE repo_id = ? AND retracted_at IS NULL").all(repoId) as any[]).map(rowToDecision);
+}
+
+/** How many of a decision's file touches the base branch no longer has, at which commit. */
+export function recordTouchCheck(id: string, commit: string, missing: number): void {
+  getDb().prepare("UPDATE memory_decisions SET checked_commit = ?, missing_touches = ? WHERE id = ?").run(commit, missing, id);
+}
+
+/**
+ * A path a decision touched moved: a decision record renumbered when two
+ * branches took the same number, found on the base branch under its new one.
+ * The touch, the JSON and the full-text row all follow, so a path search for
+ * the record's real name finds the decision it was written from.
+ */
+export function renameTouch(repoId: string, from: string, to: string): number {
+  const db = getDb();
+  const ids = (
+    db.prepare("SELECT decision_id FROM memory_touches WHERE ref = ? AND repo_id = ?").all(from, repoId) as Array<{ decision_id: string }>
+  ).map((r) => r.decision_id);
+  for (const id of ids) {
+    const d = getDecision(id);
+    if (!d) continue;
+    const touches = normaliseTouches(d.touches.map((t) => (t.kind === "file" && t.ref === from ? { kind: "file" as const, ref: to } : t)));
+    db.prepare("UPDATE memory_decisions SET touches_json = ? WHERE id = ?").run(JSON.stringify(touches), id);
+    writeDecisionIndex({ ...d, touches });
+  }
+  return ids.length;
+}
+
+/**
+ * The decision record a decision was written from is superseded on the base
+ * branch: the decision stops holding then. Only the repository's own record
+ * can say so, and it is the repository owner's record, so this is not one
+ * team closing another's decision behind its back.
+ */
+export function closeByRecord(repoId: string, recordPath: string, at: number): number {
+  return Number(
+    getDb()
+      .prepare(
+        `UPDATE memory_decisions SET valid_to = ?
+          WHERE valid_to IS NULL AND retracted_at IS NULL AND repo_id = ?
+            AND id IN (SELECT decision_id FROM memory_touches WHERE ref = ? AND repo_id = ?)`,
+      )
+      .run(at, repoId, recordPath, repoId).changes,
+  );
 }
 
 /** Closes a decision that turned out wrong. The row stays; searches skip it. */
@@ -439,7 +557,13 @@ export function searchDecisions(scope: MemoryScope, search: DecisionSearch): Dec
   const where: string[] = [`d.team_id IN (${placeholders(scope.teams.length)})`];
   const params: unknown[] = [...scope.teams];
   if (!search.includeRetracted) where.push("d.retracted_at IS NULL");
-  if (search.repoId) {
+  const paths = (search.paths ?? []).map((p) => p.trim().replace(/^\.\//, "")).filter(Boolean);
+  if (search.repoId && paths.length) {
+    // A path is only meaningful next to its repository, so a path question is
+    // answered inside the asker's: src/index.ts in the SDK is not the app's.
+    // A question in words is not scoped the same way — "how did android do
+    // offline sync" is asked from the desktop repository precisely to read
+    // another repository's decisions, and every card names its repository.
     // On the decision, not on the touch: the FTS branch reaches touches
     // through the `touches` text column, which no join can filter.
     where.push("(d.repo_id IS NULL OR d.repo_id = ?)");
@@ -457,7 +581,6 @@ export function searchDecisions(scope: MemoryScope, search: DecisionSearch): Dec
     where.push("d.valid_from >= ?");
     params.push(search.since);
   }
-  const paths = (search.paths ?? []).map((p) => p.trim().replace(/^\.\//, "")).filter(Boolean);
   if (paths.length) {
     // A prefix as an index range on memory_touches(ref), not a LIKE: the
     // range is what lets 50k rows answer in a few milliseconds.
@@ -488,10 +611,10 @@ export function searchDecisions(scope: MemoryScope, search: DecisionSearch): Dec
            FROM memory_decisions_fts fts
            JOIN memory_decisions d ON d.id = fts.id
           WHERE memory_decisions_fts MATCH ? AND ${where.join(" AND ")}
-          ORDER BY (d.team_id = ?) DESC, rank
+          ORDER BY (d.team_id = ?) DESC, (d.repo_id IS NOT NULL AND d.repo_id = ?) DESC, rank
           LIMIT ?`,
       )
-      .all(match, ...params, scope.own, limit) as any[];
+      .all(match, ...params, scope.own, search.repoId ?? "", limit) as any[];
     return rows.map((r) => ({ ...rowToDecision(r), score: -Number(r.rank) }));
   }
   const rows = getDb()

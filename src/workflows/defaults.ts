@@ -259,9 +259,17 @@ nodes:
   # command says what to do, the implementer reads that as record.stdout and
   # writes it, and after three asks the run ends on a terminal that says so:
   # a spec never written is a change to be looked at, not a ceiling met.
+  #
+  # The same node checks the one fact about a decision record that two
+  # branches can break between them: its number. Each branch takes the next
+  # free number when it writes the record, so two open at once take the same
+  # one, and whichever merges second duplicates it. Before this run offers its
+  # branch, the remote's base branch is fetched and every record this branch
+  # added under a number already taken there is named, with what to do; the
+  # implementer renumbers it. Offline, the check is skipped rather than failed.
   - id: record
     type: command
-    label: Is the spec there?
+    label: Is the record in order?
     # add -N first so a spec left uncommitted is visible to the diff, as
     # stage does for everything below; the pathspec fails harmlessly when
     # docs/specs/ does not exist, which is the case the check is for.
@@ -269,21 +277,30 @@ nodes:
       - sh
       - -c
       - >-
-        git add -N -- docs/specs 2>/dev/null;
+        git add -N -- docs/specs docs/decisions 2>/dev/null;
         if git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/specs | grep -q .;
         then :;
         else echo 'No spec under docs/specs/. Copy the plan file, as it stands, to docs/specs/YYYY-MM-DD-<topic>.md — date and topic from the plan file name, any -revN dropped — with Status: done, Branch:, Decisions: and Design: lines above it, and commit it as "Spec: <topic>".';
         exit 1;
+        fi;
+        if git fetch --quiet --no-tags origin HEAD 2>/dev/null;
+        then
+        taken=$(git ls-tree --name-only FETCH_HEAD docs/decisions/ 2>/dev/null | grep -E '^docs/decisions/[0-9]{4}-' | cut -c16-19 | sort -u);
+        clash=$(git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/decisions | grep -E '^docs/decisions/[0-9]{4}-' | while read -r f; do n=$(printf '%s' "$f" | cut -c16-19); if printf '%s\\n' "$taken" | grep -qx "$n" && ! git cat-file -e "FETCH_HEAD:$f" 2>/dev/null; then printf '%s ' "$f"; fi; done);
+        if [ -n "$clash" ];
+        then echo "Decision numbers already taken on the remote's base branch by other records: $clash(another branch merged first). Renumber each of yours to the next free number after $(printf '%s\\n' "$taken" | tail -1): rename the file, change the number in its first line, and every pointer to it in the files this branch changed (a Supersedes line, a design doc's Decisions list, a spec's Decisions line, a Status: superseded by line). Commit it as 'Renumber decision records'.";
+        exit 1;
+        fi;
         fi
     edges:
       - when: outputs.record.ok == true
         to: stage
-        label: spec written
+        label: spec written, numbers free
       - when: visits.record >= 3
         to: no-spec
-        label: still no spec after 3 asks
+        label: record still not in order after 3 asks
       - to: implementer
-        label: spec missing
+        label: spec missing, or a number taken
 
   - id: stage
     type: command
@@ -685,26 +702,35 @@ nodes:
   # was done — and this is the check that it did.
   - id: record
     type: command
-    label: Is the spec there?
+    label: Is the record in order?
     command:
       - sh
       - -c
       - >-
-        git add -N -- docs/specs 2>/dev/null;
+        git add -N -- docs/specs docs/decisions 2>/dev/null;
         if git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/specs | grep -q .;
         then :;
         else echo 'No spec under docs/specs/. Write docs/specs/YYYY-MM-DD-<slug>.md — today, a slug from the task — with Status: done, Branch:, Decisions: none and Design: lines above a "## Task" section holding the task as given and a "## Done" section saying what changed and what was run. Leave it uncommitted with the rest.';
         exit 1;
+        fi;
+        if git fetch --quiet --no-tags origin HEAD 2>/dev/null;
+        then
+        taken=$(git ls-tree --name-only FETCH_HEAD docs/decisions/ 2>/dev/null | grep -E '^docs/decisions/[0-9]{4}-' | cut -c16-19 | sort -u);
+        clash=$(git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/decisions | grep -E '^docs/decisions/[0-9]{4}-' | while read -r f; do n=$(printf '%s' "$f" | cut -c16-19); if printf '%s\\n' "$taken" | grep -qx "$n" && ! git cat-file -e "FETCH_HEAD:$f" 2>/dev/null; then printf '%s ' "$f"; fi; done);
+        if [ -n "$clash" ];
+        then echo "Decision numbers already taken on the remote's base branch by other records: $clash(another branch merged first). Renumber each of yours to the next free number after $(printf '%s\\n' "$taken" | tail -1): rename the file, change the number in its first line, and every pointer to it in the files this branch changed (a Supersedes line, a design doc's Decisions list, a spec's Decisions line, a Status: superseded by line). Commit it as 'Renumber decision records'.";
+        exit 1;
+        fi;
         fi
     edges:
       - when: outputs.record.ok == true
         to: stage
-        label: spec written
+        label: spec written, numbers free
       - when: visits.record >= 3
         to: no-spec
-        label: still no spec after 3 asks
+        label: record still not in order after 3 asks
       - to: implementer
-        label: spec missing
+        label: spec missing, or a number taken
 
   - id: stage
     type: command
@@ -1016,26 +1042,35 @@ nodes:
   # As in dev: the spec is the one fact about the record a command can check.
   - id: record
     type: command
-    label: Is the spec there?
+    label: Is the record in order?
     command:
       - sh
       - -c
       - >-
-        git add -N -- docs/specs 2>/dev/null;
+        git add -N -- docs/specs docs/decisions 2>/dev/null;
         if git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/specs | grep -q .;
         then :;
         else echo 'No spec under docs/specs/. Copy the plan file, as it stands, to docs/specs/YYYY-MM-DD-<topic>.md — date and topic from the plan file name, any -revN dropped — with Status: done, Branch:, Decisions: and Design: lines above it, and commit it as "Spec: <topic>".';
         exit 1;
+        fi;
+        if git fetch --quiet --no-tags origin HEAD 2>/dev/null;
+        then
+        taken=$(git ls-tree --name-only FETCH_HEAD docs/decisions/ 2>/dev/null | grep -E '^docs/decisions/[0-9]{4}-' | cut -c16-19 | sort -u);
+        clash=$(git diff --name-only --diff-filter=A {{outputs.base.stdout}} -- docs/decisions | grep -E '^docs/decisions/[0-9]{4}-' | while read -r f; do n=$(printf '%s' "$f" | cut -c16-19); if printf '%s\\n' "$taken" | grep -qx "$n" && ! git cat-file -e "FETCH_HEAD:$f" 2>/dev/null; then printf '%s ' "$f"; fi; done);
+        if [ -n "$clash" ];
+        then echo "Decision numbers already taken on the remote's base branch by other records: $clash(another branch merged first). Renumber each of yours to the next free number after $(printf '%s\\n' "$taken" | tail -1): rename the file, change the number in its first line, and every pointer to it in the files this branch changed (a Supersedes line, a design doc's Decisions list, a spec's Decisions line, a Status: superseded by line). Commit it as 'Renumber decision records'.";
+        exit 1;
+        fi;
         fi
     edges:
       - when: outputs.record.ok == true
         to: stage
-        label: spec written
+        label: spec written, numbers free
       - when: visits.record >= 3
         to: no-spec
-        label: still no spec after 3 asks
+        label: record still not in order after 3 asks
       - to: implementer
-        label: spec missing
+        label: spec missing, or a number taken
 
   - id: stage
     type: command

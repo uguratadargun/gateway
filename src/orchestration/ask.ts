@@ -325,7 +325,9 @@ export async function memoryAt(source: AskSource, question: string, askerTeamId:
   const found = await access.search({ query: question, repoId: source.repoId, limit: 10 });
   const covering: DecisionCard[] = [];
   const elsewhere: DecisionCard[] = [];
-  for (const decision of found.decisions) {
+  // A question in words reads the whole tree; what is true of this commit
+  // is only ever this repository's.
+  for (const decision of found.decisions.filter((d) => !d.repo || !source.repoId || d.repo === source.repoId)) {
     (holdsAt(source.repo.root, decision.commits.head, source.commit) ? covering : elsewhere).push(decision);
   }
   return { covering, elsewhere, issues: found.issues };

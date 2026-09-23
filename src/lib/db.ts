@@ -296,9 +296,8 @@ CREATE TABLE IF NOT EXISTS memory_decisions (
   -- merged are live, pr-open means a merge request was opened and nobody
   -- watched it land, completed means the run finished but never offered the
   -- work for merge, unshipped means the branch never reached its merge
-  -- request, abandoned means the run failed or was stopped. An abandoned
-  -- decision is still a decision — "we tried X and the reviewer refused it
-  -- because Y" is worth keeping. 'shipped' is what rows carried before the
+  -- request, abandoned means the run failed or was stopped — which says
+  -- nothing about the idea; a refused approach is the verdict column. 'shipped' is what rows carried before the
   -- distinction existed and is left alone; nothing re-derives it.
   outcome TEXT NOT NULL DEFAULT 'shipped',
   supersedes TEXT,
@@ -504,6 +503,65 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_decisions_fts USING fts5(
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_features_fts USING fts5(
   id UNINDEXED, name, aliases, summary, tokenize = 'porter unicode61'
 );
+
+-- The record index: what each connected repository says about itself on its
+-- base branch — design docs, decision records, specs, the map — read by code
+-- from git, never by a model. Derived and rebuildable: dropping every row and
+-- indexing again loses nothing, because the files are the source.
+--
+-- One row per repository: which commit of which ref was read, and when.
+CREATE TABLE IF NOT EXISTS record_repos (
+  repo TEXT PRIMARY KEY,           -- repos.id
+  repo_id TEXT,                    -- host/owner/name, when known
+  team_id TEXT,                    -- the team whose repository it is
+  ref TEXT,
+  commit_sha TEXT,
+  committed_at INTEGER,
+  indexed_at INTEGER,
+  error TEXT,
+  docs INTEGER NOT NULL DEFAULT 0,
+  -- The last base-branch commit merges were looked at up to, for
+  -- memory.recordMerges; NULL until the first index sets the watermark.
+  merges_seen TEXT
+);
+
+-- One row per document on the base branch. \`blob\` is git's own hash of the
+-- file, so an unchanged document is not read again.
+CREATE TABLE IF NOT EXISTS record_docs (
+  repo TEXT NOT NULL,
+  path TEXT NOT NULL,
+  repo_id TEXT,
+  team_id TEXT,
+  kind TEXT NOT NULL,              -- design | decision | spec | architecture
+  slug TEXT NOT NULL,              -- the file name without number or date
+  number INTEGER,                  -- a decision record's NNNN
+  title TEXT NOT NULL,
+  status TEXT,                     -- accepted / superseded by NNNN / a spec's Status
+  date TEXT,
+  summary TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  blob TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  indexed_at INTEGER NOT NULL,
+  PRIMARY KEY (repo, path)
+);
+CREATE INDEX IF NOT EXISTS record_docs_kind_slug ON record_docs(kind, slug);
+
+-- What a feature offers other repositories and what it uses from them, as
+-- its design doc's Interfaces section says: an API, an event, a schema.
+CREATE TABLE IF NOT EXISTS record_interfaces (
+  repo TEXT NOT NULL,
+  path TEXT NOT NULL,
+  role TEXT NOT NULL,              -- provides | consumes
+  name TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (repo, path, role, name)
+);
+CREATE INDEX IF NOT EXISTS record_interfaces_name ON record_interfaces(name);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS record_docs_fts USING fts5(
+  key UNINDEXED, title, summary, body, path, tokenize = 'porter unicode61'
+);
 `;
 
 /**
@@ -688,6 +746,19 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // node that caused it. Both NULL on a row written before this release.
   ["traffic", "request_id", "request_id TEXT"],
   ["traffic", "execution_id", "execution_id TEXT"],
+  // Whether an approach was refused, apart from whether the run that tried it
+  // finished: a run stopped by a timeout or a person going home is not a
+  // verdict on its idea, and reading it as one closed good roads.
+  ["memory_decisions", "verdict", "verdict TEXT"],
+  ["memory_decisions", "verdict_reason", "verdict_reason TEXT"],
+  // The team whose run made a decision, when the decision belongs to another:
+  // work in a repository is that repository's team's record, whoever did it.
+  ["memory_decisions", "author_team_id", "author_team_id TEXT"],
+  // The base-branch commit the record index checked the decision's files
+  // against, and how many were gone — a decision about code that no longer
+  // exists is said to be so rather than handed to a planner as current.
+  ["memory_decisions", "checked_commit", "checked_commit TEXT"],
+  ["memory_decisions", "missing_touches", "missing_touches INTEGER NOT NULL DEFAULT 0"],
 ];
 
 let db: SqlDatabase | null = null;

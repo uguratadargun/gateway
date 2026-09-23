@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { BookOpen, Search, Trash2 } from "lucide-react";
+import { BookOpen, FileText, GitBranch, Radio, RefreshCw, Search, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,19 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { DecisionView } from "@/components/decision-view";
 import { TeamPicker, useTeamScope, withTeam } from "@/components/team-picker";
-import type { FeatureCard, FeatureDetail, MemorySearchResult } from "@/memory/cards";
+import type { ActivityCard, DocumentCard, FeatureCard, FeatureDetail, InterfaceCard, MemorySearchResult } from "@/memory/cards";
+
+/** One connected repository's read, as `/api/memory/index` reports it. */
+interface RecordRepo {
+  repo: string;
+  repoId: string | null;
+  teamId: string | null;
+  ref: string | null;
+  commit: string | null;
+  indexedAt: number | null;
+  error: string | null;
+  docs: number;
+}
 
 /**
  * The team's memory, read by a person: what earlier runs decided, by words
@@ -28,6 +40,42 @@ export default function MemoryPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [repos, setRepos] = useState<RecordRepo[]>([]);
+  const [reading, setReading] = useState(false);
+
+  const loadRepos = useCallback(async () => {
+    const r = await fetch("/api/memory/index");
+    const data = await r.json();
+    setRepos(data.repos ?? []);
+  }, []);
+
+  useEffect(() => {
+    void loadRepos().catch(() => {});
+  }, [loadRepos]);
+
+  /** Reads every connected repository's base branch now: git and code, no model. */
+  async function readRepositories() {
+    setReading(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/memory/index", { method: "POST" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "could not read the repositories");
+      setRepos(data.repos ?? []);
+      const outcomes = (data.outcomes ?? []) as Array<{ ok: boolean; read?: number; merged?: number; renamed?: number; stale?: number }>;
+      const sum = (k: "read" | "merged" | "renamed" | "stale") => outcomes.reduce((n, o) => n + (o[k] ?? 0), 0);
+      setNote(
+        `Read ${outcomes.filter((o) => o.ok).length} of ${outcomes.length} repositories: ${sum("read")} document${sum("read") === 1 ? "" : "s"} new or changed, ` +
+          `${sum("merged")} decision${sum("merged") === 1 ? "" : "s"} found merged, ${sum("renamed")} renumbered record${sum("renamed") === 1 ? "" : "s"} followed, ` +
+          `${sum("stale")} describing code that is gone.`,
+      );
+      await loadFeatures();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setReading(false);
+    }
+  }
 
   const loadFeatures = useCallback(async () => {
     const r = await fetch(withTeam("/api/memory/features", team));
@@ -151,7 +199,7 @@ export default function MemoryPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Memory</h1>
           <p className="text-sm text-muted-foreground">
-            What the team&apos;s runs decided — why, how, where, and which commits. Read by the recall node before every plan.
+            What the team&apos;s runs decided and what its repositories say about themselves — why, how, where, which commits, and who is on what right now. Read by the recall node before every plan.
           </p>
         </div>
         <TeamPicker team={team} teams={teams} onChange={setTeam} />
@@ -179,6 +227,15 @@ export default function MemoryPage() {
           <Button variant="ghost" size="sm" onClick={() => void recordEarlierRuns()} title="Queue every finished run of this tree that has no record yet. Each is one model call.">
             Record earlier runs
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={reading}
+            onClick={() => void readRepositories()}
+            title="Read every connected repository's base branch now: design docs, decision records, specs, which work landed. Git and code, no model."
+          >
+            <RefreshCw className={reading ? "animate-spin" : undefined} /> Read repositories
+          </Button>
         </div>
         {note && <p className="text-xs text-muted-foreground">{note}</p>}
         {result && (
@@ -191,6 +248,16 @@ export default function MemoryPage() {
 
       {result && (
         <div className="space-y-3">
+          {(result.inFlight?.length ?? 0) > 0 && <InFlight list={result.inFlight!} />}
+          {(result.documents?.length ?? 0) > 0 && (
+            <Card className="space-y-2 p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">The repositories&apos; own record</div>
+              {result.documents!.map((d) => (
+                <DocumentRow key={`${d.repo}:${d.path}`} doc={d} />
+              ))}
+            </Card>
+          )}
+          {(result.interfaces?.length ?? 0) > 0 && <Interfaces list={result.interfaces!} />}
           {result.features.length > 0 && (
             <Card className="space-y-2 p-4">
               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Features that match</div>
@@ -232,8 +299,18 @@ export default function MemoryPage() {
           </div>
           {detail.feature.aliases.length > 0 && <p className="text-xs text-muted-foreground">also: {detail.feature.aliases.join(", ")}</p>}
           {detail.feature.summary && <p className="text-sm">{detail.feature.summary}</p>}
+          {(detail.documents?.length ?? 0) > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Each repository&apos;s design doc</div>
+              {detail.documents!.map((d) => (
+                <DocumentRow key={`${d.repo}:${d.path}`} doc={d} />
+              ))}
+            </div>
+          )}
           <div className="space-y-2">
-            {detail.implementations.length === 0 && <p className="text-sm text-muted-foreground">No team has recorded an implementation yet.</p>}
+            {detail.implementations.length === 0 && !detail.documents?.length && (
+              <p className="text-sm text-muted-foreground">No team has recorded an implementation yet.</p>
+            )}
             {detail.implementations.map((i) => (
               <div key={i.team} className="rounded-md border p-3 text-sm">
                 <div className="flex items-center gap-2">
@@ -296,11 +373,34 @@ export default function MemoryPage() {
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Catalogue</div>
           {features.length === 0 && (
             <p className="text-sm text-muted-foreground">
-              Empty so far. A feature appears here when a run&apos;s recorder files its decisions under one.
+              Empty so far. A feature appears here when a run&apos;s recorder files its decisions under one, or when a connected
+              repository has a design doc for it.
             </p>
           )}
           {features.map((f) => (
             <FeatureRow key={f.id} feature={f} onOpen={() => void openFeature(f.id)} />
+          ))}
+        </Card>
+      )}
+
+      {!result && !detail && (
+        <Card className="space-y-2 p-4">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Repositories read</div>
+          {repos.length === 0 && <p className="text-sm text-muted-foreground">No repository is connected. Connect one on the Repos page and its record is read here.</p>}
+          {repos.map((r) => (
+            <div key={r.repo} className="flex flex-wrap items-center gap-2 text-sm">
+              <GitBranch className="size-3.5 text-muted-foreground" />
+              <span className="font-medium">{r.repoId ?? r.repo}</span>
+              {r.teamId ? <Badge variant="secondary">{r.teamId}</Badge> : <span className="text-xs text-muted-foreground">no team</span>}
+              {r.commit && (
+                <span className="font-mono text-xs text-muted-foreground">
+                  {r.ref} @ {r.commit.slice(0, 8)}
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground">{r.docs} documents</span>
+              <span className="ml-auto text-xs text-muted-foreground">{r.indexedAt ? `read ${new Date(r.indexedAt).toLocaleString()}` : "not read yet"}</span>
+              {r.error && <span className="w-full text-xs text-destructive">{r.error}</span>}
+            </div>
           ))}
         </Card>
       )}
@@ -322,5 +422,81 @@ function FeatureRow({ feature, onOpen }: { feature: FeatureCard; onOpen: () => v
         {feature.teams.length === 0 && <span className="text-xs text-muted-foreground">nobody yet</span>}
       </span>
     </button>
+  );
+}
+
+/** Runs of other people in the tree going now on work with the same words: first, because everything else here has already ended. */
+function InFlight({ list }: { list: ActivityCard[] }) {
+  return (
+    <Card className="space-y-2 border-amber-500/50 p-4">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
+        <Radio className="size-3.5" /> Running right now elsewhere in the tree
+      </div>
+      {list.map((a) => (
+        <div key={a.executionId} className="rounded-md border p-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">{a.team}</Badge>
+            {a.person && <span>{a.person}</span>}
+            <span className="text-xs text-muted-foreground">
+              {a.workflow} · {a.status} since {a.startedAt.slice(0, 16).replace("T", " ")}
+              {a.repo ? ` · ${a.repo}` : ""}
+            </span>
+            <Link href={`/executions/${a.executionId}`} className="ml-auto font-mono text-xs text-muted-foreground hover:underline">
+              run {a.executionId.slice(0, 8)}
+            </Link>
+          </div>
+          <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{a.task}</p>
+          {a.shared.length > 0 && <p className="mt-1 text-xs text-muted-foreground">in common: {a.shared.join(", ")}</p>}
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+function DocumentRow({ doc: d }: { doc: DocumentCard }) {
+  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind;
+  return (
+    <div className="rounded-md border p-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <FileText className="size-3.5 text-muted-foreground" />
+        <span className="font-medium">{d.title}</span>
+        <span className="text-xs text-muted-foreground">{kind}</span>
+        {d.team && <Badge variant="secondary">{d.team}</Badge>}
+        {d.status && <span className="text-xs text-muted-foreground">{d.status}</span>}
+        <code className="ml-auto text-xs text-muted-foreground">
+          {d.repoId ?? d.repo}:{d.path} @ {d.commit.slice(0, 8)}
+        </code>
+      </div>
+      {d.summary && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{d.summary}</p>}
+      {(d.interfaces?.length ?? 0) > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {d.interfaces!.map((i) => (
+            <code key={`${i.role}:${i.name}`} className="rounded bg-muted px-1 text-[10px]">
+              {i.role} {i.name}
+            </code>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Who provides and who consumes each interface the words named. */
+function Interfaces({ list }: { list: InterfaceCard[] }) {
+  return (
+    <Card className="space-y-1 p-4">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Interfaces between repositories</div>
+      {list.map((i) => (
+        <div key={`${i.repo}:${i.path}:${i.role}:${i.name}`} className="flex flex-wrap items-center gap-2 text-sm">
+          <code>{i.name}</code>
+          <Badge variant={i.role === "provides" ? "success" : "secondary"}>{i.role}</Badge>
+          {i.team && <span>{i.team}</span>}
+          <code className="text-xs text-muted-foreground">
+            {i.repoId ?? i.repo}:{i.path}
+          </code>
+          {i.note && <span className="text-xs text-muted-foreground">{i.note}</span>}
+        </div>
+      ))}
+    </Card>
   );
 }

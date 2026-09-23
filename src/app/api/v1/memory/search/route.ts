@@ -25,12 +25,14 @@ export async function GET(req: Request) {
     asOf: url.searchParams.get("asOf") ?? undefined,
     since: url.searchParams.get("since") ?? undefined,
     limit: url.searchParams.get("limit") ?? undefined,
+    run: url.searchParams.get("run") ?? undefined,
   });
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid memory search", issues: parsed.error.issues }, { status: 400 });
   }
-  const { query, paths, remoteUrl, featureId, asOf, since, limit } = parsed.data;
-  const result = await new LocalMemoryAccess(auth.teamId).search({
+  const { query, paths, remoteUrl, featureId, asOf, since, limit, run } = parsed.data;
+  // Who is asking, for the in-flight list: their own runs are not news to them.
+  const result = await new LocalMemoryAccess(auth.teamId, null, { executionId: run ?? null, userId: auth.userId }).search({
     query,
     paths: paths.length ? paths : undefined,
     // Named here rather than taken from the client, so a repository has one

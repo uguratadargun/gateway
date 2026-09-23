@@ -103,7 +103,7 @@ describe("the recall node", () => {
     // The agent's prompt carries the task, and the memory tools were offered
     // with no workspace at all.
     expect(String(provider.calls[0].messages[0].content)).toContain("Add offline sync to the desktop app");
-    expect(provider.calls[0].tools?.map((t) => t.name)).toEqual(["memory_search", "memory_feature"]);
+    expect(provider.calls[0].tools?.map((t) => t.name)).toEqual(["memory_search", "memory_feature", "memory_history"]);
   });
 
   it("tells the model when memory is out of reach, rather than failing the node", async () => {

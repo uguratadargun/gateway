@@ -13,7 +13,7 @@ import { windowLabel } from "@/lib/account-pool";
 import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 import { pickerRow, type PickerRow } from "@/lib/model-picker";
-import { describeFeature, describeSearch } from "@/memory/cards";
+import { describeActivity, describeFeature, describeHistory, describeSearch } from "@/memory/cards";
 import { parseSince } from "@/runtime/tools/memory-tools";
 import { LINKED_DIRECTORIES } from "@/repos/detect";
 import { checkpointWork, publishBranch } from "@/repos/publish";
@@ -88,6 +88,9 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate memory search [words…] [--path <prefix>]… [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]
                                                 what your team's tree decided before: why, how, where, which commits
   gate memory feature <id> [--json]             one feature: how each team built it, and every decision under it
+  gate memory history [--path <prefix>]… [--since 30d] [--repo <host/owner/name>] [--limit n] [--json]
+                                                what changed there on the base branch: commits, their record, their run
+  gate memory activity [--json]                 what the rest of your team's tree is running right now
   gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
        …or --run <id>                           ask another team what their code does; answered from one commit, with files
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
@@ -1090,15 +1093,42 @@ async function cmdMemory(args: Args): Promise<number> {
     if (one(args.flags.since) && since == null) die(`--since: not a time: ${args.flags.since}`);
     if (one(args.flags["as-of"]) && asOf == null) die(`--as-of: not a time: ${args.flags["as-of"]}`);
     const limit = args.flags.limit ? Number(args.flags.limit) : undefined;
-    const result = await client.memorySearch({
-      query: query || undefined,
-      paths: paths.length ? paths : undefined,
-      featureId,
-      since: since ?? undefined,
-      asOf: asOf ?? undefined,
-      limit: Number.isFinite(limit) ? limit : undefined,
-    });
+    // The checkout this is typed in, when it is one: a path means something
+    // only in its own repository, and its decisions rank first. What is in
+    // flight leaves out this person's own runs, the one driving this session
+    // among them — the key says who is asking.
+    const result = await client.memorySearch(
+      {
+        query: query || undefined,
+        paths: paths.length ? paths : undefined,
+        featureId,
+        since: since ?? undefined,
+        asOf: asOf ?? undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
+      },
+      readRemoteUrl(process.cwd()),
+    );
     console.log(json ? JSON.stringify(result, null, 2) : describeSearch(result));
+    return 0;
+  }
+  if (sub === "history") {
+    const paths = [...many(args.flags.path), ...rest.filter(Boolean)];
+    const since = parseSince(one(args.flags.since));
+    if (one(args.flags.since) && since == null) die(`--since: not a time: ${args.flags.since}`);
+    const repo = one(args.flags.repo);
+    const remote = repo ? null : readRemoteUrl(process.cwd());
+    if (!repo && !remote) die("usage: gate memory history [--path <prefix>]… [--since 30d] [--repo <host/owner/name>] — outside a checkout, name the repository with --repo");
+    const limit = args.flags.limit ? Number(args.flags.limit) : undefined;
+    const result = await client.memoryHistory(
+      { paths, since: since ?? undefined, repoId: repo ?? null, limit: Number.isFinite(limit) ? limit : undefined },
+      remote,
+    );
+    console.log(json ? JSON.stringify(result, null, 2) : describeHistory(result));
+    return result.unavailable ? 1 : 0;
+  }
+  if (sub === "activity") {
+    const activity = await client.memoryActivity();
+    console.log(json ? JSON.stringify(activity, null, 2) : describeActivity(activity));
     return 0;
   }
   if (sub === "feature") {
@@ -1112,7 +1142,7 @@ async function cmdMemory(args: Args): Promise<number> {
     console.log(json ? JSON.stringify(detail, null, 2) : describeFeature(detail));
     return 0;
   }
-  die("usage: gate memory search <words…> | gate memory feature <id>");
+  die("usage: gate memory search <words…> | gate memory feature <id> | gate memory history --path <prefix> | gate memory activity");
 }
 
 /** How long `gate teach` waits to show what the recorder wrote. */

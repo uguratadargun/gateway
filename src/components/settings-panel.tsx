@@ -21,7 +21,14 @@ interface Settings {
   concurrency: { maxInFlight: number; queueTimeoutMs: number };
   throttle: { enabled: boolean; blockAt: number };
   retry: { maxRetries: number; maxRateLimitWaitMs: number };
-  memory: { enabled: boolean; model: string; embeddings: { provider: string; model: string }; consolidateEvery: number };
+  memory: {
+    enabled: boolean;
+    model: string;
+    embeddings: { provider: string; model: string };
+    consolidateEvery: number;
+    indexEveryMinutes: number;
+    recordMerges: boolean;
+  };
   plugin: { source: string };
 }
 
@@ -32,6 +39,8 @@ function memoryOf(s: Settings): Settings["memory"] {
     model: s.memory?.model ?? "sonnet",
     embeddings: { provider: s.memory?.embeddings?.provider ?? "", model: s.memory?.embeddings?.model ?? "" },
     consolidateEvery: s.memory?.consolidateEvery ?? 5,
+    indexEveryMinutes: s.memory?.indexEveryMinutes ?? 15,
+    recordMerges: s.memory?.recordMerges ?? false,
   };
 }
 
@@ -376,6 +385,32 @@ export function SettingsPanel() {
                 className="w-24"
                 value={s.memory?.consolidateEvery ?? 5}
                 onChange={(e) => setS({ ...s, memory: { ...memoryOf(s), consolidateEvery: Number(e.target.value) } })}
+              />
+            </Row>
+          </div>
+          <div className="pt-2">
+            <Row>
+              <Head
+                label="Read repositories every"
+                hint="Minutes between reads of every connected repository's base branch: its design docs, decision records and specs, which merges landed, and which recorded decisions describe files that are gone. Code, not a model. 0 leaves it to the button on Memory."
+              />
+              <Input
+                type="number"
+                className="w-24"
+                value={s.memory?.indexEveryMinutes ?? 15}
+                onChange={(e) => setS({ ...s, memory: { ...memoryOf(s), indexEveryMinutes: Number(e.target.value) } })}
+              />
+            </Row>
+          </div>
+          <div className="pt-2">
+            <Row>
+              <Head
+                label="Record merges made without gate"
+                hint="A merge on a base branch that no gate run made is recorded the way a run is — one model call per merge. Off, the repository's documents are still read for nothing."
+              />
+              <Switch
+                checked={s.memory?.recordMerges ?? false}
+                onCheckedChange={(v) => setS({ ...s, memory: { ...memoryOf(s), recordMerges: v } })}
               />
             </Row>
           </div>

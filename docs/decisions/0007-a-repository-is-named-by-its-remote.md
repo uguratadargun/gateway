@@ -1,6 +1,6 @@
 # 0007. A repository is named by its remote, and unknown is never guessed
 
-Status: accepted
+Status: superseded by 0037
 Date: 2026-09-16
 Run: faf3bfe (the identity) / 7abbb8c (the chain it travels)
 

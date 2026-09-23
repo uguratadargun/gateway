@@ -55,6 +55,28 @@ if (!g.__gateDaemon) {
     })
     .catch((e) => console.error("[gate] could not read repo identities:", e));
 
+  // The record index: every connected repository's base branch, read on the
+  // interval Settings names (memory.indexEveryMinutes), checked once a minute
+  // so a changed interval takes effect without a restart. Code and git only;
+  // its cost is a fetch per repository.
+  const recordTick = async () => {
+    try {
+      const minutes = loadSettings().memory.indexEveryMinutes;
+      if (!minutes) return;
+      const m = await import("@/memory/record-index");
+      if (!m.recordIndexDue(minutes * 60_000)) return;
+      const outcomes = await m.indexAllRepos();
+      const failed = outcomes.filter((o) => !o.ok);
+      for (const f of failed) console.error(`[gate] record index — ${f.repo}: ${f.error}`);
+      // What was just read gets its vectors when there is a model to make them.
+      await (await import("@/memory/hybrid")).embedMissing().catch(() => 0);
+    } catch (e) {
+      console.error("[gate] record index:", e);
+    }
+  };
+  setInterval(recordTick, 60_000).unref?.();
+  setTimeout(recordTick, 30_000).unref?.();
+
   // The Telegram bot, when a token is configured: people's questions,
   // approvals and new runs from their own chat. Loaded lazily so a gate
   // without one never pulls the remote-session code in at startup.

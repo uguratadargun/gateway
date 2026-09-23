@@ -79,10 +79,14 @@ rather than the whole run's. The plan file stays under `docs/plans/`, ignored by
 `.gitignore` of `*`; its reasoning travels in the implementer's summary,
 the commit's body, and the plan itself, as finished, is copied by the
 implementer to `docs/specs/` as the run's last commit. Between the verifier
-and the diff, the `record` command node checks that the spec is there —
-the one fact about the repository's record that needs no model to judge —
-and sends the implementer back with what to write when it is not, three
-times, before the run ends on `no-spec`. The plan's `## Documentation`
+and the diff, the `record` command node checks the two facts about the
+repository's record that need no model to judge: that the spec is there,
+and that no decision record this branch added uses a number the remote's
+base branch already holds for another record. It fetches that branch to
+check, and skips the number check when the remote cannot be reached. When
+either check fails it sends the implementer back with what to write or
+what to renumber, three times, before the run ends on `no-spec`
+([0040](../decisions/0040-a-decision-number-is-checked-against-the-remote.md)). The plan's `## Documentation`
 section names the design doc and the decision record the change has to
 leave true under `docs/design/` and `docs/decisions/`; the implementer
 writes them as the plan's last task, and the verifier and reviewer hold
@@ -395,6 +399,7 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Decisions
 
+- [0040 — A decision number is checked against the remote before the branch is offered](../decisions/0040-a-decision-number-is-checked-against-the-remote.md)
 - [0032 — The autonomous road can stop at the commit](../decisions/0032-the-autonomous-road-can-stop-at-the-commit.md)
 - [0031 — A prompt carries what is new, not what was already read](../decisions/0031-a-prompt-carries-what-is-new-not-what-was-already-read.md)
 - [0025 — The autonomous road answers the planner's questions itself](../decisions/0025-the-autonomous-road-answers-the-planners-questions-itself.md)

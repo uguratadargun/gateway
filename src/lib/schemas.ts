@@ -68,6 +68,8 @@ export const settingsPatchSchema = z
         model: z.string().min(1).max(100),
         embeddings: z.object({ provider: z.string().max(100), model: z.string().max(100) }).partial(),
         consolidateEvery: z.number().int().min(0).max(1000),
+        indexEveryMinutes: z.number().int().min(0).max(1440),
+        recordMerges: z.boolean(),
       })
       .partial(),
     traffic: z.object({ maxRows: z.number().int().min(100).max(1_000_000) }).partial(),

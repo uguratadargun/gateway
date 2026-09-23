@@ -80,6 +80,7 @@ describe("tool registry", () => {
       "edit_file",
       "list_files",
       "memory_feature",
+      "memory_history",
       "memory_search",
       "read_file",
       "run_command",
@@ -90,7 +91,11 @@ describe("tool registry", () => {
     // No workspace, no file tools — the same agent file still runs, in prose
     // mode. The memory tools need no worktree and stay.
     expect(toolsFor(["read_file"], false)).toEqual([]);
-    expect(toolsFor(["read_file", "memory_search", "memory_feature"], false).map((t) => t.name)).toEqual(["memory_search", "memory_feature"]);
+    expect(toolsFor(["read_file", "memory_search", "memory_feature", "memory_history"], false).map((t) => t.name)).toEqual([
+      "memory_search",
+      "memory_feature",
+      "memory_history",
+    ]);
   });
 });
 

@@ -92,6 +92,20 @@ export interface GateSettings {
      * the automatic pass off; the button on the feature stays.
      */
     consolidateEvery: number;
+    /**
+     * How often, in minutes, the record index reads every connected
+     * repository's base branch — its design docs, decision records, specs and
+     * the commits that name them — and checks recorded decisions against it.
+     * Code, not a model: it costs a fetch. 0 leaves it to the button.
+     */
+    indexEveryMinutes: number;
+    /**
+     * Record merges on a base branch that no gate run made, the way a run is
+     * recorded — one model call per merge. Off by default: the index already
+     * reads those merges' documents for nothing, and a model call per merge is
+     * a cost somebody should choose.
+     */
+    recordMerges: boolean;
   };
   /**
    * How many served exchanges the local traffic log keeps. This is a promise
@@ -140,7 +154,7 @@ export const DEFAULT_SETTINGS: GateSettings = {
   concurrency: { maxInFlight: 4, queueTimeoutMs: 60_000 },
   throttle: { enabled: true, blockAt: 0.98 },
   retry: { maxRetries: 2, maxRateLimitWaitMs: 5_000 },
-  memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5 },
+  memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5, indexEveryMinutes: 15, recordMerges: false },
   traffic: { maxRows: 5_000 },
   // fill-first keeps one account warm — its prompt cache stays hot and the
   // others stay untouched until it runs out of window.
@@ -222,6 +236,8 @@ function mergeSettings(base: GateSettings, patch: SettingsPatch): GateSettings {
         model: (patch.memory?.embeddings?.model ?? base.memory.embeddings.model).trim(),
       },
       consolidateEvery: Math.max(0, Math.floor(patch.memory?.consolidateEvery ?? base.memory.consolidateEvery)),
+      indexEveryMinutes: Math.max(0, Math.floor(patch.memory?.indexEveryMinutes ?? base.memory.indexEveryMinutes)),
+      recordMerges: patch.memory?.recordMerges ?? base.memory.recordMerges,
     },
     // A hand-edited 0 or negative value cannot turn the log into a single row
     // or an unbounded one.
