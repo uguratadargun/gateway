@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.47.0 — 2026-09-24
+
 - Every model call a run makes is now the person's own Claude Code, on their own login. gate holds no Claude account and serves no models: the account pool, the Claude login on the dashboard, the gateway (`/api/gateway`, the OpenAI dialect, Cursor and other clients), model routing and tiers, the response cache, compression, the limiter, the budget, the traffic and usage logs (`/traffic`, `/analytics`, `/sessions`), the quota windows, the playground and the client pages are removed. `gate usage`, `gate live` and `gate env` are removed; your own `/usage` in Claude Code shows your plan again. The first session after updating the plugin takes gate's old gateway settings out of Claude Code's settings and asks you to restart Claude Code once.
 
 - Runs happen only from your own Claude Code session with `/gate:run`. Starting or continuing a run from the dashboard, remote sessions, the Telegram bot, headless `gate run`, and the detached worker followed with `gate wait` are removed. A node in its own model is always a subagent of your session, drawn live in the terminal. The dashboard shows the command that restarts or continues a run, on the machine it ran on.
