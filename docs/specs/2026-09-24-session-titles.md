@@ -24,11 +24,14 @@ title to one line.
 ## What counted as done
 
 - The title is the prompt: `<session>` unwrapped and its instructions dropped,
-  `<system-reminder>` blocks removed, the classifier's request naming nothing.
+  `<system-reminder>`, `<ide_…>` and `<local-command-…>` blocks removed, a
+  slash command read as `/name args`, the classifier's requests (CLAUDE.md or
+  `<transcript>` first) naming nothing.
   Up to 2000 characters. The session id is computed as before.
 - Titles already stored are read once through the same function; those with
   no prompt in them become NULL and the session's next request fills them.
 - `/sessions` shows two lines per session and the whole prompt when opened.
 - `tests/session-title.test.ts` covers the three request shapes, the length
   and the stored titles; the migration was run against a copy of the live
-  database.
+  database, and every title on the VPS was read through the final version
+  before it was deployed: none of 190 still starts with a tag.

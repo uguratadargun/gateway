@@ -43,8 +43,9 @@ first user message, so that cost can be grouped per session on `/sessions`.
 The first request of a session that carries a prompt names it: the title is
 what the user typed, read out of the first user message — the prompt inside
 Claude Code's `<session>…</session>` title request, or the message with its
-`<system-reminder>` blocks removed — up to 2000 characters. The auto-mode
-permission classifier, which opens with the user's CLAUDE.md, names nothing.
+`<system-reminder>` and IDE `<ide_…>` blocks removed, a slash command as
+`/name args` — up to 2000 characters. The auto-mode permission classifier,
+which opens with the user's CLAUDE.md or a `<transcript>`, names nothing.
 
 **Compression.** With `compression.enabled` (off by default), oversized text
 blocks are trimmed to `maxBlockChars` (20 000) and exact-duplicate adjacent
