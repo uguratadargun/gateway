@@ -85,9 +85,11 @@ export default function SessionsPage() {
         <div className="space-y-2">
           {sessions.map((s) => (
             <Card key={s.id} className="overflow-hidden">
-              <button className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-muted/40" onClick={() => toggle(s.id)}>
+              <button className="flex w-full items-start gap-3 px-4 py-3 text-left text-sm hover:bg-muted/40" onClick={() => toggle(s.id)}>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{s.title ?? <span className="text-muted-foreground">(untitled)</span>}</div>
+                  <div className={`${open === s.id ? "whitespace-pre-wrap" : "line-clamp-2"} break-words font-medium`}>
+                    {s.title ?? <span className="text-muted-foreground">(untitled)</span>}
+                  </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span>{new Date(s.lastTs).toLocaleString()}</span>
                     <span>·</span>

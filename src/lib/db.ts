@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { sessionTitle } from "./session-title";
+
 /**
  * SQLite persistence via Node's built-in `node:sqlite`. Loaded through
  * process.getBuiltinModule so the bundler leaves it alone and no native
@@ -803,9 +805,28 @@ export function getDb(): SqlDatabase {
     "CREATE INDEX IF NOT EXISTS workflow_execution_steps_execution_started ON workflow_execution_steps(execution_id, started_at)",
   );
   ensureFtsTokenizer(d);
+  retitleSessions(d);
   db = d;
   importLegacyFiles(d);
   return d;
+}
+
+/**
+ * Sessions named before the title was the user's prompt hold whatever request
+ * came first, cut at 80 characters. Once, the stored titles go through the
+ * same reading; what has no prompt in it becomes NULL, which the session's
+ * next request fills.
+ */
+function retitleSessions(d: SqlDatabase): void {
+  const flag = "sessions_retitled";
+  if (d.prepare("SELECT 1 FROM kv WHERE key = ?").get(flag)) return;
+  const rows = d.prepare("SELECT id, title FROM sessions WHERE title IS NOT NULL").all() as Array<{ id: string; title: string }>;
+  const upd = d.prepare("UPDATE sessions SET title = ? WHERE id = ?");
+  for (const r of rows) {
+    const t = sessionTitle(r.title);
+    if (t !== r.title) upd.run(t, r.id);
+  }
+  d.prepare("INSERT INTO kv (key, value) VALUES (?, '1')").run(flag);
 }
 
 export function kvGet(key: string): string | null {

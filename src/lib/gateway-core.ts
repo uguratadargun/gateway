@@ -42,6 +42,7 @@ import { applyPromptCaching } from "./prompt-cache";
 import { currentUtilization, readRateLimit, recordRateLimit } from "./ratelimit";
 import { applyReasoning, sanitizeForModel } from "./reasoning";
 import { loadRoutingConfig, routeModel, UnresolvedModelError, type RouteResult } from "./router";
+import { sessionTitle } from "./session-title";
 import { loadSettings, type Tier } from "./settings";
 import { forceRefreshFor, getValidCredentialsFor } from "./token-manager";
 import { recordTraffic, truncatePreview } from "./traffic";
@@ -105,7 +106,7 @@ export function sessionFromRequest(headers: Headers, body: Record<string, unknow
   const messages = Array.isArray(body.messages) ? (body.messages as Array<Record<string, unknown>>) : [];
   const firstUser = messages.find((m) => m.role === "user");
   const firstText = textOf(firstUser?.content).trim();
-  const title = firstText ? firstText.slice(0, 80) : null;
+  const title = sessionTitle(firstText);
 
   const sys = textOf(body.system).slice(0, 4000);
 

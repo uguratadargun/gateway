@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `/sessions` shows what the user asked. A session was named after whichever Claude Code request came first — often the permission classifier's CLAUDE.md preamble or a `<system-reminder>` — cut at 80 characters and to one line. The title is now the prompt itself, up to 2000 characters, two lines in the list and whole when the session is opened; titles stored the old way are read again once, and those with no prompt in them are left for the session's next request to fill.
+
 - `gate ask` reads a repository that has no publication remote from its `origin`, so every connected repository can be asked about. Before this it answered `"<repo>" does not publish, so nothing in it can be read from here`, even for a base branch that the record index was already reading. The publication remote is still what lets gate push run branches, and asking about a run still needs that run to have been published.
 
 - The `search_files` tool finds what is there in a large repository. It used to stop after the first 500 entries in alphabetical order, so in ulak-desktop a search from the root never reached `ts/` or `js/`, and a path naming a single file always came back `(no matches)`. It now searches the one file a path names, walks the whole tree until it has 100 matches, and says when a limit hid something: the match cap, the file cap, or a file too large to read. `gate ask` answers are the ones this changes most, because a reviewer that could not find a name reported the feature as absent.

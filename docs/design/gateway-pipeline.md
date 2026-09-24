@@ -40,6 +40,11 @@ traffic log names whoever made the call.
 **Session.** The conversation is identified from `x-gate-session` or
 `x-claude-code-session-id`, or from a fingerprint of the system prompt and
 first user message, so that cost can be grouped per session on `/sessions`.
+The first request of a session that carries a prompt names it: the title is
+what the user typed, read out of the first user message — the prompt inside
+Claude Code's `<session>…</session>` title request, or the message with its
+`<system-reminder>` blocks removed — up to 2000 characters. The auto-mode
+permission classifier, which opens with the user's CLAUDE.md, names nothing.
 
 **Compression.** With `compression.enabled` (off by default), oversized text
 blocks are trimmed to `maxBlockChars` (20 000) and exact-duplicate adjacent
@@ -152,6 +157,7 @@ request ─ auth ─ session ─ compress ─ resolve ─ account+throttle ─ p
 - `src/lib/limiter.ts` — the process-wide semaphore with FIFO queue and timeout
 - `src/lib/ratelimit.ts` — the global rate-limit snapshot, history and time-to-limit forecast
 - `src/lib/usage.ts` — usage events, session routes, spend aggregation
+- `src/lib/session-title.ts` — the prompt out of a first user message, the session's title
 - `src/lib/pricing.ts` — list prices, cache multipliers, savings vs. Opus
 - `src/lib/traffic.ts` — the local request/response log
 - `src/lib/activity.ts` — the SSE activity feed
@@ -170,6 +176,7 @@ request ─ auth ─ session ─ compress ─ resolve ─ account+throttle ─ p
 - Compression is lossy by design (blocks are trimmed) and off by default. Turning it on changes prompts and therefore prompt-cache hits.
 - The traffic log holds served exchanges, not every call. A response-cache hit, a refusal (400, 401, 402, 429, 503) and the proxied `/v1/models`, `count_tokens` and `batches/*` write no row at all, so counting callers there under-counts them — the throttle's 429s, the ones a question about quota is usually about, are exactly what is missing. `from_cache` is written false for the same reason. A row that is written, though, is a trace: its request id and the run it carries reach back to the execution and the node that caused it, not only to the caller and the account that answered.
 - A traffic row is best-effort: the insert swallows its errors so a log line can never fail a served request, which also means a missing row is silent.
+- Claude Code files its title request, its permission classifier and the conversation under one session id, and a session's title is fixed by the first of them that has a prompt. A new kind of side request that wraps the prompt differently will name sessions with its own wrapper until `session-title.ts` learns it.
 - A run's token lives in the process that minted it and in no other. A second gate process cannot resolve it, and a restart invalidates every token in flight — which is the design, since a run does not survive its process either.
 
 ## Decisions
