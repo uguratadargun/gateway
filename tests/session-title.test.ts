@@ -51,6 +51,9 @@ describe("the session title is the user's prompt", () => {
     expect(sessionTitle("<session>\nsuanda gate'e baglanan client usage komutunu kaldirinca ne kadar usage")).toBe(
       "suanda gate'e baglanan client usage komutunu kaldirinca ne kadar usage",
     );
+    expect(sessionTitle("<session>\njira nın yaptığı işi yapacak sıfırdan bir proje yazmak istiyorum\n</ses")).toBe(
+      "jira nın yaptığı işi yapacak sıfırdan bir proje yazmak istiyorum",
+    );
     expect(sessionTitle("<system-reminder>\nCodebase and user instructions are shown below. Be sure to adh")).toBeNull();
   });
 });

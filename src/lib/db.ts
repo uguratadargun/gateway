@@ -818,7 +818,8 @@ export function getDb(): SqlDatabase {
  * next request fills.
  */
 function retitleSessions(d: SqlDatabase): void {
-  const flag = "sessions_retitled";
+  // Renamed when the reading improves, so titles read by an earlier one are read again.
+  const flag = "sessions_retitled_2";
   if (d.prepare("SELECT 1 FROM kv WHERE key = ?").get(flag)) return;
   const rows = d.prepare("SELECT id, title FROM sessions WHERE title IS NOT NULL").all() as Array<{ id: string; title: string }>;
   const upd = d.prepare("UPDATE sessions SET title = ? WHERE id = ?");

@@ -14,7 +14,8 @@ const CLASSIFIER_PREFIX = "The following is the user's CLAUDE.md";
 
 export function sessionTitle(firstText: string): string | null {
   let t = firstText.trim();
-  const wrapped = /^<session>\s*([\s\S]*?)\s*(?:<\/session>|$)/.exec(t);
+  // A stored title cut short can end inside the closing tag: `…\n</ses`.
+  const wrapped = /^<session>\s*([\s\S]*?)\s*(?:<\/session>|<\/?[\w-]*$|$)/.exec(t);
   if (wrapped) t = wrapped[1];
   if (t.startsWith(CLASSIFIER_PREFIX)) return null;
   // An unclosed reminder is a stored title cut mid-block: nothing after it is the prompt.
