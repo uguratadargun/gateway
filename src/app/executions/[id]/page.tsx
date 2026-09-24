@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Clock, GitBranch, Gauge, Maximize2, Play, Radio, RotateCcw, RefreshCw, Square, Wrench } from "lucide-react";
+import { useParams } from "next/navigation";
+import { ArrowLeft, Clock, GitBranch, Gauge, Maximize2, Radio, RefreshCw, Square, Wrench } from "lucide-react";
 
 import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } from "@/components/workflow-graph";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +18,6 @@ import { stripAnsi } from "@/lib/utils";
 import { takenLinks, type RoutingLink } from "@/workflows/routing";
 import type { WorkflowEvent } from "@/events/types";
 import { stepFailure } from "@/executions/failure";
-import { formatPoints, quotaShare } from "@/executions/quota";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
 import { TEACH_WORKFLOW_ID } from "@/memory/types";
 
@@ -51,10 +50,7 @@ function describeInput(input: Record<string, unknown>): string | null {
 
 export default function ExecutionDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [starting, setStarting] = useState<"restart" | "continue" | null>(null);
-  const [startError, setStartError] = useState<string | null>(null);
   const [live, setLive] = useState<Record<string, NodeStatus>>({});
   const [liveEdges, setLiveEdges] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
@@ -99,40 +95,6 @@ export default function ExecutionDetailPage() {
   }, [load]);
 
   const running = detail?.execution.status === "running";
-
-  // Restart begins the same workflow fresh (a new worktree from HEAD); Continue
-  // reuses this run's worktree and picks up at the node it stopped on. Both
-  // just ask the server which node id to go look at next.
-  async function restart() {
-    if (!detail?.execution) return;
-    setStarting("restart");
-    setStartError(null);
-    const r = await fetch("/api/executions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workflowId: detail.execution.workflowId, input: detail.execution.input }),
-    });
-    const data = await r.json();
-    setStarting(null);
-    if (!r.ok) {
-      setStartError(data.error ?? "could not restart");
-      return;
-    }
-    router.push(`/executions/${data.executionId}`);
-  }
-
-  async function continueRun() {
-    setStarting("continue");
-    setStartError(null);
-    const r = await fetch(`/api/executions/${id}/resume`, { method: "POST" });
-    const data = await r.json();
-    setStarting(null);
-    if (!r.ok) {
-      setStartError(data.error ?? "could not continue");
-      return;
-    }
-    router.push(`/executions/${data.executionId}`);
-  }
 
   // Asking is all this does: the engine stops at its next check and settles the
   // run itself, so the page keeps streaming until the status actually changes.
@@ -318,35 +280,20 @@ export default function ExecutionDetailPage() {
               <Square /> {stopping ? "Stopping…" : "Stop"}
             </Button>
           )}
-          {/* A run that happened on someone's machine can only be restarted or
+          {/* Every run happens on someone's own machine, so it is restarted or
               continued there: the worktree it would reuse is on that disk. The
-              buttons are replaced by the command that does it, rather than
-              offered and then refused. */}
-          {ex && !running && ex.origin === "local" && (
+              command that does it is shown instead of a button. */}
+          {ex && !running && (
             <code
               className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground"
               title={`this run worked on ${ex.client?.host ?? "another machine"}`}
             >
               {ex.workflowId === TEACH_WORKFLOW_ID
                 ? `gate teach — ${ex.workspace?.branch ?? "its branch"}, on ${ex.client?.host ?? "that machine"}`
-                : `gate run ${ex.workflowId} — on ${ex.client?.host ?? "that machine"}`}
+                : ex.status === "failed" && ex.driver === "session"
+                  ? `gate continue ${ex.id} — on ${ex.client?.host ?? "that machine"}`
+                  : `/gate:run ${ex.workflowId} — on ${ex.client?.host ?? "that machine"}`}
             </code>
-          )}
-          {ex && !running && ex.origin !== "local" && (
-            <>
-              <Button variant="outline" size="sm" onClick={restart} disabled={starting !== null}>
-                <RotateCcw /> {starting === "restart" ? "Starting…" : "Restart"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={continueRun}
-                disabled={starting !== null}
-                title="Continues in the same worktree, at the node this run stopped on"
-              >
-                <Play /> {starting === "continue" ? "Starting…" : "Continue"}
-              </Button>
-            </>
           )}
           {elapsed !== null && (
             <span
@@ -365,7 +312,6 @@ export default function ExecutionDetailPage() {
         </div>
       </header>
 
-      {startError && <p className="text-sm text-destructive">{startError}</p>}
 
       {ex?.error && <WhyItStopped error={ex.error} steps={steps} />}
 
@@ -627,12 +573,11 @@ function fmtTokens(n: number): string {
 }
 
 /**
- * What this run alone consumed. The token and cost figures are its own steps
- * summed; the window shares are attributed by cost, which is an estimate and
- * says so — the API never reports what a single run moved a window by.
+ * What this run alone consumed, as its own steps recorded it. A node the
+ * person's session or its subagent did is on their own Claude plan and is not
+ * in this sum.
  */
 function QuotaCard({ quota }: { quota: NonNullable<ExecutionRecord["quota"]> }) {
-  const share = quotaShare(quota);
   const { input, output, cacheRead } = quota.tokens;
   const total = input + output + cacheRead;
   if (total === 0) return null;
@@ -649,33 +594,9 @@ function QuotaCard({ quota }: { quota: NonNullable<ExecutionRecord["quota"]> }) 
         </span>
         <span className="ml-auto font-mono">${quota.costUsd.toFixed(3)}</span>
       </div>
-
-      {share && (share.fiveHour != null || share.weekly != null) && (
-        <div className="space-y-0.5 border-t pt-2">
-          {share.fiveHour != null && (
-            <WindowLine label="5-hour window" points={share.fiveHour} atPct={share.at5hPct} />
-          )}
-          {share.weekly != null && <WindowLine label="Weekly window" points={share.weekly} atPct={share.at7dPct} />}
-          <p className="pt-1 text-[10px] text-muted-foreground">
-            Estimated: the API reports where a window stands, never what one run moved it by, so this run&apos;s slice
-            is its share of the cost of everything the gateway sent inside that window.
-          </p>
-        </div>
-      )}
     </Card>
   );
 }
-
-function WindowLine({ label, points, atPct }: { label: string; points: number; atPct: number | null }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-28 text-muted-foreground">{label}</span>
-      <span className="font-mono">≈ {formatPoints(points)}</span>
-      {atPct != null && <span className="text-muted-foreground">· window now at {atPct.toFixed(1)}%</span>}
-    </div>
-  );
-}
-
 
 /**
  * The end of the run, said in one place.

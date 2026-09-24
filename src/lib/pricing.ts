@@ -1,7 +1,7 @@
 /**
  * Anthropic list pricing per 1M tokens (USD), September 2026:
  * platform.claude.com/docs/en/about-claude/pricing. On a subscription the real
- * cost is flat; these give an API-equivalent proxy and drive "savings".
+ * cost is flat; these give an API-equivalent figure for a run's recorded steps.
  */
 export type Tier = "haiku" | "sonnet" | "opus" | "fable";
 
@@ -18,12 +18,6 @@ export function tierOf(model: string): Tier {
   if (m.includes("fable") || m.includes("mythos")) return "fable";
   if (m.includes("opus")) return "opus";
   return "sonnet";
-}
-
-/** Cost in USD for a given tier and token counts (no cache). */
-export function costFor(tier: Tier, inputTokens: number, outputTokens: number): number {
-  const p = PRICE_PER_MTOK[tier];
-  return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
 }
 
 export interface TokenUsage {
@@ -60,9 +54,11 @@ export function costForUsage(tier: Tier, u: TokenUsage, opts: CostOptions = {}):
 }
 
 /**
- * Savings vs. serving everything on Opus: the difference between what the
- * same tokens would cost on Opus and what the routed tier actually cost.
+ * What a model call would cost at Anthropic's list price, or 0 for a provider
+ * model: a vLLM on the gate's own machine is on nobody's Anthropic bill, and
+ * pricing it as Sonnet would put a figure on the ledger nobody paid.
  */
-export function savingsVsOpus(tier: Tier, inputTokens: number, outputTokens: number): number {
-  return costFor("opus", inputTokens, outputTokens) - costFor(tier, inputTokens, outputTokens);
+export function apiEquivalentCost(model: string, u: TokenUsage): number {
+  if (/^(provider|local):/.test(model)) return 0;
+  return costForUsage(tierOf(model), u, { model });
 }

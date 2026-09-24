@@ -15,7 +15,6 @@ const patchSchema = z
     name: z.string().min(1).max(80).optional(),
     baseRef: z.string().max(200).nullable().optional(),
     setup: argv.optional(),
-    prepare: argv.optional(),
     teamId: z.string().min(1).max(64).nullable().optional(),
     /** Null turns publishing off for this repository. */
     publicationRemote: z.string().max(500).nullable().optional(),

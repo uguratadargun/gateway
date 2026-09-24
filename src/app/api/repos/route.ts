@@ -25,7 +25,6 @@ const connectSchema = z
     name: z.string().min(1).max(80).optional(),
     baseRef: z.string().max(200).optional(),
     setup: argv.optional(),
-    prepare: argv.optional(),
     /** Whose repository this is. Left unset when nobody has said. */
     teamId: z.string().min(1).max(64).optional(),
     /**
@@ -80,7 +79,6 @@ export async function POST(req: Request) {
       // the only part of that another machine can use.
       remoteUrl,
       setup: body.setup ?? commands.setup,
-      prepare: body.prepare ?? commands.prepare,
       teamId: body.teamId ?? null,
       publicationRemote: body.publicationRemote?.trim() || null,
       branchPolicy: body.branchPolicy?.trim() || null,

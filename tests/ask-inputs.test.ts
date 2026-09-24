@@ -9,17 +9,19 @@ const agent = (id: string) => parseAgent(id, DEFAULT_AGENTS[id], { sourcePath: `
 const ask = () => parseWorkflow("ask", DEFAULT_WORKFLOWS.ask, { sourcePath: "ask.yaml", updatedAt: 0, agentExists: () => true });
 
 describe("the shipped ask pipeline", () => {
-  it("asks for exactly what the route sends", () => {
+  it("asks for exactly what `gate ask` sends", () => {
     const required = requiredRunInputs(ask(), agent);
-    expect(required).toEqual(["commit", "memory", "question", "repo"]);
+    expect(required).toEqual(["ask", "commit", "memory", "question", "ref", "source"]);
     expect(
-      missingRunInputs(required, { question: "q", repo: "/r", commit: "abc1234", memory: "none", baseRef: "abc1234" }),
+      missingRunInputs(required, { question: "q", source: "github.com/a/b", ref: "main", commit: "abc1234", ask: "a1", memory: "none" }),
     ).toEqual([]);
   });
 
-  it("cannot write or run anything", () => {
-    const tools = agent("source-review").tools;
-    for (const forbidden of ["write_file", "edit_file", "run_command"]) expect(tools).not.toContain(forbidden);
-    expect(tools).toContain("read_file");
+  it("cannot write or run anything, and reads the source only through the gate", () => {
+    const reviewer = agent("source-review");
+    for (const forbidden of ["write_file", "edit_file", "run_command", "read_file", "list_files", "search_files"]) {
+      expect(reviewer.tools).not.toContain(forbidden);
+    }
+    expect(reviewer.prompt).toContain("gate source tree {{input.ask}}");
   });
 });

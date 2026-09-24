@@ -6,8 +6,10 @@
 already knows, plans, has the person approve the plan, writes the code,
 tests it, reviews it, lets the person try it, and opens a merge request.
 Every run works on its own branch, never on the code the person is working
-on, in the person's own Claude Code session on their machine, with every
-model call through the gate, which holds the definitions and the history.
+on, in the person's own Claude Code session on their machine, and every
+model call it makes is that person's own Claude Code on their own login. The
+gate holds the definitions, the history and the memory; it holds no Claude
+login and serves no models.
 
 ## How it works
 
@@ -63,7 +65,7 @@ Two such rounds are allowed; a record still wrong after them ends on
 Before the plan is shown, the planner may report that another team's
 decision cannot be lived with here; the objection is put to the person
 and, if confirmed, the run stops at `blocked-by-objection` (see
-`memory.md`). There are no engine ceilings: loops end on the workflow's
+`memory.md`). There are no run ceilings: loops end on the workflow's
 own give-up edges — `review-stuck`, `record-wrong`, `not-verified`,
 `no-spec`, `not-shipped`, `nothing-changed` — which say what is stuck. The
 review loop's give-up edge is written three times over, because it means
@@ -153,8 +155,11 @@ decisions that touched the area, the investigator reads the code and the
 history against that and says how sure it is — *related*, *suspected*,
 *confirmed*, *verified* — and the run ends with a report, a tried fix left
 uncommitted in the worktree. **`ask`** is the road `gate ask` takes when
-memory cannot answer: another team's source read at one fixed commit by a
-single agent with no writing tools and no command tool.
+memory cannot answer: another team's source read at one fixed commit, by
+the asker's own session, through the read-only `gate source tree`, `gate
+source grep` and `gate source file` views the gate serves. It has no
+workspace, and nothing of the other team's repository lands on the asker's
+disk.
 
 ### Installing and connecting
 
@@ -165,23 +170,31 @@ there (`/plugin marketplace add git@gitlab.example.com:group/gateway.git`);
 the marketplace keeps its name, and the Settings page's **Marketplace
 source** (or `GATE_PLUGIN_SOURCE`) is what the `/team` page hands out. The
 token carries the gate's address and the person's key; it is written to
-`~/.gate/client.json` (0600) and the team's definitions are pulled on the
-spot. In a terminal the same is `gate login <token>`; `gate install` writes
-a `gate` shim into `~/.local/bin`, which the slash commands do not need —
-they call the bundled script (`plugins/gate/scripts/gate.mjs`, built by
-`npm run build:cli`) through `${CLAUDE_PLUGIN_ROOT}`.
+`~/.gate/client.json` (0600), the team's definitions are pulled on the spot,
+and the team's agents are written as subagents under `~/.claude/agents/`.
+Logging in leaves Claude Code on the person's own login: it touches Claude
+Code's settings only to take out gateway wiring an older gate put there. In
+a terminal the same is `gate login <token>`. The plugin's SessionStart hook
+(`plugins/gate/scripts/session-start.mjs`) does three things on every
+session: it writes the `gate` shim into `~/.local/bin` (`gate install` does
+the same by hand); it removes any old gateway wiring from
+`~/.claude/settings.json` and `./.claude/settings.local.json`, and says to
+restart Claude Code once when it did; and it exports `GATE_CLAUDE_SESSION`,
+so every `gate begin` names the session driving the run. The slash commands
+do not need the shim — they call the bundled script
+(`plugins/gate/scripts/gate.mjs`, built by `npm run build:cli`) through
+`${CLAUDE_PLUGIN_ROOT}`.
 
 ### What travels where
 
 **Definitions come down.** `gate pull` mirrors the team's agents and
 workflows into `~/.gate/cache/<team>/`, keyed by a hash the server answers
-`304` for; the mirror is replaced on the next pull. **Model calls go up**
-to `<gate>/api/gateway` on the person's own key, carrying `x-gate-session:
-workflow:<execution-id>`; model resolution, caching, the pool, budget and
-the traffic log apply as on the server. **Progress goes up** in batches to
-`/api/v1/executions/…` about once a second; what comes back is the
+`304` for; the mirror is replaced on the next pull. **Progress goes up** to
+`/api/v1/executions/…` as each node starts and ends; what comes back is the
 person's own runs, never a teammate's, on `/api/v1/executions/stream`
-together. **The work stays here**, on a branch of the person's clone from
+together. **Model calls stay with the person**: the session and its
+subagents are their own Claude Code on their own login, and nothing about
+them reaches the gate. **The work stays here**, on a branch of the person's clone from
 their HEAD — so `/gate:run` is safe to start mid-task — in a worktree
 removed when the run ends, the branch keeping everything (see
 `workspaces.md`); the diff is uploaded once, at the end. For a workflow
@@ -211,23 +224,25 @@ link to the checkout's, produces the same file the checkout does. Every `/api/v1
 and `x-gate-min-cli`; a client below the minimum is refused with
 `CLIENT_TOO_OLD` and the command that fixes it; `MIN_CLIENT_VERSION` in
 `src/lib/protocol.ts` is raised only by a change that breaks older clients.
+It is 0.47.0: an older CLI would hand nodes to a gateway that is not there.
 
 ### The run happens in your session, not beside it
 
 `/gate:run` is the run: gate says what the next node is and it is done on
 the person's machine, in front of them, following the agent's `executor`.
-An `executor: gate` node is done by the session itself, with its tools and
-permissions — the person can watch it, interrupt it, and answer it when it
-asks, which is what `acceptance` does. An `executor: claude-code` node runs
-as a spawned Claude Code in the agent's own model — a planner on GLM, an
-implementer on a local model, which the session's model cannot stand in
-for. `/gate:login` puts the person's Claude Code on the gateway (through
-the `env` block of `~/.claude/settings.json`; `gate live` does the same per
-repository, `gate env` prints it as shell exports), and those nodes then
-run as subagents of the session, drawn live in the terminal, in the
-agent's model — gate keeps the team's agents under `~/.claude/agents/` for
-that, and a node's next pass continues the subagent that did its last one —
-addressed by the agent id the Agent tool returned, never by the
+`gate next` hands the session one instruction at a time. `agent` is an
+`executor: gate` node, done by the session itself, with its own tools and
+permissions — the person can watch it, interrupt it, and answer it when the
+agent declares `asks`, which is what `acceptance` does; an agent that reads
+memory is told to run `gate memory search`, `gate memory feature` and `gate
+memory history` in place of its memory tools. `delegate` is an `executor:
+claude-code` node, and it is always a subagent of the session: started with
+the Agent tool from `~/.claude/agents/gate-<team>-<agent>.md`, whose
+`model:` is the agent's own model, drawn live in the terminal. The subagent
+writes its answer to the file the prompt names, and the session hands that
+file back with `gate step … --output-file … --subagent <agent id>`. A
+node's next pass continues the subagent that did its last one with
+SendMessage — addressed by the agent id the Agent tool returned, never by the
 `gate-<team>-<agent>` type name of the file under `~/.claude/agents/`,
 which resolves to nobody and starts a fresh subagent that reads the whole
 worktree again. `gate step` refuses that name rather than recording a
@@ -238,46 +253,40 @@ differ under their own headings — the task, the brief and everything the
 subagent read and decided are already in that conversation, and sending
 them again was measured at thousands of tokens a pass and read by the
 subagent as an instruction to start over. When nothing differs the whole
-prompt is sent, as before; and `gate next <execution-id> --full` gives it
+prompt is sent; and `gate next <execution-id> --full` gives it
 back deliberately, which is what to do when the subagent is gone and the
-pass has to start fresh.
-In a session not on the gateway they run as a detached worker (`gate
-work`) the session follows with `gate wait`. Either way those nodes do not
-ask; questions travel through `clarify`.
+pass has to start fresh. A subagent does not ask; questions travel through
+`clarify`. `done`, `failed` and `stopped` say the run is over, failed at a
+node, or was ended from outside. A node with no workspace is told to work
+from what the prompt gives it and the commands it names, and to touch no
+files on this machine.
 
 ```bash
 gate begin <workflow> "<task>"          # → the first instruction, as JSON
 gate next <execution-id> [--full]       # → what to do now (no side effects)
-gate step <execution-id> <node> --output-file <file>   # → hand back an answer
-gate wait <execution-id>                # → follow a node running in its own model
-gate live [--global] [--off]            # → put Claude Code here on the gateway, by its settings
+gate step <execution-id> <node> --output-file <file> [--subagent <id>]   # → hand back an answer
+gate continue <execution-id>            # → reopen a failed run at the node that failed
 ```
 
-`begin`/`step`/`wait` print the next instruction, so the loop is one call
+`begin`/`step`/`continue` print the next instruction, so the loop is one call
 per node. Only agent nodes reach the session; `command` nodes are argv from
 the workflow file, so gate runs them itself. Where the run goes next is
 still gate's — from the graph's edges and the outputs handed back, never
 from the model — and an answer that does not match what the agent declared
 is refused (`agent "planner" output invalid — ok: Required`). Progress is
 reconstructed from the run's own steps, since each command is a new
-process, by the engine's own traversal, except that a `parallel` node's
-branches are walked one after another. `gate run` still runs the engine
-headlessly, for CI and anything with no session.
-
-`/usage` goes quiet on the gateway, since a session on gate has a gate key
-rather than a subscription login; `/gate:usage` (or `gate usage`, `--json`)
-answers in its words — *session limit*, *weekly limit*, what is left and
-when it resets — for the pool's shared windows.
+process: `nextInSession` replays them from the entry node with the same
+edge selection, and walks a `parallel` node's branches one after another.
+This is the only way a run is driven; nothing starts one from the
+dashboard, a terminal with no session, or CI.
 
 ### Stop works in both directions
 
-The server cannot reach into a process on a laptop, so for a run `gate run`
-drives, Stop on the execution page records the request and the answer rides
-back on the run's next report, within seconds, where it aborts the run as
-a local Ctrl-C would. A run a session drives is settled on the spot: between
-two `gate` calls there is no process to reach. The reverse also holds: a
-server restart does not kill the run, and a run whose machine goes quiet —
-fifteen minutes for `gate run`, six hours for a session — is `RUN_ABANDONED`.
+Stop on the execution page settles a session-driven run on the spot:
+between two `gate` calls there is no process to reach. The session finds
+out on its next call and ends the run's worktree the way a finished run
+does. The reverse also holds: a server restart does not kill the run, and a
+run whose session goes quiet for six hours is `RUN_ABANDONED`.
 
 ### The person's time is not the run's
 
@@ -294,28 +303,30 @@ or approval — so a desktop cockpit can say which terminal wants you.
 
 ### A run is never cut off
 
-No spend, step or visit ceiling applies to a run a session drives. An
-agent's `timeoutMs` is a notice, not a kill: a node that runs past it says
-so in its log, the session tells the person, and stopping is theirs. Cost
-is read, not enforced: a node in its own model reports its usage; a node
-the session did itself, or as its subagent, is costed afterwards from the
-session's gateway calls in the step's window, as an attribution — which
-needs the session hook to have named the session (`CLAUDE_ENV_FILE`).
+No spend, step or visit ceiling applies to a run a session drives; the
+walk reads none of `maxWorkflowSteps`, `maxVisits` or `maxCostUsd`. An
+agent's `timeoutMs` is a notice, not a kill: it is the point the person is
+told the node is overrunning, and stopping is theirs. What a node costs is
+on the person's own Claude plan: every agent node is the session or its
+subagent, recorded with `costing: "session"` and no usage, and nothing on
+the gate sees it.
 
 ### A failed node is not a lost run
 
 The branch and every step before the failure are kept, and `gate continue
 <execution-id>` checks the worktree out again from that branch and reopens
 the run at the node that failed: the trailing failed steps leave the
-history and `gate next` hands the node out again. Restart and Continue on
-the execution page stay where the worktree is; here the page shows the command.
+history and `gate next` hands the node out again. The execution page shows
+that command, with the host the run worked on, because the worktree and the
+pinned definitions are on that machine.
 
 ### The first run of a workflow asks
 
-A team's `command` nodes and `run_command` tools execute on a developer's
-machine, so before running a definition this machine has not seen at this
-exact version, the CLI lists what it will run — the commands, and whether
-its agents may write files — and asks. The approval is recorded against
+A team's `command` nodes run on a developer's machine, and its agents work
+there, so before running a definition this machine has not seen at this
+exact version, the CLI lists what it will run — the commands, and for each
+agent the tools it declares or that it is a subagent of the session — and
+asks. The approval is recorded against
 the definition's hash, so an edited workflow asks again; `--yes` skips it,
 `gate reset` clears them.
 
@@ -392,14 +403,16 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 - `src/workflows/defaults.ts` — the shipped pipelines: `dev`, `dev-super` derived from it, `dev-auto` written out and held to `dev`'s shape by a test, `dev-quick`, `blame`, `ask`, with the reasoning for each edge
 - `src/agents/defaults.ts` — the shipped agents and their `super-*` and `quick-*` counterparts, the three gates to the person and `decide` in their place on the autonomous road, `record-fix`, the investigator, source-review
-- `src/client/cli.ts`, `step.ts` — the `gate` command (login, the mirror, the first-run approval, every subcommand) and the session-driven loop: `begin` / `next` / `step` / `wait`, the definition pin, the session pointer, the worker
-- `src/client/walk.ts`, `run.ts`, `subagents.ts`, `cache.ts` — the replay, the headless engine, a claude-code node as a subagent, the mirror
+- `src/client/cli.ts`, `step.ts` — the `gate` command (login, the mirror, the first-run approval, every subcommand) and the session-driven loop: `begin` / `next` / `step` / `continue`, the instructions, the definition pin, the session pointer
+- `src/client/walk.ts`, `subagents.ts`, `cache.ts` — the replay (`nextInSession`), the team's claude-code agents written as subagents under `~/.claude/agents/`, the mirror
+- `src/client/claude-settings.ts` — taking an older gate's gateway wiring out of Claude Code's settings at login and reset
 - `src/lib/protocol.ts`, `src/app/api/v1/` — the version headers and `MIN_CLIENT_VERSION`; the client API: identity, the bundle, run registration, progress, stop, continue
-- `plugins/gate/commands/run.md`, `design.md`, `login.md`, `update.md` — the slash commands; `plugins/gate/scripts/session-start.mjs` — the hook that names the session for costing
+- `plugins/gate/commands/run.md`, `design.md`, `login.md`, `update.md` — the slash commands; `plugins/gate/scripts/session-start.mjs` — the hook that writes the shim, removes old gateway wiring and names the session
 
 ## Pitfalls
 
-- A session not on the gateway runs claude-code nodes as detached workers, not live subagents; `gate live` or `/gate:login` puts it on.
+- A `delegate` node's subagent is found by its file under `~/.claude/agents/`; Claude Code sees edits there within seconds, but the directory's very first file needs one restart to be seen.
+- A run needs its session open for its length. One whose laptop slept or whose session closed is picked up with `gate continue <execution-id>` on that machine; six hours of silence write it off.
 - Editing a workflow in the dashboard does not change a run already walking it; the run keeps its pin until it ends.
 - `claude plugin update gate@gateway` alone re-installs from an unrefreshed marketplace; use `/gate:update`, or update the marketplace first.
 - Any change under `plugins/` or `src/client/` needs a version bump, or the update is fetched and ignored.
@@ -407,6 +420,9 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Decisions
 
+- [0048 — A question to another team is read on the asker's machine, from the commit the gate fixed](../decisions/0048-ask-is-read-on-the-askers-machine.md)
+- [0047 — A run is driven only from a person's own Claude Code session](../decisions/0047-a-run-is-driven-only-from-a-persons-session.md)
+- [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)
 - [0042 — /gate:init names features after the tree, and leaves reading them to the index](../decisions/0042-init-names-features-after-the-tree-and-leaves-reading-to-the-index.md)
 - [0040 — A decision number is checked against the remote before the branch is offered](../decisions/0040-a-decision-number-is-checked-against-the-remote.md)
 - [0032 — The autonomous road can stop at the commit](../decisions/0032-the-autonomous-road-can-stop-at-the-commit.md)

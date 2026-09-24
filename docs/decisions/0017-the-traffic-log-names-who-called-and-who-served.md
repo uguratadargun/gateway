@@ -1,6 +1,6 @@
 # 0017. The traffic log names who called and who served
 
-Status: accepted
+Status: superseded by 0046
 Date: 2026-09-17
 
 ## Context

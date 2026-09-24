@@ -2,22 +2,21 @@
 
 ## Summary
 
-A provider is any model endpoint that is not one of the connected Claude
-accounts: Ollama, vLLM, LM Studio or llama.cpp on the person's own machine, or
-a hosted service like Z.AI. Once added, its models appear as
-`provider:<name>/<model>` in every model picker — a tier slot, an agent, a
-client naming one directly, and Claude Code's own `/model` on every machine
-connected to this gate — and a request that lands on one is still routed,
-logged and counted the same as a Claude call, while putting nothing on the
-Anthropic bill.
+A provider is a model endpoint this server can call itself: vLLM, Ollama, LM
+Studio or llama.cpp on the gate's own network, or a hosted service like Z.AI.
+gate holds no Claude login, so a provider is the only model the server has,
+and two things use one: the memory recorder with its consolidation pass, which
+read a finished run and write what it decided, and memory's embeddings.
+Nothing else does. Every node of a run is the person's own Claude Code, and an
+agent cannot name a provider model.
 
 ## How it works
 
-A provider is added under **Providers** on the dashboard (there are one-click
-presets) with a name, a base URL, an optional API key, an optional model list,
-and a dialect. The key is sealed under `GATE_SECRET` and never returned by the
-API — the dashboard sees only whether one is set. The dialect is the only real
-choice:
+A provider is added under **Providers**, in the dashboard's "The server's own
+model" section (there are one-click presets), with a name, a base URL, an
+optional API key, an optional model list, and a dialect. The key is sealed
+under `GATE_SECRET` and never returned by the API — the dashboard sees only
+whether one is set. The dialect is the only real choice:
 
 | | `openai-compat` | `anthropic-compat` |
 | --- | --- | --- |
@@ -26,49 +25,71 @@ choice:
 | what gate does | translates the request out and the answer back | forwards it as it stands |
 
 ```
-routing.json → tiers.haiku = "provider:ollama/qwen3-coder"
+Settings → memory.model = "provider:vllm/<model>"
 
-Claude Code ──▶ /v1/messages (Anthropic)
+recorder ──▶ ProviderModelProvider (Anthropic Messages body)
                    │  anthropicToOpenAIRequest
                    ▼
-              POST localhost:11434/v1/chat/completions
-                   │  openAIStreamToAnthropic
+              POST {baseUrl}/chat/completions
+                   │  openAIToAnthropicResponse
                    ▼
-Claude Code ◀── Anthropic SSE
+recorder ◀── Anthropic message
 ```
 
-gate speaks Anthropic end to end, so the OpenAI translation is a real round
+### The server's own model call
+
+`ProviderModelProvider` is the one way the server reaches a model. It parses
+the reference with `parseProviderRef`, finds the provider with
+`getProviderByName`, and refuses one that is missing or switched off with the
+place that fixes it; anything that is not a `provider:` reference is refused
+with the setting to change. It then hands the body to `sendToProvider`, which
+picks the dialect. The call is not streamed. A 5xx, a 529 or a connection that
+did not open is tried twice more, after about half a second and then a
+second; any other answer is final. An aborted call ends as `RUN_CANCELLED`, a
+failed one as `MODEL_EXECUTION_ERROR` with the status and the first 300
+characters of the body. The result names its model as the reference it was
+asked for, not the endpoint's own name for it, so the ledger says which
+provider did the work. `apiEquivalentCost` prices that work at zero: it is on
+nobody's Anthropic bill, whatever it costs on its own.
+
+gate's recorder speaks Anthropic, so the OpenAI translation is a real round
 trip, not a passthrough: system blocks are hoisted into a system message,
 `tool_use` becomes `tool_calls`, `tool_result` becomes the `role: "tool"`
 messages OpenAI expects (ordered so each answers the call before it), images
 become data URLs, and thinking blocks — whose signatures only Anthropic can
-verify — are dropped. On the way back, the OpenAI chunk stream is rebuilt into
-the full Anthropic event sequence, `message_start` through `message_stop`, with
-tool arguments streamed as `input_json_delta`. `stream_options.include_usage`
-is requested on every stream, because without it most OpenAI-compatible
-servers report no usage at all and the request would be accounted as zero
-tokens. The translated response carries the `provider:<name>/<model>`
-reference as its model, so everything downstream — usage parsing, the traffic
-log, the response cache — keeps speaking Anthropic and cannot tell which
-upstream served it.
+verify — are dropped. The answer is rebuilt into an Anthropic message with
+its usage. The translator also rebuilds an OpenAI chunk stream into the full
+Anthropic event sequence, asking for `stream_options.include_usage` so the
+usage is reported, though the server's own calls never stream.
 
 An `anthropic-compat` provider skips all of that. The body is forwarded with
-the model id swapped and the provider's key attached, and the answer — JSON or
-SSE — is handed back byte for byte. Tool blocks, cache breakpoints and streamed
-thinking reach the model exactly as the client wrote them. Only the parameters
-that are Anthropic's alone are stripped, because a third-party endpoint answers
-400 on them and they arrive constantly: `output_config`, `context_management`,
-and any `thinking` type other than `enabled` or `disabled` — which is to say
-`adaptive` (Claude Code sends the last two on every request).
+the model id swapped, the provider's key attached and `ANTHROPIC_VERSION`
+sent, and the answer is handed back as it came. Only the parameters that are
+Anthropic's alone are stripped, because a third-party endpoint answers 400 on
+them: `output_config`, `context_management`, and any `thinking` type other
+than `enabled` or `disabled`.
+
+### Where a provider model is named
 
 The reference form is `provider:<name>/<model>`; the model half may itself
 contain slashes (`provider:ollama/library/qwen3:8b`), so only the first one
-separates them. The prefix used to be `local:`, which was never true of a
-hosted endpoint. Both parse, forever: a `routing.json` or an agent written
-before the rename keeps resolving, and is canonicalised to `provider:` on the
-way through. Which tier a provider model counts as is whichever tier slot it
-was configured into, and `routing.json`'s `default` when it is in none — that is
-what the fallback chain uses.
+separates them. The older `local:` prefix parses too, and means the same.
+
+It is named in two places, both in Settings → Memory:
+
+- `memory.model`, the recorder's model. It accepts a provider reference and
+  nothing else. It is empty by default, and a Claude tier left in an older
+  settings file reads as empty. Until it is set, finished runs wait in the
+  ledger ([memory](memory.md)).
+- `memory.embeddings`, a provider's name and an embedding model. The embedder
+  calls `POST {baseUrl}/embeddings` in OpenAI's shape, so the provider must
+  answer that. Both empty means search by words alone.
+
+An agent's `model:` is a Claude model. The agent loader refuses a `provider:`
+or `local:` reference there, because nothing on the person's machine can
+reach it.
+
+### Where it is, and what it serves
 
 Whether the traffic leaves the network is a separate fact from the dialect.
 An endpoint on loopback, RFC1918, a link-local address, a bare container
@@ -81,127 +102,50 @@ asks the endpoint's own catalogue — `{baseUrl}/models` with a bearer token for
 `openai-compat`, `{baseUrl}/v1/models` with `x-api-key` for
 `anthropic-compat` — cached for a minute, and reports a failure as
 *unreachable* rather than throwing, so the person can name the models by hand
-instead.
+instead. The panel's refresh button asks again and shows the list, which is
+where the name for `memory.model` is read from.
 
-`providerCatalogue()` puts every enabled provider's list together, each model
-named `<model> (<provider>)` and described by where the endpoint is. That one
-list is what `/v1/models` serves and what the rows in Claude Code's `/model`
-picker are built from, so a person sees the same names wherever they look. A
-provider that is off contributes nothing rather than emptying the list.
+### Example: a vLLM on the gate's network
 
-### The rows in Claude Code's `/model`
-
-Claude Code lists Claude models. It will also read a gateway's `/v1/models` at
-startup — connecting a machine sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`
-for it — but it keeps only the entries whose id contains `claude` or
-`anthropic`, and a `provider:` reference never does. So gate writes those rows
-itself, into `modelPicker` in the user's own settings:
-
-```json
-{ "model": "provider:zai/glm-5.3-flash", "label": "glm-5.3-flash (zai)",
-  "description": "zai · remote", "behavesAs": "claude-sonnet-5" }
-```
-
-`behavesAs` is what makes the row work: it hands an id the client has never
-heard of the client-side profile of one it knows — context window, effort
-defaults — and without it the client says the model "isn't described by this
-version's model catalog". Picking the row sends `provider:zai/glm-5.3-flash`
-to the gate, so the name the person chose is the name that is resolved, logged
-and counted.
-
-The rows are written by `applyClaudeCode` on the gate's own machine and by
-`gate live` / `gate login` on everybody else's, both through
-`src/lib/model-picker.ts`. Rows somebody else put there are kept, and kept
-first; `replaceBuiltInOptions` is never written, so the built-in Claude rows
-stay.
-
-### Example: Z.AI (GLM)
-
-Z.AI publishes a Messages API endpoint, which is what makes it worth
-forwarding to untranslated. Add it as:
+The intended setup is a vLLM on the gate's own network serving the recorder's
+model, and an embedding model for search:
 
 ```
-Name       zai
-Dialect    Anthropic-compatible
-Base URL   https://api.z.ai/api/anthropic
-API key    (from your Z.AI console)
-Models     glm-5.3, glm-5.3-flash
+Name       vllm
+Dialect    OpenAI-compatible
+Base URL   http://<host>:<port>/v1
+Models     (empty — read from the endpoint)
 ```
 
-That is the same endpoint Z.AI documents for pointing Claude Code at GLM. The
-only difference is who the client talks to: their setup puts
-`ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` in your shell and the
-traffic leaves your account unmetered, while gate keeps the middle seat — same
-endpoint, same untranslated body, but routed, logged and counted.
+Then, under Settings → Memory, the recorder model is
+`provider:vllm/<the served model>` (a Qwen3.8-27B on the live gate), and
+embeddings name the provider that serves bge-m3 with `bge-m3` as the model. An
+embedding model served by a second vLLM is a second provider.
 
-The **Models** field matters here: that endpoint serves no catalogue to
-discover, so gate would otherwise have nothing to put in the pickers.
-
-Then point whatever you like at it: a tier in `routing.json`, or an agent —
-
-```yaml
-model: provider:zai/glm-5.3
-executor: claude-code
-```
-
-— which runs that node's loop in a headless Claude Code whose every call still
-goes through gate, and is therefore routed, metered, logged and counted against
-the run's budget the same as a Claude call would be.
-
-A node on a provider model also gets `ANTHROPIC_DEFAULT_SONNET_MODEL` and its
-`HAIKU` / `OPUS` siblings pinned to that same model — the mechanism Z.AI
-documents for the same purpose. Without it the child's own background work asks
-for the `haiku` alias, gate resolves that alias onto a Claude tier, and a node
-you asked to run on GLM would still need a connected Claude account to answer
-traffic you never asked for. Pinned, a gate with no Claude login at all runs
-that node end to end. The child also gets
-`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, so telemetry is not served by a
-model somebody pays per token for, and a long `API_TIMEOUT_MS`, because
-provider endpoints are routinely slower to first token than Anthropic's. (The
-child logs one `unrecognized_model` line for a model id it does not know; it
-sends the request regardless.)
-
-Practical notes:
-
-- A provider model **costs nothing on the Anthropic bill** — whatever it may
-  cost on its own — and usage accounting prices it at zero rather than as the
-  tier it stands in.
-- If the endpoint is down, or the provider is disabled or missing, the tier
-  fallback chain takes over — an unplugged Ollama drops to the next tier
-  rather than failing the request. Transient 5xx and network errors are
-  retried with backoff first.
-- A request to a provider model needs no Claude account at all; the account
-  pool and throttle are skipped for it.
-- `count_tokens` is never asked for a provider model — Anthropic cannot count
-  for a model it does not serve — so the reported token count is the local estimate.
-- You can also address one directly, without putting it in a tier:
-  `model: "provider:ollama/qwen3-coder"`.
+A hosted endpoint that publishes a Messages API, like Z.AI's
+`https://api.z.ai/api/anthropic`, is added as `anthropic-compat`. That
+endpoint serves no catalogue, so its models must be written in the Models
+field.
 
 ## Key files
 
-- `src/lib/providers.ts` — the provider rows, the two dialects, `parseProviderRef` / `formatProviderRef` / `canonicalModelRef`, self-hosted detection, declared-or-discovered catalogue, and `providerCatalogue()` behind both `/v1/models` and the picker
-- `src/lib/model-picker.ts` — the `modelPicker` row shape and the merge, database-free so the CLI bundles it · `src/client/live.ts` writes the rows on a developer's machine, `src/lib/clients.ts` on the gate's own
-- `src/lib/provider-exec.ts` — `sendToOpenAIProvider` (translate out and back) and `sendToAnthropicProvider` (forward, strip Anthropic-only fields)
+- `src/lib/providers.ts` — the provider rows, the two dialects, `ANTHROPIC_VERSION`, `parseProviderRef` / `formatProviderRef`, self-hosted detection, and the declared-or-discovered catalogue
+- `src/providers/direct-provider.ts` — `ProviderModelProvider`: the server's one model call, its retries and its errors
+- `src/providers/anthropic-shape.ts`, `types.ts` — the `ModelProvider` interface and the Anthropic body the recorder hands it
+- `src/lib/provider-exec.ts` — `sendToProvider`, and behind it `sendToOpenAIProvider` (translate out and back) and `sendToAnthropicProvider` (forward, strip Anthropic-only fields)
 - `src/lib/anthropic-openai.ts` — Anthropic Messages → OpenAI Chat Completions and back, JSON and SSE
-- `src/lib/openai-compat.ts` — the inverse direction: OpenAI SDK clients calling `/v1/chat/completions`
-- `src/lib/openai-responses.ts` — OpenAI Responses API ↔ Anthropic for `/v1/responses`; stateless, no `previous_response_id`
-- `src/lib/gateway-core.ts` — `attemptOnProvider` and the `sendWithFallback` branch that skips the account pool for a provider model
-- `src/lib/router.ts` — an explicit provider reference wins the route; a provider model's tier is the slot it sits in
-- `src/lib/usage.ts`, `src/lib/count-tokens.ts` — zero pricing and no `count_tokens` for provider models
-- `src/runtime/executors/claude-code.ts` — `providerModelEnv`, the alias pinning for a spawned Claude Code
-- `src/providers/` — the runtime's own `ModelProvider` interface; not the same thing as a configured endpoint. `gate-provider.ts` is the in-process path a workflow node takes into `executeMessages`
+- `src/lib/pricing.ts` — `apiEquivalentCost`, zero for a provider model
+- `src/lib/settings.ts` — `memory.model` kept only when it is a provider reference; `memory.embeddings`
+- `src/memory/embeddings.ts` — the embedder on a provider's `/embeddings`
+- `src/components/providers-panel.tsx`, `src/app/api/providers/` — the panel, and the routes behind it including the model probe
 
 ## Pitfalls
 
-- An `anthropic-compat` endpoint with an empty Models field shows nothing in the pickers, because there is no catalogue to discover. Write the list.
-- A picker row is written when a machine connects, not when a provider changes. Adding or removing a model shows up in `/model` after the next `gate live` (or `/gate:login`), and after the Claude Code session is restarted.
-- Every row borrows Sonnet's context window through `behavesAs`. A local model with a smaller one is compacted late, and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` does not correct it — that variable only applies to an id the client does not recognise.
-- `openai-compat` drops thinking blocks on the way out; an agent that relies on visible reasoning across turns will not get it from a translated provider.
-- Streaming through `openai-compat` reports zero tokens if the server ignores `stream_options.include_usage`; the request still succeeds, it is just unmetered.
-- A provider model in a tier slot inherits that slot's fallback chain. `tiers.haiku` on an Ollama that is off means every trivial request drops to Sonnet on a Claude account until it is back.
-- The `provider:` reference names an endpoint, it is not a bypass: budget, concurrency, traffic logging and the response cache all still apply.
-- The header comment in `providers.ts` still describes the `local:` spelling; the code canonicalises to `provider:`.
+- An `anthropic-compat` endpoint with an empty Models field shows no models, because there is no catalogue to discover. Write the list.
+- There is no fallback. A provider that is down, switched off or deleted fails the recorder's call; the ledger row is `failed` and retried, and nothing records on any other model meanwhile.
+- A recorder model left empty is not an error anywhere but the ledger: finished runs stay `pending` until one is set, and the consolidate button answers 409 with the reason.
+- `openai-compat` drops thinking blocks on the way out, and a server that ignores `stream_options.include_usage` reports no usage on a stream.
 
 ## Decisions
 
-- [0020 — A provider model reaches the picker under its own name](../decisions/0020-a-provider-model-reaches-the-picker-under-its-own-name.md)
+- [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)

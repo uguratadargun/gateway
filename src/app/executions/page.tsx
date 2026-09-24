@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Laptop, Play, RefreshCw } from "lucide-react";
+import { Laptop, RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -103,11 +103,6 @@ export default function ExecutionsPage() {
           </p>
         </div>
         <div className="flex items-center gap-1">
-          <Link href="/executions/new">
-            <Button size="sm">
-              <Play /> New run
-            </Button>
-          </Link>
           <Button variant="ghost" size="icon" onClick={load} aria-label="Refresh">
             <RefreshCw />
           </Button>

@@ -1,6 +1,6 @@
 # 0034. A traffic row names the run it came from
 
-Status: accepted
+Status: superseded by 0046
 Date: 2026-09-21
 
 ## Context

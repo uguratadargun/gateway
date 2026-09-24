@@ -8,8 +8,7 @@ import { getDb } from "./db";
  * A team is the unit that owns agents and workflows — its files live under
  * ~/.gate/teams/<id>, which is why a team id is a slug and not a UUID: it is a
  * directory name a person reads and edits. A user is a person with one team and
- * one or more API keys; the key is what identifies them to the client API and
- * the gateway.
+ * one or more API keys; the key is what identifies them to the client API.
  *
  * Everything that existed before multi-user belongs to the `default` team, so a
  * single-person install keeps working with no migration to think about.

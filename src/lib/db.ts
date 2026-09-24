@@ -2,8 +2,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { sessionTitle } from "./session-title";
-
 /**
  * SQLite persistence via Node's built-in `node:sqlite`. Loaded through
  * process.getBuiltinModule so the bundler leaves it alone and no native
@@ -23,44 +21,6 @@ export interface SqlDatabase {
 const GATE_DIR = process.env.GATE_HOME || join(homedir(), ".gate");
 
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS usage (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts INTEGER NOT NULL,
-  requested TEXT,
-  model TEXT NOT NULL,
-  tier TEXT NOT NULL,
-  reason TEXT,
-  status INTEGER,
-  stream INTEGER NOT NULL DEFAULT 0,
-  input_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS usage_ts ON usage(ts);
-
-CREATE TABLE IF NOT EXISTS traffic (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts INTEGER NOT NULL,
-  endpoint TEXT,
-  requested TEXT,
-  routed TEXT,
-  tier TEXT,
-  status INTEGER,
-  stream INTEGER NOT NULL DEFAULT 0,
-  from_cache INTEGER NOT NULL DEFAULT 0,
-  request_preview TEXT,
-  response_preview TEXT
-);
-CREATE INDEX IF NOT EXISTS traffic_ts ON traffic(ts);
-
-CREATE TABLE IF NOT EXISTS cache (
-  key TEXT PRIMARY KEY,
-  body TEXT NOT NULL,
-  model TEXT,
-  input_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens INTEGER NOT NULL DEFAULT 0,
-  stored_at INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS apikeys (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -75,23 +35,6 @@ CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY,
-  title TEXT,
-  first_ts INTEGER NOT NULL,
-  last_ts INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS ratelimit_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts INTEGER NOT NULL,
-  util_5h REAL,
-  util_7d REAL,
-  status TEXT,
-  reset_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS rl_ts ON ratelimit_history(ts);
 
 CREATE TABLE IF NOT EXISTS workflow_executions (
   id TEXT PRIMARY KEY,
@@ -138,13 +81,30 @@ CREATE TABLE IF NOT EXISTS repos (
   -- 1 when gate created the checkout, and so may remove it again.
   cloned INTEGER NOT NULL DEFAULT 0,
   base_ref TEXT,
-  -- argv arrays: setup runs once in the repo, prepare in every worktree.
+  -- argv arrays: setup runs once in the repo. prepare is read by nothing
+  -- since runs stopped happening in this server's worktrees.
   setup_json TEXT NOT NULL DEFAULT '[]',
   prepare_json TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'new',
   last_setup_at INTEGER,
   last_setup_log TEXT,
   created_at INTEGER NOT NULL
+);
+
+-- A question one team asked about another's code: the one commit the answer
+-- is read from, fixed by the server, and read by the asker's own machine
+-- through the ask's read-only file routes until it expires.
+CREATE TABLE IF NOT EXISTS asks (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL,
+  user_id TEXT,
+  repo TEXT NOT NULL,
+  repo_id TEXT,
+  ref TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  question TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS skill_sources (
@@ -167,33 +127,6 @@ CREATE TABLE IF NOT EXISTS skill_sources (
   last_sync_log TEXT,
   created_at INTEGER NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS accounts (
-  id TEXT PRIMARY KEY,
-  label TEXT NOT NULL,
-  -- AES-256-GCM sealed StoredCredentials; never plaintext at rest.
-  sealed TEXT NOT NULL,
-  account_uuid TEXT,
-  email TEXT,
-  organization TEXT,
-  plan_tier TEXT,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  -- Lower = preferred. Pool order for fill-first and every tie-break.
-  priority INTEGER NOT NULL DEFAULT 100,
-  last_used_at INTEGER,
-  -- Sticky round-robin bookkeeping: requests served in a row.
-  consecutive_use_count INTEGER NOT NULL DEFAULT 0,
-  -- Exponential cooldown level; reset by a confirmed success.
-  backoff_level INTEGER NOT NULL DEFAULT 0,
-  cooldown_until INTEGER,
-  last_error TEXT,
-  -- Upstream quota snapshot: the 5h / 7d unified windows.
-  quota_json TEXT,
-  quota_fetched_at INTEGER,
-  connected_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS accounts_uuid ON accounts(account_uuid) WHERE account_uuid IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS providers (
   id TEXT PRIMARY KEY,
@@ -225,19 +158,6 @@ CREATE TABLE IF NOT EXISTS users (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS users_team ON users(team_id);
-
--- A Telegram chat linked to a person: the bot answers their questions and
--- starts their runs from it, on a key minted for the link (sealed, because a
--- remote session runs on the plaintext). Unlinking revokes that key.
-CREATE TABLE IF NOT EXISTS telegram_links (
-  chat_id TEXT PRIMARY KEY,
-  user_id TEXT,
-  team_id TEXT NOT NULL,
-  key_id TEXT NOT NULL,
-  key_sealed TEXT NOT NULL,
-  username TEXT,
-  linked_at INTEGER NOT NULL
-);
 
 CREATE TABLE IF NOT EXISTS workflow_layouts (
   workflow_id TEXT PRIMARY KEY,
@@ -604,25 +524,10 @@ function ensureFtsTokenizer(d: SqlDatabase): void {
 
 /** Columns added after the first schema; applied idempotently on open. */
 const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
-  ["usage", "cache_read_tokens", "cache_read_tokens INTEGER NOT NULL DEFAULT 0"],
-  ["usage", "cache_creation_tokens", "cache_creation_tokens INTEGER NOT NULL DEFAULT 0"],
-  ["usage", "session_id", "session_id TEXT"],
-  ["sessions", "base_tier", "base_tier TEXT"],
-  ["sessions", "effort", "effort TEXT"],
   ["workflow_executions", "workspace_json", "workspace_json TEXT"],
   ["workflow_execution_steps", "tool_calls_json", "tool_calls_json TEXT"],
   ["workflow_executions", "quota_json", "quota_json TEXT"],
   ["workflow_executions", "resumed_from", "resumed_from TEXT"],
-  ["usage", "account_id", "account_id TEXT"],
-  ["usage", "provider_id", "provider_id TEXT"],
-  ["traffic", "account_id", "account_id TEXT"],
-  // Who called and who served. Ids, not labels: a label is editable and the row
-  // it names can be deleted, so /traffic resolves them as it reads and says so
-  // when it cannot. A row written before this release carries NULL throughout.
-  ["traffic", "key_id", "key_id TEXT"],
-  ["traffic", "user_id", "user_id TEXT"],
-  ["traffic", "team_id", "team_id TEXT"],
-  ["traffic", "provider_id", "provider_id TEXT"],
   // An endpoint that serves no /models list (Z.AI's Anthropic endpoint among
   // them) names its catalogue here instead of being discovered.
   ["providers", "models_json", "models_json TEXT"],
@@ -631,9 +536,9 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   ["apikeys", "user_id", "user_id TEXT"],
   ["apikeys", "team_id", "team_id TEXT"],
   ["apikeys", "last_host", "last_host TEXT"],
-  // What a key may reach: "gateway" (model calls) and/or "workflows" (the
-  // client API that hands out definitions and takes run reports).
-  ["apikeys", "scopes", "scopes TEXT NOT NULL DEFAULT 'gateway,workflows'"],
+  // What a key may reach: "workflows" (the client API that hands out
+  // definitions and takes run reports) and, on purpose, "author".
+  ["apikeys", "scopes", "scopes TEXT NOT NULL DEFAULT 'workflows'"],
   // Runs that happened on someone's own machine: who, where, and still alive?
   ["workflow_executions", "user_id", "user_id TEXT"],
   ["workflow_executions", "team_id", "team_id TEXT"],
@@ -653,13 +558,12 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // has waited so far over the whole run. The run's clock leaves both out.
   ["workflow_executions", "paused_at", "paused_at INTEGER"],
   ["workflow_executions", "paused_ms", "paused_ms INTEGER NOT NULL DEFAULT 0"],
-  // The Claude Code session driving a session-driven run. Its own model
-  // calls reach the gateway under this id, which is how the nodes the
-  // session does itself get a cost against the run.
+  // The Claude Code session driving a session-driven run.
   ["workflow_executions", "client_session", "client_session TEXT"],
-  // A step's cost when it was worked out exactly (a session's calls across
-  // several models), and where its usage came from: NULL/"reported" for the
-  // node's own executor, "session" for an attribution from gateway traffic.
+  // A step's cost when it was worked out exactly, and where its usage came
+  // from: NULL/"reported" for the node's own executor, "session" for an
+  // attribution from traffic through the gateway gate once had, which only
+  // older runs carry.
   ["workflow_execution_steps", "cost_usd", "cost_usd REAL"],
   ["workflow_execution_steps", "usage_source", "usage_source TEXT"],
   // A library held at one commit: sync fetches, but checks this out rather
@@ -737,17 +641,6 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // are checked the way they always were rather than refused for lacking
   // evidence they were never asked for.
   ["workflow_executions", "definitions_json", "definitions_json TEXT"],
-  // A model-scoped weekly limit that rejected a request parks the model on the
-  // account, not the account in the pool. One JSON column: at most a handful of
-  // entries, each the window's name, the scope it answered as, and the reset
-  // time — a weekly window legitimately runs days out, which a cooldown column
-  // could not say without taking the whole login with it.
-  ["accounts", "model_blocks_json", "model_blocks_json TEXT"],
-  // A traffic row's own id, for a copyable link straight to one exchange, and
-  // the run it was made for, so a row can be traced back to the execution and
-  // node that caused it. Both NULL on a row written before this release.
-  ["traffic", "request_id", "request_id TEXT"],
-  ["traffic", "execution_id", "execution_id TEXT"],
   // Whether an approach was refused, apart from whether the run that tried it
   // finished: a run stopped by a timeout or a person going home is not a
   // verdict on its idea, and reading it as one closed good roads.
@@ -783,51 +676,41 @@ export function getDb(): SqlDatabase {
     const cols = (d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name);
     if (!cols.includes(column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
   }
-  d.exec("CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id)");
   // A path lookup now asks two questions at once — which file, and whose —
   // so the repository travels in the index rather than as a filter applied
   // to everything the path alone matched.
   d.exec("CREATE INDEX IF NOT EXISTS memory_touches_ref_repo ON memory_touches(ref, repo_id)");
-  // Traffic: a point lookup for the request id a row shows, a join to the
-  // execution it traces to, and one composite per filterable column — each
-  // ordered (value, ts) because every filtered read is "this value, newest
-  // first, limit N", which the composite serves without a sort left behind.
-  d.exec("CREATE INDEX IF NOT EXISTS traffic_request_id ON traffic(request_id)");
-  d.exec("CREATE INDEX IF NOT EXISTS traffic_execution_id ON traffic(execution_id)");
-  d.exec("CREATE INDEX IF NOT EXISTS traffic_user_ts ON traffic(user_id, ts)");
-  d.exec("CREATE INDEX IF NOT EXISTS traffic_key_ts ON traffic(key_id, ts)");
-  d.exec("CREATE INDEX IF NOT EXISTS traffic_account_ts ON traffic(account_id, ts)");
-  d.exec("CREATE INDEX IF NOT EXISTS traffic_provider_ts ON traffic(provider_id, ts)");
-  d.exec("CREATE INDEX IF NOT EXISTS traffic_tier_ts ON traffic(tier, ts)");
-  // For Task 3's node-resolution subquery: which step of a run was open when
-  // a traffic row's timestamp fell.
+  // Which step of a run was open at a given moment.
   d.exec(
     "CREATE INDEX IF NOT EXISTS workflow_execution_steps_execution_started ON workflow_execution_steps(execution_id, started_at)",
   );
   ensureFtsTokenizer(d);
-  retitleSessions(d);
+  forgetTheGateway(d);
   db = d;
   importLegacyFiles(d);
   return d;
 }
 
 /**
- * Sessions named before the title was the user's prompt hold whatever request
- * came first, cut at 80 characters. Once, the stored titles go through the
- * same reading; what has no prompt in it becomes NULL, which the session's
- * next request fills.
+ * What gate kept while it held Claude logins and served models: the logins
+ * themselves (sealed tokens included), their rate-limit history, the gateway's
+ * usage and traffic logs, its response cache and its session titles, and the
+ * Telegram links — each of which reached a model through the pool. None of it
+ * describes anything gate does now, and the logins are credentials nobody
+ * should be holding, so they go on the first open of a gate that no longer
+ * has the code to read them. A key issued for a Telegram chat goes with its
+ * link. Idempotent: every statement is a no-op on a database that never had
+ * the table.
  */
-function retitleSessions(d: SqlDatabase): void {
-  // Renamed when the reading improves, so titles read by an earlier one are read again.
-  const flag = "sessions_retitled_4";
-  if (d.prepare("SELECT 1 FROM kv WHERE key = ?").get(flag)) return;
-  const rows = d.prepare("SELECT id, title FROM sessions WHERE title IS NOT NULL").all() as Array<{ id: string; title: string }>;
-  const upd = d.prepare("UPDATE sessions SET title = ? WHERE id = ?");
-  for (const r of rows) {
-    const t = sessionTitle(r.title);
-    if (t !== r.title) upd.run(t, r.id);
+export function forgetTheGateway(d: SqlDatabase): void {
+  const has = (t: string) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+  if (has("telegram_links")) {
+    d.exec("UPDATE apikeys SET revoked = 1 WHERE id IN (SELECT key_id FROM telegram_links)");
   }
-  d.prepare("INSERT INTO kv (key, value) VALUES (?, '1')").run(flag);
+  for (const t of ["accounts", "ratelimit_history", "usage", "traffic", "cache", "sessions", "telegram_links"]) {
+    d.exec(`DROP TABLE IF EXISTS ${t}`);
+  }
+  d.exec("DELETE FROM kv WHERE key = 'ratelimit' OR key LIKE 'telegram.%' OR key LIKE 'sessions_retitled_%'");
 }
 
 export function kvGet(key: string): string | null {
@@ -843,48 +726,6 @@ export function kvSet(key: string, value: string): void {
 
 /** One-time import of the pre-SQLite JSON/JSONL files, then rename them. */
 function importLegacyFiles(d: SqlDatabase): void {
-  const usageFile = join(GATE_DIR, "usage.jsonl");
-  if (existsSync(usageFile) && d.prepare("SELECT COUNT(*) AS n FROM usage").get().n === 0) {
-    try {
-      const ins = d.prepare(
-        "INSERT INTO usage (ts,requested,model,tier,reason,status,stream,input_tokens,output_tokens) VALUES (?,?,?,?,?,?,?,?,?)",
-      );
-      for (const line of readFileSync(usageFile, "utf8").split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const e = JSON.parse(line);
-          ins.run(e.ts, e.requested ?? null, e.model, e.tier, e.reason ?? null, e.status ?? null, e.stream ? 1 : 0, e.inputTokens ?? 0, e.outputTokens ?? 0);
-        } catch {
-          // skip malformed line
-        }
-      }
-      renameSync(usageFile, usageFile + ".migrated");
-    } catch {
-      // best-effort
-    }
-  }
-
-  const trafficFile = join(GATE_DIR, "traffic.jsonl");
-  if (existsSync(trafficFile) && d.prepare("SELECT COUNT(*) AS n FROM traffic").get().n === 0) {
-    try {
-      const ins = d.prepare(
-        "INSERT INTO traffic (ts,endpoint,requested,routed,tier,status,stream,from_cache,request_preview,response_preview) VALUES (?,?,?,?,?,?,?,?,?,?)",
-      );
-      for (const line of readFileSync(trafficFile, "utf8").split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const e = JSON.parse(line);
-          ins.run(e.ts, e.endpoint ?? null, e.requested ?? null, e.routed ?? null, e.tier ?? null, e.status ?? null, e.stream ? 1 : 0, e.fromCache ? 1 : 0, e.requestPreview ?? "", e.responsePreview ?? "");
-        } catch {
-          // skip
-        }
-      }
-      renameSync(trafficFile, trafficFile + ".migrated");
-    } catch {
-      // best-effort
-    }
-  }
-
   const keysFile = join(GATE_DIR, "apikeys.json");
   if (existsSync(keysFile) && d.prepare("SELECT COUNT(*) AS n FROM apikeys").get().n === 0) {
     try {
@@ -899,14 +740,4 @@ function importLegacyFiles(d: SqlDatabase): void {
     }
   }
 
-  for (const f of ["cache.json", "ratelimit.json"]) {
-    const p = join(GATE_DIR, f);
-    if (existsSync(p)) {
-      try {
-        renameSync(p, p + ".migrated");
-      } catch {
-        // ignore
-      }
-    }
-  }
 }

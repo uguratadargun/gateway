@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
  *
  * One file, because that is what a plugin can ship: a developer installs the
  * plugin and has a working `gate` without an npm install, a build step, or a
- * checkout of this repository. The engine and the loaders go in with it, so a
+ * checkout of this repository. The loaders and the walk go in with it, so a
  * definition is parsed by the same code on both sides of the connection.
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");

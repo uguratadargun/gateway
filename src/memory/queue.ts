@@ -1,5 +1,6 @@
 import { loadSettings } from "@/lib/settings";
-import { GateModelProvider } from "@/providers/gate-provider";
+import { parseProviderRef } from "@/lib/providers";
+import { ProviderModelProvider } from "@/providers/direct-provider";
 import type { ModelProvider } from "@/providers/types";
 
 import { consolidateImplementation, dueConsolidations } from "./consolidate";
@@ -23,15 +24,30 @@ const g = globalThis as unknown as { __gateMemoryDrain?: Promise<void> | null; _
 
 let providerForDrain: (() => ModelProvider) | null = null;
 
-/** Tests swap the model out; the server records through its own gateway. */
+/** Tests swap the model out; the server records on the provider model Settings names. */
 export function setExtractionProvider(factory: (() => ModelProvider) | null): void {
   providerForDrain = factory;
+}
+
+/**
+ * Why the recorder cannot run right now, or null when it can. The server holds
+ * no Claude account, so it records on a provider model; until Settings names
+ * one, finished runs wait in the ledger rather than failing there.
+ */
+export function recorderUnavailable(settings = loadSettings()): string | null {
+  if (!settings.memory.enabled) return "memory is switched off in Settings";
+  if (!parseProviderRef(settings.memory.model)) {
+    return "the recorder has no model: set a provider model (provider:<name>/<model>) under Settings → Memory — finished runs wait until then";
+  }
+  return null;
 }
 
 export async function drainExtractions(provider?: ModelProvider): Promise<number> {
   const settings = loadSettings();
   if (!settings.memory.enabled) return 0;
-  const model = provider ?? (providerForDrain ? providerForDrain() : new GateModelProvider());
+  // A test hands its own model in; the real server needs one Settings names.
+  if (!provider && !providerForDrain && recorderUnavailable(settings)) return 0;
+  const model = provider ?? (providerForDrain ? providerForDrain() : new ProviderModelProvider());
   releaseStaleExtractions();
   let done = 0;
   // A bounded pass: a backlog of hundreds is worked off across several asks,

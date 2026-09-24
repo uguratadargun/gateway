@@ -22,7 +22,6 @@ function repo(source: string, remoteUrl: string | null) {
     cloned: false,
     baseRef: null,
     setup: [],
-    prepare: [],
     remoteUrl,
   });
 }

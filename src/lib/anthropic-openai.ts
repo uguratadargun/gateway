@@ -1,11 +1,10 @@
 /**
  * Anthropic Messages → OpenAI Chat Completions, and back.
  *
- * gate speaks Anthropic natively end to end: clients post /v1/messages, the
- * router, prompt cache and usage accounting all read that shape. Routing a
- * request to a local OpenAI-compatible box therefore needs the *inverse* of
- * openai-compat.ts — the request translated out, and the answer (JSON or SSE)
- * translated back, so nothing downstream can tell which upstream served it.
+ * gate speaks Anthropic: the recorder builds a Messages request and reads a
+ * Messages answer. Sending it to an OpenAI-compatible box therefore needs the
+ * request translated out, and the answer (JSON or SSE) translated back, so
+ * nothing downstream can tell which upstream served it.
  */
 
 type AnyObj = Record<string, unknown>;

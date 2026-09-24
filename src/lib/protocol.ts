@@ -21,10 +21,10 @@
  * bundled into the CLI.
  */
 
-export const GATE_VERSION = "0.46.0";
+export const GATE_VERSION = "0.47.0";
 
 /** The oldest CLI this server will serve. Older ones are refused, with the fix. */
-export const MIN_CLIENT_VERSION = "0.13.0";
+export const MIN_CLIENT_VERSION = "0.47.0";
 
 /**
  * Where the plugin comes from, for anyone who has never installed it: the
@@ -47,13 +47,9 @@ export function installLines(loginLine: string, source: string = PLUGIN_MARKETPL
 }
 
 /**
- * The same login, as a line for a terminal rather than for Claude Code.
- *
- * `/gate:login` is a slash command, which is a prompt, which is a model turn —
- * and a Claude Code at its weekly limit has none to give. That is precisely
- * when a person is trying to connect to a gateway that would serve them on the
- * team's quota instead, so the way in cannot be inside Claude Code. The shim
- * the plugin's SessionStart hook writes is named by absolute path, so this line
+ * The same login, as a line for a terminal rather than for Claude Code:
+ * connecting spends no model turn, and needs no Claude Code open. The shim the
+ * plugin's SessionStart hook writes is named by absolute path, so this line
  * works whether or not `~/.local/bin` is on their PATH.
  */
 export function terminalLoginLine(loginArgument: string): string {

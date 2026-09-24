@@ -1,7 +1,7 @@
 Status: done
 Branch: fix/session-titles
 Decisions: none — a fix inside the existing session design
-Design: docs/design/gateway-pipeline.md (the Session paragraph, the title pitfall)
+Design: gateway-pipeline.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md) (the Session paragraph, the title pitfall)
 
 # A session is named by what the user asked
 

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getExecution, getExecutionDiff, getExecutionLineage } from "@/executions/store";
 import { teamFamily } from "@/lib/teams";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
-import { costForUsage, tierOf } from "@/lib/pricing";
+import { apiEquivalentCost } from "@/lib/pricing";
 import { loadSettings } from "@/lib/settings";
 import type { ModelProvider } from "@/providers/types";
 import { repoByIdentity } from "@/repos/store";
@@ -430,8 +430,8 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
       // figure is what the recorder was shown, and the cost is exact either way.
       inputTokens: result.usage.inputTokens + result.usage.cacheReadTokens,
       outputTokens: result.usage.outputTokens,
-      costUsd: costForUsage(
-        tierOf(result.model),
+      costUsd: apiEquivalentCost(
+        result.model,
         // `inputTokens` already counts what was written to the cache; the
         // write is priced apart from plain input because it bills at 1.25×
         // (5m) or 2× (1h), and pricing it as input reads too cheap.
@@ -441,7 +441,6 @@ export async function extractRun(executionId: string, provider: ModelProvider, o
           cacheRead: result.usage.cacheReadTokens,
           cacheCreation: result.usage.cacheCreationTokens ?? 0,
         },
-        { model: result.model, cacheTtl: loadSettings().promptCache.ttl },
       ),
     };
 

@@ -4,16 +4,14 @@ import { ADMIN_COOKIE, adminConfigured, verifySessionToken } from "@/lib/admin-a
 import { GATE_VERSION, MIN_CLIENT_VERSION, VERSION_HEADERS } from "@/lib/protocol";
 
 /**
- * Protects the dashboard and management API behind the admin session.
- * The gateway itself (/api/gateway/*) is excluded — it has its own key auth.
+ * Protects the dashboard and management API behind the admin session. The
+ * client API (/api/v1/*) is excluded — it has its own key auth.
  */
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Surfaces with their own auth: the gateway takes an API key, and so does the
-  // client API the CLI on a developer's machine talks to. Neither can sit
-  // behind the admin cookie — there is no browser on the other end.
-  if (pathname.startsWith("/api/gateway/")) return NextResponse.next();
+  // The client API the CLI on a developer's machine talks to takes an API key.
+  // It cannot sit behind the admin cookie — there is no browser on the other end.
   if (pathname.startsWith("/api/v1/")) {
     // Every client-API response says what this server is and how old a client
     // it will still serve, so a CLI learns it is behind from any call it makes

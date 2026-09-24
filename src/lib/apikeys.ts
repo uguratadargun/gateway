@@ -4,11 +4,10 @@ import { DEFAULT_TEAM_ID } from "./teams";
 import { getDb } from "./db";
 
 /**
- * Gateway API keys. Multiple keys can be issued (one per tool/app) so usage can
- * be attributed and keys revoked individually. Only the SHA-256 hash is stored;
- * the plaintext key is shown once at creation.
+ * API keys for the client API. Only the SHA-256 hash is stored; the plaintext
+ * key is shown once at creation.
  *
- * A key is also the identity the client CLI connects with: it names the person
+ * A key is the identity the client CLI connects with: it names the person
  * it was issued to and the team whose agents and workflows they may pull, so
  * verifying a key answers "who is this" and not only "is this allowed".
  * Keys issued before there were users carry no owner and are read as the
@@ -23,16 +22,16 @@ import { getDb } from "./db";
  * decision about that team's pipelines. Someone designing one — `/gate:design`
  * on their own machine — is given it on purpose.
  *
- * `remote` is the same kind of grant: a key with it may start Claude Code
- * sessions on the gate server itself, from a cockpit — an interactive
- * terminal on that machine, running as the user gate runs as.
+ * A key issued when gate still had a gateway, or ran sessions on its own
+ * machine, may carry `gateway` or `remote` as well; neither reaches anything
+ * now, and both are dropped when the key is read.
  */
-export type KeyScope = "gateway" | "workflows" | "author" | "remote";
+export type KeyScope = "workflows" | "author";
 
-export const ALL_SCOPES: KeyScope[] = ["gateway", "workflows", "author", "remote"];
+export const ALL_SCOPES: KeyScope[] = ["workflows", "author"];
 
 /** What a new key gets unless the person issuing it says otherwise. */
-export const DEFAULT_SCOPES: KeyScope[] = ["gateway", "workflows"];
+export const DEFAULT_SCOPES: KeyScope[] = ["workflows"];
 
 export interface ApiKey {
   id: string;
@@ -157,8 +156,7 @@ export function deleteKey(id: string): boolean {
  *
  * One statement does the lookup and the liveness check together — a revoked key
  * and an unknown one are the same answer — and touching `last_used_at` here is
- * what makes the dashboard's "last used" column true for every surface a key
- * can reach, not only the gateway.
+ * what makes the dashboard's "last used" column true.
  */
 export function resolveKey(raw: string, host?: string | null): Principal | null {
   if (!raw) return null;
@@ -180,12 +178,3 @@ export function resolveKey(raw: string, host?: string | null): Principal | null 
   return { keyId: key.id, userId: key.userId, teamId: key.teamId, scopes: key.scopes };
 }
 
-/** Returns true if an active key matches; touches lastUsedAt. */
-export function verifyKey(raw: string): boolean {
-  return resolveKey(raw) !== null;
-}
-
-/** True when at least one non-revoked key exists (gateway then requires a key). */
-export function hasActiveKeys(): boolean {
-  return Number(getDb().prepare("SELECT COUNT(*) AS n FROM apikeys WHERE revoked = 0").get().n) > 0;
-}

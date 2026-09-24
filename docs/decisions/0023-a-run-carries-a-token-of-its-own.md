@@ -1,6 +1,6 @@
 # 0023. A run carries a token of its own
 
-Status: accepted
+Status: superseded by 0047
 Date: 2026-09-20
 Run: gate/run-525fd5c1
 

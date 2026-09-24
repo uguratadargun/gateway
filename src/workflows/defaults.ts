@@ -1339,31 +1339,24 @@ nodes:
  * The road `gate ask` takes when memory cannot answer: one team's question,
  * read out of another team's source at one fixed commit.
  *
- * Nothing is written and nothing is run. The single agent on it has no
- * writing tools and no command tool, which is the guarantee — a read-only
- * review is a tool list, not an instruction. The `base` node is here for the
- * same reason it is on blame: the answer names the commit it came from, and
- * this is the run's own record of which one that was.
+ * Nothing is written and nothing is run. It has no workspace: the other
+ * team's repository is never on the asker's machine, and the one agent on it
+ * reads the commit the gate fixed through `gate source`, which serves that
+ * commit read-only. The commit is an input, so the answer names it without
+ * a node of its own.
  *
- * Every input this names is supplied by the ask route, `question`, `repo`,
- * `commit` and `memory` alike — `memory` as an empty string when memory had
- * nothing near the question, because an unresolved placeholder is an error
- * and not a blank.
+ * Every input this names is supplied by `gate ask` from the ask route's
+ * answer: `question`, `source`, `ref`, `commit`, `ask` and `memory` — `memory`
+ * as a sentence even when memory had nothing near the question, because an
+ * unresolved placeholder is an error and not a blank.
  */
 const ASK = `name: Ask
-description: Answer another team's question by reading their repository at one fixed commit. Nothing is written, nothing is run, and the answer says which files it came from.
-entry: base
-workspace: {}
+description: Answer another team's question by reading their repository at one fixed commit, which the gate serves read-only. Nothing is written, nothing is run, and the answer says which files it came from.
+entry: source-review
 maxWorkflowSteps: 0
 maxVisits: 0
 maxCostUsd: 0
 nodes:
-  - id: base
-    type: command
-    label: Record the commit being read
-    command: [git, log, "-1", --format=format:%H]
-    next: source-review
-
   - id: source-review
     type: agent
     agent: source-review

@@ -5,7 +5,8 @@ import { loadSettings } from "@/lib/settings";
 import { getTeam } from "@/lib/teams";
 import { consolidateImplementation, consolidationsOf } from "@/memory/consolidate";
 import { memoryScopeFor } from "@/memory/store";
-import { GateModelProvider } from "@/providers/gate-provider";
+import { recorderUnavailable } from "@/memory/queue";
+import { ProviderModelProvider } from "@/providers/direct-provider";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,8 @@ export async function POST(req: Request) {
   if (!featureId) return NextResponse.json({ error: "which feature?" }, { status: 400 });
   const memoryScope = memoryScopeFor(scope.teamId!);
   if (!memoryScope.teams.includes(teamId)) return NextResponse.json({ error: "that team is not in this tree" }, { status: 403 });
-  const outcome = await consolidateImplementation(memoryScope, featureId, teamId, new GateModelProvider(), { model: loadSettings().memory.model });
+  const unavailable = recorderUnavailable();
+  if (unavailable) return NextResponse.json({ error: unavailable }, { status: 409 });
+  const outcome = await consolidateImplementation(memoryScope, featureId, teamId, new ProviderModelProvider(), { model: loadSettings().memory.model });
   return NextResponse.json({ ...outcome, consolidations: consolidationsOf(featureId) });
 }

@@ -1,17 +1,15 @@
 # gate
 
-A personal Claude gateway. Connect one or more Claude Code OAuth logins — plus
-any other model endpoint you have, on your machine or hosted — then point any
-Anthropic-compatible tool at it and name the model you want (Haiku / Sonnet /
-Opus / Fable, a local model, or a GLM on Z.AI) — gate serves it, from whichever
-login still has window. On top of it, a team keeps its agents, workflows and skills, runs
-multi-agent pipelines against its repositories from Claude Code, and records
-what each run decided so the next run reads it first. Dashboard built with
-Next.js + shadcn/ui.
+Your team's development pipeline, run from Claude Code. A team keeps its
+agents, workflows and skills on one gate; each person runs those pipelines
+against their own repositories from their own Claude Code session, on their
+own Claude login; and gate records what each run decided so the next run, in
+any team of the tree, reads it before planning. Dashboard built with Next.js +
+shadcn/ui.
 
-> **Scope:** built around the Claude accounts *you* connect. It rotates between
-> those logins and serves them to the people you issue keys to — a small team
-> working through one gate, not account sharing with strangers: every key names
+> **Scope:** gate holds no Claude account and serves no models. Every model
+> call a run makes is the person's own Claude Code. The gate holds the team's
+> definitions, the runs, the memory and the cross-team record; every key names
 > a person, belongs to a team, and can be revoked on its own.
 
 ## Where to get it
@@ -22,8 +20,8 @@ git clone https://github.com/uguratadargun/gateway.git
 
 The repository is also a Claude Code **marketplace** carrying one plugin, `gate`
 — `/gate:run` pulls your team's workflows and runs one **on your own machine**,
-in a worktree of the repository you are in, with every model call still going
-through your gate; `/gate:design` designs one for that repository
+in a worktree of the repository you are in, on your own Claude login;
+`/gate:design` designs one for that repository
 ([how a run works](docs/design/dev-workflow.md)):
 
 ```
@@ -43,29 +41,15 @@ cp .env.example .env
 # set GATE_SECRET (openssl rand -hex 32) and GATE_ADMIN_SECRET (openssl rand -hex 24)
 npm install
 npm run dev        # binds 127.0.0.1:4141; use `npm run dev:lan` to expose on your network
-npm test           # vitest: router, OpenAI translation, SQLite storage, the engine, memory
+npm test           # vitest: the walk, the shipped pipelines, SQLite storage, memory
 ```
 
-Open http://localhost:4141, sign in with your admin secret, click **Start Claude
-login**, approve, and paste the code Anthropic shows you.
-
-## Using the gateway
-
-```bash
-# Claude Code
-ANTHROPIC_BASE_URL=http://localhost:4141/api/gateway claude
-
-# Anthropic SDK
-new Anthropic({ baseURL: "http://localhost:4141/api/gateway", apiKey: "unused" })
-```
-
-Name a model, a tier alias (`haiku`, `sonnet`, `opus`, `fable`) or a provider
-model (`provider:<name>/<model>`); a name gate cannot resolve is a 400. Response
-headers `x-gate-model`, `x-gate-tier`, and `x-gate-route-reason` report what it
-resolved to.
-
-OpenAI SDK clients work too — point them at the same base URL and call
-`/v1/chat/completions` (translated to/from Anthropic, streaming included).
+Open http://localhost:4141 and sign in with your admin secret. On the Team
+page, add people and issue each a key: the key comes with the one
+`/gate:login …` line they paste into Claude Code. The memory recorder is the
+one thing the server asks a model itself: add a provider on the dashboard (a
+vLLM or Ollama on your network, or a hosted endpoint) and name its model under
+Settings → Memory as `provider:<name>/<model>`.
 
 ## Documentation
 
@@ -84,16 +68,15 @@ them true with the code ([the convention](plugins/gate/reference/docs.md)):
 
 The features, by design doc:
 
-| The gateway | The team layer |
+| The server | The team layer |
 | --- | --- |
-| [Routing](docs/design/routing.md) — how a model name resolves, and at what effort | [Teams and keys](docs/design/teams-and-keys.md) — a key is a person on a team |
-| [Account pool](docs/design/account-pool.md) — more than one login, rotated on the same model | [Agents and skills](docs/design/agents-and-skills.md) — the two file formats a team writes |
-| [Providers](docs/design/providers.md) — endpoints that are not Claude, in both dialects | [Workflows and the engine](docs/design/workflows-engine.md) — the YAML graph, and the engine that walks it |
-| [The request pipeline](docs/design/gateway-pipeline.md) — cache, compression, limiter, budget, traffic | [Workspaces](docs/design/workspaces.md) — a run's own worktree and tools |
-| | [Executions](docs/design/executions.md) — every run recorded, with what it cost |
+| [Teams and keys](docs/design/teams-and-keys.md) — a key is a person on a team | [Agents and skills](docs/design/agents-and-skills.md) — the two file formats a team writes |
+| [Providers](docs/design/providers.md) — the model the recorder runs on | [Workflows and the engine](docs/design/workflows-engine.md) — the YAML graph, and the walk that follows it |
+| [Repositories](docs/design/repositories.md) — one name every clone agrees on | [Workspaces](docs/design/workspaces.md) — a run's own worktree |
+| [The dashboard](docs/design/dashboard.md) | [Executions](docs/design/executions.md) — every run recorded, as the path it took |
 | | [Memory](docs/design/memory.md) — what a run decided, for the runs after it |
+| | [Cross-team](docs/design/cross-team.md) — asking another team, and objecting |
 | | [The dev workflow](docs/design/dev-workflow.md) — the shipped pipeline, run from Claude Code on your machine |
-| | [Remote sessions](docs/design/remote-sessions.md) · [Telegram](docs/design/telegram.md) |
 
 ## Keeping up to date
 

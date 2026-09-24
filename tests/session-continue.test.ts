@@ -38,7 +38,7 @@ Ask about {{input.task}}.
 
 const BUILDER = `---
 name: Builder
-model: provider:zai/glm-5.3
+model: sonnet
 executor: claude-code
 output:
   type: json
@@ -173,18 +173,22 @@ describe("a node the session holds", () => {
     const after = await step(ctx, "e-again", "ask", '{"answer": "blue"}');
     // The step carries the original start, so the node's duration is the person's whole answer time.
     expect(server.steps[0].startedAt).toBe(marker.startedAt);
-    expect(after.do).toBe("wait");
+    expect(after.do).toBe("delegate");
   });
 });
 
 describe("continuing a failed run", () => {
   it("retries the node that failed, in the same worktree, with the steps before it kept", async () => {
     const server = fakeServer("e-cont");
-    // A pid nothing on this machine has: the worker for `build` dies at once.
-    const ctx = context(server.client, { spawnWorker: () => 4_194_000 });
+    const ctx = context(server.client);
 
     expect((await next(ctx, "e-cont")).do).toBe("agent");
-    expect((await step(ctx, "e-cont", "ask", '{"answer": "blue"}')).do).toBe("wait");
+    expect((await step(ctx, "e-cont", "ask", '{"answer": "blue"}')).do).toBe("delegate");
+    // `build` fails where it runs — recorded as the server keeps it.
+    server.steps.push({
+      executionId: "e-cont", nodeId: "build", stepIndex: 1, visit: 1, status: "failed", startedAt: 1, finishedAt: 2,
+      input: null, output: null, error: { code: "MODEL_EXECUTION_ERROR", message: "the subagent gave up" },
+    } as unknown as ExecutionStepRecord);
     const failed = await next(ctx, "e-cont");
     expect(failed.do).toBe("failed");
     if (failed.do !== "failed") return;
@@ -197,11 +201,11 @@ describe("continuing a failed run", () => {
 
     // Continue: the failed attempt is dropped, the run is running, and the
     // walk lands on `build` again — `ask` is not asked twice.
-    const alive = context(server.client, { spawnWorker: () => process.pid });
+    const alive = context(server.client);
     const resumed = await continueRun(alive, "e-cont");
     expect(server.continued()).toBe(1);
-    expect(resumed.do).toBe("wait");
-    if (resumed.do !== "wait") return;
+    expect(resumed.do).toBe("delegate");
+    if (resumed.do !== "delegate") return;
     expect(resumed.nodeId).toBe("build");
     expect(server.steps.map((s) => `${s.nodeId}:${s.status}`)).toEqual(["ask:completed"]);
     expect(alive.said.some((m) => m.includes("build will run again"))).toBe(true);
@@ -209,7 +213,7 @@ describe("continuing a failed run", () => {
 
   it("refuses a run that is over for good, and picks up one that is still going", async () => {
     const server = fakeServer("e-cont-2");
-    const ctx = context(server.client, { spawnWorker: () => process.pid });
+    const ctx = context(server.client);
     // Still running: continue is just `next`.
     expect((await continueRun(ctx, "e-cont-2")).do).toBe("agent");
 

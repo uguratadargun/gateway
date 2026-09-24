@@ -10,9 +10,6 @@
 export interface AgentEditorOptions {
   modelTiers: string[];
   models: string[];
-  /** Non-Claude endpoints, one group per configured provider. */
-  providerGroups: Array<{ label: string; models: string[] }>;
-  modelSource: "live" | "fallback";
   efforts: string[];
   executors: string[];
   fieldTypes: readonly string[];

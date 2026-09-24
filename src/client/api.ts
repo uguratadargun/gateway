@@ -1,7 +1,6 @@
 import { hostname } from "node:os";
 
 import type { AskBody, TeachRequest } from "@/lib/client-api-schemas";
-import { isProviderModelId } from "@/lib/model-picker";
 import { GATE_VERSION, isOlderThan, VERSION_HEADERS } from "@/lib/protocol";
 import type { ActivityCard, FeatureCard, FeatureDetail, HistoryResult, MemoryHistoryRequest, MemorySearchRequest, MemorySearchResult, RepoRecordCard } from "@/memory/cards";
 
@@ -32,7 +31,17 @@ export interface AskSourceWire {
 }
 
 export type AskResponse =
-  | { status: "reviewing"; executionId: string; source: AskSourceWire }
+  | {
+      status: "ready";
+      /** What the session reads the source through, for a day: `gate source … <askId>`. */
+      askId: string;
+      expiresAt: number;
+      /** The workflow the question is answered by. */
+      workflow: string;
+      source: AskSourceWire;
+      /** What the asker's memory holds near the question, split by whether it holds at the commit. */
+      memory: string;
+    }
   | {
       status: "source_unavailable";
       reason: string;
@@ -88,10 +97,6 @@ export class GateClient {
 
   get url(): string {
     return this.config.url;
-  }
-
-  get gatewayUrl(): string {
-    return `${this.config.url}/api/gateway`;
   }
 
   get key(): string {
@@ -174,34 +179,9 @@ export class GateClient {
     user: { id: string; email: string; name: string | null } | null;
     team: { id: string; name: string };
     scopes: string[];
-    gatewayUrl: string;
     server?: { version: string; minClientVersion: string };
   }> {
     return (await this.request<any>("/api/v1/me")).body;
-  }
-
-  /**
-   * What the gate's account pool has left. The shape is `PoolQuota` from
-   * src/lib/account-pool.ts, restated here because the CLI is bundled on its
-   * own and an older gate may answer without the newer fields.
-   */
-  async usage(): Promise<{
-    windows: Array<{ name: string; remaining: number; resetsAt: string | null; label?: string }>;
-    accounts: {
-      total: number;
-      enabled: number;
-      available: number;
-      coolingDown: number;
-      quotaBlocked: number;
-      /** A newer field an older gate omits; `?.` at the call site, not here. */
-      modelBlocked?: number;
-    };
-    plan: string | null;
-    updatedAt: number | null;
-    floorPercent: number;
-    reason: string | null;
-  }> {
-    return (await this.request<any>("/api/v1/usage")).body;
   }
 
   /** null when the bundle has not changed since `etag`. */
@@ -399,28 +379,16 @@ export class GateClient {
     return (await this.request<AskResponse>("/api/v1/ask", { method: "POST", body: JSON.stringify(req) })).body;
   }
 
+  /** One read-only look at an ask's commit: `tree`, `grep` or `file`, answered as text. */
+  async askRead(askId: string, what: "tree" | "grep" | "file", params: Record<string, string | undefined>): Promise<string> {
+    const query = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") query.set(k, v);
+    const res = await this.request<{ text: string }>(`/api/v1/ask/${encodeURIComponent(askId)}/${what}?${query}`);
+    return res.body.text;
+  }
+
   async listRuns(limit = 20): Promise<Array<Record<string, any>>> {
     const res = await this.request<{ executions: Array<Record<string, any>> }>(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
-  }
-
-  /**
-   * The models the gateway serves, as `/v1/models` reports them — the gateway
-   * endpoint rather than a client-API one, because it is the list every other
-   * client of this gate already sees, and it is already this key's to read.
-   * Only the provider models are of interest here: the Claude ones reach the
-   * picker through Claude Code's own discovery.
-   */
-  async providerModels(): Promise<Array<{ id: string; display_name?: string; description?: string }>> {
-    const res = await this.request<{ data?: Array<{ id?: unknown; display_name?: unknown; description?: unknown }> }>(
-      "/api/gateway/v1/models",
-    );
-    return (Array.isArray(res.body?.data) ? res.body.data : [])
-      .filter((m) => isProviderModelId(m?.id))
-      .map((m) => ({
-        id: String(m.id),
-        ...(typeof m.display_name === "string" ? { display_name: m.display_name } : {}),
-        ...(typeof m.description === "string" ? { description: m.description } : {}),
-      }));
   }
 }

@@ -1,18 +1,22 @@
 import { resolveKey, type Principal } from "./apikeys";
-import { bearerToken } from "./gate-auth";
 import { teamScope, type DefinitionScope } from "./def-root";
 import { isOlderThan, MIN_CLIENT_VERSION, VERSION_HEADERS } from "./protocol";
 import { DEFAULT_TEAM_ID, ensureDefaultTeam, getTeam } from "./teams";
+
+/** The bearer token on a request, from either header form clients use. */
+function bearerToken(req: Request): string {
+  const header = req.headers.get("authorization") || req.headers.get("x-api-key") || "";
+  return header.replace(/^Bearer\s+/i, "").trim();
+}
 
 /**
  * Auth for the client API (`/api/v1/*`) — the surface the CLI on a developer's
  * machine talks to: it hands out a team's agent and workflow definitions and
  * takes back what their runs did.
  *
- * Unlike the gateway, this is never open. The gateway may run keyless because a
- * loopback-only install has nothing to protect from itself; this API is the one
- * people reach across the network, and an unauthenticated caller there would be
- * handed every workflow a team has written. `GATE_API_KEY` still works, for the
+ * It is never open: this API is the one people reach across the network, and
+ * an unauthenticated caller there would be handed every workflow a team has
+ * written. `GATE_API_KEY` still works, for the
  * single-person install that has issued no keys, and answers as the default team.
  */
 
@@ -62,7 +66,7 @@ export function requireClient(req: Request): Principal | Response {
     if (!principal.scopes.includes("workflows")) {
       return clientErrorResponse({
         status: 403,
-        error: "this key is a gateway-only key; ask for one that may pull workflows",
+        error: "this key may not pull workflows; ask for one that may",
         code: "SCOPE_MISSING",
       });
     }
@@ -84,7 +88,7 @@ export function requireClient(req: Request): Principal | Response {
   const envKey = process.env.GATE_API_KEY;
   if (envKey && token === envKey) {
     ensureDefaultTeam();
-    return { keyId: "env", userId: null, teamId: DEFAULT_TEAM_ID, scopes: ["gateway", "workflows"] };
+    return { keyId: "env", userId: null, teamId: DEFAULT_TEAM_ID, scopes: ["workflows"] };
   }
 
   return clientErrorResponse({

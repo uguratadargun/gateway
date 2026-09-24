@@ -1,6 +1,6 @@
 # 0045. Gate's own agent loop clears old tool results instead of re-sending them
 
-Status: accepted
+Status: superseded by 0047
 Date: 2026-09-23
 Run: manual
 

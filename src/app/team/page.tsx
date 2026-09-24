@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { TelegramPanel } from "@/components/telegram-panel";
 import { encodeConnectionToken } from "@/lib/connect-token";
 import { bundleLoginLine, installLines, PLUGIN_ID, PLUGIN_MARKETPLACE, terminalLoginLine } from "@/lib/protocol";
 
@@ -90,7 +89,6 @@ export default function TeamPage() {
   const [issued, setIssued] = useState<{ userId: string; key: string } | null>(null);
   /** Whether the next key issued may write the team's definitions. */
   const [canAuthor, setCanAuthor] = useState(false);
-  const [canRemote, setCanRemote] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -174,10 +172,7 @@ export default function TeamPage() {
       const data = await post("/api/keys", {
         name: `${user.email}`,
         userId: user.id,
-        scopes:
-          canAuthor || canRemote
-            ? ["gateway", "workflows", ...(canAuthor ? ["author"] : []), ...(canRemote ? ["remote"] : [])]
-            : undefined,
+        scopes: canAuthor ? ["workflows", "author"] : undefined,
       });
       setIssued({ userId: user.id, key: data.plaintext });
       await load();
@@ -233,7 +228,7 @@ export default function TeamPage() {
         <h1 className="text-xl font-semibold">Team</h1>
         <p className="text-sm text-muted-foreground">
           Each person gets a key. They paste one <code>/gate:login</code> line into Claude Code, and their team&apos;s
-          workflows run on their own machine — through this gateway.
+          workflows run on their own machine, on their own Claude login.
         </p>
       </div>
 
@@ -333,15 +328,6 @@ export default function TeamPage() {
           <label className="ml-auto flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
             <input type="checkbox" checked={canAuthor} onChange={(e) => setCanAuthor(e.target.checked)} />
             New keys may author definitions (<code>/gate:design</code>)
-          </label>
-          {/* A remote session is a terminal on this server, as the user gate
-              runs as — a grant of its own, never a default. */}
-          <label
-            className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground"
-            title="Lets a cockpit start Claude Code sessions on this server, in its connected repositories"
-          >
-            <input type="checkbox" checked={canRemote} onChange={(e) => setCanRemote(e.target.checked)} />
-            New keys may run sessions on this server
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -446,14 +432,11 @@ export default function TeamPage() {
                         <Copy />
                       </Button>
                     </div>
-                    {/* The way in that does not go through Claude Code. A
-                        slash command is a prompt, and a Claude Code at its
-                        weekly limit runs none — which is the moment someone
-                        most wants to be on the team's gateway instead. */}
+                    {/* The way in that does not go through Claude Code: a slash
+                        command is a prompt, and connecting needs none. */}
                     <p className="text-xs text-muted-foreground">
-                      If their Claude Code will not run at all — a spent weekly limit refuses every prompt, including{" "}
-                      <code>/gate:login</code> — this is the same login, in a plain terminal with Claude Code closed.
-                      Connecting spends no model call:
+                      The same login in a plain terminal, for a machine where Claude Code is not open. Connecting
+                      spends no model call:
                     </p>
                     <div className="flex items-center gap-2">
                       <code className="flex-1 truncate rounded bg-background px-2 py-1 text-xs">
@@ -493,7 +476,6 @@ export default function TeamPage() {
                       <div key={k.id} className="flex items-center gap-3 text-xs text-muted-foreground">
                         <code>{k.prefix}…</code>
                         {k.scopes.includes("author") && <Badge variant="outline">author</Badge>}
-                        {k.scopes.includes("remote") && <Badge variant="outline">remote</Badge>}
                         {k.revoked && <Badge variant="destructive">revoked</Badge>}
                         <span>{k.lastUsedAt ? `last used ${new Date(k.lastUsedAt).toLocaleString()}` : "never used"}</span>
                         {k.lastHost && <span>from {k.lastHost}</span>}
@@ -511,8 +493,6 @@ export default function TeamPage() {
           })}
         </div>
       </Card>
-
-      <TelegramPanel users={users} />
     </div>
   );
 }

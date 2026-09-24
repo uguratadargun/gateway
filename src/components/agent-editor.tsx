@@ -14,7 +14,7 @@ import { minutesOf, num, type AgentEditorOptions, type AgentForm, type OutputFie
  *
  * Everything above the prompt used to be YAML you typed into a textarea, which
  * meant the fields that decide what an agent costs and how it is run —
- * `executor`, `effort`, `maxTokens`, `timeoutMs` — were invisible unless you
+ * `executor`, `effort`, `timeoutMs` — were invisible unless you
  * already knew they existed. They are controls now, with the vocabularies
  * served by the API rather than guessed at here, so a wrong value is not
  * typeable rather than being caught on save.
@@ -77,11 +77,7 @@ export function AgentEditor({
       <Section title="Model">
         <Field
           label="model"
-          hint={
-            options.modelSource === "live"
-              ? "A tier is resolved per run by the router; a concrete id pins it. A provider model runs the node off Anthropic entirely."
-              : "Model list is the built-in fallback — the account could not be queried."
-          }
+          hint="An alias is what the person's Claude Code resolves it to; a concrete id pins it. Only a claude-code agent runs on it — a gate agent is done on the session's own model."
         >
           <select
             value={form.model}
@@ -102,23 +98,10 @@ export function AgentEditor({
                 </option>
               ))}
             </optgroup>
-            {(options.providerGroups ?? []).map((g) => (
-              <optgroup key={g.label} label={g.label}>
-                {g.models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-            {/* A model the account no longer lists must still be selectable, or
-                opening the file would silently rewrite it to something else. */}
+            {/* A model not in the list must still be selectable, or opening
+                the file would silently rewrite it to something else. */}
             {form.model &&
-              ![
-                ...options.modelTiers,
-                ...options.models,
-                ...(options.providerGroups ?? []).flatMap((g) => g.models),
-              ].includes(form.model) && (
+              ![...options.modelTiers, ...options.models].includes(form.model) && (
                 <option value={form.model}>{form.model} (not in the current list)</option>
               )}
           </select>
@@ -139,8 +122,8 @@ export function AgentEditor({
           label="executor"
           hint={
             claudeCode
-              ? "Claude Code holds the loop in the worktree: its own tools, and it compacts instead of re-sending the whole context each round. Needs a workspace."
-              : "Gate holds the conversation and serves its own tools, appending every result to one message list."
+              ? "A subagent of the person's session, in this agent's own model, with Claude Code's tools and a context of its own. It cannot ask the person."
+              : "The person's session does the node itself, on its own model, in front of them — and can ask them when the agent declares asks."
           }
         >
           <select
@@ -156,18 +139,6 @@ export function AgentEditor({
           </select>
         </Field>
 
-        <Field label="max tokens" hint="Per model call, thinking included. Blank = 8192.">
-          <Input
-            type="number"
-            min={1024}
-            max={200000}
-            step={1024}
-            value={form.maxTokens}
-            onChange={(e) => onChange({ maxTokens: e.target.value })}
-            className={fieldClass}
-            placeholder="8192"
-          />
-        </Field>
       </Section>
 
       <Section title="Limits">
@@ -175,8 +146,8 @@ export function AgentEditor({
           label="timeout (minutes)"
           hint={
             timeoutNum === 0
-              ? "0 — no timeout at all. A wedged node hangs the run until someone stops it."
-              : `Covers one whole visit, every tool round included. Blank = 60. Written as ${
+              ? "0 — never mention it. A wedged node goes on until someone stops it."
+              : `How long one visit is expected to take; past it the person is told. Blank = 60. Written as ${
                   timeoutNum === undefined ? "nothing" : `${timeoutNum} ms`
                 }.`
           }
@@ -192,16 +163,6 @@ export function AgentEditor({
             }}
             className={fieldClass}
             placeholder="60"
-          />
-        </Field>
-        <Field label="max tool rounds" hint="0 or blank = no cap. The timeout is the real backstop.">
-          <Input
-            type="number"
-            min={0}
-            value={form.maxToolIterations}
-            onChange={(e) => onChange({ maxToolIterations: e.target.value })}
-            className={fieldClass}
-            placeholder="no cap"
           />
         </Field>
       </Section>
@@ -360,8 +321,9 @@ export function AgentEditor({
         ) : (
           <>
             <p className="text-[10px] leading-snug text-muted-foreground">
-              Only exist when the workflow declares a workspace; the same file runs without one, reasoning over what it
-              is handed. An agent holding a write tool is one that is expected to change the worktree.
+              The shape of the role, which the session doing the node stays inside; the memory tools become{" "}
+              <span className="font-mono">gate memory</span> commands. An agent holding a write tool is one that is
+              expected to change the worktree.
             </p>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1">
               {options.gateTools.map((t) => (

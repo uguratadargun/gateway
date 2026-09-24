@@ -1,6 +1,6 @@
 # 0020. A provider model reaches the picker under its own name
 
-Status: accepted
+Status: superseded by 0046
 Date: 2026-09-17
 Run: provider-models-in-the-model-picker
 

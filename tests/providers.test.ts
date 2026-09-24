@@ -7,7 +7,6 @@ import {
 } from "@/lib/anthropic-openai";
 import { getDb } from "@/lib/db";
 import {
-  canonicalModelRef,
   catalogueRequest,
   createProvider,
   formatProviderRef,
@@ -24,7 +23,7 @@ import {
   sendToOpenAIProvider,
   sendToProvider,
 } from "@/lib/provider-exec";
-import { routeModel } from "@/lib/router";
+import { ProviderModelProvider } from "@/providers/direct-provider";
 
 // ── request translation ─────────────────────────────────────────────────────
 
@@ -253,13 +252,9 @@ describe("provider registry", () => {
   });
 
   it("still reads the `local:` prefix it used to write", () => {
-    // Every routing.json and agent definition written before the rename holds
-    // one of these; they have to keep resolving to the same endpoint.
+    // A settings file written before the rename may hold one; it has to keep
+    // resolving to the same endpoint.
     expect(parseProviderRef("local:ollama/qwen3")).toEqual({ provider: "ollama", model: "qwen3" });
-    expect(canonicalModelRef("local:ollama/qwen3")).toBe("provider:ollama/qwen3");
-    expect(canonicalModelRef("provider:zai/glm-4.6")).toBe("provider:zai/glm-4.6");
-    // A Claude id is not a provider ref and is handed back untouched.
-    expect(canonicalModelRef("claude-sonnet-5")).toBe("claude-sonnet-5");
   });
 
   it("slugifies the name, trims the base URL, and seals the key", () => {
@@ -287,19 +282,88 @@ describe("provider registry", () => {
     vi.unstubAllGlobals();
   });
 
-  it("routes an explicit provider reference straight through", () => {
-    createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1" });
-    const route = routeModel("provider:ollama/qwen3", { messages: [{ role: "user", content: "hi" }] });
-    expect(route.model).toBe("provider:ollama/qwen3");
-    expect(route.reason).toBe("explicit provider model");
-    expect(listProviders().length).toBe(1);
+  it("sends a provider model straight to its endpoint, translated both ways", async () => {
+    createProvider({ name: "vllm", baseUrl: "http://10.0.0.5:8000/v1", models: ["qwen"] });
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          id: "c1",
+          model: "qwen",
+          choices: [{ index: 0, message: { role: "assistant", content: "hello" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 12, completion_tokens: 3 },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const result = await new ProviderModelProvider().execute({ model: "provider:vllm/qwen", messages: [{ role: "user", content: "hi" }] });
+    vi.unstubAllGlobals();
+    expect(fetchSpy.mock.calls[0][0]).toBe("http://10.0.0.5:8000/v1/chat/completions");
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).model).toBe("qwen");
+    expect(result.text).toBe("hello");
+    expect(result.model).toBe("provider:vllm/qwen");
+    expect(result.usage).toMatchObject({ inputTokens: 12, outputTokens: 3 });
   });
 
-  it("routes a legacy `local:` reference to the same endpoint, canonicalised", () => {
-    createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1" });
-    const route = routeModel("local:ollama/qwen3", { messages: [{ role: "user", content: "hi" }] });
-    expect(route.model).toBe("provider:ollama/qwen3");
-    expect(route.reason).toBe("explicit provider model");
+  it("takes the legacy `local:` spelling for the same endpoint", async () => {
+    createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1", models: ["qwen3"] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }], usage: {} }), { status: 200 })),
+    );
+    const result = await new ProviderModelProvider().execute({ model: "local:ollama/qwen3", messages: [{ role: "user", content: "hi" }] });
+    vi.unstubAllGlobals();
+    expect(result.text).toBe("ok");
+  });
+
+  it("refuses a Claude model, and says which setting would fix it", async () => {
+    await expect(new ProviderModelProvider().execute({ model: "sonnet", messages: [{ role: "user", content: "hi" }] })).rejects.toThrow(
+      /provider:<name>\/<model>/,
+    );
+  });
+
+  it("says a provider is missing rather than calling nowhere", async () => {
+    await expect(
+      new ProviderModelProvider().execute({ model: "provider:nowhere/x", messages: [{ role: "user", content: "hi" }] }),
+    ).rejects.toThrow(/"nowhere" is not configured/);
+  });
+
+  it("tries a failing endpoint again, and gives the answer when it comes", async () => {
+    createProvider({ name: "flaky", baseUrl: "http://10.0.0.6:8000/v1", models: ["m"] });
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls++;
+        return calls === 1
+          ? new Response("busy", { status: 503 })
+          : new Response(JSON.stringify({ choices: [{ message: { content: "second time" } }], usage: {} }), { status: 200 });
+      }),
+    );
+    const result = await new ProviderModelProvider().execute({ model: "provider:flaky/m", messages: [{ role: "user", content: "hi" }] });
+    vi.unstubAllGlobals();
+    expect(calls).toBe(2);
+    expect(result.text).toBe("second time");
+  });
+
+  it("does not retry a refusal, and names its status", async () => {
+    createProvider({ name: "strict", baseUrl: "http://10.0.0.7:8000/v1", models: ["m"] });
+    const fetchSpy = vi.fn(async () => new Response("bad request", { status: 400 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(
+      new ProviderModelProvider().execute({ model: "provider:strict/m", messages: [{ role: "user", content: "hi" }] }),
+    ).rejects.toThrow(/\(400\)/);
+    vi.unstubAllGlobals();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a stopped run as stopped, not as a model failure", async () => {
+    createProvider({ name: "slow", baseUrl: "http://10.0.0.8:8000/v1", models: ["m"] });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      new ProviderModelProvider().execute({ model: "provider:slow/m", messages: [{ role: "user", content: "hi" }], signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "RUN_CANCELLED" });
   });
 
   it("declared models are the catalogue, and nothing is probed", async () => {

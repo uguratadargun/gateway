@@ -1,6 +1,6 @@
 # 0022. A session gate starts begins in auto mode
 
-Status: accepted
+Status: superseded by 0047
 Date: 2026-09-20
 
 ## Context

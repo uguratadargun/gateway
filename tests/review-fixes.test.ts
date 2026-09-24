@@ -8,13 +8,10 @@ import { newAgentTemplate } from "@/agents/new-agent-template";
 import { renderTemplate, templatePaths } from "@/agents/template";
 import type { AgentDefinition } from "@/agents/types";
 import { publishWorkflowEvent, subscribeWorkflow, workflowEvents } from "@/events/bus";
-import { runWorkflow } from "@/runtime/engine";
 import { parseCondition, evaluateCondition } from "@/workflows/condition";
 import { missingRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { parseWorkflow } from "@/workflows/loader";
 import { getWorkflow, listWorkflows, saveWorkflow, workflowsDir } from "@/workflows/registry";
-
-import { FakeModelProvider } from "./fakes/fake-model-provider";
 
 const meta = { sourcePath: "/tmp/x", updatedAt: 0 };
 
@@ -133,31 +130,6 @@ nodes:
     expect(missingRunInputs(["task", "repo"], { task: "do it" })).toEqual(["repo"]);
     expect(missingRunInputs(["task"], { task: "" })).toEqual(["task"]);
     expect(missingRunInputs(["task"], { task: "do it" })).toEqual([]);
-  });
-});
-
-describe("truncated agent output", () => {
-  const AGENT = "---\nname: Big\nmaxTokens: 2048\noutput:\n  type: json\n  schema:\n    summary: string\n---\nWrite it.\n";
-  const loadAgent = (id: string): AgentDefinition => parseAgent(id, AGENT, meta);
-  const WORKFLOW = `
-name: One
-entry: write
-nodes:
-  - id: write
-    type: agent
-    agent: big
-    next: done
-  - id: done
-    type: terminal
-`;
-
-  it("is reported as truncation, not as a formatting failure", async () => {
-    const provider = new FakeModelProvider(() => ({ text: '{"summary": "half a sen', stopReason: "max_tokens" }));
-    const state = await runWorkflow(parseWorkflow("w", WORKFLOW, meta), { provider, loadAgent });
-    expect(state.error?.code).toBe("AGENT_OUTPUT_TRUNCATED");
-    expect(state.error?.message).toMatch(/2048 max tokens/);
-    // The agent's own ceiling is what gets sent upstream.
-    expect(provider.calls[0].maxTokens).toBe(2048);
   });
 });
 

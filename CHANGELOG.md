@@ -2,15 +2,19 @@
 
 ## Unreleased
 
-- `/sessions` shows what the user asked. A session was named after whichever Claude Code request came first — often the permission classifier's CLAUDE.md preamble or a `<system-reminder>` — cut at 80 characters and to one line. The title is now the prompt itself, up to 2000 characters, two lines in the list and whole when the session is opened; titles stored the old way are read again once, and those with no prompt in them are left for the session's next request to fill.
+- Every model call a run makes is now the person's own Claude Code, on their own login. gate holds no Claude account and serves no models: the account pool, the Claude login on the dashboard, the gateway (`/api/gateway`, the OpenAI dialect, Cursor and other clients), model routing and tiers, the response cache, compression, the limiter, the budget, the traffic and usage logs (`/traffic`, `/analytics`, `/sessions`), the quota windows, the playground and the client pages are removed. `gate usage`, `gate live` and `gate env` are removed; your own `/usage` in Claude Code shows your plan again. The first session after updating the plugin takes gate's old gateway settings out of Claude Code's settings and asks you to restart Claude Code once.
+
+- Runs happen only from your own Claude Code session with `/gate:run`. Starting or continuing a run from the dashboard, remote sessions, the Telegram bot, headless `gate run`, and the detached worker followed with `gate wait` are removed. A node in its own model is always a subagent of your session, drawn live in the terminal. The dashboard shows the command that restarts or continues a run, on the machine it ran on.
+
+- `gate ask` reads the other team's code in your own session. The gate still fixes the commit, checks that the repository is in your team's family, and reads memory at that commit; it then starts an `ask` run on your machine, which reads the source through `gate source tree|grep|file`, read-only and for a day. Restore the shipped `ask` workflow on a gate that has its own copy.
+
+- The memory recorder runs on a provider model the server names under Settings → Memory as `provider:<name>/<model>`, such as a vLLM on your network. Until one is named, finished runs wait in the ledger and the dashboard says why. An agent's `model:` must be a Claude model; a `provider:` reference is refused.
+
+- A repository's `prepare` commands are removed. Nothing runs in a worktree on the server; `setup` still runs once in the gate's own checkout.
+
+- The oldest CLI the gate serves is 0.47.0; an older plugin is told to run `/gate:update`.
 
 - `gate ask` reads a repository that has no publication remote from its `origin`, so every connected repository can be asked about. Before this it answered `"<repo>" does not publish, so nothing in it can be read from here`, even for a base branch that the record index was already reading. The publication remote is still what lets gate push run branches, and asking about a run still needs that run to have been published.
-
-- The `search_files` tool finds what is there in a large repository. It used to stop after the first 500 entries in alphabetical order, so in ulak-desktop a search from the root never reached `ts/` or `js/`, and a path naming a single file always came back `(no matches)`. It now searches the one file a path names, walks the whole tree until it has 100 matches, and says when a limit hid something: the match cap, the file cap, or a file too large to read. `gate ask` answers are the ones this changes most, because a reviewer that could not find a name reported the feature as absent.
-
-- `list_files` shows every top-level entry of a large repository. It used to list depth-first and stop at 500 entries, so in ulak-desktop a root listing filled up inside `tests/` and never showed `ts/`. It now lists level by level and says to what depth the listing is complete; on a file it says to use `read_file` instead of answering `(empty)`. `run_command` output that is too long is now cut in the middle instead of at the end, so a test run's failures and summary are kept. These are the tools of the agents that run on gate's own executor — recall, decide, plan review, conflict review, acceptance and the `ask` reviewer.
-
-- Agents on gate's own executor no longer re-send every file they have read on every round. Once a round's context reaches 100 000 tokens, tool results older than the last five rounds are replaced by a note that names the call, so the agent can make it again. One `ask` answer had re-read 8.4M tokens over 119 rounds; a longer node could reach the model's context window and fail. `search_files` now also searches files up to 5 MB, where it used to skip anything over 200 KB (in ulak-desktop that included `ts/sql/Server.ts`), and it skips binary files.
 
 ## 0.46.0 — 2026-09-23
 

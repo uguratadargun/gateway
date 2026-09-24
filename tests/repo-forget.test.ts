@@ -48,7 +48,6 @@ function record(id: string, root: string, cloned: boolean) {
     cloned,
     baseRef: null,
     setup: [],
-    prepare: [],
     remoteUrl: null,
   });
 }

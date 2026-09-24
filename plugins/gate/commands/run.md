@@ -115,15 +115,14 @@ already done, or that nothing needed changing, ends there.
 
 **You are the one running it.** gate decides *what* runs next and in *what order*; the work
 happens on this machine, where the user can see it. Which of you does a given node depends on
-the agent's `executor`, exactly as it does on the server:
+the agent's `executor`:
 
 - `executor: gate` — the loop driving the run, which here is **you**: you do the node with your
   own tools, in front of the user, and you can ask them. The shipped `acceptance` node is one.
-- `executor: claude-code` — a **spawned Claude Code on this machine, in the agent's own model**.
-  A planner on GLM, an implementer on a local model: your session's model cannot stand in for
-  that, so gate starts it as a worker and you follow it. The shipped planner, implementer and
-  reviewer are these. They run unattended — they were told so — and do not ask; what needed
-  settling was settled above, before the run, and the acceptance node asks at the end.
+- `executor: claude-code` — **your subagent, in the agent's own model**, on the user's own
+  Claude login like everything else here. The shipped planner, implementer and reviewer are
+  these. They run unattended — they were told so — and do not ask; what needed settling was
+  settled above, before the run, and the acceptance node asks at the end.
 
 **The run reads the team's memory first, and writes to it last.** The shipped pipelines open
 with a `recall` node: it searches what earlier runs decided — across the team's whole tree, so a
@@ -190,8 +189,8 @@ Each call prints one JSON instruction:
     reason to hold a node: measured here, a reviewer's approval waited thirty-four minutes
     on "shall I take the plan file out of the commit?" while the user was away. Hand the
     step back, then say what you noticed.
-  - **No signature on any commit.** A commit the run makes — a subagent's, a worker's, or
-    one you make yourself for a node — carries no "Co-Authored-By" and no "Generated with"
+  - **No signature on any commit.** A commit the run makes — a subagent's, or one you make
+    yourself for a node — carries no "Co-Authored-By" and no "Generated with"
     trailer, whatever your own habit is: the commit is the team's, and the tool that typed it
     is not its author. The shipped agents are told the same; if you see one on the branch,
     say so at the end rather than rewriting history mid-run.
@@ -244,25 +243,6 @@ Each call prints one JSON instruction:
     and unchanged) instead of starting a fresh one that reads it all again; the prompt
     carries what is new. If the send fails because the agent is gone, start `subagent` fresh
     with the Agent tool as on a first pass.
-  - You only get this instruction when your session runs through the gateway (see the end of
-    this file); otherwise the same node arrives as `wait`.
-- **`{"do": "wait", …}`** — a node is running on its own, in its own model. `log` is where it
-  writes what it is doing, one short line per thing done, the way you show your own tool
-  calls: `⏺ Read src/a.ts`, `⏺ Edit src/a.ts (+2 −1)`, `⏺ Bash: Run tests`, and what it says
-  in between. You do nothing for it: do not touch the worktree, do not do its work, do not
-  answer for it. Run
-  ```
-  node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" wait <execution-id>
-  ```
-  in the foreground: it prints what the node has done since you last looked and returns on its
-  own — with the next instruction when the node is over, or with `wait` again after about
-  ninety seconds. A node that runs past its agent's `timeoutMs` is not stopped: the log says it
-  is overrunning, you tell the user, and stopping it is their call (`gate cancel`, or Stop on
-  the dashboard). **The user cannot see that command's output.** The node is working in their
-  worktree, in a model they chose, and this log is their only view of it — so after every
-  `wait`, relay the lines it printed, as they are, in one fenced code block: nothing added,
-  nothing summarised, nothing left out. Then run `wait` again. A node can take an hour; that
-  is the worker's hour, not yours.
 - **`{"do": "done", …}`** — the run is over. Report `status`, the `branch` and the `review`
   command for reviewing it, then offer to review that diff. Every run that ends has its
   worktree removed on the spot and says so: what it left uncommitted became the branch's last
@@ -292,8 +272,8 @@ a test suite's tail, a `✓ commit` — relay them to the user in a fenced code 
 go on. You never run those commands yourself and never see them as an instruction.
 
 **The run's definitions are pinned when it starts.** `begin` copies the team's agents,
-workflows and skills as they are at that moment, and every later `next`, `step` and `wait`
-of that run reads the copy — so an edit in the dashboard, or a `gate pull`, changes the next
+workflows and skills as they are at that moment, and every later `next` and `step` of that
+run reads the copy — so an edit in the dashboard, or a `gate pull`, changes the next
 run and never the graph under a run that is already walking it.
 
 **Routing** is gate's. Which node follows which, and which way a loop goes, comes from the
@@ -305,12 +285,8 @@ commands it will run and asks for approval. That prompt needs a terminal, so if 
 "Refusing to run unattended without approval", tell the user what it wanted to run and let them
 approve; pass `--yes` only if they say so.
 
-## Watching a node live
+## The first run on a machine
 
-A node in its own model runs as your subagent — drawn live in this terminal — only when your
-own session sends its model calls through the gateway, because a subagent inherits your
-endpoint and its model is a name only the gateway resolves. `/gate:live` makes that so for
-Claude Code started in this repository, through its own settings; nothing has to be typed
-after that. If a run's nodes arrive as `wait` and the user asks to see them live, tell them
-about `/gate:live` once. The first time, gate writes the team's agents to `~/.claude/agents/`;
-if that directory did not exist before, Claude Code needs one restart to see them.
+The first time, gate writes the team's claude-code agents to `~/.claude/agents/`, one file
+each, which is how a node's subagent carries the agent's own model. If that directory did not
+exist before, Claude Code needs one restart to see them; `begin` says so when it happens.

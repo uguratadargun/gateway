@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 
 /**
  * AES-256-GCM sealing under a key derived from GATE_SECRET. Anything secret
- * that gate persists — Claude refresh tokens, provider API keys — goes through
+ * that gate persists — provider API keys — goes through
  * here, so nothing at rest is plaintext.
  */
 

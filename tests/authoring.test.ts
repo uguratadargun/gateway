@@ -50,7 +50,7 @@ describe("authoring from a client", () => {
 
   it("refuses a key that may only read", async () => {
     createTeam("Authors", team);
-    author = createKey({ name: "author", teamId: team, scopes: ["gateway", "workflows", "author"] }).plaintext;
+    author = createKey({ name: "author", teamId: team, scopes: ["workflows", "author"] }).plaintext;
     reader = createKey({ name: "reader", teamId: team }).plaintext;
 
     const res = await push(reader, { kind: "agent", id: "designed", source: AGENT });

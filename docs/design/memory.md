@@ -11,7 +11,7 @@ else in the tree is being built right now. So:
 - a feature one team built is found when a sibling is asked for it
 - a deliberate decision is not undone by accident
 - a refused road is not tried again
-- two teams starting the same work hear about it
+- two teams starting the same work see each other in recall
 
 Older work can be taught in, a wrong record forgotten, and one team can
 object to another's decision where its planner will read it.
@@ -130,7 +130,7 @@ sequenceDiagram
   participant Run as Run
   participant DB as gate.db
   participant Rec as 📝 Recorder
-  participant AI as Model (Sonnet)
+  participant AI as Model (a provider)
 
   Run->>DB: 1. Run ended → a "pending" row in memory_extractions
   Rec->>DB: 2. Set the row to "running" (nobody else takes it)
@@ -154,8 +154,8 @@ sequenceDiagram
    the decision records and design docs the run wrote, read from its diff
    as the added lines of `docs/decisions/*.md` and `docs/design/*.md`; and
    the catalogue's similar features and earlier decisions on the same files.
-4. **Asking the model** (`memory.model` in Settings, `sonnet` by default),
-   in one message. The rules: every real choice is a decision, logic not
+4. **Asking the model** (`memory.model` in Settings, a
+   `provider:<name>/<model>`), in one message. The rules: every real choice is a decision, logic not
    code, and the failed attempt counts too. A refused approach carries its
    verdict. Housekeeping (tests updated to match, regenerated output, a
    rename) is no decision. The answer is JSON: the decisions, and the
@@ -175,8 +175,8 @@ sequenceDiagram
    A replaced decision gets `valid_to`, and only when it is the owner's own
    decision in the same repository.
 7. **The summary.** The team's row in `memory_feature_impls` is updated.
-8. **Closing.** The row becomes `done` with the count and the cost, on the
-   run's page; on an error it becomes `failed` and is retried up to three
+8. **Closing.** The row becomes `done` with the count and the cost (zero,
+   for a provider model), on the run's page; on an error it becomes `failed` and is retried up to three
    times; **Record again** on the run's page asks once more, and **Record
    earlier runs** on `/memory` queues every finished run with no ledger row.
 
@@ -191,6 +191,16 @@ feature for that team, rewrites the summary and the pitfalls whole, and
 closes the decisions a later one replaced — `valid_to` set, `supersedes`
 filled, nothing deleted; a likely duplicate entry is proposed to a person,
 never folded. Every pass is on the feature's page with its cost.
+
+gate holds no Claude login, so the recorder and consolidation run on a
+provider the server calls itself (`ProviderModelProvider`,
+[providers](providers.md)): `memory.model` is a `provider:<name>/<model>`
+and nothing else, empty by default. On the live gate that is a Qwen3.8-27B
+on the gate's own vLLM. Until one is set, `recorderUnavailable()` says why,
+every drain leaves the ledger's rows `pending` rather than failing them, and
+the consolidate button answers 409 with the same reason. Saving a model
+starts nothing by itself: the next run that ends, or **Record again** on a
+run, starts a drain, and each drain takes ten waiting runs.
 
 ### Merges nobody ran through gate
 
@@ -376,8 +386,8 @@ Every decision is rendered this way, with a few extra markers:
 
 The same reads exist in three places:
 
-- as agent tools: `memory_search`, `memory_feature` and `memory_history`,
-  on the server or over HTTP with the person's key
+- in a run: an agent whose tools list `memory_search`, `memory_feature` or
+  `memory_history` is told to run the `gate memory` command of that name
 - in a session: `gate memory search …`, `gate memory feature <id>`,
   `gate memory history …` and `gate memory activity`, run in the checkout,
   whose remote names the repository
@@ -441,8 +451,9 @@ from the dashboard, neither from a run, and neither may do the other's;
 found by its paths and feature. An answer whose objection never reached the server is kept
 and counted, and the count is shown to recall, so an empty list is not read
 as agreement. When memory cannot answer another team's question about
-code, `gate ask "<question>" --repo <host/owner/name>` runs the `ask`
-pipeline over that team's published source at one fixed commit.
+code, `gate ask "<question>" --repo <host/owner/name>` has the gate fix one
+commit of that team's published source, and the asker's own session reads it
+through read-only views of that commit ([cross-team](cross-team.md)).
 
 ### Forgetting
 
@@ -477,12 +488,13 @@ no agent, run or CLI can forget anything.
 ## Key files
 
 - `src/memory/types.ts`, `store.ts` — the three layers and outcome values; the tables and the one way to read them, through a scope in the SQL; the extraction ledger
-- `src/memory/extract.ts`, `queue.ts` — the recorder (steps, docs in the diff, neighbours, the prompt, the write) and when it runs, with the consolidation and embedding passes after it
+- `src/memory/extract.ts`, `queue.ts` — the recorder (steps, docs in the diff, neighbours, the prompt, the write) and when it runs, `recorderUnavailable`, with the consolidation and embedding passes after it
+- `src/providers/direct-provider.ts` — the provider the recorder and consolidation call
 - `src/memory/teach.ts`, `forget.ts`, `consolidate.ts`, `issues.ts` — teaching, forgetting, consolidation, objections
 - `src/memory/hybrid.ts`, `embeddings.ts`, `cards.ts`, `access.ts` — words and vectors fused, for decisions, features and documents; the shared shapes and the text a model reads
 - `src/memory/record-index.ts`, `merges.ts` — the repositories' record read from their base branches, the decisions reconciled against it, path history; merges made without gate
-- `src/memory/activity.ts` — the tree's runs in flight, and the overlap told to both people
-- `src/runtime/tools/memory-tools.ts`, `src/client/memory.ts`, `src/client/cli.ts` — the three read tools on the server and over the client API; `gate memory`, `gate teach`, `gate ask`
+- `src/memory/activity.ts` — the tree's runs in flight, matched against a task's words for recall
+- `src/client/memory.ts`, `src/client/cli.ts`, `src/agents/tools.ts` — `gate memory`, `gate teach`, `gate ask`; the tool names an agent file lists for the three reads
 - `src/lib/db.ts` — the DDL and the FTS indexes; `src/app/api/memory/` (with `index/`), `src/app/api/v1/memory/` (with `history/` and `activity/`), `src/app/api/executions/[id]/memory/` — the routes
 
 ## Pitfalls
@@ -497,7 +509,9 @@ no agent, run or CLI can forget anything.
 ## Decisions
 
 - [0041 — Merges made without gate are recorded only when the gate is set to](../decisions/0041-merges-made-without-gate-are-recorded-when-asked.md)
-- [0039 — Work in flight is part of recall, and an overlap is told to both people](../decisions/0039-work-in-flight-is-part-of-recall.md)
+- [0048 — A question to another team is read on the asker's machine, from the commit the gate fixed](../decisions/0048-ask-is-read-on-the-askers-machine.md)
+- [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)
+- [0039 — Work in flight is part of recall, and an overlap is told to both people](../decisions/0039-work-in-flight-is-part-of-recall.md) (its Telegram message superseded by 0047)
 - [0038 — The repositories' record is read by code, and the base branch settles what landed](../decisions/0038-the-repositories-record-is-read-by-code.md)
 - [0037 — Words read every repository of the tree, paths stay in their own](../decisions/0037-words-read-every-repository-paths-stay-in-their-own.md)
 - [0036 — A decision belongs to the repository's team](../decisions/0036-a-decision-belongs-to-the-repositorys-team.md)

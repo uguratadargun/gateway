@@ -25,9 +25,8 @@ const clientInfo = z
     version: z.string().max(40).optional(),
     /**
      * The Claude Code session driving the run, when the plugin's hook could
-     * learn it. The gateway files that session's own model calls under the
-     * same id, which is what lets the nodes the session does itself be
-     * costed against the run.
+     * learn it: which session a run belongs to, for whoever is watching
+     * several.
      */
     session: z.string().max(80).optional(),
   })
@@ -139,7 +138,7 @@ export const stepSchema = z.object({
   output: z.unknown().optional(),
   error: z.object({ code: z.string().max(64), message: z.string().max(4000) }).optional(),
   usage: usageSchema.optional(),
-  /** The session did this node itself: cost it from the session's own gateway calls. */
+  /** The session did this node itself, on the person's own login: no usage comes with it. */
   costing: z.literal("session").optional(),
   toolCalls: z.array(toolCallSchema).optional(),
 });

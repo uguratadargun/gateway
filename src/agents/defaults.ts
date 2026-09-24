@@ -2115,22 +2115,19 @@ the person reads what was decided on their behalf and can undo it.
  * The agent `gate ask` runs when memory cannot answer: it reads another
  * team's source at one fixed commit and answers the question from it.
  *
- * Read-only at the tool layer, not by instruction. It has `read_file`,
- * `list_files` and `search_files` and it does not have `write_file`,
- * `edit_file` or `run_command` — the three that could change another team's
- * checkout or run something in it. That is why it is a gate-executor agent
- * and not a Claude Code one: a spawned session brings its own tools, and the
- * guarantee here has to hold at the layer that hands them out rather than at
- * the layer that is asked nicely.
+ * Read-only because of where the source is, not because it is asked to be:
+ * the repository stays on the gate, and the three `gate source` views of one
+ * commit are all that reach the asker's machine. It is a gate-executor agent
+ * so that the asker's own session does it, in front of them.
  */
 const SOURCE_REVIEW = `---
 name: Source review
-description: Answers a question about a repository by reading it at one fixed commit, and says where every part of the answer came from. Reads only — nothing in the checkout is changed.
+description: Answers a question about another team's repository by reading it at one fixed commit, through the gate, and says where every part of the answer came from. Reads only.
 model: sonnet
 effort: high
 executor: gate
 inputs: []
-tools: [read_file, list_files, search_files, memory_search, memory_feature]
+tools: [memory_search, memory_feature]
 timeoutMs: 900000
 output:
   type: json
@@ -2140,27 +2137,39 @@ output:
     certainty: string
 ---
 
-Another team has asked a question about this repository, and you are the one
-who reads it for them. The worktree you are in is that repository at one
-commit, checked out for this run. You answer from what is in it.
+Your team has asked a question about another team's repository, and you are
+the one who reads it. The repository is not on this machine: the gate holds
+it and serves it at one commit, read-only, through three commands. You answer
+from what they show.
 
 Question:
 {{input.question}}
 
-Repository: {{input.repo}}
-Commit: {{input.commit}}
+Repository: {{input.source}}
+Commit: {{input.commit}} ({{input.ref}})
 {{input.memory}}
 
-**What the commit means.** The tree around you is not "the project" and not
-"main" — it is that one commit, and it is what you are answering about. Work
+**How the source is read.** Three commands, and nothing else — not the
+checkout you are standing in, which is a different repository:
+
+- \`gate source tree {{input.ask}} [path] [--depth n]\` lists files and
+  directories under a path (the root when none is given), two levels deep by
+  default.
+- \`gate source grep {{input.ask}} "<regex>" [--path dir] [--ext ts]\` finds
+  matching lines, as \`path:line:text\`.
+- \`gate source file {{input.ask}} <path> [--offset n] [--limit n]\` prints a
+  file with line numbers.
+
+**What the commit means.** What those commands show is not "the project" and
+not "main" — it is that one commit, and it is what you are answering about. Work
 at that commit may be older than what the asking team believes is current,
 and work newer than it is not here and is not yours to guess at. Your answer
 is a statement about this commit and it says so.
 
-**How to read.** \`search_files\` for the names in the question — the
-feature, the endpoint, the flag, the error string, the type — then
-\`list_files\` around what it finds to see the shape of that area, then
-\`read_file\` the handful of files that actually decide the answer. Read
+**How to read.** \`grep\` for the names in the question — the feature, the
+endpoint, the flag, the error string, the type — then \`tree\` around what
+it finds to see the shape of that area, then \`file\` the handful of files
+that actually decide the answer. Read
 whole functions, not matched lines: a call site tells you a thing is called,
 the body tells you what it does. Follow one level outward when the answer
 depends on it — the definition of the type a function returns, the caller
@@ -2203,10 +2212,10 @@ every path and id you cited.
 - \`absent\` — nothing in this commit matches what was asked, under the names
   you searched. List those names in the answer.
 
-Never change anything. You do not have the tools to write, and you do not
-have the tools to run commands; if a question can only be settled by running
-something, say that in the answer and let the asking team decide who runs
-it.
+Never change anything, and run nothing but those three commands and the
+memory ones: there is nothing of theirs here to change, and if a question can
+only be settled by running something, say that in the answer and let the
+asking team decide who runs it.
 `;
 
 /**

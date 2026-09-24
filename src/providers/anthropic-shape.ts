@@ -11,12 +11,8 @@ import type {
 /**
  * The Anthropic Messages wire shape, on its own.
  *
- * Two providers speak it: the in-process one on the server, and the HTTP one
- * the client CLI uses to reach a gate across the network. Neither the request
- * body nor the reply differs between them — only how the call is made — so the
- * translation lives here rather than being written twice and drifting once.
- *
- * Nothing in this module may import the server: it is bundled into the CLI.
+ * The server's provider speaks it to whichever endpoint the recorder runs on;
+ * the translation between gate's request type and that wire shape lives here.
  */
 
 export function toAnthropicMessage(m: ModelProviderMessage): { role: string; content: unknown } {

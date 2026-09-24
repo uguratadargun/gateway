@@ -6,15 +6,14 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { execFileSync as execFileSync6 } from "node:child_process";
-import { appendFileSync as appendFileSync2, existsSync as existsSync16, mkdirSync as mkdirSync13, readFileSync as readFileSync13, writeFileSync as writeFileSync11 } from "node:fs";
-import { homedir as homedir8, hostname as hostname4 } from "node:os";
-import { basename as basename2, join as join17, resolve as resolve6 } from "node:path";
+import { existsSync as existsSync12, mkdirSync as mkdirSync10, readFileSync as readFileSync10, writeFileSync as writeFileSync9 } from "node:fs";
+import { homedir as homedir6, hostname as hostname3 } from "node:os";
+import { basename, join as join13, resolve as resolve4 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync3, readdirSync as readdirSync3, rmSync as rmSync2, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, readdirSync as readdirSync2, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
 
 // src/lib/def-root.ts
 import { existsSync, mkdirSync, renameSync } from "node:fs";
@@ -1263,24 +1262,12 @@ var DEFAULT_TAG_HANDLERS = Object.assign(/* @__PURE__ */ Object.create(null), {
   "!": "!",
   "!!": "tag:yaml.org,2002:"
 });
-function tagPercentEncode(source) {
-  return encodeURI(source).replace(/!/g, "%21");
-}
 function tagNameFull(rawTag, tagHandlers) {
   if (rawTag.startsWith("!<") && rawTag.endsWith(">")) return decodeURIComponent(rawTag.slice(2, -1));
   const handleEnd = rawTag.indexOf("!", 1);
   const handle = handleEnd === -1 ? "!" : rawTag.slice(0, handleEnd + 1);
   const prefix = tagHandlers?.[handle] ?? DEFAULT_TAG_HANDLERS[handle] ?? handle;
   return decodeURIComponent(prefix) + decodeURIComponent(rawTag.slice(handle.length));
-}
-function tagNameShort(fullTag) {
-  let tag = fullTag;
-  if (tag.charCodeAt(0) === 33) {
-    tag = tag.slice(1);
-    return `!${tagPercentEncode(tag)}`;
-  }
-  if (tag.slice(0, 18) === "tag:yaml.org,2002:") return `!!${tagPercentEncode(tag.slice(18))}`;
-  return `!<${tagPercentEncode(tag)}>`;
 }
 var NO_RANGE$2 = -1;
 var MERGE_TAG_NAME = "tag:yaml.org,2002:merge";
@@ -2386,164 +2373,6 @@ function load(input, options) {
   if (documents.length === 1) return documents[0];
   throw new YAMLException("expected a single document in the stream, but found more");
 }
-var INVALID = /* @__PURE__ */ Symbol("INVALID");
-function buildRepresentTypes(schema) {
-  const defaultTags = new Set([
-    schema.defaultScalarTag,
-    schema.defaultSequenceTag,
-    schema.defaultMappingTag
-  ].filter((t) => t !== void 0));
-  const implicitScalars = schema.implicitScalarTags;
-  const explicitTags = schema.tags.filter((t) => !(t.nodeKind === "scalar" && t.implicit) && !defaultTags.has(t));
-  const defaultTagsLast = schema.tags.filter((t) => defaultTags.has(t));
-  return [
-    ...implicitScalars.map((tag) => ({
-      tag,
-      implicitTag: true
-    })),
-    ...explicitTags.map((tag) => ({
-      tag,
-      implicitTag: false
-    })),
-    ...defaultTagsLast.map((tag) => ({
-      tag,
-      implicitTag: true
-    }))
-  ];
-}
-function matchTag(state, object) {
-  for (let index = 0, length = state.representTypes.length; index < length; index += 1) {
-    const { tag, implicitTag } = state.representTypes[index];
-    if (tag.identify(object)) {
-      let tagName;
-      if (tag.matchByTagPrefix) tagName = tag.representTagName(object);
-      else tagName = tag.tagName;
-      return {
-        tag,
-        tagName,
-        implicitTag
-      };
-    }
-  }
-  return null;
-}
-function build(state, object) {
-  if (!state.noRefs && object !== null && typeof object === "object") {
-    const existing = state.refs.get(object);
-    if (existing) {
-      if (existing.anchor === void 0) existing.anchor = `ref_${state.refCounter++}`;
-      return {
-        kind: "alias",
-        anchor: existing.anchor
-      };
-    }
-  }
-  const matched = matchTag(state, object);
-  if (!matched) {
-    if (object === void 0) return INVALID;
-    if (state.skipInvalid) return INVALID;
-    throw new YAMLException(`unacceptable kind of an object to dump ${Object.prototype.toString.call(object)}`);
-  }
-  const { tag, tagName, implicitTag } = matched;
-  const nodeTagName = implicitTag ? tagName : tagNameShort(tagName);
-  if (tag.nodeKind === "scalar") return {
-    kind: "scalar",
-    tag: nodeTagName,
-    tagged: !implicitTag,
-    style: SCALAR_STYLE.PLAIN,
-    value: tag.represent(object)
-  };
-  if (tag.nodeKind === "sequence") {
-    const container = tag.represent(object);
-    const node2 = {
-      kind: "sequence",
-      tag: nodeTagName,
-      tagged: !implicitTag,
-      style: COLLECTION_STYLE.BLOCK,
-      items: []
-    };
-    if (!state.noRefs) state.refs.set(object, node2);
-    for (let index = 0, length = container.length; index < length; index += 1) {
-      let item = build(state, container[index]);
-      if (item === INVALID && container[index] === void 0) item = build(state, null);
-      if (item === INVALID) continue;
-      node2.items.push(item);
-    }
-    return node2;
-  }
-  const map = tag.represent(object);
-  const node = {
-    kind: "mapping",
-    tag: nodeTagName,
-    tagged: !implicitTag,
-    style: COLLECTION_STYLE.BLOCK,
-    items: []
-  };
-  if (!state.noRefs) state.refs.set(object, node);
-  for (const [objectKey, objectValue] of map) {
-    const key = build(state, objectKey);
-    if (key === INVALID) continue;
-    const value = build(state, objectValue);
-    if (value === INVALID) continue;
-    node.items.push({
-      key,
-      value
-    });
-  }
-  return node;
-}
-function jsToAst(input, schema, options = {}) {
-  const root = build({
-    representTypes: buildRepresentTypes(schema),
-    noRefs: options.noRefs ?? false,
-    skipInvalid: options.skipInvalid ?? false,
-    refs: /* @__PURE__ */ new Map(),
-    refCounter: 0
-  }, input);
-  return [{
-    contents: root === INVALID ? null : root,
-    directives: []
-  }];
-}
-var VISIT_BREAK = /* @__PURE__ */ Symbol("visit:break");
-var VISIT_SKIP = /* @__PURE__ */ Symbol("visit:skip");
-function visitNode(node, visitor, ctx) {
-  const control = visitor(node, ctx);
-  if (control === VISIT_BREAK) return true;
-  if (control === VISIT_SKIP) return false;
-  const depth = ctx.depth + 1;
-  switch (node.kind) {
-    case "sequence":
-      for (const item of node.items) if (visitNode(item, visitor, {
-        depth,
-        parent: node,
-        isKey: false
-      })) return true;
-      break;
-    case "mapping":
-      for (const { key, value } of node.items) {
-        if (visitNode(key, visitor, {
-          depth,
-          parent: node,
-          isKey: true
-        })) return true;
-        if (visitNode(value, visitor, {
-          depth,
-          parent: node,
-          isKey: false
-        })) return true;
-      }
-      break;
-  }
-  return false;
-}
-function visit(documents, visitor) {
-  for (const doc of documents) if (doc.contents && visitNode(doc.contents, visitor, {
-    depth: 0,
-    parent: null,
-    isKey: false
-  })) return;
-}
 function hasBit(mask, bit) {
   return (mask & 1 << bit) !== 0;
 }
@@ -2610,9 +2439,6 @@ function quoteInvalidPlain(layout) {
 function fallbackToDoubleQuoted(layout) {
   if (!hasBit(layout.allowedStylesMask, layout.style)) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
 }
-function setBit(mask, bit) {
-  return mask | 1 << bit;
-}
 var SRC_C_PRINTABLE = "[\\x09\\x0A\\x0D\\x20-\\x7E\\x85\\xA0-\\uD7FF\\uE000-\\uFFFD\\u{10000}-\\u{10FFFF}]";
 var SRC_B_CHAR = "[\\n\\r]";
 var SRC_C_BYTE_ORDER_MARK = "\\uFEFF";
@@ -2645,221 +2471,6 @@ var NS_PLAIN_FLOW_KEY = new RegExp(`^(?:${SRC_NS_PLAIN_ONE_LINE_FLOW_KEY})$`, "u
 var NB_SINGLE_ONE_LINE = new RegExp(`^(?:${SRC_NB_JSON})*$`, "u");
 var NB_SINGLE_MULTI_LINE = new RegExp(`^(?:${SRC_NB_JSON}|\\n)*$`, "u");
 var BLOCK_SCALAR_CONTENT = new RegExp(`^(?:${SRC_NB_CHAR}|\\n)*$`, "u");
-var C_FORBIDDEN_FIRST_LINE = /^(?:---|\.\.\.)(?=$|[ \t\n\r])/;
-var C_FORBIDDEN_CONTENT = /^(?:---|\.\.\.)(?=$|[ \t\n\r])/m;
-function canUsePlain(layout) {
-  const str2 = layout.node.value;
-  if (str2 !== "") {
-    if (!(layout.isKey ? layout.flowOnly ? NS_PLAIN_FLOW_KEY : NS_PLAIN_BLOCK_KEY : layout.flowOnly ? NS_PLAIN_FLOW_IN : NS_PLAIN_FLOW_OUT).test(str2)) return false;
-    if (layout.shiftOfFirstLine === 0 && C_FORBIDDEN_FIRST_LINE.test(str2)) return false;
-    if (layout.shiftOfContent === 0) {
-      const firstLineBreak = str2.indexOf("\n");
-      if (firstLineBreak !== -1) {
-        const content = str2.slice(firstLineBreak + 1);
-        if (C_FORBIDDEN_CONTENT.test(content)) return false;
-      }
-    }
-  }
-  const resolvedTag = layout.presenterOptions.schema.resolveImplicitScalarTag(str2).tag.tagName;
-  if (!layout.node.tagged && resolvedTag !== layout.node.tag) return false;
-  if (!layout.node.tagged && str2 === "=" && resolvedTag === layout.presenterOptions.schema.defaultScalarTag.tagName) return false;
-  return true;
-}
-function canUseSingleQuoted(layout) {
-  const str2 = layout.node.value;
-  if (!(layout.isKey ? NB_SINGLE_ONE_LINE : NB_SINGLE_MULTI_LINE).test(str2)) return false;
-  if (/[ \t]\n|\n[ \t]/.test(str2)) return false;
-  if (!layout.isKey && layout.shiftOfContent === 0) {
-    const firstLineBreak = str2.indexOf("\n");
-    if (firstLineBreak !== -1 && C_FORBIDDEN_CONTENT.test(str2.slice(firstLineBreak + 1))) return false;
-  }
-  return true;
-}
-function canUseBlock(layout) {
-  if (layout.flowOnly || !BLOCK_SCALAR_CONTENT.test(layout.node.value)) return false;
-  const contentIndent = layout.shiftOfContent - layout.shiftOfParent;
-  if (contentIndent < 1) return false;
-  if (contentIndent > 9 && /^\n* /.test(layout.node.value)) return false;
-  if (layout.shiftOfContent === 0 && C_FORBIDDEN_CONTENT.test(layout.node.value)) return false;
-  return true;
-}
-function detectAllowedStyles(layout) {
-  let mask = setBit(0, SCALAR_STYLE.DOUBLE_QUOTED);
-  if (canUsePlain(layout)) mask = setBit(mask, SCALAR_STYLE.PLAIN);
-  if (canUseSingleQuoted(layout)) mask = setBit(mask, SCALAR_STYLE.SINGLE_QUOTED);
-  if (canUseBlock(layout)) mask = setBit(setBit(mask, SCALAR_STYLE.LITERAL_BLOCK), SCALAR_STYLE.FOLDED_BLOCK);
-  layout.allowedStylesMask = mask;
-}
-function renderScalar(layout) {
-  switch (layout.style) {
-    case SCALAR_STYLE.PLAIN:
-      return renderPlain(layout);
-    case SCALAR_STYLE.SINGLE_QUOTED:
-      return renderSingleQuoted(layout);
-    case SCALAR_STYLE.LITERAL_BLOCK:
-      return renderLiteralBlock(layout);
-    case SCALAR_STYLE.FOLDED_BLOCK:
-      return renderFoldedBlock(layout);
-    case SCALAR_STYLE.DOUBLE_QUOTED:
-      return renderDoubleQuoted(layout);
-  }
-}
-function renderPlain(layout) {
-  return encodeFlowBreaks(layout.node.value, layout.shiftOfContent);
-}
-function renderSingleQuoted(layout) {
-  return `'${encodeFlowBreaks(layout.node.value, layout.shiftOfContent).replace(/'/g, "''")}'`;
-}
-function renderLiteralBlock(layout) {
-  const value = layout.node.value;
-  return "|" + blockHeader(value, layout.shiftOfParent, layout.shiftOfContent) + dropEndingNewline(indentString(value, layout.shiftOfContent));
-}
-function renderFoldedBlock(layout) {
-  const value = layout.node.value;
-  const w = layout.presenterOptions.lineWidth;
-  let availableWidth = Infinity;
-  if (w !== -1) availableWidth = Math.max(Math.min(w, 40), w - layout.shiftOfContent);
-  return ">" + blockHeader(value, layout.shiftOfParent, layout.shiftOfContent) + dropEndingNewline(indentString(foldBlockScalar(value, availableWidth), layout.shiftOfContent));
-}
-function renderDoubleQuoted(layout) {
-  return `"${escapeString(layout.node.value)}"`;
-}
-function encodeFlowBreaks(string, shiftOfContent) {
-  let nextLF = string.indexOf("\n");
-  if (nextLF === -1) return string;
-  const pad = " ".repeat(shiftOfContent);
-  let result = string.slice(0, nextLF);
-  const lineRe = /(\n+)([^\n]*)/g;
-  lineRe.lastIndex = nextLF;
-  let match;
-  while (match = lineRe.exec(string)) {
-    const breaks = match[1].length;
-    const line = match[2];
-    result += "\n".repeat(breaks + 1) + pad + line;
-  }
-  return result;
-}
-function indentString(string, spaces) {
-  const indent = " ".repeat(spaces);
-  let position = 0;
-  let result = "";
-  const length = string.length;
-  while (position < length) {
-    let line;
-    const next2 = string.indexOf("\n", position);
-    if (next2 === -1) {
-      line = string.slice(position);
-      position = length;
-    } else {
-      line = string.slice(position, next2 + 1);
-      position = next2 + 1;
-    }
-    if (line.length && line !== "\n") result += indent;
-    result += line;
-  }
-  return result;
-}
-function needIndentIndicator(string) {
-  return /^\n* /.test(string);
-}
-function blockHeader(string, shiftOfParent, shiftOfContent) {
-  const indentIndicator = needIndentIndicator(string) ? String(shiftOfContent - shiftOfParent) : "";
-  const clip3 = string[string.length - 1] === "\n";
-  return `${indentIndicator}${clip3 && (string[string.length - 2] === "\n" || string === "\n") ? "+" : clip3 ? "" : "-"}
-`;
-}
-function dropEndingNewline(string) {
-  return string[string.length - 1] === "\n" ? string.slice(0, -1) : string;
-}
-function isMoreIndented(char) {
-  return char === " " || char === "	";
-}
-function foldLine(line, width) {
-  if (line === "" || isMoreIndented(line[0])) return line;
-  const breakRe = / [^ \t]/g;
-  let match;
-  let start = 0;
-  let end;
-  let curr = 0;
-  let next2 = 0;
-  let result = "";
-  while (match = breakRe.exec(line)) {
-    next2 = match.index;
-    if (next2 - start > width) {
-      end = curr > start ? curr : next2;
-      result += `
-${line.slice(start, end)}`;
-      start = end + 1;
-    }
-    curr = next2;
-  }
-  result += "\n";
-  if (line.length - start > width && curr > start) result += `${line.slice(start, curr)}
-${line.slice(curr + 1)}`;
-  else result += line.slice(start);
-  return result.slice(1);
-}
-function foldBlockScalar(string, width) {
-  const lineRe = /(\n+)([^\n]*)/g;
-  let nextLF = string.indexOf("\n");
-  if (nextLF === -1) nextLF = string.length;
-  lineRe.lastIndex = nextLF;
-  let result = foldLine(string.slice(0, nextLF), width);
-  let prevMoreIndented = string[0] === "\n" || isMoreIndented(string[0]);
-  let moreIndented;
-  let match;
-  while (match = lineRe.exec(string)) {
-    const prefix = match[1];
-    const line = match[2];
-    moreIndented = line !== "" && isMoreIndented(line[0]);
-    result += prefix + (!prevMoreIndented && !moreIndented && line !== "" ? "\n" : "") + foldLine(line, width);
-    prevMoreIndented = moreIndented;
-  }
-  return result;
-}
-var CHARACTERS_TO_ESCAPE = /["\\\x00-\x1F\x7F-\xA0\u2028\u2029\uD800-\uDFFF\uFEFF\uFFFE\uFFFF]/gu;
-function escapeCharacter(character) {
-  switch (character) {
-    case "\0":
-      return "\\0";
-    case "\x07":
-      return "\\a";
-    case "\b":
-      return "\\b";
-    case "	":
-      return "\\t";
-    case "\n":
-      return "\\n";
-    case "\v":
-      return "\\v";
-    case "\f":
-      return "\\f";
-    case "\r":
-      return "\\r";
-    case "\x1B":
-      return "\\e";
-    case '"':
-      return '\\"';
-    case "\\":
-      return "\\\\";
-    case "\x85":
-      return "\\N";
-    case "\xA0":
-      return "\\_";
-    case "\u2028":
-      return "\\L";
-    case "\u2029":
-      return "\\P";
-  }
-  const code = character.charCodeAt(0);
-  const hex = code.toString(16).toUpperCase();
-  if (code <= 255) return `\\x${"0".repeat(2 - hex.length)}${hex}`;
-  return `\\u${"0".repeat(4 - hex.length)}${hex}`;
-}
-function escapeString(string) {
-  return string.replace(CHARACTERS_TO_ESCAPE, escapeCharacter);
-}
-var CHAR_LINE_FEED = 10;
 var DEFAULT_PRESENTER_OPTIONS = {
   indent: 2,
   seqNoIndent: false,
@@ -2874,222 +2485,6 @@ var DEFAULT_PRESENTER_OPTIONS = {
   scalarStyleRules: Object.keys(DEFAULT_SCALAR_STYLE_RULES).map((name) => Reflect.get(DEFAULT_SCALAR_STYLE_RULES, name)),
   tagBeforeAnchor: false
 };
-function nodeTagShort(node) {
-  return node.tagged ? node.tag : tagNameShort(node.tag);
-}
-function createPresenterState(options) {
-  const opts = {
-    ...DEFAULT_PRESENTER_OPTIONS,
-    ...options
-  };
-  if (opts.flowSkipColonSpace) opts.quoteFlowKeys = true;
-  return {
-    ...opts,
-    defaultScalarTagName: opts.schema.defaultScalarTag.tagName,
-    openEnded: false
-  };
-}
-function generateNextLine(state, level) {
-  return `
-${" ".repeat(state.indent * level)}`;
-}
-function scalarLayout(state, node, parent, level, isKey, flowOnly) {
-  return {
-    node,
-    parent,
-    level,
-    isKey,
-    flowOnly,
-    shiftOfParent: level === 0 ? -1 : state.indent * (level - 1),
-    shiftOfContent: state.indent * Math.max(1, level),
-    shiftOfFirstLine: level === 0 ? 0 : state.indent * level,
-    presenterOptions: state,
-    allowedStylesMask: 0,
-    style: node.style
-  };
-}
-function writeFlowSequence(state, level, node) {
-  let result = "";
-  for (let index = 0, length = node.items.length; index < length; index += 1) {
-    const item = writeNode(state, level, node.items[index], node, {}).text;
-    if (index > 0) result += `,${!state.flowSkipCommaSpace ? " " : ""}`;
-    result += item;
-  }
-  const pad = state.flowBracketPadding && node.items.length > 0 ? " " : "";
-  return `[${pad}${result}${pad}]`;
-}
-function writeBlockSequence(state, level, node, compact) {
-  let result = "";
-  for (let index = 0, length = node.items.length; index < length; index += 1) {
-    const item = writeNode(state, level + 1, node.items[index], node, {
-      block: true,
-      compact: state.seqInlineFirst,
-      isblockseq: true
-    }).text;
-    if (!compact || result !== "") result += generateNextLine(state, level);
-    if (item === "" || CHAR_LINE_FEED === item.charCodeAt(0)) result += "-";
-    else result += "- ";
-    result += item;
-  }
-  return result;
-}
-function writeFlowMapping(state, level, node) {
-  let result = "";
-  for (const { key, value } of node.items) {
-    let pairBuffer = "";
-    if (result !== "") pairBuffer += `,${!state.flowSkipCommaSpace ? " " : ""}`;
-    const keyRender = writeNode(state, level, key, node, { iskey: true });
-    const keyText = keyRender.text;
-    const valueText = writeNode(state, level, value, node, {}).text;
-    const sep3 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
-    const keyIsBareProps = key.kind === "scalar" && keyRender.noBody && (key.tagged || key.anchor !== void 0);
-    const keyColonSep = key.kind === "alias" || keyIsBareProps ? " " : "";
-    pairBuffer += `${keyText}${keyColonSep}:${sep3}${valueText}`;
-    result += pairBuffer;
-  }
-  const pad = state.flowBracketPadding && result !== "" ? " " : "";
-  return `{${pad}${result}${pad}}`;
-}
-function writeBlockMapping(state, level, node, compact) {
-  let result = "";
-  for (let index = 0, length = node.items.length; index < length; index += 1) {
-    let pairBuffer = "";
-    if (!compact || result !== "") pairBuffer += generateNextLine(state, level);
-    const { key, value } = node.items[index];
-    const keyIsBlock = (key.kind === "mapping" || key.kind === "sequence") && key.style === COLLECTION_STYLE.BLOCK && key.items.length !== 0 || key.kind === "scalar" && (key.style === SCALAR_STYLE.LITERAL_BLOCK || key.style === SCALAR_STYLE.FOLDED_BLOCK);
-    const keyRender = keyIsBlock ? writeNode(state, level + 1, key, node, {
-      block: true,
-      compact: true,
-      isblockseq: !cannotBeCompact(state, key, level + 1)
-    }) : writeNode(state, level + 1, key, node, {
-      block: true,
-      compact: true,
-      iskey: true
-    });
-    const keyText = keyRender.text;
-    const keyHasLineBreak = key.kind === "scalar" && key.value.indexOf("\n") !== -1;
-    const keyIsTooLong = keyText.length > 1024 && /^[\s\S]{1025}/u.test(keyText);
-    const explicitPair = keyIsBlock || keyHasLineBreak || keyIsTooLong;
-    if (explicitPair) if (keyText && CHAR_LINE_FEED === keyText.charCodeAt(0)) pairBuffer += "?";
-    else pairBuffer += "? ";
-    pairBuffer += keyText;
-    if (explicitPair) pairBuffer += generateNextLine(state, level);
-    const valueText = writeNode(state, level + 1, value, node, {
-      block: true,
-      compact: explicitPair,
-      isblockseq: explicitPair && !cannotBeCompact(state, value, level + 1)
-    }).text;
-    const keyIsBareProps = key.kind === "scalar" && keyRender.noBody && (key.tagged || key.anchor !== void 0);
-    const keyColonSep = !explicitPair && (key.kind === "alias" || keyIsBareProps) ? " " : "";
-    if (valueText === "" || CHAR_LINE_FEED === valueText.charCodeAt(0)) pairBuffer += `${keyColonSep}:`;
-    else pairBuffer += `${keyColonSep}: `;
-    pairBuffer += valueText;
-    result += pairBuffer;
-  }
-  return result;
-}
-function cannotBeCompact(state, node, level) {
-  if (node.kind === "alias") return true;
-  return node.tagged || node.anchor !== void 0 || state.indent < 2 && level > 0;
-}
-function writeNode(state, level, node, parent, ctx) {
-  if (node.kind === "alias") {
-    state.openEnded = false;
-    return {
-      text: `*${node.anchor}`,
-      noBody: false
-    };
-  }
-  const { block = false, iskey = false, isblockseq = false } = ctx;
-  let compact = ctx.compact ?? false;
-  const hasAnchor = node.anchor !== void 0;
-  if (cannotBeCompact(state, node, level)) compact = false;
-  let body;
-  let shouldPrintTag = node.tagged;
-  const useBlockCollection = block && (node.kind === "mapping" || node.kind === "sequence") && node.style === COLLECTION_STYLE.BLOCK && node.items.length !== 0;
-  if (node.kind === "mapping") if (useBlockCollection) body = writeBlockMapping(state, level, node, compact);
-  else body = writeFlowMapping(state, level, node);
-  else if (node.kind === "sequence") if (useBlockCollection) if (state.seqNoIndent && !isblockseq && level > 0) body = writeBlockSequence(state, level - 1, node, compact);
-  else body = writeBlockSequence(state, level, node, compact);
-  else body = writeFlowSequence(state, level, node);
-  else {
-    const layout = scalarLayout(state, node, parent, level, iskey, !block);
-    detectAllowedStyles(layout);
-    for (const rule of state.scalarStyleRules) rule(layout);
-    body = renderScalar(layout);
-    state.openEnded = (layout.style === SCALAR_STYLE.LITERAL_BLOCK || layout.style === SCALAR_STYLE.FOLDED_BLOCK) && (node.value === "\n" || node.value.endsWith("\n\n"));
-    shouldPrintTag = node.tagged || body === "" && layout.flowOnly && parent?.kind === "sequence" && !hasAnchor || layout.style !== SCALAR_STYLE.PLAIN && node.tag !== state.defaultScalarTagName;
-  }
-  if ((node.kind === "mapping" || node.kind === "sequence") && !useBlockCollection) state.openEnded = false;
-  if (useBlockCollection && compact && level > 0 && state.indent > 2) body = `${" ".repeat(state.indent - 2)}${body}`;
-  const noBody = body === "";
-  let text = body;
-  if (shouldPrintTag || hasAnchor) {
-    const props = [];
-    const tag = shouldPrintTag ? nodeTagShort(node) : null;
-    const anchor = hasAnchor ? `&${node.anchor}` : null;
-    if (state.tagBeforeAnchor) {
-      if (tag !== null) props.push(tag);
-      if (anchor !== null) props.push(anchor);
-    } else {
-      if (anchor !== null) props.push(anchor);
-      if (tag !== null) props.push(tag);
-    }
-    const sep3 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
-    text = `${props.join(" ")}${sep3}${body}`;
-  }
-  return {
-    text,
-    noBody
-  };
-}
-function rootStartsOwnLine(node) {
-  return (node.kind === "sequence" || node.kind === "mapping") && node.style === COLLECTION_STYLE.BLOCK && node.items.length !== 0 && !node.tagged && node.anchor === void 0;
-}
-function writeDocumentDirectives(doc) {
-  let result = "";
-  for (const directive of doc.directives) {
-    if (directive.kind === "yaml") {
-      result += `%YAML ${directive.version}
-`;
-      continue;
-    }
-    const { handle, prefix } = directive;
-    result += `%TAG ${handle} ${prefix}
-`;
-  }
-  return result;
-}
-function present(documents, options) {
-  const state = createPresenterState(options);
-  let result = "";
-  let previousEnded = false;
-  for (let index = 0; index < documents.length; index += 1) {
-    const doc = documents[index];
-    state.openEnded = false;
-    const directives = writeDocumentDirectives(doc);
-    const hasDirectives = directives !== "";
-    const marker = doc.explicitStart || hasDirectives || index > 0 && !previousEnded;
-    result += directives;
-    if (doc.contents === null) {
-      if (marker) result += "---\n";
-    } else if (marker) {
-      const body = writeNode(state, 0, doc.contents, null, {
-        block: true,
-        compact: true
-      }).text;
-      const sep3 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
-      result += `---${sep3}${body}
-`;
-    } else result += writeNode(state, 0, doc.contents, null, {
-      block: true,
-      compact: true
-    }).text + "\n";
-    previousEnded = doc.explicitEnd || state.openEnded;
-    if (previousEnded) result += "...\n";
-  }
-  return result;
-}
 var DEFAULT_DUMP_OPTIONS = {
   ...DEFAULT_PRESENTER_OPTIONS,
   schema: DUMP_SCHEMA,
@@ -3100,40 +2495,6 @@ var DEFAULT_DUMP_OPTIONS = {
   transform: () => {
   }
 };
-function defaultCompareFn(a, b) {
-  const x = String(a);
-  const y = String(b);
-  if (x < y) return -1;
-  if (x > y) return 1;
-  return 0;
-}
-function dump(input, options = {}) {
-  const opts = {
-    ...DEFAULT_DUMP_OPTIONS,
-    ...options
-  };
-  const documents = jsToAst(input, opts.schema, {
-    noRefs: opts.noRefs,
-    skipInvalid: opts.skipInvalid
-  });
-  if (opts.flowLevel >= 0) visit(documents, (node, ctx) => {
-    if (ctx.depth < opts.flowLevel) return;
-    if (node.kind === "sequence" || node.kind === "mapping") node.style = COLLECTION_STYLE.FLOW;
-    return VISIT_SKIP;
-  });
-  if (opts.sortKeys) {
-    const compareFn = opts.sortKeys === true ? defaultCompareFn : opts.sortKeys;
-    visit(documents, (node) => {
-      if (node.kind !== "mapping") return;
-      node.items.sort((a, b) => compareFn(a.key.kind === "scalar" ? a.key.value : "", b.key.kind === "scalar" ? b.key.value : ""));
-    });
-  }
-  opts.transform(documents);
-  return present(documents, {
-    ...pick(opts, Object.keys(DEFAULT_PRESENTER_OPTIONS)),
-    schema: opts.schema
-  });
-}
 var EVENT_DOCUMENT = EVENT_ID.DOCUMENT;
 var EVENT_SEQUENCE = EVENT_ID.SEQUENCE;
 var EVENT_MAPPING = EVENT_ID.MAPPING;
@@ -3157,7 +2518,7 @@ __export(external_exports, {
   BRAND: () => BRAND,
   DIRTY: () => DIRTY,
   EMPTY_PATH: () => EMPTY_PATH,
-  INVALID: () => INVALID2,
+  INVALID: () => INVALID,
   NEVER: () => NEVER,
   OK: () => OK,
   ParseStatus: () => ParseStatus,
@@ -3689,7 +3050,7 @@ var ParseStatus = class _ParseStatus {
     const arrayValue = [];
     for (const s of results) {
       if (s.status === "aborted")
-        return INVALID2;
+        return INVALID;
       if (s.status === "dirty")
         status.dirty();
       arrayValue.push(s.value);
@@ -3713,9 +3074,9 @@ var ParseStatus = class _ParseStatus {
     for (const pair of pairs) {
       const { key, value } = pair;
       if (key.status === "aborted")
-        return INVALID2;
+        return INVALID;
       if (value.status === "aborted")
-        return INVALID2;
+        return INVALID;
       if (key.status === "dirty")
         status.dirty();
       if (value.status === "dirty")
@@ -3727,7 +3088,7 @@ var ParseStatus = class _ParseStatus {
     return { status: status.value, value: finalObject };
   }
 };
-var INVALID2 = Object.freeze({
+var INVALID = Object.freeze({
   status: "aborted"
 });
 var DIRTY = (value) => ({ status: "dirty", value });
@@ -4182,7 +3543,7 @@ var ZodString = class _ZodString extends ZodType {
         expected: ZodParsedType.string,
         received: ctx2.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     const status = new ParseStatus();
     let ctx = void 0;
@@ -4742,7 +4103,7 @@ var ZodNumber = class _ZodNumber extends ZodType {
         expected: ZodParsedType.number,
         received: ctx2.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     let ctx = void 0;
     const status = new ParseStatus();
@@ -5025,7 +4386,7 @@ var ZodBigInt = class _ZodBigInt extends ZodType {
       expected: ZodParsedType.bigint,
       received: ctx.parsedType
     });
-    return INVALID2;
+    return INVALID;
   }
   gte(value, message) {
     return this.setLimit("min", value, true, errorUtil.toString(message));
@@ -5140,7 +4501,7 @@ var ZodBoolean = class extends ZodType {
         expected: ZodParsedType.boolean,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     return OK(input.data);
   }
@@ -5165,14 +4526,14 @@ var ZodDate = class _ZodDate extends ZodType {
         expected: ZodParsedType.date,
         received: ctx2.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     if (Number.isNaN(input.data.getTime())) {
       const ctx2 = this._getOrReturnCtx(input);
       addIssueToContext(ctx2, {
         code: ZodIssueCode.invalid_date
       });
-      return INVALID2;
+      return INVALID;
     }
     const status = new ParseStatus();
     let ctx = void 0;
@@ -5271,7 +4632,7 @@ var ZodSymbol = class extends ZodType {
         expected: ZodParsedType.symbol,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     return OK(input.data);
   }
@@ -5292,7 +4653,7 @@ var ZodUndefined = class extends ZodType {
         expected: ZodParsedType.undefined,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     return OK(input.data);
   }
@@ -5313,7 +4674,7 @@ var ZodNull = class extends ZodType {
         expected: ZodParsedType.null,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     return OK(input.data);
   }
@@ -5362,7 +4723,7 @@ var ZodNever = class extends ZodType {
       expected: ZodParsedType.never,
       received: ctx.parsedType
     });
-    return INVALID2;
+    return INVALID;
   }
 };
 ZodNever.create = (params) => {
@@ -5381,7 +4742,7 @@ var ZodVoid = class extends ZodType {
         expected: ZodParsedType.void,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     return OK(input.data);
   }
@@ -5402,7 +4763,7 @@ var ZodArray = class _ZodArray extends ZodType {
         expected: ZodParsedType.array,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     if (def.exactLength !== null) {
       const tooBig = ctx.data.length > def.exactLength.value;
@@ -5543,7 +4904,7 @@ var ZodObject = class _ZodObject extends ZodType {
         expected: ZodParsedType.object,
         received: ctx2.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     const { status, ctx } = this._processInputParams(input);
     const { shape, keys: shapeKeys } = this._getCached();
@@ -5878,7 +5239,7 @@ var ZodUnion = class extends ZodType {
         code: ZodIssueCode.invalid_union,
         unionErrors
       });
-      return INVALID2;
+      return INVALID;
     }
     if (ctx.common.async) {
       return Promise.all(options.map(async (option) => {
@@ -5934,7 +5295,7 @@ var ZodUnion = class extends ZodType {
         code: ZodIssueCode.invalid_union,
         unionErrors
       });
-      return INVALID2;
+      return INVALID;
     }
   }
   get options() {
@@ -5988,7 +5349,7 @@ var ZodDiscriminatedUnion = class _ZodDiscriminatedUnion extends ZodType {
         expected: ZodParsedType.object,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     const discriminator = this.discriminator;
     const discriminatorValue = ctx.data[discriminator];
@@ -5999,7 +5360,7 @@ var ZodDiscriminatedUnion = class _ZodDiscriminatedUnion extends ZodType {
         options: Array.from(this.optionsMap.keys()),
         path: [discriminator]
       });
-      return INVALID2;
+      return INVALID;
     }
     if (ctx.common.async) {
       return option._parseAsync({
@@ -6098,14 +5459,14 @@ var ZodIntersection = class extends ZodType {
     const { status, ctx } = this._processInputParams(input);
     const handleParsed = (parsedLeft, parsedRight) => {
       if (isAborted(parsedLeft) || isAborted(parsedRight)) {
-        return INVALID2;
+        return INVALID;
       }
       const merged = mergeValues(parsedLeft.value, parsedRight.value);
       if (!merged.valid) {
         addIssueToContext(ctx, {
           code: ZodIssueCode.invalid_intersection_types
         });
-        return INVALID2;
+        return INVALID;
       }
       if (isDirty(parsedLeft) || isDirty(parsedRight)) {
         status.dirty();
@@ -6155,7 +5516,7 @@ var ZodTuple = class _ZodTuple extends ZodType {
         expected: ZodParsedType.array,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     if (ctx.data.length < this._def.items.length) {
       addIssueToContext(ctx, {
@@ -6165,7 +5526,7 @@ var ZodTuple = class _ZodTuple extends ZodType {
         exact: false,
         type: "array"
       });
-      return INVALID2;
+      return INVALID;
     }
     const rest = this._def.rest;
     if (!rest && ctx.data.length > this._def.items.length) {
@@ -6228,7 +5589,7 @@ var ZodRecord = class _ZodRecord extends ZodType {
         expected: ZodParsedType.object,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     const pairs = [];
     const keyType = this._def.keyType;
@@ -6281,7 +5642,7 @@ var ZodMap = class extends ZodType {
         expected: ZodParsedType.map,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     const keyType = this._def.keyType;
     const valueType = this._def.valueType;
@@ -6298,7 +5659,7 @@ var ZodMap = class extends ZodType {
           const key = await pair.key;
           const value = await pair.value;
           if (key.status === "aborted" || value.status === "aborted") {
-            return INVALID2;
+            return INVALID;
           }
           if (key.status === "dirty" || value.status === "dirty") {
             status.dirty();
@@ -6313,7 +5674,7 @@ var ZodMap = class extends ZodType {
         const key = pair.key;
         const value = pair.value;
         if (key.status === "aborted" || value.status === "aborted") {
-          return INVALID2;
+          return INVALID;
         }
         if (key.status === "dirty" || value.status === "dirty") {
           status.dirty();
@@ -6341,7 +5702,7 @@ var ZodSet = class _ZodSet extends ZodType {
         expected: ZodParsedType.set,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     const def = this._def;
     if (def.minSize !== null) {
@@ -6375,7 +5736,7 @@ var ZodSet = class _ZodSet extends ZodType {
       const parsedSet = /* @__PURE__ */ new Set();
       for (const element of elements2) {
         if (element.status === "aborted")
-          return INVALID2;
+          return INVALID;
         if (element.status === "dirty")
           status.dirty();
         parsedSet.add(element.value);
@@ -6430,7 +5791,7 @@ var ZodFunction = class _ZodFunction extends ZodType {
         expected: ZodParsedType.function,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     function makeArgsIssue(args, error) {
       return makeIssue({
@@ -6548,7 +5909,7 @@ var ZodLiteral = class extends ZodType {
         code: ZodIssueCode.invalid_literal,
         expected: this._def.value
       });
-      return INVALID2;
+      return INVALID;
     }
     return { status: "valid", value: input.data };
   }
@@ -6580,7 +5941,7 @@ var ZodEnum = class _ZodEnum extends ZodType {
         received: ctx.parsedType,
         code: ZodIssueCode.invalid_type
       });
-      return INVALID2;
+      return INVALID;
     }
     if (!this._cache) {
       this._cache = new Set(this._def.values);
@@ -6593,7 +5954,7 @@ var ZodEnum = class _ZodEnum extends ZodType {
         code: ZodIssueCode.invalid_enum_value,
         options: expectedValues
       });
-      return INVALID2;
+      return INVALID;
     }
     return OK(input.data);
   }
@@ -6646,7 +6007,7 @@ var ZodNativeEnum = class extends ZodType {
         received: ctx.parsedType,
         code: ZodIssueCode.invalid_type
       });
-      return INVALID2;
+      return INVALID;
     }
     if (!this._cache) {
       this._cache = new Set(util.getValidEnumValues(this._def.values));
@@ -6658,7 +6019,7 @@ var ZodNativeEnum = class extends ZodType {
         code: ZodIssueCode.invalid_enum_value,
         options: expectedValues
       });
-      return INVALID2;
+      return INVALID;
     }
     return OK(input.data);
   }
@@ -6685,7 +6046,7 @@ var ZodPromise = class extends ZodType {
         expected: ZodParsedType.promise,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     const promisified = ctx.parsedType === ZodParsedType.promise ? ctx.data : Promise.resolve(ctx.data);
     return OK(promisified.then((data) => {
@@ -6732,14 +6093,14 @@ var ZodEffects = class extends ZodType {
       if (ctx.common.async) {
         return Promise.resolve(processed).then(async (processed2) => {
           if (status.value === "aborted")
-            return INVALID2;
+            return INVALID;
           const result = await this._def.schema._parseAsync({
             data: processed2,
             path: ctx.path,
             parent: ctx
           });
           if (result.status === "aborted")
-            return INVALID2;
+            return INVALID;
           if (result.status === "dirty")
             return DIRTY(result.value);
           if (status.value === "dirty")
@@ -6748,14 +6109,14 @@ var ZodEffects = class extends ZodType {
         });
       } else {
         if (status.value === "aborted")
-          return INVALID2;
+          return INVALID;
         const result = this._def.schema._parseSync({
           data: processed,
           path: ctx.path,
           parent: ctx
         });
         if (result.status === "aborted")
-          return INVALID2;
+          return INVALID;
         if (result.status === "dirty")
           return DIRTY(result.value);
         if (status.value === "dirty")
@@ -6781,7 +6142,7 @@ var ZodEffects = class extends ZodType {
           parent: ctx
         });
         if (inner.status === "aborted")
-          return INVALID2;
+          return INVALID;
         if (inner.status === "dirty")
           status.dirty();
         executeRefinement(inner.value);
@@ -6789,7 +6150,7 @@ var ZodEffects = class extends ZodType {
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
           if (inner.status === "aborted")
-            return INVALID2;
+            return INVALID;
           if (inner.status === "dirty")
             status.dirty();
           return executeRefinement(inner.value).then(() => {
@@ -6806,7 +6167,7 @@ var ZodEffects = class extends ZodType {
           parent: ctx
         });
         if (!isValid(base))
-          return INVALID2;
+          return INVALID;
         const result = effect.transform(base.value, checkCtx);
         if (result instanceof Promise) {
           throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
@@ -6815,7 +6176,7 @@ var ZodEffects = class extends ZodType {
       } else {
         return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
           if (!isValid(base))
-            return INVALID2;
+            return INVALID;
           return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
             status: status.value,
             value: result
@@ -6968,7 +6329,7 @@ var ZodNaN = class extends ZodType {
         expected: ZodParsedType.nan,
         received: ctx.parsedType
       });
-      return INVALID2;
+      return INVALID;
     }
     return { status: "valid", value: input.data };
   }
@@ -7005,7 +6366,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
           parent: ctx
         });
         if (inResult.status === "aborted")
-          return INVALID2;
+          return INVALID;
         if (inResult.status === "dirty") {
           status.dirty();
           return DIRTY(inResult.value);
@@ -7025,7 +6386,7 @@ var ZodPipeline = class _ZodPipeline extends ZodType {
         parent: ctx
       });
       if (inResult.status === "aborted")
-        return INVALID2;
+        return INVALID;
       if (inResult.status === "dirty") {
         status.dirty();
         return {
@@ -7190,7 +6551,7 @@ var coerce = {
   bigint: ((arg) => ZodBigInt.create({ ...arg, coerce: true })),
   date: ((arg) => ZodDate.create({ ...arg, coerce: true }))
 };
-var NEVER = INVALID2;
+var NEVER = INVALID;
 
 // src/skills/types.ts
 var SKILL_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -7239,23 +6600,6 @@ function parseSkill(id, raw, meta) {
     updatedAt: meta.updatedAt,
     origin: meta.origin ?? null
   };
-}
-function serializeSkill(front, body) {
-  const defined = Object.fromEntries(Object.entries(front).filter(([, v]) => v !== void 0));
-  const yaml = dump(defined, { lineWidth: -1, noRefs: true }).trimEnd();
-  return `---
-${yaml}
----
-
-${body.trim()}
-`;
-}
-function withSkillName(raw, id) {
-  const m = FRONTMATTER.exec(raw.replace(/^﻿/, ""));
-  if (!m) return raw;
-  const front = load(m[1]) ?? {};
-  if (front.name === id) return raw;
-  return serializeSkill({ ...front, name: id }, m[2]);
 }
 
 // src/skills/registry.ts
@@ -7316,587 +6660,23 @@ function getSkill(id, scope = teamScope()) {
   return loadDir(id, dir);
 }
 
-// src/memory/cards.ts
-function describeRepoRecord(r) {
-  if (!r.connected) return `${r.repoId ?? "This checkout"} is not read by the gate: ${r.advice ?? "connect it on the Repos page"}`;
-  const counts = Object.entries(r.documents).map(([k, n]) => `${n} ${k}`).join(", ");
-  const lines = [
-    `${r.repoId ?? r.repo} is connected as "${r.repo}"${r.team ? `, team ${r.team}` : ", with no team (every team on the gate reads it)"}.`,
-    r.commit ? `Last read: ${r.ref} at ${r.commit.slice(0, 8)}${r.indexedAt ? `, ${r.indexedAt.slice(0, 16).replace("T", " ")}` : ""} \u2014 ${counts || "no documents"}.` : "Not read yet: the record index reads it on its next pass."
-  ];
-  if (r.error) lines.push(`The last read failed: ${r.error}`);
-  if (r.advice) lines.push(r.advice);
-  return lines.join("\n");
-}
-function describeFeatureList(list) {
-  if (!list.length) return "The tree's catalogue is empty: no team has a design doc or a recorded feature yet.";
-  const out = [`${list.length} feature${list.length === 1 ? "" : "s"} in the tree's catalogue \u2014 a design doc named <id>.md is that feature:`];
-  for (const f of list) {
-    out.push(`- ${f.id} \u2014 ${f.name}${f.aliases.length ? ` (also: ${f.aliases.join(", ")})` : ""} \xB7 built by: ${f.teams.join(", ") || "nobody yet"}`);
-  }
-  return out.join("\n");
-}
-var MAX_FIELD = 1200;
-function clip(s, max = MAX_FIELD) {
-  return s.length > max ? `${s.slice(0, max)}\u2026` : s;
-}
-function describeSearch(result) {
-  const out = [];
-  if (result.inFlight?.length) out.push(describeActivity(result.inFlight, "Running right now elsewhere in the tree, on work with the same words:"), "");
-  if (result.features.length) {
-    out.push("Features in the catalogue that match:");
-    for (const f of result.features) {
-      out.push(`- ${f.id} \u2014 ${f.name}${f.aliases.length ? ` (also: ${f.aliases.join(", ")})` : ""} \xB7 built by: ${f.teams.join(", ") || "nobody yet"}${f.summary ? `
-  ${clip(f.summary, 300)}` : ""}`);
-    }
-    out.push("");
-  }
-  if (result.documents?.length) {
-    out.push("The repositories' own record \u2014 documents on their base branches that match:");
-    for (const d of result.documents) out.push(describeDocument(d));
-    out.push("");
-  }
-  if (result.interfaces?.length) {
-    out.push(describeInterfaces(result.interfaces), "");
-  }
-  if (!result.decisions.length) {
-    const anything = result.features.length || result.documents?.length || result.inFlight?.length;
-    out.push(anything ? "No recorded decisions matched the text or paths; use memory_feature on a feature above for its decisions." : "Nothing in memory matches. The team has no recorded decision about this.");
-  } else {
-    out.push(`${result.decisions.length} decision${result.decisions.length === 1 ? "" : "s"} (searched teams: ${result.scope.teams.join(", ")}; own team ${result.scope.own} first):`);
-    for (const d of result.decisions) out.push(describeDecision(d));
-  }
-  out.push(describeIssues(result.issues, result.scope.own, result.heldAnswers));
-  return out.filter(Boolean).join("\n");
-}
-function describeIssues(issues, own, heldAnswers = 0) {
-  const lines = [];
-  if (issues.length) {
-    const against = issues.filter((i) => i.target === own);
-    lines.push(`
-\u26A0 ${issues.length} open cross-team objection${issues.length === 1 ? "" : "s"}${against.length ? ` \u2014 ${against.length} against this team's own decisions` : ""}.`);
-    for (const i of issues) {
-      const side = i.target === own ? `${i.from} objects to our decision` : `we objected to ${i.target}`;
-      lines.push(`
-### ${i.title}`);
-      lines.push(
-        `id: ${i.id} \xB7 ${side} \xB7 ${i.status === "open" ? "confirmed by a person" : "raised, nobody has answered yet"} \xB7 raised ${i.raisedAt.slice(0, 10)}${i.decisionId ? ` \xB7 about decision ${i.decisionId}` : ""}${i.featureId ? ` \xB7 feature: ${i.featureId}` : ""}`
-      );
-      if (i.theirDecision) lines.push(`the decision objected to: ${clip(i.theirDecision, 600)}`);
-      if (i.why) lines.push(`why it does not work: ${clip(i.why, 800)}`);
-      if (i.proposal) lines.push(`proposed instead: ${clip(i.proposal, 800)}`);
-      if (i.revision) lines.push(`asked of ${i.target}: ${clip(i.revision, 800)}`);
-      if (i.paths.length) lines.push(`touches: ${i.paths.slice(0, 20).join(", ")}`);
-    }
-    if (against.length) {
-      lines.push(
-        `
-An objection against this team's own decision is a revision request, not a note: plan for it, or say in the plan why the objection does not hold. It does not make the decision invalid \u2014 only the team that made it can do that.`
-      );
-    }
-  }
-  if (heldAnswers) {
-    lines.push(
-      `
-Note: ${heldAnswers} answer${heldAnswers === 1 ? " was" : "s were"} recorded for objection${heldAnswers === 1 ? "" : "s"} whose own step never reached the server, so ${heldAnswers === 1 ? "it is" : "they are"} not shown above. An empty list is not proof nobody objected.`
-    );
-  }
-  return lines.join("\n");
-}
-function outcomeLabel(d) {
-  if (d.verdict === "rejected") return `${d.outcome} \xB7 refused`;
-  if (d.outcome === "abandoned") return "abandoned (the run did not finish \u2014 not a refusal)";
-  return d.outcome;
-}
-function describeDecision(d) {
-  const who = d.author && d.author !== d.team ? `team: ${d.team} (made by ${d.author})` : `team: ${d.team}`;
-  const lines = [
-    `
-## ${d.title}`,
-    `id: ${d.id} \xB7 ${who}${d.repo ? ` \xB7 repo: ${d.repo}` : ""} \xB7 ${outcomeLabel(d)} \xB7 from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` \xB7 feature: ${d.featureId}` : ""}${d.supersedes ? ` \xB7 supersedes ${d.supersedes}` : ""}`,
-    `run: ${d.executionId}${d.commits.base || d.commits.head ? ` \xB7 commits ${d.commits.base ?? "?"}..${d.commits.head ?? "?"}` : ""}`
-  ];
-  if (d.verdict === "rejected") {
-    lines.push(`\u2717 refused${d.verdictReason ? `: ${clip(d.verdictReason, 600)}` : ""} \u2014 a road already found closed; taking it again needs a reason the refusal did not have.`);
-  }
-  if (d.checked?.allGone) {
-    lines.push(`\u26A0 every file it touched is gone from the base branch at ${d.checked.commit.slice(0, 8)} \u2014 it describes code that no longer exists; check the code before relying on it.`);
-  }
-  if (d.outcome === "in-progress") {
-    lines.push(
-      `\u26A0 work in progress: the team that taught this says it is not finished. Build on it only if you mean to, and raise an objection now rather than after it settles.`
-    );
-  }
-  if (d.decision) lines.push(`decision: ${clip(d.decision)}`);
-  if (d.rationale) lines.push(`why: ${clip(d.rationale)}`);
-  if (d.how) lines.push(`how: ${clip(d.how, 2e3)}`);
-  if (d.alternatives) lines.push(`not taken: ${clip(d.alternatives, 600)}`);
-  if (d.consequences) lines.push(`consequences: ${clip(d.consequences)}`);
-  if (d.touches.length) lines.push(`touches: ${d.touches.slice(0, 30).join(", ")}${d.touches.length > 30 ? ` (+${d.touches.length - 30})` : ""}`);
-  return lines.join("\n");
-}
-function describeDocument(d) {
-  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind === "note" ? "note (outside the convention)" : d.kind;
-  const lines = [
-    `- ${kind} ${d.path} \u2014 ${d.title}`,
-    `  repo: ${d.repoId ?? d.repo}${d.team ? ` \xB7 team: ${d.team}` : ""}${d.status ? ` \xB7 ${d.status}` : ""}${d.date ? ` \xB7 ${d.date}` : ""} \xB7 at ${d.commit.slice(0, 8)}`
-  ];
-  if (d.summary) lines.push(`  ${clip(d.summary.replace(/\s+/g, " "), 500)}`);
-  if (d.pitfalls) lines.push(`  pitfalls: ${clip(d.pitfalls.replace(/\s+/g, " "), 500)}`);
-  for (const i of d.interfaces ?? []) lines.push(`  ${i.role} ${i.name}${i.note ? ` \u2014 ${clip(i.note, 200)}` : ""}`);
-  return lines.join("\n");
-}
-function describeInterfaces(list) {
-  const byName = /* @__PURE__ */ new Map();
-  for (const i of list) byName.set(i.name, [...byName.get(i.name) ?? [], i]);
-  const out = ["Interfaces between repositories that this names:"];
-  for (const [name, users] of byName) {
-    out.push(`- ${name}`);
-    for (const u of users) {
-      out.push(`  ${u.role} \xB7 ${u.team ?? "no team"} \xB7 ${u.repoId ?? u.repo} \xB7 ${u.path} (feature ${u.feature})${u.note ? ` \u2014 ${clip(u.note, 200)}` : ""}`);
-    }
-  }
-  return out.join("\n");
-}
-function describeActivity(list, heading = "Running right now in the tree:") {
-  if (!list.length) return "Nothing is running in the tree right now.";
-  const out = [heading];
-  for (const a of list) {
-    out.push(
-      `- run ${a.executionId} \xB7 ${a.team}${a.person ? ` \xB7 ${a.person}` : ""} \xB7 ${a.workflow} \xB7 ${a.status} since ${a.startedAt.slice(0, 16).replace("T", " ")}${a.repo ? ` \xB7 repo ${a.repo}` : ""}${a.branch ? ` \xB7 branch ${a.branch}` : ""}${a.taskId ? ` \xB7 task ${a.taskId}` : ""}`
-    );
-    out.push(`  ${clip(a.task.replace(/\s+/g, " "), 300)}`);
-    if (a.shared.length) out.push(`  in common: ${a.shared.join(", ")}`);
-  }
-  return out.join("\n");
-}
-function describeHistory(h) {
-  if (h.unavailable) return `No history: ${h.unavailable}`;
-  if (!h.commits.length) return `No commit on ${h.repoId ?? h.repo}'s ${h.ref ?? "base branch"} (at ${h.commit?.slice(0, 8)}) touched these paths in that window.`;
-  const out = [`${h.commits.length} commit${h.commits.length === 1 ? "" : "s"} on ${h.repoId ?? h.repo}'s ${h.ref ?? "base branch"} at ${h.commit?.slice(0, 8)}, newest first:`];
-  for (const c of h.commits) {
-    out.push(`- ${c.sha.slice(0, 10)} \xB7 ${c.date.slice(0, 10)} \xB7 ${c.author} \xB7 ${c.subject}`);
-    if (c.documents.length) out.push(`  record: ${c.documents.join(", ")}`);
-    if (c.runs.length) out.push(`  run: ${c.runs.join(", ")}`);
-  }
-  return out.join("\n");
-}
-function describeFeature(detail) {
-  const { feature } = detail;
-  const out = [
-    `# ${feature.name} (${feature.id})`,
-    feature.aliases.length ? `also known as: ${feature.aliases.join(", ")}` : "",
-    feature.summary,
-    ""
-  ];
-  if (detail.implementations.length) {
-    out.push("How each team built it:");
-    for (const i of detail.implementations) {
-      out.push(`
-### ${i.team} \xB7 ${i.decisionCount} decision${i.decisionCount === 1 ? "" : "s"} \xB7 updated ${i.updatedAt.slice(0, 10)}`);
-      out.push(i.summary || "(no summary yet)");
-      if (i.pitfalls) out.push(`pitfalls: ${i.pitfalls}`);
-    }
-  } else if (!detail.documents?.length) {
-    out.push("No team has recorded an implementation of it yet.");
-  }
-  if (detail.documents?.length) {
-    out.push("\nEach repository's design doc for it:");
-    for (const d of detail.documents) out.push(describeDocument(d));
-  }
-  if (detail.decisions.length) {
-    out.push(`
-Decisions (${detail.decisions.length}):`);
-    for (const d of detail.decisions) out.push(describeDecision(d));
-  }
-  if (detail.issues.length) out.push(describeIssues(detail.issues, detail.own));
-  return out.filter((l) => l !== "").join("\n");
-}
-
-// src/runtime/tools/types.ts
-var ToolError = class extends Error {
-};
-
-// src/runtime/tools/memory-tools.ts
-function parseSince(v, now = Date.now()) {
-  if (typeof v !== "string" || !v.trim()) return null;
-  const s = v.trim().toLowerCase();
-  const rel = s.match(/^(\d+)\s*(d|day|days|w|week|weeks|m|month|months|y|year|years)$/);
-  if (rel) {
-    const n = Number(rel[1]);
-    const unit = rel[2][0];
-    const days = unit === "d" ? n : unit === "w" ? n * 7 : unit === "m" ? n * 30 : n * 365;
-    return now - days * 864e5;
-  }
-  const t = Date.parse(s);
-  return Number.isFinite(t) ? t : null;
-}
-var memorySearch = {
-  name: "memory_search",
-  description: "Search the team's memory: what past runs decided (why, how, which files), and each repository's own record \u2014 design docs, decision records and specs as their base branches have them. Reads the whole team tree (sibling teams' repositories included), own team and repository first; a path search stays in this repository. Give a query in words, path prefixes, or both; narrow with a time. Every hit names its repository, its run and its commits. The answer also carries runs of other people in the tree going right now on work with the same words, interfaces the words name with who provides and consumes each, and any open cross-team objection touching what you asked about. An objection against this team's own decision is a revision request to plan for, not a note.",
-  mutates: false,
-  workspaceFree: true,
-  inputSchema: {
-    type: "object",
-    properties: {
-      query: { type: "string", description: "Words to match: the feature, the problem, the component. Optional if paths are given." },
-      paths: { type: "array", items: { type: "string" }, description: 'Repository path prefixes a decision must have touched, e.g. ["src/sync"].' },
-      feature: { type: "string", description: "Only decisions filed under this catalogue feature id." },
-      since: { type: "string", description: 'Only decisions from this time on: "30d", "6 months", or a date.' },
-      as_of: { type: "string", description: "Only decisions that held at this date \u2014 what was believed then." },
-      limit: { type: "integer", description: "How many decisions at most (default 10, max 50)." }
-    }
-  },
-  async execute(input, ctx) {
-    if (!ctx.memory) throw new ToolError("memory is not reachable from this run");
-    const query = typeof input.query === "string" ? input.query.trim() : "";
-    const paths = Array.isArray(input.paths) ? input.paths.filter((p) => typeof p === "string" && !!p.trim()) : [];
-    const feature = typeof input.feature === "string" && input.feature.trim() ? input.feature.trim() : void 0;
-    if (!query && !paths.length && !feature) throw new ToolError("give a query, paths, or a feature");
-    const result = await ctx.memory.search({
-      query: query || void 0,
-      paths: paths.length ? paths : void 0,
-      featureId: feature,
-      since: parseSince(input.since) ?? void 0,
-      asOf: parseSince(input.as_of) ?? void 0,
-      limit: typeof input.limit === "number" ? input.limit : void 0
-    });
-    return describeSearch(result);
-  }
-};
-var memoryFeature = {
-  name: "memory_feature",
-  description: "Read one catalogue feature in full: what it is, how each team in the tree built it (summary and pitfalls), each repository's design doc for it with the interfaces it provides and consumes, and every decision filed under it. Use it after memory_search names a feature, before planning the same thing on another platform.",
-  mutates: false,
-  workspaceFree: true,
-  inputSchema: {
-    type: "object",
-    properties: { id: { type: "string", description: "The feature id, as memory_search printed it." } },
-    required: ["id"]
-  },
-  async execute(input, ctx) {
-    if (!ctx.memory) throw new ToolError("memory is not reachable from this run");
-    const id = typeof input.id === "string" ? input.id.trim() : "";
-    if (!id) throw new ToolError('"id" is required');
-    const detail = await ctx.memory.feature(id);
-    if (!detail) return `No feature "${id}" in this team's catalogue.`;
-    return describeFeature(detail);
-  }
-};
-var memoryHistory = {
-  name: "memory_history",
-  description: "What changed under some paths on this repository's base branch, newest first: every commit \u2014 gate's or a person's \u2014 with the record it names on its Documents: line and the gate run it came from. The list to read when something that used to work does not: narrow it with since, then read the commits' records and diffs.",
-  mutates: false,
-  workspaceFree: true,
-  inputSchema: {
-    type: "object",
-    properties: {
-      paths: { type: "array", items: { type: "string" }, description: 'Repository path prefixes, e.g. ["src/sync"]. Empty means the whole repository.' },
-      since: { type: "string", description: 'Only commits from this time on: "30d", "6 months", or a date.' },
-      limit: { type: "integer", description: "How many commits at most (default 30, max 200)." }
-    }
-  },
-  async execute(input, ctx) {
-    if (!ctx.memory) throw new ToolError("memory is not reachable from this run");
-    const paths = Array.isArray(input.paths) ? input.paths.filter((p) => typeof p === "string" && !!p.trim()) : [];
-    const result = await ctx.memory.history({
-      paths,
-      since: parseSince(input.since) ?? void 0,
-      limit: typeof input.limit === "number" ? input.limit : void 0
-    });
-    return describeHistory(result);
-  }
-};
-var MEMORY_TOOLS = [memorySearch, memoryFeature, memoryHistory];
-
-// src/runtime/tools/workspace-tools.ts
-import { execFile } from "node:child_process";
-import { existsSync as existsSync3, lstatSync, mkdirSync as mkdirSync3, readFileSync as readFileSync2, readdirSync as readdirSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join3, relative as relative3, resolve as resolve2 } from "node:path";
-
-// src/runtime/tools/paths.ts
-import { realpathSync } from "node:fs";
-import { isAbsolute, relative as relative2, resolve, sep } from "node:path";
-function resolveInWorkspace(root, input, label = "path") {
-  if (typeof input !== "string" || !input.trim()) throw new ToolError(`${label} is required`);
-  const candidate = isAbsolute(input) ? input : resolve(root, input);
-  const full = resolve(candidate);
-  assertInside(root, full, input);
-  const real = realPathIfExists(full);
-  if (real) assertInside(realPathIfExists(root) ?? root, real, input);
-  return full;
-}
-function assertInside(root, full, shown) {
-  const rel = relative2(root, full);
-  if (rel === "") return;
-  if (rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("..")) {
-    throw new ToolError(`"${shown}" is outside the workspace`);
-  }
-}
-function realPathIfExists(p) {
-  try {
-    return realpathSync(p);
-  } catch {
-    return null;
-  }
-}
-
-// src/runtime/tools/workspace-tools.ts
-var MAX_READ_BYTES = 2e5;
-var MAX_WRITE_BYTES = 2e6;
-var MAX_LIST_ENTRIES = 500;
-var MAX_MATCHES = 100;
-var MAX_COMMAND_OUTPUT = 3e4;
-var DEFAULT_COMMAND_TIMEOUT_MS = 3e5;
-var SKIP_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", ".next", "dist", "build", ".venv", "__pycache__", ".turbo"]);
-function str(input, key, required = true) {
-  const v = input[key];
-  if (typeof v === "string" && v.length) return v;
-  if (required) throw new ToolError(`"${key}" is required`);
-  return "";
-}
-function truncate(s, max, what) {
-  return s.length > max ? `${s.slice(0, max)}
-\u2026 [${what} truncated at ${max} characters]` : s;
-}
-var readFile = {
-  name: "read_file",
-  description: "Read a file from the workspace. Returns its content with 1-based line numbers.",
-  mutates: false,
-  inputSchema: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Path relative to the workspace root." },
-      offset: { type: "integer", description: "1-based line to start at (optional)." },
-      limit: { type: "integer", description: "How many lines to read (optional)." }
-    },
-    required: ["path"]
-  },
-  async execute(input, ctx) {
-    const file = resolveInWorkspace(ctx.root, input.path);
-    if (!existsSync3(file)) throw new ToolError(`no such file: ${str(input, "path")}`);
-    if (statSync2(file).isDirectory()) throw new ToolError(`"${str(input, "path")}" is a directory; use list_files`);
-    const raw = readFileSync2(file, "utf8");
-    const lines = raw.split("\n");
-    const offset = Math.max(1, Number(input.offset ?? 1));
-    const limit = Math.max(1, Number(input.limit ?? lines.length));
-    const slice = lines.slice(offset - 1, offset - 1 + limit);
-    const numbered = slice.map((l, i) => `${offset + i}	${l}`).join("\n");
-    return truncate(numbered, MAX_READ_BYTES, "file");
-  }
-};
-var writeFile = {
-  name: "write_file",
-  description: "Create a file or replace its whole content. Parent directories are created as needed.",
-  mutates: true,
-  inputSchema: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Path relative to the workspace root." },
-      content: { type: "string", description: "The complete new file content." }
-    },
-    required: ["path", "content"]
-  },
-  async execute(input, ctx) {
-    const file = resolveInWorkspace(ctx.root, input.path);
-    const content = typeof input.content === "string" ? input.content : "";
-    if (content.length > MAX_WRITE_BYTES) throw new ToolError(`content is larger than ${MAX_WRITE_BYTES} bytes`);
-    if (existsSync3(file) && statSync2(file).isDirectory()) throw new ToolError(`"${str(input, "path")}" is a directory`);
-    mkdirSync3(resolve2(file, ".."), { recursive: true });
-    writeFileSync2(file, content);
-    return `wrote ${content.length} characters to ${relative3(ctx.root, file)}`;
-  }
-};
-var editFile = {
-  name: "edit_file",
-  description: "Replace an exact string in a file. The old string must appear exactly once unless replace_all is true \u2014 read the file first.",
-  mutates: true,
-  inputSchema: {
-    type: "object",
-    properties: {
-      path: { type: "string" },
-      old_string: { type: "string", description: "Exact text to replace, including indentation." },
-      new_string: { type: "string", description: "Replacement text." },
-      replace_all: { type: "boolean", description: "Replace every occurrence (default false)." }
-    },
-    required: ["path", "old_string", "new_string"]
-  },
-  async execute(input, ctx) {
-    const file = resolveInWorkspace(ctx.root, input.path);
-    if (!existsSync3(file)) throw new ToolError(`no such file: ${str(input, "path")}`);
-    const oldString = str(input, "old_string");
-    const newString = typeof input.new_string === "string" ? input.new_string : "";
-    const raw = readFileSync2(file, "utf8");
-    const count = raw.split(oldString).length - 1;
-    if (count === 0) throw new ToolError("old_string was not found in the file");
-    if (count > 1 && input.replace_all !== true) {
-      throw new ToolError(`old_string appears ${count} times; pass replace_all or include more context`);
-    }
-    const parts = raw.split(oldString);
-    const updated = input.replace_all === true ? parts.join(newString) : [parts[0], parts.slice(1).join(oldString)].join(newString);
-    writeFileSync2(file, updated);
-    return `edited ${relative3(ctx.root, file)} (${input.replace_all === true ? count : 1} replacement${count > 1 && input.replace_all === true ? "s" : ""})`;
-  }
-};
-function walk(root, dir, depth, out) {
-  if (out.length >= MAX_LIST_ENTRIES || depth < 0) return;
-  let entries;
-  try {
-    entries = readdirSync2(dir).sort();
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (out.length >= MAX_LIST_ENTRIES) return;
-    if (SKIP_DIRS.has(entry) || entry.startsWith(".DS_Store")) continue;
-    const full = join3(dir, entry);
-    let isDir = false;
-    try {
-      const st = lstatSync(full);
-      if (st.isSymbolicLink()) continue;
-      isDir = st.isDirectory();
-    } catch {
-      continue;
-    }
-    out.push(relative3(root, full) + (isDir ? "/" : ""));
-    if (isDir) walk(root, full, depth - 1, out);
-  }
-}
-var listFiles = {
-  name: "list_files",
-  description: "List files and directories in the workspace. Skips .git, node_modules and build output.",
-  mutates: false,
-  inputSchema: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Directory to list, relative to the workspace root (default: the root)." },
-      depth: { type: "integer", description: "How deep to recurse (default 2)." }
-    }
-  },
-  async execute(input, ctx) {
-    const dir = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
-    if (!existsSync3(dir)) throw new ToolError(`no such directory: ${String(input.path)}`);
-    const out = [];
-    walk(ctx.root, dir, Math.max(0, Number(input.depth ?? 2) - 1), out);
-    if (!out.length) return "(empty)";
-    const capped = out.length >= MAX_LIST_ENTRIES ? `
-\u2026 [listing truncated at ${MAX_LIST_ENTRIES} entries]` : "";
-    return out.join("\n") + capped;
-  }
-};
-var searchFiles = {
-  name: "search_files",
-  description: "Search file contents with a regular expression. Returns path:line:text for each match.",
-  mutates: false,
-  inputSchema: {
-    type: "object",
-    properties: {
-      pattern: { type: "string", description: "JavaScript regular expression." },
-      path: { type: "string", description: "Directory to search in (default: the workspace root)." },
-      extension: { type: "string", description: 'Only search files with this extension, e.g. "ts" (optional).' }
-    },
-    required: ["pattern"]
-  },
-  async execute(input, ctx) {
-    const dir = input.path ? resolveInWorkspace(ctx.root, input.path) : ctx.root;
-    let re;
-    try {
-      re = new RegExp(str(input, "pattern"));
-    } catch (e) {
-      throw new ToolError(`invalid regular expression: ${e.message}`);
-    }
-    const ext = typeof input.extension === "string" ? input.extension.replace(/^\./, "") : null;
-    const files = [];
-    walk(ctx.root, dir, 12, files);
-    const matches = [];
-    for (const rel of files) {
-      if (rel.endsWith("/")) continue;
-      if (ext && !rel.endsWith(`.${ext}`)) continue;
-      if (matches.length >= MAX_MATCHES) break;
-      let content;
-      try {
-        const full = join3(ctx.root, rel);
-        if (statSync2(full).size > MAX_READ_BYTES) continue;
-        content = readFileSync2(full, "utf8");
-      } catch {
-        continue;
-      }
-      content.split("\n").forEach((line, i) => {
-        if (matches.length >= MAX_MATCHES || !re.test(line)) return;
-        matches.push(`${rel}:${i + 1}:${line.trim().slice(0, 200)}`);
-      });
-    }
-    return matches.length ? matches.join("\n") : "(no matches)";
-  }
-};
-var runCommandTool = {
-  name: "run_command",
-  description: "Run a command in the workspace. Pass argv as an array (no shell string). Returns the exit code with stdout and stderr.",
-  mutates: true,
-  inputSchema: {
-    type: "object",
-    properties: {
-      command: {
-        type: "array",
-        items: { type: "string" },
-        description: 'Program and arguments, e.g. ["npm", "test"].'
-      },
-      cwd: { type: "string", description: "Directory to run in, relative to the workspace root (optional)." },
-      timeout_ms: { type: "integer", description: "Timeout in milliseconds (default 300000)." }
-    },
-    required: ["command"]
-  },
-  async execute(input, ctx) {
-    const argv = Array.isArray(input.command) ? input.command.map(String).filter(Boolean) : [];
-    if (!argv.length) throw new ToolError("command must be a non-empty array of strings");
-    const cwd = input.cwd ? resolveInWorkspace(ctx.root, input.cwd) : ctx.root;
-    const timeout = Math.min(Math.max(Number(input.timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS), 1e3), 6e5);
-    const [file, ...args] = argv;
-    return new Promise((resolvePromise, reject) => {
-      execFile(file, args, { cwd, timeout, maxBuffer: 1e7, shell: false }, (error, stdout, stderr) => {
-        const err = error;
-        if (err?.killed) {
-          reject(new ToolError(`command timed out after ${timeout}ms`));
-          return;
-        }
-        if (err && typeof err.code !== "number") {
-          reject(new ToolError(err.message));
-          return;
-        }
-        const exitCode = typeof err?.code === "number" ? err.code : 0;
-        const out = truncate(String(stdout).trim(), MAX_COMMAND_OUTPUT, "stdout");
-        const errOut = truncate(String(stderr).trim(), MAX_COMMAND_OUTPUT, "stderr");
-        resolvePromise(
-          [`exit code: ${exitCode}`, out && `stdout:
-${out}`, errOut && `stderr:
-${errOut}`].filter(Boolean).join("\n\n")
-        );
-      });
-    });
-  }
-};
-var WORKSPACE_TOOLS = [readFile, writeFile, editFile, listFiles, searchFiles, runCommandTool];
-
-// src/runtime/tools/registry.ts
-var BY_NAME = new Map([...WORKSPACE_TOOLS, ...MEMORY_TOOLS].map((t) => [t.name, t]));
+// src/agents/tools.ts
+var TOOLS = [
+  "read_file",
+  "list_files",
+  "search_files",
+  "write_file",
+  "edit_file",
+  "run_command",
+  "memory_search",
+  "memory_feature",
+  "memory_history"
+];
 function knownToolNames() {
-  return [...BY_NAME.keys()].sort();
+  return [...TOOLS].sort();
 }
 function isKnownTool(name) {
-  return BY_NAME.has(name);
-}
-function getTool(name) {
-  return BY_NAME.get(name);
-}
-function toolsFor(names, hasWorkspace) {
-  const out = [];
-  for (const name of names) {
-    const tool = BY_NAME.get(name);
-    if (!tool) continue;
-    if (!hasWorkspace && !tool.workspaceFree) continue;
-    out.push(tool);
-  }
-  return out;
+  return TOOLS.includes(name);
 }
 
 // src/agents/template.ts
@@ -7935,118 +6715,6 @@ function renderTemplate(tpl, ctx) {
   return out;
 }
 
-// src/lib/settings.ts
-import { homedir as homedir2 } from "node:os";
-import { join as join4 } from "node:path";
-
-// src/lib/pricing.ts
-var PRICE_PER_MTOK = {
-  haiku: { input: 1, output: 5 },
-  sonnet: { input: 2, output: 10 },
-  opus: { input: 5, output: 25 },
-  fable: { input: 10, output: 50 }
-};
-function tierOf(model) {
-  const m = model.toLowerCase();
-  if (m.includes("haiku")) return "haiku";
-  if (m.includes("fable") || m.includes("mythos")) return "fable";
-  if (m.includes("opus")) return "opus";
-  return "sonnet";
-}
-function cacheReadMultiplier(model) {
-  const m = (model ?? "").toLowerCase();
-  return /fable-5-1|mythos-5-1/.test(m) ? 0.025 : 0.1;
-}
-function costForUsage(tier, u, opts = {}) {
-  const p = PRICE_PER_MTOK[tier];
-  const writeMult = opts.cacheTtl === "1h" ? 2 : 1.25;
-  return (u.input * p.input + (u.cacheRead ?? 0) * p.input * cacheReadMultiplier(opts.model) + (u.cacheCreation ?? 0) * p.input * writeMult + u.output * p.output) / 1e6;
-}
-
-// src/lib/account-pool.ts
-var BACKOFF = { baseMs: 5e3, maxMs: 2 * 60 * 1e3, maxLevel: 15 };
-var QUOTA_FALLBACK_COOLDOWN_MS = 15 * 60 * 1e3;
-var MAX_HINT_COOLDOWN_MS = 8 * 60 * 60 * 1e3;
-var WINDOW_NAMES = {
-  "5h": "five_hour",
-  "7d": "seven_day",
-  "7d_oi": "seven_day_overage_included"
-};
-function canonicalWindowName(name) {
-  return WINDOW_NAMES[name] ?? name;
-}
-var MODEL_BLOCK_MAX_MS = 8 * 24 * 60 * 60 * 1e3;
-var WINDOW_LABELS = {
-  five_hour: "session limit",
-  seven_day: "weekly limit",
-  seven_day_opus: "Opus limit",
-  seven_day_sonnet: "Sonnet limit",
-  seven_day_fable: "Fable limit",
-  overage: "usage credit limit"
-};
-function windowLabel(name, scope) {
-  if (scope) return `${scope} limit`;
-  const canonical = canonicalWindowName(name);
-  return WINDOW_LABELS[canonical] ?? canonical.replace(/_/g, " ");
-}
-
-// src/lib/protocol.ts
-var GATE_VERSION = "0.46.0";
-var PLUGIN_MARKETPLACE = "uguratadargun/gateway";
-var VERSION_HEADERS = {
-  /** Client → server: the CLI's own version. */
-  client: "x-gate-cli",
-  /** Server → client: what is running there. */
-  server: "x-gate-server",
-  /** Server → client: the oldest client it will serve. */
-  minClient: "x-gate-min-cli"
-};
-function compareVersions(a, b) {
-  const parts = (v) => v.trim().split(".").map((n) => Number.parseInt(n, 10)).map((n) => Number.isFinite(n) ? n : 0);
-  const [x, y] = [parts(a), parts(b)];
-  for (let i = 0; i < 3; i++) {
-    const diff = (x[i] ?? 0) - (y[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
-function isOlderThan(version, than) {
-  return compareVersions(version, than) < 0;
-}
-
-// src/lib/settings.ts
-var DEFAULT_SETTINGS = {
-  compression: { enabled: false, maxBlockChars: 2e4, dedupe: true },
-  // Off by default: a cached reply is a stale reply for chat. When enabled, only
-  // deterministic requests (temperature unset or 0) are cached — see gateway-core.
-  cache: { enabled: false, ttlSeconds: 3600 },
-  budget: { enabled: false, mode: "warn", dailyUsd: 10, monthlyUsd: 200 },
-  fallback: {
-    enabled: true,
-    chains: {
-      fable: ["opus", "sonnet", "haiku"],
-      opus: ["sonnet", "haiku"],
-      sonnet: ["haiku"],
-      haiku: []
-    }
-  },
-  reasoning: { defaultEffort: "default" },
-  // 5m per Anthropic's guidance: active sessions refresh it for free, while a
-  // 1h TTL doubles the cost of every cache write (2× vs 1.25×).
-  promptCache: { enabled: true, ttl: "5m" },
-  plugin: { source: process.env.GATE_PLUGIN_SOURCE?.trim() || PLUGIN_MARKETPLACE },
-  concurrency: { maxInFlight: 4, queueTimeoutMs: 6e4 },
-  throttle: { enabled: true, blockAt: 0.98 },
-  retry: { maxRetries: 2, maxRateLimitWaitMs: 5e3 },
-  memory: { enabled: true, model: "sonnet", embeddings: { provider: "", model: "" }, consolidateEvery: 5, indexEveryMinutes: 15, recordMerges: false },
-  traffic: { maxRows: 5e3 },
-  // fill-first keeps one account warm — its prompt cache stays hot and the
-  // others stay untouched until it runs out of window.
-  accountPool: { strategy: "fill-first", stickyRoundRobinLimit: 3, quotaMinRemainingPercent: 0, quotaRefreshMinutes: 30 }
-};
-var GATE_DIR = process.env.GATE_HOME || join4(homedir2(), ".gate");
-var FILE = join4(GATE_DIR, "settings.json");
-
 // src/lib/reasoning.ts
 var EFFORTS = ["default", "low", "medium", "high", "xhigh", "max"];
 
@@ -8064,33 +6732,25 @@ var agentFrontmatterSchema = external_exports.object({
   name: external_exports.string().min(1).max(64),
   description: external_exports.string().max(500).optional(),
   /**
-   * Which model runs this agent. A tier alias ("sonnet") the router resolves
-   * per run, a concrete "claude-*" id that pins it, or
-   * `provider:<name>/<model>` for one of the configured providers — an
-   * Ollama on this machine, a hosted endpoint like Z.AI. A provider model is
-   * still routed, metered and counted against the run's budget; it just puts
-   * nothing on the Anthropic bill.
+   * Which model runs this agent: a Claude Code alias ("sonnet", "opus", …)
+   * or a concrete "claude-*" id. Every node runs on the person's own Claude
+   * login, so a `provider:` reference — a model only a gateway could reach —
+   * names something nothing can serve, and is refused.
    */
-  model: external_exports.string().min(1).max(100).default("sonnet"),
+  model: external_exports.string().min(1).max(100).default("sonnet").refine((m) => !/^(provider|local):/.test(m), {
+    message: "a provider model cannot run here: every node runs on the person's own Claude login \u2014 use haiku, sonnet, opus, fable or a claude-* id"
+  }),
   effort: external_exports.enum(EFFORTS).optional(),
   /** Upstream node outputs this agent is allowed to read, e.g. "planner.plan". */
   inputs: external_exports.array(external_exports.string().min(1).max(200)).max(50).default([]),
   output: agentOutputSpecSchema.default({ type: "text" }),
   /**
-   * Which loop runs this agent's node.
+   * Who does this agent's node in a run the person's session drives.
    *
-   * `gate` is the built-in one: gate holds the conversation and serves its own
-   * six tools. `claude-code` hands the node to a headless Claude Code in the
-   * worktree instead — better tools, and a harness that compacts its context
-   * rather than appending every tool result until the node re-reads 100K a
-   * round. Routing, metering and the run budget are unaffected either way:
-   * the child is pointed at this gate's own gateway.
-   *
-   * It is a separate axis from `model`, and every combination is valid: the
-   * Claude Code harness driving a GLM on Z.AI is `executor: claude-code` with
-   * `model: provider:zai/glm-4.6`, and gate's own loop on the same model is
-   * the same line with `executor: gate`. The harness names the loop, not the
-   * vendor.
+   * `gate` is the session itself, with its own tools and model, in front of
+   * the person, and able to ask them. `claude-code` is a subagent of the
+   * session in the agent's own `model`, drawn live in the terminal, with a
+   * context of its own that the harness compacts.
    */
   executor: external_exports.enum(["gate", "claude-code"]).default("gate"),
   /**
@@ -8109,52 +6769,41 @@ var agentFrontmatterSchema = external_exports.object({
    */
   asks: external_exports.enum(["person", "question", "approval"]).optional(),
   /**
-   * Tool names this agent may invoke. Which names are valid depends on the
-   * executor: gate's own (`read_file`, `edit_file`, …) or Claude Code's
-   * (`Read`, `Edit`, `Grep`, `Bash`, …).
+   * The tools this agent's role uses — the shape of the job, read by the
+   * session. For `executor: gate` the names are gate's own (`read_file`,
+   * `memory_search`, …); for `claude-code`, Claude Code's (`Read`, `Grep`,
+   * `Bash`, …).
    */
   tools: external_exports.array(external_exports.string().min(1).max(64)).max(50).default([]),
   /**
    * Skills this agent works by, named as ids from the team's skill library.
    *
-   * Not a hint: an agent that declares one is told to follow it, every run.
-   * A spawned Claude Code gets them as a plugin, so a skill loads with its
-   * own files beside it and the harness opens it when it is due; gate's own
-   * loop has nowhere to put a file and folds the prose into the system
-   * prompt instead. Either way the skill's instructions reach the model,
-   * which is what makes "the planner brainstorms" a property of the
-   * definition rather than of how the prompt happened to be worded.
+   * Not a hint: an agent that declares one is told to read and follow it,
+   * every run, from the copy this machine pulled with the team's
+   * definitions. That is what makes "the planner brainstorms" a property of
+   * the definition rather than of how the prompt happened to be worded.
    */
   skills: external_exports.array(external_exports.string().regex(SKILL_ID_RE, "use lowercase letters, digits and dashes")).max(20).default([]),
   /**
-   * Wall-clock cap on one visit to this agent's node — every tool round it
-   * takes counts against it, not each model call separately. Left out, it is
-   * an hour, which is past any healthy node; 0 turns it off entirely for an
-   * agent that genuinely runs longer. There is no upper bound.
+   * How long one visit to this agent's node is expected to take. Past it the
+   * person is told the node is overrunning; stopping it is theirs. Left out,
+   * it is an hour; 0 turns the notice off. There is no upper bound.
    */
   timeoutMs: external_exports.number().int().min(0).optional(),
   /**
-   * Output ceiling per model call. Thinking counts against it, so an agent
-   * that must return something long (a full diff) needs a bigger one than
-   * the 8192 default.
+   * Read by nothing since gate stopped running model calls of its own; still
+   * accepted, so an agent file written before that keeps loading.
    */
   maxTokens: external_exports.number().int().min(1024).max(2e5).optional(),
-  /**
-   * Tool-call rounds a single node may make before the runtime gives up on
-   * it. Unset — or 0 — means no cap, which is the default: a long task that
-   * reads and edits its way through a large repo for hours legitimately
-   * needs more rounds than anyone can name up front, and the timeout above
-   * is the real backstop. Set it only to hold a known-cheap agent short.
-   */
   maxToolIterations: external_exports.number().int().min(0).optional()
 }).strict();
 function buildOutputSchema(spec) {
   if (spec.type === "text") return external_exports.string();
   const shape = {};
-  for (const [field2, raw] of Object.entries(spec.schema)) {
+  for (const [field, raw] of Object.entries(spec.schema)) {
     const optional = raw.endsWith("?");
     const base = fieldValidator(raw.replace(/\?$/, ""));
-    shape[field2] = optional ? optionalField(base) : base;
+    shape[field] = optional ? optionalField(base) : base;
   }
   return external_exports.object(shape).passthrough();
 }
@@ -8238,31 +6887,31 @@ function assertTemplateInputsDeclared(def) {
 // src/agents/registry.ts
 var ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 function agentsDir(scope = teamScope()) {
-  return join5(scope.root, "agents");
+  return join3(scope.root, "agents");
 }
 function pathFor(id, scope) {
   if (!ID_RE.test(id)) throw new AgentDefinitionError("invalid agent id (use lowercase letters, digits and dashes)", id);
-  return join5(agentsDir(scope), `${id}.md`);
+  return join3(agentsDir(scope), `${id}.md`);
 }
 var cache2 = /* @__PURE__ */ new Map();
 function loadFile(id, file) {
-  const stat = statSync3(file);
+  const stat = statSync2(file);
   const hit = cache2.get(file);
   if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
-  const def = parseAgent(id, readFileSync3(file, "utf8"), { sourcePath: file, updatedAt: stat.mtimeMs });
+  const def = parseAgent(id, readFileSync2(file, "utf8"), { sourcePath: file, updatedAt: stat.mtimeMs });
   cache2.set(file, { mtimeMs: stat.mtimeMs, def });
   return def;
 }
 function listAgents(scope = teamScope()) {
   const dir = agentsDir(scope);
-  if (!existsSync4(dir)) return { agents: [], errors: [] };
+  if (!existsSync3(dir)) return { agents: [], errors: [] };
   const agents = [];
   const errors = [];
-  for (const entry of readdirSync3(dir).sort()) {
+  for (const entry of readdirSync2(dir).sort()) {
     if (!entry.endsWith(".md")) continue;
     const id = entry.slice(0, -3);
     try {
-      agents.push(loadFile(id, join5(dir, entry)));
+      agents.push(loadFile(id, join3(dir, entry)));
     } catch (e) {
       errors.push({ id, message: e.message });
     }
@@ -8271,7 +6920,7 @@ function listAgents(scope = teamScope()) {
 }
 function resolveFile(id, scope) {
   const own = pathFor(id, scope);
-  if (existsSync4(own)) return own;
+  if (existsSync3(own)) return own;
   if (scope.fallback) return resolveFile(id, scope.fallback);
   return null;
 }
@@ -8286,7 +6935,7 @@ function agentExists(id, scope = teamScope()) {
 function readAgentSource(id, scope = teamScope()) {
   const file = resolveFile(id, scope);
   if (!file) throw new AgentDefinitionError("agent not found", id);
-  return readFileSync3(file, "utf8");
+  return readFileSync2(file, "utf8");
 }
 
 // src/workflows/condition.ts
@@ -8531,8 +7180,8 @@ function optionalRunInputs(wf, loadAgent) {
 }
 
 // src/workflows/registry.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync4, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync4 } from "node:fs";
-import { join as join6 } from "node:path";
+import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync3, readdirSync as readdirSync3, rmSync as rmSync3, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 
 // src/runtime/errors.ts
 var WorkflowError = class extends Error {
@@ -8834,25 +7483,25 @@ function regionOf(wf, start, stop) {
 // src/workflows/registry.ts
 var ID_RE2 = /^[a-z0-9][a-z0-9-]{0,63}$/;
 function workflowsDir(scope = teamScope()) {
-  return join6(scope.root, "workflows");
+  return join4(scope.root, "workflows");
 }
 function invalid2(id, message) {
   return new WorkflowError("WORKFLOW_DEFINITION_INVALID", message, { workflowId: id });
 }
 function pathFor2(id, scope) {
   if (!ID_RE2.test(id)) throw invalid2(id, "invalid workflow id (use lowercase letters, digits and dashes)");
-  const yaml = join6(workflowsDir(scope), `${id}.yaml`);
-  if (existsSync5(yaml)) return yaml;
-  const yml = join6(workflowsDir(scope), `${id}.yml`);
-  return existsSync5(yml) ? yml : yaml;
+  const yaml = join4(workflowsDir(scope), `${id}.yaml`);
+  if (existsSync4(yaml)) return yaml;
+  const yml = join4(workflowsDir(scope), `${id}.yml`);
+  return existsSync4(yml) ? yml : yaml;
 }
 var cache3 = /* @__PURE__ */ new Map();
 function loadFile2(id, file, scope) {
-  const stat = statSync4(file);
+  const stat = statSync3(file);
   const key = `${scope.teamId ?? scope.root}\0${file}`;
   const hit = cache3.get(key);
   if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
-  const def = parseWorkflow(id, readFileSync4(file, "utf8"), {
+  const def = parseWorkflow(id, readFileSync3(file, "utf8"), {
     sourcePath: file,
     updatedAt: stat.mtimeMs,
     agentExists: (agentId) => agentExists(agentId, scope)
@@ -8862,7 +7511,7 @@ function loadFile2(id, file, scope) {
 }
 function resolveFile2(id, scope) {
   const own = pathFor2(id, scope);
-  if (existsSync5(own)) return own;
+  if (existsSync4(own)) return own;
   if (scope.fallback) return resolveFile2(id, scope.fallback);
   return null;
 }
@@ -8874,7 +7523,7 @@ function getWorkflow(id, scope = teamScope()) {
 function readWorkflowSource(id, scope = teamScope()) {
   const file = resolveFile2(id, scope);
   if (!file) throw invalid2(id, "workflow not found");
-  return readFileSync4(file, "utf8");
+  return readFileSync3(file, "utf8");
 }
 
 // src/lib/connect-token.ts
@@ -8908,50 +7557,224 @@ function decodeConnectionToken(value) {
   return { url: u.replace(/\/+$/, ""), key: k };
 }
 
-// src/lib/model-picker.ts
-var PICKER_BEHAVES_AS = "claude-sonnet-5";
-var GATE_PREFIXES = ["provider:", "local:"];
-function isProviderModelId(id) {
-  return typeof id === "string" && GATE_PREFIXES.some((p) => id.startsWith(p));
+// src/memory/cards.ts
+function describeRepoRecord(r) {
+  if (!r.connected) return `${r.repoId ?? "This checkout"} is not read by the gate: ${r.advice ?? "connect it on the Repos page"}`;
+  const counts = Object.entries(r.documents).map(([k, n]) => `${n} ${k}`).join(", ");
+  const lines = [
+    `${r.repoId ?? r.repo} is connected as "${r.repo}"${r.team ? `, team ${r.team}` : ", with no team (every team on the gate reads it)"}.`,
+    r.commit ? `Last read: ${r.ref} at ${r.commit.slice(0, 8)}${r.indexedAt ? `, ${r.indexedAt.slice(0, 16).replace("T", " ")}` : ""} \u2014 ${counts || "no documents"}.` : "Not read yet: the record index reads it on its next pass."
+  ];
+  if (r.error) lines.push(`The last read failed: ${r.error}`);
+  if (r.advice) lines.push(r.advice);
+  return lines.join("\n");
 }
-function isGateRow(row) {
-  return isProviderModelId(row?.model);
+function describeFeatureList(list) {
+  if (!list.length) return "The tree's catalogue is empty: no team has a design doc or a recorded feature yet.";
+  const out = [`${list.length} feature${list.length === 1 ? "" : "s"} in the tree's catalogue \u2014 a design doc named <id>.md is that feature:`];
+  for (const f of list) {
+    out.push(`- ${f.id} \u2014 ${f.name}${f.aliases.length ? ` (also: ${f.aliases.join(", ")})` : ""} \xB7 built by: ${f.teams.join(", ") || "nobody yet"}`);
+  }
+  return out.join("\n");
 }
-function pickerRow(entry) {
-  return {
-    model: entry.id,
-    label: entry.display_name || entry.id,
-    ...entry.description ? { description: entry.description } : {},
-    behavesAs: PICKER_BEHAVES_AS
-  };
+var MAX_FIELD = 1200;
+function clip(s, max = MAX_FIELD) {
+  return s.length > max ? `${s.slice(0, max)}\u2026` : s;
 }
-function readOptions(settings) {
-  const picker = settings.modelPicker && typeof settings.modelPicker === "object" && !Array.isArray(settings.modelPicker) ? settings.modelPicker : {};
-  return { picker, options: Array.isArray(picker.options) ? picker.options : [] };
+function describeSearch(result) {
+  const out = [];
+  if (result.inFlight?.length) out.push(describeActivity(result.inFlight, "Running right now elsewhere in the tree, on work with the same words:"), "");
+  if (result.features.length) {
+    out.push("Features in the catalogue that match:");
+    for (const f of result.features) {
+      out.push(`- ${f.id} \u2014 ${f.name}${f.aliases.length ? ` (also: ${f.aliases.join(", ")})` : ""} \xB7 built by: ${f.teams.join(", ") || "nobody yet"}${f.summary ? `
+  ${clip(f.summary, 300)}` : ""}`);
+    }
+    out.push("");
+  }
+  if (result.documents?.length) {
+    out.push("The repositories' own record \u2014 documents on their base branches that match:");
+    for (const d of result.documents) out.push(describeDocument(d));
+    out.push("");
+  }
+  if (result.interfaces?.length) {
+    out.push(describeInterfaces(result.interfaces), "");
+  }
+  if (!result.decisions.length) {
+    const anything = result.features.length || result.documents?.length || result.inFlight?.length;
+    out.push(anything ? "No recorded decisions matched the text or paths; use memory_feature on a feature above for its decisions." : "Nothing in memory matches. The team has no recorded decision about this.");
+  } else {
+    out.push(`${result.decisions.length} decision${result.decisions.length === 1 ? "" : "s"} (searched teams: ${result.scope.teams.join(", ")}; own team ${result.scope.own} first):`);
+    for (const d of result.decisions) out.push(describeDecision(d));
+  }
+  out.push(describeIssues(result.issues, result.scope.own, result.heldAnswers));
+  return out.filter(Boolean).join("\n");
 }
-function withPickerRows(settings, rows) {
-  const { picker, options } = readOptions(settings);
-  const foreign = options.filter((row) => !isGateRow(row));
-  const next2 = [...foreign, ...rows];
-  if (next2.length) settings.modelPicker = { ...picker, options: next2 };
-  else delete settings.modelPicker;
-  return settings;
+function describeIssues(issues, own, heldAnswers = 0) {
+  const lines = [];
+  if (issues.length) {
+    const against = issues.filter((i) => i.target === own);
+    lines.push(`
+\u26A0 ${issues.length} open cross-team objection${issues.length === 1 ? "" : "s"}${against.length ? ` \u2014 ${against.length} against this team's own decisions` : ""}.`);
+    for (const i of issues) {
+      const side = i.target === own ? `${i.from} objects to our decision` : `we objected to ${i.target}`;
+      lines.push(`
+### ${i.title}`);
+      lines.push(
+        `id: ${i.id} \xB7 ${side} \xB7 ${i.status === "open" ? "confirmed by a person" : "raised, nobody has answered yet"} \xB7 raised ${i.raisedAt.slice(0, 10)}${i.decisionId ? ` \xB7 about decision ${i.decisionId}` : ""}${i.featureId ? ` \xB7 feature: ${i.featureId}` : ""}`
+      );
+      if (i.theirDecision) lines.push(`the decision objected to: ${clip(i.theirDecision, 600)}`);
+      if (i.why) lines.push(`why it does not work: ${clip(i.why, 800)}`);
+      if (i.proposal) lines.push(`proposed instead: ${clip(i.proposal, 800)}`);
+      if (i.revision) lines.push(`asked of ${i.target}: ${clip(i.revision, 800)}`);
+      if (i.paths.length) lines.push(`touches: ${i.paths.slice(0, 20).join(", ")}`);
+    }
+    if (against.length) {
+      lines.push(
+        `
+An objection against this team's own decision is a revision request, not a note: plan for it, or say in the plan why the objection does not hold. It does not make the decision invalid \u2014 only the team that made it can do that.`
+      );
+    }
+  }
+  if (heldAnswers) {
+    lines.push(
+      `
+Note: ${heldAnswers} answer${heldAnswers === 1 ? " was" : "s were"} recorded for objection${heldAnswers === 1 ? "" : "s"} whose own step never reached the server, so ${heldAnswers === 1 ? "it is" : "they are"} not shown above. An empty list is not proof nobody objected.`
+    );
+  }
+  return lines.join("\n");
 }
-function withoutPickerRows(settings) {
-  if (!settings.modelPicker) return settings;
-  const { picker, options } = readOptions(settings);
-  const foreign = options.filter((row) => !isGateRow(row));
-  if (foreign.length) settings.modelPicker = { ...picker, options: foreign };
-  else delete settings.modelPicker;
-  return settings;
+function outcomeLabel(d) {
+  if (d.verdict === "rejected") return `${d.outcome} \xB7 refused`;
+  if (d.outcome === "abandoned") return "abandoned (the run did not finish \u2014 not a refusal)";
+  return d.outcome;
+}
+function describeDecision(d) {
+  const who = d.author && d.author !== d.team ? `team: ${d.team} (made by ${d.author})` : `team: ${d.team}`;
+  const lines = [
+    `
+## ${d.title}`,
+    `id: ${d.id} \xB7 ${who}${d.repo ? ` \xB7 repo: ${d.repo}` : ""} \xB7 ${outcomeLabel(d)} \xB7 from ${d.validFrom.slice(0, 10)}${d.validTo ? ` to ${d.validTo.slice(0, 10)} (no longer holds)` : ""}${d.featureId ? ` \xB7 feature: ${d.featureId}` : ""}${d.supersedes ? ` \xB7 supersedes ${d.supersedes}` : ""}`,
+    `run: ${d.executionId}${d.commits.base || d.commits.head ? ` \xB7 commits ${d.commits.base ?? "?"}..${d.commits.head ?? "?"}` : ""}`
+  ];
+  if (d.verdict === "rejected") {
+    lines.push(`\u2717 refused${d.verdictReason ? `: ${clip(d.verdictReason, 600)}` : ""} \u2014 a road already found closed; taking it again needs a reason the refusal did not have.`);
+  }
+  if (d.checked?.allGone) {
+    lines.push(`\u26A0 every file it touched is gone from the base branch at ${d.checked.commit.slice(0, 8)} \u2014 it describes code that no longer exists; check the code before relying on it.`);
+  }
+  if (d.outcome === "in-progress") {
+    lines.push(
+      `\u26A0 work in progress: the team that taught this says it is not finished. Build on it only if you mean to, and raise an objection now rather than after it settles.`
+    );
+  }
+  if (d.decision) lines.push(`decision: ${clip(d.decision)}`);
+  if (d.rationale) lines.push(`why: ${clip(d.rationale)}`);
+  if (d.how) lines.push(`how: ${clip(d.how, 2e3)}`);
+  if (d.alternatives) lines.push(`not taken: ${clip(d.alternatives, 600)}`);
+  if (d.consequences) lines.push(`consequences: ${clip(d.consequences)}`);
+  if (d.touches.length) lines.push(`touches: ${d.touches.slice(0, 30).join(", ")}${d.touches.length > 30 ? ` (+${d.touches.length - 30})` : ""}`);
+  return lines.join("\n");
+}
+function describeDocument(d) {
+  const kind = d.kind === "decision" ? "decision record" : d.kind === "design" ? "design doc" : d.kind === "note" ? "note (outside the convention)" : d.kind;
+  const lines = [
+    `- ${kind} ${d.path} \u2014 ${d.title}`,
+    `  repo: ${d.repoId ?? d.repo}${d.team ? ` \xB7 team: ${d.team}` : ""}${d.status ? ` \xB7 ${d.status}` : ""}${d.date ? ` \xB7 ${d.date}` : ""} \xB7 at ${d.commit.slice(0, 8)}`
+  ];
+  if (d.summary) lines.push(`  ${clip(d.summary.replace(/\s+/g, " "), 500)}`);
+  if (d.pitfalls) lines.push(`  pitfalls: ${clip(d.pitfalls.replace(/\s+/g, " "), 500)}`);
+  for (const i of d.interfaces ?? []) lines.push(`  ${i.role} ${i.name}${i.note ? ` \u2014 ${clip(i.note, 200)}` : ""}`);
+  return lines.join("\n");
+}
+function describeInterfaces(list) {
+  const byName = /* @__PURE__ */ new Map();
+  for (const i of list) byName.set(i.name, [...byName.get(i.name) ?? [], i]);
+  const out = ["Interfaces between repositories that this names:"];
+  for (const [name, users] of byName) {
+    out.push(`- ${name}`);
+    for (const u of users) {
+      out.push(`  ${u.role} \xB7 ${u.team ?? "no team"} \xB7 ${u.repoId ?? u.repo} \xB7 ${u.path} (feature ${u.feature})${u.note ? ` \u2014 ${clip(u.note, 200)}` : ""}`);
+    }
+  }
+  return out.join("\n");
+}
+function describeActivity(list, heading = "Running right now in the tree:") {
+  if (!list.length) return "Nothing is running in the tree right now.";
+  const out = [heading];
+  for (const a of list) {
+    out.push(
+      `- run ${a.executionId} \xB7 ${a.team}${a.person ? ` \xB7 ${a.person}` : ""} \xB7 ${a.workflow} \xB7 ${a.status} since ${a.startedAt.slice(0, 16).replace("T", " ")}${a.repo ? ` \xB7 repo ${a.repo}` : ""}${a.branch ? ` \xB7 branch ${a.branch}` : ""}${a.taskId ? ` \xB7 task ${a.taskId}` : ""}`
+    );
+    out.push(`  ${clip(a.task.replace(/\s+/g, " "), 300)}`);
+    if (a.shared.length) out.push(`  in common: ${a.shared.join(", ")}`);
+  }
+  return out.join("\n");
+}
+function describeHistory(h) {
+  if (h.unavailable) return `No history: ${h.unavailable}`;
+  if (!h.commits.length) return `No commit on ${h.repoId ?? h.repo}'s ${h.ref ?? "base branch"} (at ${h.commit?.slice(0, 8)}) touched these paths in that window.`;
+  const out = [`${h.commits.length} commit${h.commits.length === 1 ? "" : "s"} on ${h.repoId ?? h.repo}'s ${h.ref ?? "base branch"} at ${h.commit?.slice(0, 8)}, newest first:`];
+  for (const c of h.commits) {
+    out.push(`- ${c.sha.slice(0, 10)} \xB7 ${c.date.slice(0, 10)} \xB7 ${c.author} \xB7 ${c.subject}`);
+    if (c.documents.length) out.push(`  record: ${c.documents.join(", ")}`);
+    if (c.runs.length) out.push(`  run: ${c.runs.join(", ")}`);
+  }
+  return out.join("\n");
+}
+function describeFeature(detail) {
+  const { feature } = detail;
+  const out = [
+    `# ${feature.name} (${feature.id})`,
+    feature.aliases.length ? `also known as: ${feature.aliases.join(", ")}` : "",
+    feature.summary,
+    ""
+  ];
+  if (detail.implementations.length) {
+    out.push("How each team built it:");
+    for (const i of detail.implementations) {
+      out.push(`
+### ${i.team} \xB7 ${i.decisionCount} decision${i.decisionCount === 1 ? "" : "s"} \xB7 updated ${i.updatedAt.slice(0, 10)}`);
+      out.push(i.summary || "(no summary yet)");
+      if (i.pitfalls) out.push(`pitfalls: ${i.pitfalls}`);
+    }
+  } else if (!detail.documents?.length) {
+    out.push("No team has recorded an implementation of it yet.");
+  }
+  if (detail.documents?.length) {
+    out.push("\nEach repository's design doc for it:");
+    for (const d of detail.documents) out.push(describeDocument(d));
+  }
+  if (detail.decisions.length) {
+    out.push(`
+Decisions (${detail.decisions.length}):`);
+    for (const d of detail.decisions) out.push(describeDecision(d));
+  }
+  if (detail.issues.length) out.push(describeIssues(detail.issues, detail.own));
+  return out.filter((l) => l !== "").join("\n");
+}
+
+// src/memory/since.ts
+function parseSince(v, now = Date.now()) {
+  if (typeof v !== "string" || !v.trim()) return null;
+  const s = v.trim().toLowerCase();
+  const rel = s.match(/^(\d+)\s*(d|day|days|w|week|weeks|m|month|months|y|year|years)$/);
+  if (rel) {
+    const n = Number(rel[1]);
+    const unit = rel[2][0];
+    const days = unit === "d" ? n : unit === "w" ? n * 7 : unit === "m" ? n * 30 : n * 365;
+    return now - days * 864e5;
+  }
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : null;
 }
 
 // src/repos/detect.ts
-import { existsSync as existsSync6, readFileSync as readFileSync5 } from "node:fs";
-import { join as join7 } from "node:path";
+import { existsSync as existsSync5 } from "node:fs";
+import { join as join5 } from "node:path";
 var LINKED_DIRECTORIES = ["node_modules", "vendor", ".venv"];
 function linkedDirectories(root) {
-  return LINKED_DIRECTORIES.filter((d) => existsSync6(join7(root, d)));
+  return LINKED_DIRECTORIES.filter((d) => existsSync5(join5(root, d)));
 }
 
 // src/repos/publish.ts
@@ -9018,12 +7841,12 @@ function checkpointWork(root, note, exclude = []) {
 
 // src/runtime/workspace.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync7, lstatSync as lstatSync2, mkdirSync as mkdirSync6, rmSync as rmSync4, symlinkSync } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { dirname, join as join8, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync5, rmSync as rmSync4, symlinkSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname, join as join6, resolve } from "node:path";
 var MAX_LISTED_FILES = 200;
 function workspacesDir() {
-  return join8(process.env.GATE_HOME || join8(homedir3(), ".gate"), "workspaces");
+  return join6(process.env.GATE_HOME || join6(homedir2(), ".gate"), "workspaces");
 }
 function git2(cwd, args) {
   try {
@@ -9047,8 +7870,8 @@ function readRemoteUrl(root) {
   }
 }
 function createRunWorkspace(spec, executionId) {
-  const repo = resolve3(spec.repo.replace(/^~(?=\/|$)/, homedir3()));
-  if (!existsSync7(repo)) {
+  const repo = resolve(spec.repo.replace(/^~(?=\/|$)/, homedir2()));
+  if (!existsSync6(repo)) {
     throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" does not exist`);
   }
   try {
@@ -9058,9 +7881,9 @@ function createRunWorkspace(spec, executionId) {
   }
   const baseRef = spec.baseRef ?? "HEAD";
   const branch = `${spec.branchPrefix ?? "gate/run"}-${executionId.slice(0, 8)}`;
-  const root = join8(workspacesDir(), executionId);
-  mkdirSync6(workspacesDir(), { recursive: true, mode: 448 });
-  if (existsSync7(root)) rmSync4(root, { recursive: true, force: true });
+  const root = join6(workspacesDir(), executionId);
+  mkdirSync5(workspacesDir(), { recursive: true, mode: 448 });
+  if (existsSync6(root)) rmSync4(root, { recursive: true, force: true });
   git2(repo, ["worktree", "add", "-b", branch, root, baseRef]);
   const baseCommit = git2(root, ["rev-parse", "HEAD"]);
   return { root, repo, branch, baseRef, baseCommit };
@@ -9068,10 +7891,10 @@ function createRunWorkspace(spec, executionId) {
 function borrowDependencies(ws) {
   const linked = [];
   for (const dir of linkedDirectories(ws.repo)) {
-    const target = join8(ws.root, dir);
-    if (existsSync7(target)) continue;
+    const target = join6(ws.root, dir);
+    if (existsSync6(target)) continue;
     try {
-      symlinkSync(join8(ws.repo, dir), target, "dir");
+      symlinkSync(join6(ws.repo, dir), target, "dir");
       linked.push(dir);
     } catch (e) {
       throw new WorkflowError("WORKSPACE_ERROR", `could not link ${dir} into the worktree: ${e.message}`);
@@ -9090,7 +7913,7 @@ function isFullyPushed(root) {
 }
 function isSymlink(path) {
   try {
-    return lstatSync2(path).isSymbolicLink();
+    return lstatSync(path).isSymbolicLink();
   } catch {
     return false;
   }
@@ -9105,7 +7928,7 @@ function isIgnored(root, path) {
 }
 function commitLeftovers(ws, executionId) {
   if (!git2(ws.root, ["status", "--porcelain"]).length) return false;
-  const excluded = LINKED_DIRECTORIES.filter((d) => isSymlink(join8(ws.root, d)) && !isIgnored(ws.root, d)).map((d) => `:(exclude)${d}`);
+  const excluded = LINKED_DIRECTORIES.filter((d) => isSymlink(join6(ws.root, d)) && !isIgnored(ws.root, d)).map((d) => `:(exclude)${d}`);
   git2(ws.root, ["add", "-A", "--", ".", ...excluded]);
   if (!git2(ws.root, ["diff", "--cached", "--name-only"]).length) return false;
   let identity = [];
@@ -9118,7 +7941,7 @@ function commitLeftovers(ws, executionId) {
   return true;
 }
 function releaseRunWorkspace(ws, executionId, opts = {}) {
-  if (!existsSync7(ws.root)) return null;
+  if (!existsSync6(ws.root)) return null;
   try {
     if (git2(ws.root, ["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
   } catch {
@@ -9153,11 +7976,11 @@ function releaseRunWorkspace(ws, executionId, opts = {}) {
   return `worktree ${ws.root} removed; branch ${ws.branch} keeps the work${committed ? " (what was uncommitted is its last commit)" : ""}${publishNote}`;
 }
 function restoreRunWorkspace(ws) {
-  if (existsSync7(ws.root)) return false;
-  if (!existsSync7(ws.repo)) {
+  if (existsSync6(ws.root)) return false;
+  if (!existsSync6(ws.repo)) {
     throw new WorkflowError("WORKSPACE_ERROR", `the repository this run worked in (${ws.repo}) is gone`);
   }
-  mkdirSync6(dirname(ws.root), { recursive: true, mode: 448 });
+  mkdirSync5(dirname(ws.root), { recursive: true, mode: 448 });
   try {
     git2(ws.repo, ["worktree", "prune"]);
   } catch {
@@ -9190,10 +8013,10 @@ function summarizeWorkspace(ws) {
 var MAX_DIFF_BYTES = 4e6;
 function readRunDiff(root, baseCommit, ended) {
   let diff;
-  if (existsSync7(root)) {
+  if (existsSync6(root)) {
     git2(root, ["add", "-N", "."]);
     diff = git2(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
-  } else if (ended && baseCommit && existsSync7(ended.repo)) {
+  } else if (ended && baseCommit && existsSync6(ended.repo)) {
     try {
       diff = git2(ended.repo, ["diff", baseCommit, `refs/heads/${ended.branch}`]);
     } catch {
@@ -9223,6 +8046,31 @@ function removeRunWorkspace(ws, opts = {}) {
 
 // src/client/api.ts
 import { hostname } from "node:os";
+
+// src/lib/protocol.ts
+var GATE_VERSION = "0.47.0";
+var VERSION_HEADERS = {
+  /** Client → server: the CLI's own version. */
+  client: "x-gate-cli",
+  /** Server → client: what is running there. */
+  server: "x-gate-server",
+  /** Server → client: the oldest client it will serve. */
+  minClient: "x-gate-min-cli"
+};
+function compareVersions(a, b) {
+  const parts = (v) => v.trim().split(".").map((n) => Number.parseInt(n, 10)).map((n) => Number.isFinite(n) ? n : 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) {
+    const diff = (x[i] ?? 0) - (y[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+function isOlderThan(version, than) {
+  return compareVersions(version, than) < 0;
+}
+
+// src/client/api.ts
 var CLI_VERSION = GATE_VERSION;
 var GateApiError = class extends Error {
   constructor(message, status, code) {
@@ -9242,9 +8090,6 @@ var GateClient = class {
   warnedAboutVersion = false;
   get url() {
     return this.config.url;
-  }
-  get gatewayUrl() {
-    return `${this.config.url}/api/gateway`;
   }
   get key() {
     return this.config.key;
@@ -9311,14 +8156,6 @@ var GateClient = class {
   }
   async me() {
     return (await this.request("/api/v1/me")).body;
-  }
-  /**
-   * What the gate's account pool has left. The shape is `PoolQuota` from
-   * src/lib/account-pool.ts, restated here because the CLI is bundled on its
-   * own and an older gate may answer without the newer fields.
-   */
-  async usage() {
-    return (await this.request("/api/v1/usage")).body;
   }
   /** null when the bundle has not changed since `etag`. */
   async bundle(etag) {
@@ -9453,49 +8290,39 @@ var GateClient = class {
   async ask(req) {
     return (await this.request("/api/v1/ask", { method: "POST", body: JSON.stringify(req) })).body;
   }
+  /** One read-only look at an ask's commit: `tree`, `grep` or `file`, answered as text. */
+  async askRead(askId, what, params) {
+    const query = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== void 0 && v !== "") query.set(k, v);
+    const res = await this.request(`/api/v1/ask/${encodeURIComponent(askId)}/${what}?${query}`);
+    return res.body.text;
+  }
   async listRuns(limit = 20) {
     const res = await this.request(`/api/v1/executions?limit=${limit}`);
     return res.body.executions;
   }
-  /**
-   * The models the gateway serves, as `/v1/models` reports them — the gateway
-   * endpoint rather than a client-API one, because it is the list every other
-   * client of this gate already sees, and it is already this key's to read.
-   * Only the provider models are of interest here: the Claude ones reach the
-   * picker through Claude Code's own discovery.
-   */
-  async providerModels() {
-    const res = await this.request(
-      "/api/gateway/v1/models"
-    );
-    return (Array.isArray(res.body?.data) ? res.body.data : []).filter((m) => isProviderModelId(m?.id)).map((m) => ({
-      id: String(m.id),
-      ...typeof m.display_name === "string" ? { display_name: m.display_name } : {},
-      ...typeof m.description === "string" ? { description: m.description } : {}
-    }));
-  }
 };
 
 // src/client/cache.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync8, readFileSync as readFileSync7, readdirSync as readdirSync5, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname3, isAbsolute as isAbsolute2, join as join10, normalize, relative as relative4, sep as sep2 } from "node:path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync7, readFileSync as readFileSync5, readdirSync as readdirSync4, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname3, isAbsolute, join as join8, normalize, relative as relative2, sep } from "node:path";
 
 // src/client/config.ts
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname2, join as join9 } from "node:path";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname2, join as join7 } from "node:path";
 function gateHome2() {
-  return process.env.GATE_HOME || join9(homedir4(), ".gate");
+  return process.env.GATE_HOME || join7(homedir3(), ".gate");
 }
 function configPath() {
-  return join9(gateHome2(), "client.json");
+  return join7(gateHome2(), "client.json");
 }
 function readConfig() {
   const url = process.env.GATE_URL;
   const key = process.env.GATE_KEY;
   if (url && key) return { url: url.replace(/\/+$/, ""), key, fromEnv: true };
   try {
-    const raw = JSON.parse(readFileSync6(configPath(), "utf8"));
+    const raw = JSON.parse(readFileSync4(configPath(), "utf8"));
     if (!raw?.url || !raw?.key) return null;
     return { ...raw, url: raw.url.replace(/\/+$/, "") };
   } catch {
@@ -9504,8 +8331,8 @@ function readConfig() {
 }
 function writeConfig(config) {
   const file = configPath();
-  mkdirSync7(dirname2(file), { recursive: true, mode: 448 });
-  writeFileSync5(file, `${JSON.stringify(config, null, 2)}
+  mkdirSync6(dirname2(file), { recursive: true, mode: 448 });
+  writeFileSync4(file, `${JSON.stringify(config, null, 2)}
 `, { mode: 384 });
 }
 function writeLogin(login) {
@@ -9516,7 +8343,7 @@ function writeLogin(login) {
 }
 function readConfigFile() {
   try {
-    return JSON.parse(readFileSync6(configPath(), "utf8"));
+    return JSON.parse(readFileSync4(configPath(), "utf8"));
   } catch {
     return null;
   }
@@ -9544,17 +8371,17 @@ function repoPaths() {
 
 // src/client/cache.ts
 function cacheDir(team) {
-  return join10(gateHome2(), "cache", team);
+  return join8(gateHome2(), "cache", team);
 }
 function cacheScope(team) {
   return scopeAt(cacheDir(team), team);
 }
 function manifestPath(team) {
-  return join10(cacheDir(team), "manifest.json");
+  return join8(cacheDir(team), "manifest.json");
 }
 function readManifest(team) {
   try {
-    return JSON.parse(readFileSync7(manifestPath(team), "utf8"));
+    return JSON.parse(readFileSync5(manifestPath(team), "utf8"));
   } catch {
     return null;
   }
@@ -9562,29 +8389,29 @@ function readManifest(team) {
 function writeSkill(dir, skill) {
   rmSync5(dir, { recursive: true, force: true });
   for (const file of skill.files) {
-    const full = join10(dir, normalize(file.path));
-    const rel = relative4(dir, full);
-    if (!rel || rel.startsWith("..") || isAbsolute2(rel) || rel.split(sep2).includes("..")) continue;
-    mkdirSync8(dirname3(full), { recursive: true, mode: 448 });
-    writeFileSync6(full, Buffer.from(file.base64, "base64"), { mode: 384 });
+    const full = join8(dir, normalize(file.path));
+    const rel = relative2(dir, full);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("..")) continue;
+    mkdirSync7(dirname3(full), { recursive: true, mode: 448 });
+    writeFileSync5(full, Buffer.from(file.base64, "base64"), { mode: 384 });
   }
 }
 function writeBundle(bundle, from) {
   const root = cacheDir(bundle.team);
-  const agents = join10(root, "agents");
-  const workflows = join10(root, "workflows");
-  const skills = join10(root, "skills");
-  mkdirSync8(agents, { recursive: true, mode: 448 });
-  mkdirSync8(workflows, { recursive: true, mode: 448 });
-  mkdirSync8(skills, { recursive: true, mode: 448 });
+  const agents = join8(root, "agents");
+  const workflows = join8(root, "workflows");
+  const skills = join8(root, "skills");
+  mkdirSync7(agents, { recursive: true, mode: 448 });
+  mkdirSync7(workflows, { recursive: true, mode: 448 });
+  mkdirSync7(skills, { recursive: true, mode: 448 });
   for (const agent of bundle.agents) {
-    writeFileSync6(join10(agents, `${agent.id}.md`), agent.source, { mode: 384 });
+    writeFileSync5(join8(agents, `${agent.id}.md`), agent.source, { mode: 384 });
   }
   for (const workflow of bundle.workflows) {
-    writeFileSync6(join10(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
+    writeFileSync5(join8(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
   }
   for (const skill of bundle.skills ?? []) {
-    writeSkill(join10(skills, skill.id), skill);
+    writeSkill(join8(skills, skill.id), skill);
   }
   prune(agents, new Set(bundle.agents.map((a) => `${a.id}.md`)));
   prune(workflows, new Set(bundle.workflows.map((w) => `${w.id}.yaml`)));
@@ -9597,31 +8424,31 @@ function writeBundle(bundle, from) {
     workflows: bundle.workflows.map(({ source: _source, ...rest }) => rest),
     skills: (bundle.skills ?? []).map((s) => s.id)
   };
-  writeFileSync6(manifestPath(bundle.team), `${JSON.stringify(manifest, null, 2)}
+  writeFileSync5(manifestPath(bundle.team), `${JSON.stringify(manifest, null, 2)}
 `, { mode: 384 });
   return manifest;
 }
 function prune(dir, keep) {
-  if (!existsSync8(dir)) return;
-  for (const entry of readdirSync5(dir)) {
-    if (!keep.has(entry)) rmSync5(join10(dir, entry), { recursive: true, force: true });
+  if (!existsSync7(dir)) return;
+  for (const entry of readdirSync4(dir)) {
+    if (!keep.has(entry)) rmSync5(join8(dir, entry), { recursive: true, force: true });
   }
 }
 function clearLocalState() {
   const removed = [];
-  const cache4 = join10(gateHome2(), "cache");
-  if (existsSync8(cache4)) {
+  const cache4 = join8(gateHome2(), "cache");
+  if (existsSync7(cache4)) {
     rmSync5(cache4, { recursive: true, force: true });
     removed.push(`removed the mirrored definitions (${cache4})`);
   }
-  const config = join10(gateHome2(), "client.json");
-  if (existsSync8(config)) {
+  const config = join8(gateHome2(), "client.json");
+  if (existsSync7(config)) {
     rmSync5(config, { force: true });
     removed.push(`removed the login and its approvals (${config})`);
   }
-  const workspaces = join10(gateHome2(), "workspaces");
-  if (existsSync8(workspaces)) {
-    const kept = readdirSync5(workspaces).length;
+  const workspaces = join8(gateHome2(), "workspaces");
+  if (existsSync7(workspaces)) {
+    const kept = readdirSync4(workspaces).length;
     if (kept) removed.push(`kept ${kept} run worktree(s) in ${workspaces} \u2014 they are branches, not cache`);
   }
   return removed.length ? removed : ["nothing to remove \u2014 this machine was not connected"];
@@ -9629,29 +8456,15 @@ function clearLocalState() {
 
 // src/client/clean.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import { existsSync as existsSync14, readdirSync as readdirSync9 } from "node:fs";
-import { join as join15 } from "node:path";
+import { existsSync as existsSync10, readdirSync as readdirSync7 } from "node:fs";
+import { join as join11 } from "node:path";
 
 // src/client/step.ts
-import { spawn as spawn2 } from "node:child_process";
-import { appendFileSync, closeSync, cpSync as cpSync2, existsSync as existsSync13, mkdirSync as mkdirSync11, openSync, readdirSync as readdirSync8, readFileSync as readFileSync10, rmSync as rmSync8, writeFileSync as writeFileSync9 } from "node:fs";
-import { hostname as hostname3 } from "node:os";
-import { join as join14 } from "node:path";
+import { cpSync, existsSync as existsSync9, mkdirSync as mkdirSync9, readdirSync as readdirSync6, readFileSync as readFileSync7, rmSync as rmSync7, writeFileSync as writeFileSync7 } from "node:fs";
+import { hostname as hostname2 } from "node:os";
+import { join as join10 } from "node:path";
 
 // src/runtime/state.ts
-function createState(executionId, workflowId, input = {}, seed) {
-  return {
-    executionId,
-    workflowId,
-    status: "running",
-    input,
-    outputs: seed?.outputs ?? {},
-    visitCounts: seed?.visitCounts ?? {},
-    stepCount: seed?.stepCount ?? 0,
-    history: seed?.history ?? [],
-    error: null
-  };
-}
 function conditionContext(state) {
   return { outputs: state.outputs, input: state.input, visits: state.visitCounts };
 }
@@ -9695,479 +8508,7 @@ function resolveInputs(paths, state, nodeId2) {
   return out;
 }
 
-// src/skills/inject.ts
-import { createHash } from "node:crypto";
-import { cpSync, existsSync as existsSync9, mkdirSync as mkdirSync9, readFileSync as readFileSync8, readdirSync as readdirSync6, renameSync as renameSync2, rmSync as rmSync6, statSync as statSync5, writeFileSync as writeFileSync7 } from "node:fs";
-import { basename, join as join11 } from "node:path";
-var MAX_BUNDLES = 20;
-function skillsBriefing(skills) {
-  if (!skills.length) return "";
-  const list = skills.map((s) => `- ${s.id}: ${s.description}`).join("\n");
-  const bodies = skills.map((s) => {
-    const files = s.resources.length ? `
-
-(This skill also ships ${s.resources.join(", ")}. Those files are not readable from this workspace \u2014 work from what is written above, and do not claim to have opened them.)` : "";
-    return `## Skill: ${s.id}
-
-${s.body}${files}`;
-  }).join("\n\n---\n\n");
-  return `
-
-# Skills
-
-You have been given these skills, and you are expected to work the way they say:
-${list}
-
-They are instructions, not references: where a skill describes a process, follow it.
-
-${bodies}`;
-}
-var SKILL_PLUGIN_NAME = "gate-skills";
-function skillsDirective(skills) {
-  const list = skills.map((s) => `- ${SKILL_PLUGIN_NAME}:${s.id} \u2014 ${s.description}`).join("\n");
-  return `You have been given these skills, and this node is expected to be done the way they say:
-${list}
-
-Use each one before you start, by its full name above, and follow it. A skill that describes a process is the process for this node, not background reading.`;
-}
-function unattendedNotice() {
-  return "This node is running unattended: there is no person in this session, and a question you ask here reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait for a reply here. If the prompt below gives such questions a way out \u2014 an output field they go into, so that the run can put them to the person elsewhere \u2014 put them there, all of them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where the prompt gives no such way out, or tells you the person has already been asked and was not there, take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
-}
-function backgroundSubagentNotice() {
-  return "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent is launched, and its result reaches you as a notification. Ending your turn while one of yours is still running does not finish this node \u2014 you are resumed with the result when it completes. So after dispatching, do whatever work does not depend on the result, then say what you are waiting on and stop; never poll for its commits or a report file, and never run a command whose only purpose is to let time pass \u2014 no `sleep`, no `true`, no `echo`, no `date`, and no loop around any of them \u2014 because the result was on its way and a turn spent passing time is one in which it cannot arrive.\n\nNever dispatch a subagent type that copies your own context. Your context contains your instruction to dispatch, so the copy dispatches too, and its copies do, and a copy cannot tell that it is one. Measured here: four such dispatches became sixteen, and one branch's tail was 40% of the node. Dispatch a named agent with a task written out in the prompt, so that what it was asked is something you decided and can read back.\n\nDispatch only when the work is bigger than the dispatch. A subagent starts cold: it reads what you have already read before it can begin, and a check you could run yourself in a minute costs more dispatched than done. Reading a handful of files, running this project's test command, answering a question you already know where to look for \u2014 do those yourself.\n\nBefore you give your final answer, name every subagent you dispatched and what it returned. If any of them has not returned, you have no final answer yet: say which one you are waiting on and stop. A verdict written without a result you asked for is wrong even when it happens to be right, because you did not know that when you wrote it.";
-}
-function fileReadingNotice() {
-  return 'Read files with Read, find them with Glob, and search them with Grep. Each is one call that returns what you asked for. A shell command that does the same thing \u2014 `cat`, `head`, `sed -n`, `find`, `grep` \u2014 opens a shell first, and here that costs more than the read: measured in one node, 43 Reads took a second between them while 107 shell calls took nearly four minutes, most of it startup. Shell is for commands that do something: tests, a build, git.\n\nA file read through the shell does not count as read. The next Edit to it is refused \u2014 "File has not been read yet" \u2014 and you pay for the read twice; measured in the same node, thirteen refused Edits. Read the whole file the first time rather than a window you will have to widen, and re-read only after something has changed it.';
-}
-function bundlesDir() {
-  return join11(gateHome(), "skill-bundles");
-}
-function fingerprint(skills) {
-  const h = createHash("sha256");
-  for (const skill of [...skills].sort((a, b) => a.id.localeCompare(b.id))) {
-    h.update(`skill:${skill.id}
-`);
-    for (const file of ["SKILL.md", ...skill.resources]) {
-      const full = join11(skill.dir, file);
-      try {
-        const stat = statSync5(full);
-        h.update(`${file}:${stat.size}:${stat.mtimeMs}
-`);
-      } catch {
-        h.update(`${file}:missing
-`);
-      }
-    }
-  }
-  return h.digest("hex").slice(0, 16);
-}
-function buildSkillPlugin(skills) {
-  if (!skills.length) return null;
-  const root = join11(bundlesDir(), fingerprint(skills));
-  const marker = join11(root, ".claude-plugin", "plugin.json");
-  if (existsSync9(marker)) return root;
-  const staging = `${root}.${process.pid}.${Date.now()}`;
-  mkdirSync9(join11(staging, ".claude-plugin"), { recursive: true, mode: 448 });
-  writeFileSync7(
-    join11(staging, ".claude-plugin", "plugin.json"),
-    `${JSON.stringify(
-      {
-        name: SKILL_PLUGIN_NAME,
-        description: "Skills this node's agent declared, assembled by gate.",
-        version: "0.0.0"
-      },
-      null,
-      2
-    )}
-`,
-    { mode: 384 }
-  );
-  for (const skill of skills) {
-    const target = join11(staging, "skills", skill.id);
-    cpSync(skill.dir, target, {
-      recursive: true,
-      // Provenance is gate's bookkeeping and would read to the model as part
-      // of the skill.
-      filter: (src) => basename(src) !== ORIGIN_FILE
-    });
-    writeFileSync7(join11(target, "SKILL.md"), withSkillName(readFileSync8(join11(skill.dir, "SKILL.md"), "utf8"), skill.id), {
-      mode: 384
-    });
-  }
-  try {
-    mkdirSync9(bundlesDir(), { recursive: true, mode: 448 });
-    if (!existsSync9(root)) {
-      renameSync2(staging, root);
-    } else {
-      rmSync6(staging, { recursive: true, force: true });
-    }
-  } catch {
-    rmSync6(staging, { recursive: true, force: true });
-  }
-  prune2();
-  return existsSync9(marker) ? root : null;
-}
-function prune2() {
-  try {
-    const dir = bundlesDir();
-    const entries = readdirSync6(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => ({ path: join11(dir, e.name), mtimeMs: statSync5(join11(dir, e.name)).mtimeMs })).sort((a, b) => b.mtimeMs - a.mtimeMs);
-    for (const stale of entries.slice(MAX_BUNDLES)) rmSync6(stale.path, { recursive: true, force: true });
-  } catch {
-  }
-}
-
-// src/runtime/executors/claude-code.ts
-import { spawn } from "node:child_process";
-import { existsSync as existsSync10 } from "node:fs";
-
-// src/lib/db.ts
-import { homedir as homedir5 } from "node:os";
-import { join as join12 } from "node:path";
-var GATE_DIR2 = process.env.GATE_HOME || join12(homedir5(), ".gate");
-
-// src/lib/claude/config.ts
-var CLAUDE_OAUTH = {
-  clientId: process.env.CLAUDE_OAUTH_CLIENT_ID || "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-  authorizeUrl: "https://claude.ai/oauth/authorize",
-  tokenUrl: "https://api.anthropic.com/v1/oauth/token",
-  // Anthropic's hosted callback that displays the code+state for manual paste,
-  // exactly like Claude Code's headless login. No local server required.
-  redirectUri: process.env.CLAUDE_OAUTH_REDIRECT_URI || "https://platform.claude.com/oauth/code/callback",
-  scopes: [
-    "org:create_api_key",
-    "user:profile",
-    "user:inference",
-    "user:sessions:claude_code",
-    "user:mcp_servers"
-  ],
-  codeChallengeMethod: "S256"
-};
-var ANTHROPIC_API_BASE = "https://api.anthropic.com";
-var ANTHROPIC_MESSAGES_URL = `${ANTHROPIC_API_BASE}/v1/messages`;
-var ANTHROPIC_BOOTSTRAP_URL = `${ANTHROPIC_API_BASE}/api/claude_cli/bootstrap`;
-var ANTHROPIC_OAUTH_USAGE_URL = `${ANTHROPIC_API_BASE}/api/oauth/usage`;
-var CLAUDE_CODE_VERSION = process.env.CLAUDE_CODE_VERSION || "2.1.280";
-var CLAUDE_CODE_STAINLESS_VERSION = process.env.CLAUDE_CODE_STAINLESS_VERSION || "0.112.1";
-
-// src/lib/providers.ts
-var REF_PREFIX = "provider:";
-var LEGACY_REF_PREFIX = "local:";
-function parseProviderRef(ref) {
-  if (typeof ref !== "string") return null;
-  const rest = ref.trim();
-  const lower = rest.toLowerCase();
-  const prefix = lower.startsWith(REF_PREFIX) ? REF_PREFIX : lower.startsWith(LEGACY_REF_PREFIX) ? LEGACY_REF_PREFIX : null;
-  if (!prefix) return null;
-  const body = rest.slice(prefix.length);
-  const slash = body.indexOf("/");
-  if (slash <= 0 || slash === body.length - 1) return null;
-  return { provider: body.slice(0, slash), model: body.slice(slash + 1) };
-}
-
-// src/runtime/executors/claude-code.ts
-function gatewayUrl(override) {
-  if (override) return `${override.replace(/\/$/, "")}`;
-  return `http://127.0.0.1:${process.env.PORT ?? 4141}/api/gateway`;
-}
-function providerModelEnv(model) {
-  if (!parseProviderRef(model)) return {};
-  return {
-    ANTHROPIC_DEFAULT_SONNET_MODEL: model,
-    ANTHROPIC_DEFAULT_OPUS_MODEL: model,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
-    // Telemetry and the other non-essential chatter would otherwise be served
-    // by a model somebody is paying per token for, to no one's benefit.
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-    // Provider endpoints are routinely slower to first token than Anthropic's,
-    // and the harness's own HTTP timeout is the one thing gate's node timeout
-    // cannot rescue. Z.AI documents this same value for exactly this reason.
-    API_TIMEOUT_MS: "3000000"
-  };
-}
-function renderResult(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.map(
-      (b) => b && typeof b === "object" && "text" in b ? String(b.text) : JSON.stringify(b)
-    ).join("\n");
-  }
-  return content == null ? "" : JSON.stringify(content);
-}
-function failureDetail(r, stderr) {
-  const said = typeof r?.result === "string" ? r.result.trim() : (
-    // Not JSON.stringify on its own: `undefined` does not come back a
-    // string from it, and "undefined" is worse than nothing.
-    r?.result == null ? "" : JSON.stringify(r.result)
-  );
-  return (said || stderr.trim()).slice(0, 500);
-}
-var MAX_OUTPUT_RETRIES = 2;
-async function runClaudeCodeNode(agent, prompt, nodeId2, deps, deadline) {
-  if (!deps.workspace) {
-    throw new WorkflowError(
-      "AGENT_DEFINITION_INVALID",
-      `node "${nodeId2}": agent "${agent.id}" uses the claude-code executor, which needs a workspace; declare one on the workflow`,
-      { nodeId: nodeId2, agentId: agent.id }
-    );
-  }
-  const workspace = deps.workspace;
-  if (!existsSync10(workspace.root)) {
-    throw new WorkflowError(
-      "WORKSPACE_ERROR",
-      `node "${nodeId2}": this run's worktree is gone (${workspace.root}); it was removed while the run was going`,
-      { nodeId: nodeId2, agentId: agent.id }
-    );
-  }
-  const skills = deps.skills ?? [];
-  const skillPlugin = buildSkillPlugin(skills);
-  const toolCalls = [];
-  const usage = {
-    model: agent.model,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0
-  };
-  const runTurn = async (userPrompt, resume) => {
-    const args = [
-      "-p",
-      userPrompt,
-      // Not `json`: that returns one blob when the node is already over, and the
-      // dashboard has nothing to show for the half hour before it. `stream-json`
-      // emits every tool call as it happens, which is what feeds tool.called.
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--model",
-      agent.model,
-      "--add-dir",
-      workspace.root,
-      // A run is unattended, so nothing may wait for an answer.
-      //
-      // Not `bypassPermissions`: Claude Code refuses that outright when the
-      // process is root, which is how gate runs as a service — and it refuses
-      // for a good reason, because that mode as root is unrestricted execution
-      // on the host. `auto` decides without asking, and `--permission-prompts
-      // none` denies whatever would still have prompted rather than hanging on
-      // a question nobody is there to answer.
-      "--permission-mode",
-      "auto",
-      "--permission-prompts",
-      "none",
-      // The commits a node makes are the team's. Claude Code signs the ones it
-      // writes with a Co-Authored-By trailer unless told not to, and the
-      // person's own settings do not reach a service's process, so it is
-      // said here for every worker.
-      "--settings",
-      JSON.stringify({ includeCoAuthoredBy: false })
-    ];
-    if (agent.effort) args.push("--effort", agent.effort);
-    if (resume) args.push("--resume", resume);
-    if (skillPlugin) args.push("--plugin-dir", skillPlugin);
-    const appended = [];
-    appended.push(unattendedNotice());
-    appended.push(backgroundSubagentNotice());
-    appended.push(fileReadingNotice());
-    if (skills.length) appended.push(skillsDirective(skills));
-    if (agent.output.type === "json") {
-      const fields = Object.entries(agent.output.schema).map(([field2, type]) => `  "${field2}": ${type}`).join("\n");
-      appended.push(
-        `When you have finished the work, your final message must be a single JSON object and nothing else \u2014 no prose, no code fence. Fields:
-{
-${fields}
-}
-A type ending in "?" is optional: leave that key out, or write null \u2014 both say there was nothing to put there. Every other key is required, and null is not an answer for one.`
-      );
-    }
-    if (appended.length) args.push("--append-system-prompt", appended.join("\n\n"));
-    const spawnCli = deps.spawnCli ?? spawn;
-    const child = spawnCli("claude", args, {
-      cwd: workspace.root,
-      env: {
-        ...process.env,
-        ANTHROPIC_BASE_URL: gatewayUrl(deps.gatewayUrl),
-        // How the child gets through gate's own front door: on the server, a
-        // token minted for this run; on a developer's machine, that person's
-        // own key. Being loopback buys it nothing — a gate that has issued any
-        // key refuses a request without one whatever its source address.
-        // Conditional because an empty value would be sent as a credential.
-        ...deps.authToken ? { ANTHROPIC_AUTH_TOKEN: deps.authToken, ANTHROPIC_API_KEY: deps.authToken } : {},
-        // Claude Code would otherwise send only its own session id, and the
-        // gateway would file a node's calls as unrelated traffic. This is the
-        // same header gate's own provider sets (`sessionFromRequest` prefers
-        // it), so a node run by the child groups, sticks to its tier and reuses
-        // its prompt cache exactly like one gate held itself.
-        ...deps.sessionId ? { ANTHROPIC_CUSTOM_HEADERS: `x-gate-session: ${deps.sessionId}` } : {},
-        // Empty unless this node runs on a provider model; see above.
-        ...providerModelEnv(agent.model)
-      },
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stderr = "";
-    let final = null;
-    const pending = /* @__PURE__ */ new Map();
-    let buffered = "";
-    const onEvent = (e) => {
-      if (e.type === "result") {
-        final = e;
-        return;
-      }
-      const blocks = e.message?.content;
-      if (!Array.isArray(blocks)) return;
-      for (const b of blocks) {
-        if (e.type === "assistant" && b.type === "text" && typeof b.text === "string") {
-          deps.onText?.(b.text);
-        }
-        if (b.type === "tool_use" && typeof b.id === "string") {
-          pending.set(b.id, {
-            tool: b.name ?? "tool",
-            input: b.input,
-            startedAt: Date.now()
-          });
-        }
-        if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
-          const started = pending.get(b.tool_use_id);
-          pending.delete(b.tool_use_id);
-          const record2 = {
-            tool: started?.tool ?? "tool",
-            input: started?.input ?? null,
-            ok: b.is_error !== true,
-            result: renderResult(b.content),
-            startedAt: started?.startedAt ?? Date.now(),
-            durationMs: started ? Date.now() - started.startedAt : 0
-          };
-          toolCalls.push(record2);
-          deps.onToolCall?.(record2);
-        }
-      }
-    };
-    child.stdout?.on("data", (c) => {
-      buffered += c.toString();
-      const lines = buffered.split("\n");
-      buffered = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          onEvent(JSON.parse(line));
-        } catch {
-        }
-      }
-    });
-    child.stderr?.on("data", (c) => stderr += c.toString());
-    const settled = await new Promise((resolve7) => {
-      let done = false;
-      const finish = (r) => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        deps.signal?.removeEventListener("abort", onAbort);
-        resolve7(r);
-      };
-      const timer = deadline === null ? void 0 : setTimeout(
-        () => {
-          child.kill("SIGKILL");
-          finish({ code: null, timedOut: true, cancelled: false });
-        },
-        Math.max(0, deadline - Date.now())
-      );
-      const onAbort = () => {
-        child.kill("SIGKILL");
-        finish({ code: null, timedOut: false, cancelled: true });
-      };
-      deps.signal?.addEventListener("abort", onAbort, { once: true });
-      child.on(
-        "error",
-        () => finish({ code: null, timedOut: false, cancelled: false })
-      );
-      child.on(
-        "close",
-        (code) => finish({ code, timedOut: false, cancelled: false })
-      );
-    });
-    if (buffered.trim()) {
-      try {
-        onEvent(JSON.parse(buffered));
-      } catch {
-      }
-    }
-    if (settled.cancelled) {
-      throw new WorkflowError(
-        "RUN_CANCELLED",
-        `node "${nodeId2}" was cancelled`,
-        { nodeId: nodeId2 }
-      );
-    }
-    if (settled.timedOut) {
-      throw new WorkflowError(
-        "NODE_TIMEOUT",
-        `node "${nodeId2}" exceeded its timeout`,
-        { nodeId: nodeId2 }
-      );
-    }
-    const parsed = final;
-    if (!parsed) {
-      const detail = failureDetail(null, stderr) || "no output";
-      throw new WorkflowError(
-        "MODEL_EXECUTION_ERROR",
-        `node "${nodeId2}": claude-code exited ${settled.code ?? "without a code"} before reporting a result \u2014 ${detail}`,
-        { nodeId: nodeId2, agentId: agent.id, toolCalls }
-      );
-    }
-    usage.model = modelOf(parsed) ?? usage.model;
-    usage.inputTokens += parsed.usage?.input_tokens ?? 0;
-    usage.outputTokens += parsed.usage?.output_tokens ?? 0;
-    usage.cacheReadTokens += parsed.usage?.cache_read_input_tokens ?? 0;
-    if (parsed.is_error || typeof parsed.result !== "string") {
-      const why = failureDetail(parsed, stderr);
-      throw new WorkflowError(
-        "MODEL_EXECUTION_ERROR",
-        `node "${nodeId2}": claude-code did not finish (${parsed.subtype ?? "unknown"})` + // The child's own reason, where it gave one: the subtype says the
-        // shape of the failure, this says the cause.
-        (why ? ` \u2014 ${why}` : "") + // Denials are silent otherwise, and a node that lost the tool it
-        // needed reads exactly like one that simply answered badly.
-        (parsed.permission_denials?.length ? `; ${parsed.permission_denials.length} tool call(s) denied by the permission mode` : ""),
-        // The tool calls it did make and the tokens it did spend are attached, so
-        // a failure is recorded with its evidence instead of looking like nothing.
-        { nodeId: nodeId2, agentId: agent.id, usage, toolCalls }
-      );
-    }
-    return parsed;
-  };
-  let turn = await runTurn(prompt);
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return {
-        output: parseOutput(agent, turn.result, nodeId2),
-        usage,
-        toolCalls
-      };
-    } catch (e) {
-      const validation = e instanceof WorkflowError && e.code === "AGENT_OUTPUT_VALIDATION_ERROR";
-      if (!validation || attempt >= MAX_OUTPUT_RETRIES || !turn.session_id)
-        throw e;
-      turn = await runTurn(
-        outputCorrection(e.message),
-        turn.session_id
-      );
-    }
-  }
-}
-function modelOf(r) {
-  const keys = r.modelUsage ? Object.keys(r.modelUsage) : [];
-  return keys.length ? keys[0] : null;
-}
-
 // src/runtime/executors/agent.ts
-var MAX_TOOL_ITERATIONS = 0;
-var DEFAULT_AGENT_TIMEOUT_MS = 60 * 6e4;
-var WRITE_TOOLS = /* @__PURE__ */ new Set(["write_file", "edit_file"]);
-var RECON_ROUNDS_BEFORE_NUDGE = 12;
-var NUDGE_EVERY_ROUNDS = 10;
-var MAX_OUTPUT_RETRIES2 = 2;
-function outputCorrection(message) {
-  return `Your last message did not match the output shape this node declared: ${message}
-
-Send the same answer again, corrected, as a single JSON object and nothing else \u2014 no prose, no code fence. Do not redo any work; only the shape of the final message was wrong.`;
-}
 function prepareAgentNode(node, state, loadAgent) {
   const agent = loadAgent(node.agent);
   const paths = node.inputs ?? agent.inputs;
@@ -10181,163 +8522,6 @@ function prepareAgentNode(node, state, loadAgent) {
       agentId: agent.id
     });
   }
-}
-async function executeAgentNode(node, state, deps) {
-  const { agent, inputs, prompt } = prepareAgentNode(node, state, deps.loadAgent);
-  const skills = resolveSkills(agent, node.id, deps.loadSkill);
-  const workspace = deps.workspace ?? null;
-  const nodeTimeoutMs = agent.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
-  const nodeDeadline = nodeTimeoutMs > 0 ? Date.now() + nodeTimeoutMs : null;
-  if (agent.executor === "claude-code") {
-    const res = await runClaudeCodeNode(
-      agent,
-      prompt,
-      node.id,
-      {
-        skills,
-        workspace,
-        onToolCall: deps.onToolCall,
-        signal: deps.signal,
-        gatewayUrl: deps.claudeCode?.gatewayUrl,
-        authToken: deps.claudeCode?.authToken,
-        sessionId: `workflow:${state.executionId}`
-      },
-      nodeDeadline
-    );
-    return { input: inputs, output: res.output, usage: res.usage, toolCalls: res.toolCalls };
-  }
-  const tools = toolsFor(agent.tools, Boolean(workspace));
-  const canWrite = tools.some((t) => WRITE_TOOLS.has(t.name));
-  const toolDefs = tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
-  const toolCtx = workspace || tools.length ? { root: workspace?.root ?? "", nodeId: node.id, executionId: state.executionId, memory: deps.memory } : null;
-  const messages = [{ role: "user", content: prompt }];
-  const toolCalls = [];
-  let writes = 0;
-  const usage = { model: agent.model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
-  const deadline = nodeDeadline;
-  const maxIterations = agent.maxToolIterations ?? deps.maxToolIterations ?? MAX_TOOL_ITERATIONS;
-  let outputRetries = 0;
-  try {
-    for (let iteration = 0; ; iteration++) {
-      if (deps.signal?.aborted) {
-        throw new WorkflowError("RUN_CANCELLED", `node "${node.id}" was cancelled`, { nodeId: node.id });
-      }
-      const call = deps.provider.execute({
-        model: agent.model,
-        system: systemPrompt(agent, tools.length > 0, canWrite, skills),
-        messages,
-        effort: agent.effort,
-        maxTokens: agent.maxTokens,
-        tools: toolDefs.length ? toolDefs : void 0,
-        context: { executionId: state.executionId, workflowId: state.workflowId, nodeId: node.id },
-        signal: deps.signal
-      });
-      const result = await withDeadline(call, deadline, node.id);
-      usage.model = result.model;
-      usage.inputTokens += result.usage.inputTokens;
-      usage.outputTokens += result.usage.outputTokens;
-      usage.cacheReadTokens += result.usage.cacheReadTokens;
-      if (result.stopReason === "max_tokens") {
-        throw new WorkflowError(
-          "AGENT_OUTPUT_TRUNCATED",
-          `node "${node.id}": agent "${agent.id}" hit its output limit (${agent.maxTokens ?? 8192} max tokens); raise maxTokens in the agent file`,
-          { nodeId: node.id, agentId: agent.id }
-        );
-      }
-      if (!result.toolUses.length) {
-        try {
-          return { input: inputs, output: parseOutput(agent, result.text, node.id), usage, toolCalls };
-        } catch (e) {
-          const validation = e instanceof WorkflowError && e.code === "AGENT_OUTPUT_VALIDATION_ERROR";
-          if (!validation || outputRetries >= MAX_OUTPUT_RETRIES2) throw e;
-          outputRetries++;
-          messages.push({ role: "assistant", content: result.content });
-          messages.push({ role: "user", content: [{ type: "text", text: outputCorrection(e.message) }] });
-          continue;
-        }
-      }
-      if (maxIterations > 0 && iteration >= maxIterations) {
-        throw new WorkflowError(
-          "TOOL_LIMIT_EXCEEDED",
-          `node "${node.id}": agent "${agent.id}" made ${maxIterations} tool rounds without answering`,
-          { nodeId: node.id, agentId: agent.id }
-        );
-      }
-      messages.push({ role: "assistant", content: result.content });
-      const results = [];
-      for (const use of result.toolUses) {
-        const record2 = await runTool(use, toolCtx, agent);
-        toolCalls.push(record2);
-        deps.onToolCall?.(record2);
-        if (record2.ok && WRITE_TOOLS.has(use.name)) writes++;
-        results.push({ type: "tool_result", toolUseId: use.id, content: record2.result, isError: !record2.ok });
-      }
-      const nudge = canWrite && writes === 0 ? reconNudge(iteration + 1, toolCalls.length) : null;
-      if (nudge) results.push({ type: "text", text: nudge });
-      messages.push({ role: "user", content: results });
-    }
-  } catch (e) {
-    if (e instanceof WorkflowError) throw new WorkflowError(e.code, e.message, { ...e.detail, toolCalls, usage });
-    throw e;
-  }
-}
-async function runTool(use, ctx, agent) {
-  const startedAt = Date.now();
-  const base = { tool: use.name, input: use.input, startedAt };
-  const tool = getTool(use.name);
-  if (!tool || !agent.tools.includes(use.name) || !ctx) {
-    return { ...base, ok: false, durationMs: 0, result: `tool "${use.name}" is not available to this agent` };
-  }
-  try {
-    const result = await tool.execute(use.input ?? {}, ctx);
-    return { ...base, ok: true, durationMs: Date.now() - startedAt, result };
-  } catch (e) {
-    const message = e instanceof ToolError ? e.message : `${e.message}`;
-    return { ...base, ok: false, durationMs: Date.now() - startedAt, result: `error: ${message}` };
-  }
-}
-function reconNudge(rounds, toolCallCount) {
-  if (rounds < RECON_ROUNDS_BEFORE_NUDGE) return null;
-  if ((rounds - RECON_ROUNDS_BEFORE_NUDGE) % NUDGE_EVERY_ROUNDS !== 0) return null;
-  return `You have made ${toolCallCount} tool calls in this node and have not written anything to the worktree yet. The worktree is the deliverable: nothing downstream reads this answer for the change itself, and a node that ends with an unchanged worktree fails. Apply the part of the change you already understand, now, with write_file or edit_file \u2014 then keep reading between edits instead of before them.`;
-}
-function systemPrompt(agent, hasTools, canWrite, skills = []) {
-  const parts = [`You are the "${agent.name}" agent in an automated workflow.`];
-  if (agent.description) parts.push(agent.description);
-  if (hasTools) {
-    parts.push(
-      canWrite ? "You are working in a git worktree of the target repository, and that worktree is your output: every change you decide on, you apply there yourself with the write and edit tools. Nothing reads your final answer for the change itself. Work change by change \u2014 read what the edit in front of you needs, make it, verify it, move on \u2014 rather than surveying the whole repository first and writing at the end. Tool paths are relative to the worktree root." : "You are working in a git worktree of the target repository. Tool paths are relative to its root. Read what you need, and base what you report on what you actually read rather than on what a name suggests."
-    );
-  }
-  parts.push(unattendedNotice());
-  const briefing = skillsBriefing(skills);
-  if (briefing) parts.push(briefing.trim());
-  if (agent.output.type === "json") {
-    const fields = Object.entries(agent.output.schema).map(([field2, type]) => `  "${field2}": ${type}`).join("\n");
-    parts.push(
-      `${hasTools ? "When you are done working, your final message must be a single JSON object" : "Respond with a single JSON object"} and nothing else \u2014 no prose, no code fence. Fields:
-{
-${fields}
-}
-A type ending in "?" is optional: leave that key out, or write null \u2014 both say there was nothing to put there. Every other key is required, and null is not an answer for one.`
-    );
-  }
-  return parts.join("\n\n");
-}
-function resolveSkills(agent, nodeId2, loadSkill) {
-  if (!agent.skills.length) return [];
-  const load2 = loadSkill ?? getSkill;
-  return agent.skills.map((id) => {
-    try {
-      return load2(id);
-    } catch {
-      throw new WorkflowError(
-        "AGENT_DEFINITION_INVALID",
-        `node "${nodeId2}": agent "${agent.id}" declares skill "${id}", which is not in this team's skill library`,
-        { nodeId: nodeId2, agentId: agent.id }
-      );
-    }
-  });
 }
 function extractJson(text) {
   const whole = text.trim();
@@ -10375,32 +8559,20 @@ function parseOutput(agent, text, nodeId2) {
   }
   return validated.data;
 }
-function withDeadline(p, deadline, nodeId2) {
-  if (!deadline) return p;
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) return Promise.reject(new WorkflowError("NODE_TIMEOUT", `node "${nodeId2}" ran out of time`, { nodeId: nodeId2 }));
-  return new Promise((resolve7, reject) => {
-    const timer = setTimeout(
-      () => reject(new WorkflowError("NODE_TIMEOUT", `node "${nodeId2}" exceeded its timeout`, { nodeId: nodeId2 })),
-      remaining
-    );
-    p.then(resolve7, reject).finally(() => clearTimeout(timer));
-  });
-}
 
 // src/runtime/executors/command.ts
-import { execFile as execFile2 } from "node:child_process";
-import { isAbsolute as isAbsolute3, resolve as resolve4 } from "node:path";
+import { execFile } from "node:child_process";
+import { isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
 var DEFAULT_TIMEOUT_MS = 60 * 6e4;
 var MAX_OUTPUT_BYTES = 2e7;
 function cwdFor(node, options) {
   if (!node.cwd) return options?.defaultCwd;
-  if (isAbsolute3(node.cwd)) return node.cwd;
-  return options?.defaultCwd ? resolve4(options.defaultCwd, node.cwd) : node.cwd;
+  if (isAbsolute2(node.cwd)) return node.cwd;
+  return options?.defaultCwd ? resolve2(options.defaultCwd, node.cwd) : node.cwd;
 }
 var runCommand = (node, options) => new Promise((resolvePromise, reject) => {
   const [file, ...args] = node.command;
-  execFile2(
+  execFile(
     file,
     args,
     {
@@ -10430,11 +8602,22 @@ var runCommand = (node, options) => new Promise((resolvePromise, reject) => {
   );
 });
 
+// src/skills/inject.ts
+function unattendedNotice() {
+  return "This node is running unattended: there is no person in this session, and a question you ask here reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait for a reply here. If the prompt below gives such questions a way out \u2014 an output field they go into, so that the run can put them to the person elsewhere \u2014 put them there, all of them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where the prompt gives no such way out, or tells you the person has already been asked and was not there, take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
+}
+function backgroundSubagentNotice() {
+  return "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent is launched, and its result reaches you as a notification. Ending your turn while one of yours is still running does not finish this node \u2014 you are resumed with the result when it completes. So after dispatching, do whatever work does not depend on the result, then say what you are waiting on and stop; never poll for its commits or a report file, and never run a command whose only purpose is to let time pass \u2014 no `sleep`, no `true`, no `echo`, no `date`, and no loop around any of them \u2014 because the result was on its way and a turn spent passing time is one in which it cannot arrive.\n\nNever dispatch a subagent type that copies your own context. Your context contains your instruction to dispatch, so the copy dispatches too, and its copies do, and a copy cannot tell that it is one. Measured here: four such dispatches became sixteen, and one branch's tail was 40% of the node. Dispatch a named agent with a task written out in the prompt, so that what it was asked is something you decided and can read back.\n\nDispatch only when the work is bigger than the dispatch. A subagent starts cold: it reads what you have already read before it can begin, and a check you could run yourself in a minute costs more dispatched than done. Reading a handful of files, running this project's test command, answering a question you already know where to look for \u2014 do those yourself.\n\nBefore you give your final answer, name every subagent you dispatched and what it returned. If any of them has not returned, you have no final answer yet: say which one you are waiting on and stop. A verdict written without a result you asked for is wrong even when it happens to be right, because you did not know that when you wrote it.";
+}
+function fileReadingNotice() {
+  return 'Read files with Read, find them with Glob, and search them with Grep. Each is one call that returns what you asked for. A shell command that does the same thing \u2014 `cat`, `head`, `sed -n`, `find`, `grep` \u2014 opens a shell first, and here that costs more than the read: measured in one node, 43 Reads took a second between them while 107 shell calls took nearly four minutes, most of it startup. Shell is for commands that do something: tests, a build, git.\n\nA file read through the shell does not count as read. The next Edit to it is refused \u2014 "File has not been read yet" \u2014 and you pay for the read twice; measured in the same node, thirteen refused Edits. Read the whole file the first time rather than a window you will have to widen, and re-read only after something has changed it.';
+}
+
 // src/workflows/snapshot.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash } from "node:crypto";
 var DEFINITION_SNAPSHOT_VERSION = 1;
 function sha(source) {
-  return createHash2("sha256").update(source).digest("hex").slice(0, 16);
+  return createHash("sha256").update(source).digest("hex").slice(0, 16);
 }
 function agentsNamedBy(workflow) {
   return [...new Set(workflow.nodes.flatMap((n) => n.type === "agent" ? [n.agent] : []))].sort();
@@ -10444,7 +8627,7 @@ function hashOf(workflowId, workflow, agents, missing) {
     ...Object.entries(agents).map(([id, source]) => `a:${id}:${sha(source)}`),
     ...missing.map((id) => `a:${id}:missing`)
   ].sort();
-  return createHash2("sha256").update([`v:${DEFINITION_SNAPSHOT_VERSION}`, `w:${workflowId}:${sha(workflow)}`, ...lines].join("\n")).digest("hex").slice(0, 16);
+  return createHash("sha256").update([`v:${DEFINITION_SNAPSHOT_VERSION}`, `w:${workflowId}:${sha(workflow)}`, ...lines].join("\n")).digest("hex").slice(0, 16);
 }
 function snapshotDefinitions(workflowId, scope) {
   const workflow = readWorkflowSource(workflowId, scope);
@@ -10479,87 +8662,12 @@ function definitionsHash(workflowId, scope) {
   }
 }
 
-// src/client/reporter.ts
-var FLUSH_INTERVAL_MS = 1e3;
-var HEARTBEAT_MS = 5e3;
-var MAX_BUFFERED_EVENTS = 2e3;
-var MAX_BUFFERED_STEPS = 200;
-var RunReporter = class {
-  constructor(client, executionId, onCancel) {
-    this.client = client;
-    this.executionId = executionId;
-    this.onCancel = onCancel;
-  }
-  client;
-  executionId;
-  onCancel;
-  events = [];
-  steps = [];
-  timer = null;
-  inFlight = false;
-  lastSentAt = Date.now();
-  stopped = false;
-  /** The flag stays set on the server; the run only needs telling once. */
-  cancelSeen = false;
-  start() {
-    if (this.timer) return;
-    this.timer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
-    this.timer.unref?.();
-  }
-  event(event) {
-    if (this.events.length >= MAX_BUFFERED_EVENTS) this.events.shift();
-    this.events.push(event);
-  }
-  step(step2) {
-    if (this.steps.length >= MAX_BUFFERED_STEPS) this.steps.shift();
-    this.steps.push(step2);
-  }
-  /** Sends what is buffered. Safe to call concurrently; overlapping calls no-op. */
-  async flush() {
-    if (this.inFlight || this.stopped) return;
-    const idle = !this.events.length && !this.steps.length;
-    if (idle && Date.now() - this.lastSentAt < HEARTBEAT_MS) return;
-    const events = this.events;
-    const steps = this.steps;
-    this.events = [];
-    this.steps = [];
-    this.inFlight = true;
-    try {
-      const res = await this.client.report(this.executionId, { events, steps });
-      this.lastSentAt = Date.now();
-      if (res.cancelRequested && !this.cancelSeen) {
-        this.cancelSeen = true;
-        this.onCancel();
-      }
-    } catch {
-      this.events = [...events, ...this.events].slice(-MAX_BUFFERED_EVENTS);
-      this.steps = [...steps, ...this.steps].slice(-MAX_BUFFERED_STEPS);
-    } finally {
-      this.inFlight = false;
-    }
-  }
-  /** Final flush, then stop reporting. Called once the engine has settled. */
-  async stop() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-    for (let attempt = 0; attempt < 4 && (this.inFlight || this.events.length || this.steps.length); attempt++) {
-      if (this.inFlight) {
-        await new Promise((resolve7) => setTimeout(resolve7, 100));
-        continue;
-      }
-      this.lastSentAt = 0;
-      await this.flush();
-    }
-    this.stopped = true;
-  }
-};
-
 // src/client/subagents.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync10, readdirSync as readdirSync7, readFileSync as readFileSync9, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
-import { homedir as homedir6 } from "node:os";
-import { join as join13 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync8, readdirSync as readdirSync5, readFileSync as readFileSync6, rmSync as rmSync6, writeFileSync as writeFileSync6 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { join as join9 } from "node:path";
 function claudeConfigDir() {
-  return process.env.CLAUDE_CONFIG_DIR || join13(homedir6(), ".claude");
+  return process.env.CLAUDE_CONFIG_DIR || join9(homedir4(), ".claude");
 }
 function subagentName(team, agentId) {
   return `gate-${team}-${agentId}`;
@@ -10590,22 +8698,22 @@ ${fileReadingNotice()}
 `;
 }
 function removeSubagents() {
-  const dir = join13(claudeConfigDir(), "agents");
-  if (!existsSync11(dir)) return [];
+  const dir = join9(claudeConfigDir(), "agents");
+  if (!existsSync8(dir)) return [];
   const removed = [];
-  for (const entry of readdirSync7(dir)) {
+  for (const entry of readdirSync5(dir)) {
     if (!/^gate-[a-z0-9-]+\.md$/.test(entry)) continue;
-    const text = readFileSync9(join13(dir, entry), "utf8");
+    const text = readFileSync6(join9(dir, entry), "utf8");
     if (!text.includes("Only /gate:run starts it")) continue;
-    rmSync7(join13(dir, entry));
+    rmSync6(join9(dir, entry));
     removed.push(entry.slice(0, -3));
   }
   return removed;
 }
 function syncSubagents(team, scope) {
-  const dir = join13(claudeConfigDir(), "agents");
-  const created = !existsSync11(dir);
-  if (created) mkdirSync10(dir, { recursive: true, mode: 448 });
+  const dir = join9(claudeConfigDir(), "agents");
+  const created = !existsSync8(dir);
+  if (created) mkdirSync8(dir, { recursive: true, mode: 448 });
   const prefix = `gate-${team}-`;
   const wanted = /* @__PURE__ */ new Map();
   for (const agent of listAgents(scope).agents) {
@@ -10613,95 +8721,23 @@ function syncSubagents(team, scope) {
   }
   const written = [];
   const removed = [];
-  for (const entry of readdirSync7(dir)) {
+  for (const entry of readdirSync5(dir)) {
     if (!entry.startsWith(prefix) || !entry.endsWith(".md") || wanted.has(entry)) continue;
-    rmSync7(join13(dir, entry));
+    rmSync6(join9(dir, entry));
     removed.push(entry.slice(0, -3));
   }
   for (const [file, content] of wanted) {
-    const path = join13(dir, file);
+    const path = join9(dir, file);
     let current = "";
     try {
-      current = readFileSync9(path, "utf8");
+      current = readFileSync6(path, "utf8");
     } catch {
     }
     if (current === content) continue;
-    writeFileSync8(path, content, { mode: 384 });
+    writeFileSync6(path, content, { mode: 384 });
     written.push(file.slice(0, -3));
   }
   return { written, removed, created };
-}
-
-// src/client/worker-log.ts
-import { relative as relative5 } from "node:path";
-var LINE_WIDTH = 120;
-var TEXT_LINES = 3;
-function clip2(s, width = LINE_WIDTH) {
-  const line = s.trim().replace(/\s+/g, " ");
-  return line.length > width ? `${line.slice(0, width - 1)}\u2026` : line;
-}
-function firstLine(s) {
-  return clip2(s.split("\n").find((l) => l.trim()) ?? "", 80);
-}
-function field(input, key) {
-  const v = input && typeof input === "object" ? input[key] : void 0;
-  return typeof v === "string" ? v : null;
-}
-function pathOf(p, root) {
-  if (!p) return "?";
-  if (root && (p === root || p.startsWith(`${root}/`))) return relative5(root, p) || ".";
-  return p;
-}
-function lineCount(s) {
-  return s === "" ? 0 : s.split("\n").length;
-}
-function summary(call, root) {
-  const input = call.input;
-  const file = pathOf(field(input, "file_path") ?? field(input, "path"), root);
-  switch (call.tool) {
-    case "Read":
-      return `Read ${file}`;
-    case "Edit":
-    case "MultiEdit": {
-      const removed = lineCount(field(input, "old_string") ?? "");
-      const added = lineCount(field(input, "new_string") ?? "");
-      return `Edit ${file} (+${added} \u2212${removed})`;
-    }
-    case "Write":
-      return `Write ${file} (${lineCount(field(input, "content") ?? "")} lines)`;
-    case "Bash":
-      return `Bash: ${clip2(field(input, "description") ?? field(input, "command") ?? "", 100)}`;
-    case "Grep":
-      return `Grep ${JSON.stringify(field(input, "pattern") ?? "")}${field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : ""}`;
-    case "Glob":
-      return `Glob ${field(input, "pattern") ?? ""}${field(input, "path") ? ` in ${pathOf(field(input, "path"), root)}` : ""}`;
-    case "Task":
-    case "Agent":
-      return `Agent: ${clip2(field(input, "description") ?? "", 100)}`;
-    case "Skill":
-      return `Skill ${field(input, "skill") ?? field(input, "name") ?? "?"}`;
-    case "TodoWrite":
-      return "Update todos";
-    case "WebFetch":
-    case "WebSearch":
-      return `${call.tool} ${clip2(field(input, "url") ?? field(input, "query") ?? "", 100)}`;
-    default:
-      return call.tool;
-  }
-}
-function describeCall(call, root = "") {
-  const line = summary(call, root);
-  return call.ok ? `\u23FA ${line}
-` : `\u23FA ${line} \u2014 ${firstLine(call.result) || "failed"}
-`;
-}
-function describeText(text) {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return "";
-  const shown = lines.slice(0, TEXT_LINES).map((l, i) => `${i === 0 ? "\u23FA " : "  "}${clip2(l)}`);
-  if (lines.length > TEXT_LINES) shown.push("  \u2026");
-  return `${shown.join("\n")}
-`;
 }
 
 // src/client/release.ts
@@ -10723,14 +8759,35 @@ async function releaseAndPublish(client, workspace, executionId, publish, say) {
   }).catch((e) => say?.(`the branch was dealt with, but the gate could not be told: ${e.message}`));
 }
 
-// src/client/run.ts
+// src/client/repo.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { homedir as homedir7, hostname as hostname2 } from "node:os";
-import { resolve as resolve5 } from "node:path";
-
-// src/runtime/engine.ts
-import { randomUUID } from "node:crypto";
-import { existsSync as existsSync12 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { resolve as resolve3 } from "node:path";
+function isPathLike(value) {
+  return value.startsWith("/") || value.startsWith("~") || value.startsWith(".") || value.includes("/");
+}
+function resolveRepo(workflow, input, cwd, repos = {}) {
+  const given = typeof input.repo === "string" ? input.repo.trim() : "";
+  const pinned = workflow.workspace?.repo?.trim() ?? "";
+  const named = given || pinned;
+  if (named && !isPathLike(named)) {
+    const mapped = repos[named];
+    if (mapped) return resolve3(mapped.replace(/^~(?=\/|$)/, homedir5()));
+    throw new WorkflowError(
+      "WORKSPACE_ERROR",
+      `this workflow works in the connected repository "${named}", which this machine has no checkout for \u2014 run \`gate repo ${named} /path/to/your/clone\` once, or pass --input repo=/path/to/your/clone`
+    );
+  }
+  if (named) return resolve3(named.replace(/^~(?=\/|$)/, homedir5()));
+  try {
+    return execFileSync3("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
+  } catch {
+    throw new WorkflowError(
+      "WORKSPACE_ERROR",
+      `this workflow works in a repository, and ${cwd} is not one \u2014 run it from a checkout, or pass --input repo=/path/to/repo`
+    );
+  }
+}
 
 // src/runtime/executors/condition.ts
 function selectEdge(node, state) {
@@ -10758,503 +8815,14 @@ function selectEdge(node, state) {
   });
 }
 
-// src/runtime/engine.ts
-function sentBack(state, nodeId2) {
-  const previous = [...state.history].reverse().find((h) => h.nodeId !== nodeId2);
-  if (!previous) return "";
-  const output = previous.output;
-  let signal = "";
-  if (output && typeof output === "object") {
-    const o = output;
-    if (o.ok === false) signal = typeof o.exitCode === "number" ? ` (exit ${o.exitCode})` : " (failed)";
-    else if (typeof o.verdict === "string" && o.verdict !== "approved") signal = ` (${o.verdict})`;
-    else if (o.passed === false) signal = " (tests failed)";
-  }
-  return `; last sent back by "${previous.nodeId}"${signal}`;
-}
-function costOfStep(usage) {
-  if (!usage) return 0;
-  return costForUsage(
-    tierOf(usage.model),
-    { input: usage.inputTokens, output: usage.outputTokens, cacheRead: usage.cacheReadTokens },
-    { model: usage.model }
-  );
-}
-function renderCommand(command, ctx, nodeId2) {
-  return command.map((arg) => {
-    if (!arg.includes("{{")) return arg;
-    try {
-      return renderTemplate(arg, ctx);
-    } catch (e) {
-      throw new WorkflowError(
-        "WORKFLOW_ROUTING_ERROR",
-        `node "${nodeId2}": ${e instanceof TemplateError ? e.message : String(e)}`,
-        { nodeId: nodeId2 }
-      );
-    }
-  });
-}
-async function runWorkflow(workflow, opts) {
-  const now = opts.now ?? Date.now;
-  const emit = (e) => opts.emit?.(e);
-  const executionId = opts.executionId ?? randomUUID();
-  const state = createState(executionId, workflow.id, opts.input ?? {}, opts.resume);
-  const startNodeId = opts.resume?.startNodeId ?? workflow.entry;
-  const loadAgent = opts.loadAgent ?? getAgent;
-  const loadSkill = opts.loadSkill;
-  const execCommand = opts.runCommand ?? runCommand;
-  const maxSteps = workflow.maxWorkflowSteps;
-  const maxVisits = workflow.maxVisits;
-  const maxCost = workflow.maxCostUsd;
-  let spentUsd = state.history.reduce((sum, step2) => sum + costOfStep(step2.usage), 0);
-  function halt(code, message, nodeId2) {
-    if (state.status !== "running") return;
-    state.status = "failed";
-    state.error = { code, message };
-    emit({ type: "workflow.failed", executionId, at: now(), code, message, nodeId: nodeId2 });
-  }
-  async function runFrom(startId, stopAt) {
-    let currentId = startId;
-    for (; ; ) {
-      if (state.status !== "running") return;
-      if (opts.signal?.aborted) return halt("RUN_CANCELLED", "run cancelled", currentId);
-      if (currentId === stopAt) return;
-      const node = findNode(workflow, currentId);
-      if (!node) return halt("WORKFLOW_ROUTING_ERROR", `node "${currentId}" does not exist`, currentId);
-      const skipTo = skipTargetOf(node);
-      if (skipTo) {
-        emit({ type: "edge.selected", executionId, at: now(), from: node.id, to: skipTo, label: "off" });
-        currentId = skipTo;
-        continue;
-      }
-      if (node.type === "terminal") {
-        state.status = node.status;
-        emit({ type: "workflow.completed", executionId, at: now(), status: node.status, terminalNodeId: node.id });
-        return;
-      }
-      const visit2 = state.visitCounts[node.id] = (state.visitCounts[node.id] ?? 0) + 1;
-      state.stepCount += 1;
-      if (maxVisits > 0 && visit2 > maxVisits) {
-        return halt(
-          "LOOP_LIMIT_EXCEEDED",
-          `node "${node.id}" ran ${visit2} times (max ${maxVisits})${sentBack(state, node.id)}`,
-          node.id
-        );
-      }
-      if (maxSteps > 0 && state.stepCount > maxSteps) {
-        return halt("LOOP_LIMIT_EXCEEDED", `workflow exceeded ${maxSteps} steps`, node.id);
-      }
-      const stepIndex = state.stepCount - 1;
-      const startedAt = now();
-      emit({ type: "node.started", executionId, at: startedAt, nodeId: node.id, stepIndex, visit: visit2 });
-      if (opts.workspace && !existsSync12(opts.workspace.root)) {
-        return halt(
-          "WORKSPACE_ERROR",
-          `this run's worktree is gone (${opts.workspace.root}); it was removed while the run was going`,
-          node.id
-        );
-      }
-      let input = null;
-      let output = null;
-      let usage;
-      let toolCalls;
-      try {
-        if (node.type === "agent") {
-          const res = await executeAgentNode(node, state, {
-            provider: opts.provider,
-            loadAgent,
-            loadSkill,
-            workspace: opts.workspace ?? null,
-            maxToolIterations: opts.maxToolIterations,
-            claudeCode: opts.claudeCode,
-            memory: opts.memory,
-            signal: opts.signal,
-            onToolCall: (call) => emit({
-              type: "tool.called",
-              executionId,
-              at: now(),
-              nodeId: node.id,
-              stepIndex,
-              tool: call.tool,
-              ok: call.ok,
-              summary: call.result.split("\n")[0].slice(0, 200),
-              durationMs: call.durationMs
-            })
-          });
-          input = res.input;
-          output = res.output;
-          usage = res.usage;
-          toolCalls = res.toolCalls.length ? res.toolCalls : void 0;
-        } else if (node.type === "command") {
-          const command = renderCommand(node.command, conditionContext(state), node.id);
-          input = command;
-          output = await execCommand({ ...node, command }, { defaultCwd: opts.workspace?.root, signal: opts.signal });
-        } else if (node.type === "parallel") {
-          input = { branches: node.branches, join: node.join };
-          for (const branch of node.branches) {
-            emit({ type: "edge.selected", executionId, at: now(), from: node.id, to: branch, label: "parallel" });
-          }
-          const settled = await Promise.allSettled(node.branches.map((branch) => runFrom(branch, node.join)));
-          const crashed = settled.find((r) => r.status === "rejected");
-          if (crashed?.status === "rejected") throw crashed.reason;
-          if (state.status !== "running") return;
-        }
-      } catch (e) {
-        const code = e instanceof WorkflowError ? e.code : "MODEL_EXECUTION_ERROR";
-        const message = e.message;
-        const finishedAt2 = now();
-        const progress = e instanceof WorkflowError ? e.detail : void 0;
-        const step3 = {
-          nodeId: node.id,
-          stepIndex,
-          visit: visit2,
-          startedAt,
-          finishedAt: finishedAt2,
-          status: "failed",
-          input,
-          output: null,
-          error: { code, message },
-          toolCalls: progress?.toolCalls ?? toolCalls,
-          usage: progress?.usage
-        };
-        state.history.push(step3);
-        opts.onStep?.(step3);
-        spentUsd += costOfStep(step3.usage);
-        emit({ type: "node.failed", executionId, at: finishedAt2, nodeId: node.id, stepIndex, code, message });
-        return halt(code, message, node.id);
-      }
-      if (node.type !== "condition" && node.type !== "parallel") state.outputs[node.id] = output;
-      const finishedAt = now();
-      const step2 = {
-        nodeId: node.id,
-        stepIndex,
-        visit: visit2,
-        startedAt,
-        finishedAt,
-        status: "completed",
-        input,
-        output,
-        usage,
-        toolCalls
-      };
-      state.history.push(step2);
-      opts.onStep?.(step2);
-      emit({ type: "node.output", executionId, at: finishedAt, nodeId: node.id, stepIndex, output });
-      emit({
-        type: "node.completed",
-        executionId,
-        at: finishedAt,
-        nodeId: node.id,
-        stepIndex,
-        durationMs: finishedAt - startedAt,
-        usage
-      });
-      spentUsd += costOfStep(usage);
-      if (maxCost > 0 && spentUsd > maxCost) {
-        return halt(
-          "BUDGET_EXCEEDED",
-          `run spent $${spentUsd.toFixed(2)}, over this workflow's $${maxCost.toFixed(2)} budget`,
-          node.id
-        );
-      }
-      if (node.type === "parallel") {
-        emit({ type: "edge.selected", executionId, at: now(), from: node.id, to: node.join, label: "join" });
-        currentId = node.join;
-        continue;
-      }
-      let edge;
-      try {
-        edge = selectEdge(node, state);
-      } catch (e) {
-        const code = e instanceof WorkflowError ? e.code : "WORKFLOW_ROUTING_ERROR";
-        return halt(code, e.message, node.id);
-      }
-      emit({ type: "edge.selected", executionId, at: now(), from: node.id, to: edge.to, label: edge.label });
-      currentId = edge.to;
-    }
-  }
-  emit({ type: "workflow.started", executionId, at: now(), workflowId: workflow.id, entry: startNodeId });
-  await runFrom(startNodeId, null);
-  return state;
-}
-
-// src/providers/anthropic-shape.ts
-function toAnthropicMessage(m) {
-  if (typeof m.content === "string") return { role: m.role, content: m.content };
-  return {
-    role: m.role,
-    content: m.content.map((b) => {
-      if (b.type === "tool_use") return { type: "tool_use", id: b.id, name: b.name, input: b.input };
-      if (b.type === "tool_result") {
-        return { type: "tool_result", tool_use_id: b.toolUseId, content: b.content, is_error: b.isError ?? false };
-      }
-      return { type: "text", text: b.text };
-    })
-  };
-}
-function toAnthropicBody(req) {
-  const body = {
-    model: req.model,
-    max_tokens: req.maxTokens ?? 8192,
-    messages: req.messages.map(toAnthropicMessage)
-  };
-  if (req.system) body.system = req.system;
-  if (req.tools?.length) {
-    body.tools = req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
-  }
-  return body;
-}
-function fromAnthropicMessage(json, requestedModel, routedModel) {
-  const content = [];
-  for (const block of json.content ?? []) {
-    if (block?.type === "text" && typeof block.text === "string") {
-      content.push({ type: "text", text: block.text });
-    } else if (block?.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
-      content.push({ type: "tool_use", id: block.id, name: block.name, input: block.input });
-    }
-  }
-  const toolUses = content.filter((b) => b.type === "tool_use");
-  const text = content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-  if (!text && !toolUses.length) throw new WorkflowError("MODEL_EXECUTION_ERROR", "model returned no content");
-  return {
-    text,
-    content,
-    toolUses,
-    stopReason: json.stop_reason ?? null,
-    model: routedModel || json.model || requestedModel,
-    usage: {
-      // Tokens written to the prompt cache were read by the model all the
-      // same: with prompt caching on, the API reports a 20k-token prompt as
-      // `input_tokens: 2` plus `cache_creation_input_tokens: 19998`, and a
-      // node's usage used to show the 2. Counted as input here, and carried
-      // apart as well, because a cache write does not bill at the input rate.
-      inputTokens: (json.usage?.input_tokens ?? 0) + (json.usage?.cache_creation_input_tokens ?? 0),
-      outputTokens: json.usage?.output_tokens ?? 0,
-      cacheReadTokens: json.usage?.cache_read_input_tokens ?? 0,
-      cacheCreationTokens: json.usage?.cache_creation_input_tokens ?? 0
-    }
-  };
-}
-
-// src/client/http-provider.ts
-var HttpGateProvider = class {
-  constructor(gatewayUrl2, apiKey) {
-    this.gatewayUrl = gatewayUrl2;
-    this.apiKey = apiKey;
-  }
-  gatewayUrl;
-  apiKey;
-  async execute(req) {
-    if (req.signal?.aborted) throw new WorkflowError("RUN_CANCELLED", "run cancelled");
-    const body = toAnthropicBody(req);
-    const executionId = req.context?.executionId ?? null;
-    const headers = {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.apiKey}`
-    };
-    if (executionId) headers["x-gate-session"] = `workflow:${executionId}`;
-    if (req.effort) headers["x-gate-effort"] = req.effort;
-    let res;
-    try {
-      res = await fetch(`${this.gatewayUrl}/v1/messages`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: req.signal
-      });
-    } catch (e) {
-      if (req.signal?.aborted) throw new WorkflowError("RUN_CANCELLED", "run cancelled");
-      throw new WorkflowError("MODEL_EXECUTION_ERROR", `cannot reach the gateway: ${e.message}`, {
-        model: req.model
-      });
-    }
-    const raw = await res.text();
-    if (!res.ok) {
-      if (req.signal?.aborted) throw new WorkflowError("RUN_CANCELLED", "run cancelled");
-      if (res.status === 401 || res.status === 403) {
-        throw new WorkflowError("MODEL_EXECUTION_ERROR", "the gateway refused this API key \u2014 run `gate login` again", {
-          status: res.status
-        });
-      }
-      throw new WorkflowError("MODEL_EXECUTION_ERROR", `model call failed (${res.status}): ${truncate2(raw)}`, {
-        status: res.status,
-        model: req.model
-      });
-    }
-    let json;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      throw new WorkflowError("MODEL_EXECUTION_ERROR", "model returned a non-JSON response");
-    }
-    return fromAnthropicMessage(json, req.model, res.headers.get("x-gate-model"));
-  }
-};
-function truncate2(s) {
-  return s.length > 300 ? `${s.slice(0, 300)}\u2026` : s;
-}
-
-// src/client/memory.ts
-var HttpMemoryAccess = class {
-  /**
-   * `remoteUrl` is the origin of the repository the run works in, sent with
-   * every search so the answer is about this codebase and not the one next to
-   * it with the same file names. Raw, for the server to name — and never
-   * asked of the model, which has no way to know it. `executionId` is the run
-   * asking, which the server leaves out of what is in flight.
-   */
-  constructor(client, remoteUrl = null, executionId = null) {
-    this.client = client;
-    this.remoteUrl = remoteUrl;
-    this.executionId = executionId;
-  }
-  client;
-  remoteUrl;
-  executionId;
-  search(req) {
-    return this.client.memorySearch(req, this.remoteUrl, this.executionId);
-  }
-  feature(id) {
-    return this.client.memoryFeature(id);
-  }
-  history(req) {
-    return this.client.memoryHistory(req, this.remoteUrl);
-  }
-  activity() {
-    return this.client.memoryActivity();
-  }
-};
-
-// src/client/run.ts
-function isPathLike(value) {
-  return value.startsWith("/") || value.startsWith("~") || value.startsWith(".") || value.includes("/");
-}
-function resolveRepo(workflow, input, cwd, repos = {}) {
-  const given = typeof input.repo === "string" ? input.repo.trim() : "";
-  const pinned = workflow.workspace?.repo?.trim() ?? "";
-  const named = given || pinned;
-  if (named && !isPathLike(named)) {
-    const mapped = repos[named];
-    if (mapped) return resolve5(mapped.replace(/^~(?=\/|$)/, homedir7()));
-    throw new WorkflowError(
-      "WORKSPACE_ERROR",
-      `this workflow works in the connected repository "${named}", which this machine has no checkout for \u2014 run \`gate repo ${named} /path/to/your/clone\` once, or pass --input repo=/path/to/your/clone`
-    );
-  }
-  if (named) return resolve5(named.replace(/^~(?=\/|$)/, homedir7()));
-  try {
-    return execFileSync3("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
-  } catch {
-    throw new WorkflowError(
-      "WORKSPACE_ERROR",
-      `this workflow works in a repository, and ${cwd} is not one \u2014 run it from a checkout, or pass --input repo=/path/to/repo`
-    );
-  }
-}
-async function runLocal(client, opts) {
-  const scope = cacheScope(opts.team);
-  const workflow = getWorkflow(opts.workflowId, scope);
-  const input = { ...opts.input };
-  let workspace = null;
-  let repo = null;
-  if (workflow.workspace) {
-    repo = resolveRepo(workflow, input, opts.cwd, opts.repos ?? {});
-    input.repo = repo;
-  }
-  const { executionId, publish } = await client.startRun({
-    workflowId: workflow.id,
-    input,
-    // The raw remote, not a name derived from it: the server does the
-    // normalising, so two clients of different ages cannot mint two
-    // identities for one repository.
-    client: {
-      host: hostname2(),
-      repo: repo ?? void 0,
-      remoteUrl: repo && readRemoteUrl(repo) || void 0,
-      version: CLI_VERSION
-    },
-    taskId: opts.taskId,
-    // What this machine has, so the server can say if it is not what the team
-    // has. Sent from the mirror the run is about to work from.
-    definitionsHash: definitionsHash(workflow.id, scope)
-  });
-  const controller = new AbortController();
-  const reporter = new RunReporter(client, executionId, () => {
-    opts.onNotice?.("stop requested from the dashboard");
-    controller.abort();
-  });
-  try {
-    if (workflow.workspace) {
-      workspace = createRunWorkspace({ ...workflow.workspace, repo }, executionId);
-      const linked = borrowDependencies(workspace);
-      if (linked.length) opts.onNotice?.(`linked ${linked.join(", ")} from ${workspace.repo} into the worktree`);
-    }
-  } catch (e) {
-    const error = { code: e instanceof WorkflowError ? e.code : "WORKSPACE_ERROR", message: e.message };
-    await client.finish(executionId, { status: "failed", error, stepCount: 0 }).catch(() => {
-    });
-    throw e;
-  }
-  reporter.start();
-  const onInterrupt = () => {
-    opts.onNotice?.("stopping\u2026");
-    controller.abort();
-  };
-  process.on("SIGINT", onInterrupt);
-  process.on("SIGTERM", onInterrupt);
-  let state;
-  try {
-    state = await runWorkflow(workflow, {
-      provider: new HttpGateProvider(client.gatewayUrl, client.key),
-      input,
-      executionId,
-      workspace,
-      loadAgent: (id) => getAgent(id, scope),
-      loadSkill: (id) => getSkill(id, scope),
-      // A node that runs as a spawned Claude Code talks to the same gateway
-      // with the same key, so its calls are metered like every other call.
-      claudeCode: { gatewayUrl: client.gatewayUrl, authToken: client.key },
-      // The team's memory, read through the same key.
-      memory: new HttpMemoryAccess(client, repo ? readRemoteUrl(repo) : null, executionId),
-      emit: (event) => {
-        reporter.event(event);
-        opts.onEvent?.(event);
-      },
-      onStep: (step2) => reporter.step(step2),
-      signal: controller.signal
-    });
-  } finally {
-    process.off("SIGINT", onInterrupt);
-    process.off("SIGTERM", onInterrupt);
-  }
-  await reporter.stop();
-  const summary2 = workspace ? summarizeWorkspace(workspace) : null;
-  let diff = null;
-  if (workspace) {
-    try {
-      diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
-    } catch {
-    }
-  }
-  await client.finish(executionId, {
-    status: state.status === "completed" ? "completed" : "failed",
-    error: state.error ?? null,
-    stepCount: state.stepCount,
-    workspace: summary2,
-    diff
-  }).catch((e) => opts.onNotice?.(`could not report the run's outcome: ${e.message}`));
-  if (workspace) await releaseAndPublish(client, workspace, executionId, publish, opts.onNotice);
-  return { executionId, state, workspace };
-}
-
 // src/client/walk.ts
 function nextInSession(workflow, steps, input) {
   const replay = { outputs: {}, visitCounts: {}, cursor: 0 };
-  const position = walk2(workflow, steps, input, replay, workflow.entry, null);
+  const position = walk(workflow, steps, input, replay, workflow.entry, null);
   if (position) return position;
   throw new WorkflowError("WORKFLOW_ROUTING_ERROR", "this run walked off the end of its workflow");
 }
-function walk2(workflow, steps, input, replay, from, stopAt) {
+function walk(workflow, steps, input, replay, from, stopAt) {
   let currentId = from;
   for (; ; ) {
     if (currentId === stopAt) return null;
@@ -11292,7 +8860,7 @@ function walk2(workflow, steps, input, replay, from, stopAt) {
     if (node.type !== "condition" && node.type !== "parallel") replay.outputs[node.id] = step2.output;
     if (node.type === "parallel") {
       for (const branch of node.branches) {
-        const inside = walk2(workflow, steps, input, replay, branch, node.join);
+        const inside = walk(workflow, steps, input, replay, branch, node.join);
         if (inside) return inside;
       }
       currentId = node.join;
@@ -11306,29 +8874,29 @@ function walk2(workflow, steps, input, replay, from, stopAt) {
 // src/client/step.ts
 var SESSION_ID_ENV = "GATE_CLAUDE_SESSION";
 function pendingPath(executionId) {
-  return join14(gateHome2(), "runs", `${executionId}.json`);
+  return join10(gateHome2(), "runs", `${executionId}.json`);
 }
 function readPending(executionId) {
   try {
-    return JSON.parse(readFileSync10(pendingPath(executionId), "utf8"));
+    return JSON.parse(readFileSync7(pendingPath(executionId), "utf8"));
   } catch {
     return null;
   }
 }
 function writePending(pending) {
   const file = pendingPath(pending.executionId);
-  mkdirSync11(join14(gateHome2(), "runs"), { recursive: true, mode: 448 });
-  writeFileSync9(file, `${JSON.stringify(pending)}
+  mkdirSync9(join10(gateHome2(), "runs"), { recursive: true, mode: 448 });
+  writeFileSync7(file, `${JSON.stringify(pending)}
 `, { mode: 384 });
 }
 function clearPending(executionId) {
-  rmSync8(pendingPath(executionId), { force: true });
+  rmSync7(pendingPath(executionId), { force: true });
 }
 function currentSession() {
   return (process.env[SESSION_ID_ENV] ?? process.env.CLAUDE_CODE_SESSION_ID ?? "").trim() || void 0;
 }
 function sessionStatePath(session) {
-  return join14(gateHome2(), "sessions", `${session}.json`);
+  return join10(gateHome2(), "sessions", `${session}.json`);
 }
 function noteSession(instruction, at = Date.now()) {
   const session = currentSession();
@@ -11343,50 +8911,50 @@ function noteSession(instruction, at = Date.now()) {
     at
   };
   try {
-    mkdirSync11(join14(gateHome2(), "sessions"), { recursive: true, mode: 448 });
-    writeFileSync9(sessionStatePath(session), `${JSON.stringify(state)}
+    mkdirSync9(join10(gateHome2(), "sessions"), { recursive: true, mode: 448 });
+    writeFileSync7(sessionStatePath(session), `${JSON.stringify(state)}
 `, { mode: 384 });
   } catch {
   }
   return state;
 }
 function runDir(executionId) {
-  return join14(gateHome2(), "runs", executionId);
+  return join10(gateHome2(), "runs", executionId);
 }
 function runDefinitionsDir(executionId) {
-  return join14(runDir(executionId), "definitions");
+  return join10(runDir(executionId), "definitions");
 }
 function pinDefinitions(team, executionId) {
   const dir = runDefinitionsDir(executionId);
-  rmSync8(dir, { recursive: true, force: true });
-  mkdirSync11(dir, { recursive: true, mode: 448 });
-  cpSync2(cacheDir(team), dir, { recursive: true });
+  rmSync7(dir, { recursive: true, force: true });
+  mkdirSync9(dir, { recursive: true, mode: 448 });
+  cpSync(cacheDir(team), dir, { recursive: true });
   return dir;
 }
 function runScope(team, executionId) {
   const dir = runDefinitionsDir(executionId);
-  return existsSync13(join14(dir, "workflows")) ? scopeAt(dir, team) : cacheScope(team);
+  return existsSync9(join10(dir, "workflows")) ? scopeAt(dir, team) : cacheScope(team);
 }
 function forgetRun(executionId) {
-  rmSync8(runDir(executionId), { recursive: true, force: true });
+  rmSync7(runDir(executionId), { recursive: true, force: true });
   clearPending(executionId);
-  const runs = join14(gateHome2(), "runs");
-  if (!existsSync13(runs)) return;
-  for (const entry of readdirSync8(runs)) {
-    if (entry.startsWith(`${executionId}-`) && entry.endsWith(".log")) rmSync8(join14(runs, entry), { force: true });
+  const runs = join10(gateHome2(), "runs");
+  if (!existsSync9(runs)) return;
+  for (const entry of readdirSync6(runs)) {
+    if (entry.startsWith(`${executionId}-`) && entry.endsWith(".log")) rmSync7(join10(runs, entry), { force: true });
   }
 }
-function outputFileFor(executionId, nodeId2, visit2) {
-  const dir = join14(runDir(executionId), "out");
-  mkdirSync11(dir, { recursive: true, mode: 448 });
-  return join14(dir, `${nodeId2}-${visit2}.json`);
+function outputFileFor(executionId, nodeId2, visit) {
+  const dir = join10(runDir(executionId), "out");
+  mkdirSync9(dir, { recursive: true, mode: 448 });
+  return join10(dir, `${nodeId2}-${visit}.json`);
 }
 function subagentsPath(executionId) {
-  return join14(runDir(executionId), "subagents.json");
+  return join10(runDir(executionId), "subagents.json");
 }
 function recallSubagent(executionId, nodeId2) {
   try {
-    const all = JSON.parse(readFileSync10(subagentsPath(executionId), "utf8"));
+    const all = JSON.parse(readFileSync7(subagentsPath(executionId), "utf8"));
     return all[nodeId2] ?? null;
   } catch {
     return null;
@@ -11395,63 +8963,20 @@ function recallSubagent(executionId, nodeId2) {
 function rememberSubagent(executionId, nodeId2, subagentId) {
   let all = {};
   try {
-    all = JSON.parse(readFileSync10(subagentsPath(executionId), "utf8"));
+    all = JSON.parse(readFileSync7(subagentsPath(executionId), "utf8"));
   } catch {
   }
   all[nodeId2] = subagentId;
-  mkdirSync11(runDir(executionId), { recursive: true, mode: 448 });
-  writeFileSync9(subagentsPath(executionId), `${JSON.stringify(all)}
+  mkdirSync9(runDir(executionId), { recursive: true, mode: 448 });
+  writeFileSync7(subagentsPath(executionId), `${JSON.stringify(all)}
 `, { mode: 384 });
 }
 function workspaceOf(execution) {
   return execution.workspace ?? null;
 }
 function reviewCommand(ws) {
-  if (existsSync13(ws.root)) return `git -C ${ws.root} diff${ws.baseCommit ? ` ${ws.baseCommit}` : ""}`;
+  if (existsSync9(ws.root)) return `git -C ${ws.root} diff${ws.baseCommit ? ` ${ws.baseCommit}` : ""}`;
   return `git -C ${ws.repo} diff ${ws.baseCommit ?? ws.baseRef}...${ws.branch}`;
-}
-function logPath(pending) {
-  return join14(gateHome2(), "runs", `${pending.executionId}-${pending.nodeId}-${pending.visit}.log`);
-}
-function spawnDetachedWorker(executionId, nodeId2, log) {
-  const fd = openSync(log, "a");
-  try {
-    const child = spawn2(process.execPath, [process.argv[1], "work", executionId, nodeId2], {
-      detached: true,
-      stdio: ["ignore", fd, fd],
-      env: process.env
-    });
-    child.unref();
-    if (child.pid === void 0) throw new WorkflowError("MODEL_EXECUTION_ERROR", "could not start the worker process");
-    return child.pid;
-  } finally {
-    closeSync(fd);
-  }
-}
-function alive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function waitInstruction(executionId, pending, agent) {
-  return {
-    do: "wait",
-    executionId,
-    nodeId: pending.nodeId,
-    agent: agent.id,
-    model: agent.model,
-    log: pending.worker.log,
-    startedAt: pending.startedAt,
-    remember: [
-      `Node "${pending.nodeId}" is running on its own as a spawned Claude Code, in ${agent.model} \u2014 the agent's model, not yours. You do nothing for it: do not touch the worktree, do not do its work, do not answer for it.`,
-      `Follow it with \`gate wait ${executionId}\`. That prints what the node is doing as it happens and returns when the node is done \u2014 with the next instruction \u2014 or after about ninety seconds, with this one again; run it again until it moves on.`,
-      "Between waits, relay what the log printed, as it is. They are watching this happen.",
-      "If the user would rather watch such a node live, every read, edit and command drawn here as your own are, tell them once: `/gate:live` puts this repository's Claude Code sessions on the gateway, and from then on a node in its own model runs as a subagent of the session instead of a worker."
-    ]
-  };
 }
 async function begin(ctx, workflowId, input, cwd, repos, opts = {}) {
   const scope = cacheScope(ctx.team);
@@ -11466,9 +8991,9 @@ async function begin(ctx, workflowId, input, cwd, repos, opts = {}) {
   const { executionId } = await ctx.client.startRun({
     workflowId: workflow.id,
     input: runInput,
-    // Raw, for the server to normalise — see runLocal.
+    // Raw, for the server to normalise.
     client: {
-      host: hostname3(),
+      host: hostname2(),
       repo: repo ?? void 0,
       remoteUrl: repo && readRemoteUrl(repo) || void 0,
       version: CLI_VERSION,
@@ -11505,13 +9030,6 @@ async function next(ctx, executionId, opts = {}) {
     const { execution, steps, publish } = await ctx.client.execution(executionId);
     const stopped = stoppedOutside(execution);
     if (stopped) {
-      const pending = readPending(executionId);
-      if (pending?.worker && alive(pending.worker.pid)) {
-        try {
-          process.kill(pending.worker.pid);
-        } catch {
-        }
-      }
       clearPending(executionId);
       ctx.say(`\u25A0 run ${stopped.code === "RUN_CANCELLED" ? "stopped" : "written off"}: ${stopped.message}`);
       await releaseStopped(ctx, executionId, execution, publish);
@@ -11537,7 +9055,7 @@ async function next(ctx, executionId, opts = {}) {
         executionId,
         status: position.status,
         branch: workspace?.branch ?? null,
-        workspace: workspace && existsSync13(workspace.root) ? workspace.root : null,
+        workspace: workspace && existsSync9(workspace.root) ? workspace.root : null,
         review: workspace ? reviewCommand(workspace) : null
       };
     }
@@ -11545,35 +9063,8 @@ async function next(ctx, executionId, opts = {}) {
     const state = stateFor(execution, position.outputs);
     if (node.type === "agent") {
       const prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
-      if (prepared.agent.executor === "claude-code") {
-        const already = readPending(executionId);
-        if (already && already.worker && already.nodeId === node.id && already.visit === position.visit) {
-          if (alive(already.worker.pid)) return waitInstruction(executionId, already, prepared.agent);
-          clearPending(executionId);
-          await record(
-            ctx,
-            executionId,
-            {
-              nodeId: node.id,
-              stepIndex: position.stepIndex,
-              visit: position.visit,
-              status: "failed",
-              startedAt: already.startedAt,
-              finishedAt: Date.now(),
-              input: null,
-              output: null,
-              error: {
-                code: "MODEL_EXECUTION_ERROR",
-                message: `the worker running "${node.id}" exited without reporting; its log is ${already.worker.log}`
-              }
-            },
-            false
-          );
-          continue;
-        }
-      }
       const held = readPending(executionId);
-      const again = held && !held.worker && held.nodeId === node.id && held.visit === position.visit ? held : null;
+      const again = held && held.nodeId === node.id && held.visit === position.visit ? held : null;
       const startedAt = again?.startedAt ?? Date.now();
       if (!again) {
         writePending({
@@ -11620,7 +9111,7 @@ async function next(ctx, executionId, opts = {}) {
         }
         return { id, description, path: resolveSkillDir(id, scope) };
       });
-      if (prepared.agent.executor === "claude-code" && ctx.throughGateway) {
+      if (prepared.agent.executor === "claude-code") {
         const shape2 = outputShape(prepared.agent.output);
         const subagent = subagentName(ctx.team, prepared.agent.id);
         const outputFile2 = outputFileFor(executionId, node.id, position.visit);
@@ -11681,25 +9172,6 @@ ${answerFileNotice(outputFile2, shape2)}`,
           ]
         };
       }
-      if (prepared.agent.executor === "claude-code") {
-        const log = logPath({ executionId, nodeId: node.id, visit: position.visit });
-        mkdirSync11(join14(gateHome2(), "runs"), { recursive: true, mode: 448 });
-        appendFileSync(log, `\u2500\u2500 ${node.id} \xB7 agent ${prepared.agent.id} \xB7 ${prepared.agent.model} \xB7 started ${new Date(startedAt).toISOString()}
-`, { mode: 384 });
-        const pid = (ctx.spawnWorker ?? spawnDetachedWorker)(executionId, node.id, log);
-        const pending = {
-          executionId,
-          nodeId: node.id,
-          stepIndex: position.stepIndex,
-          visit: position.visit,
-          startedAt,
-          worker: { pid, log },
-          shown: 0
-        };
-        writePending(pending);
-        ctx.say(`  running on its own in ${prepared.agent.model} \xB7 log ${log}`);
-        return waitInstruction(executionId, pending, prepared.agent);
-      }
       const shape = outputShape(prepared.agent.output);
       const outputFile = outputFileFor(executionId, node.id, position.visit);
       return {
@@ -11715,7 +9187,7 @@ ${answerFileNotice(outputFile2, shape2)}`,
           ...skills.length ? [
             `This agent follows ${skills.length === 1 ? "a skill" : "skills"}: ${skills.map((s) => s.id).join(", ")}. Open each one's SKILL.md and follow it \u2014 it is part of the node, not a suggestion. If a skill asks you to talk to the user, do that; you are in their session and that is why the node runs here.`
           ] : [],
-          workspace ? `Work in ${workspace.root} \u2014 the run's worktree, not the user's checkout.` : "This node has no workspace: reason over what the prompt gives you, do not touch files.",
+          workspace ? `Work in ${workspace.root} \u2014 the run's worktree, not the user's checkout.` : "This node has no workspace: work from what the prompt gives you and the commands it names, and touch no files on this machine.",
           "Say what you are doing as you go; the user is watching this happen.",
           "What gate printed above this JSON \u2014 the command nodes it ran on the way here and their output \u2014 the user has not seen: relay those lines to them before you start, as they are.",
           // Whether this node may ask is the agent's own `asks`, not a blanket
@@ -11727,7 +9199,7 @@ ${answerFileNotice(outputFile2, shape2)}`,
           // left to the model.
           personsTurn ? "Ask the user when the brief does not settle something, or something looks wrong. They can answer. Ask with AskUserQuestion, one question at a time, their own words through Other \u2014 never with a plain message that ends your turn: a question asked that way reaches only this terminal, and a person watching several runs from elsewhere never sees it." : "This node does not ask the user: its agent declares no `asks`, so nothing here pauses for a person. When the brief does not settle something, settle it on what you can read and say in your answer what you decided and why. If you find something genuinely wrong, that too goes in the answer \u2014 the edges read it, and that is how the run is stopped.",
           ...prepared.agent.tools.some((t) => t.startsWith("memory_")) ? [
-            "This agent reads the team's memory, and here the memory tools are commands: `gate memory search \"<words>\"` and `gate memory search --path <prefix>` are memory_search, `gate memory feature <id>` is memory_feature. Run them, read what they print, and treat it as the tool's result. They read only; nothing you do here writes memory."
+            "This agent reads the team's memory, and here the memory tools are commands: `gate memory search \"<words>\"` and `gate memory search --path <prefix>` are memory_search, `gate memory feature <id>` is memory_feature, `gate memory history --path <prefix>` is memory_history. Run them, read what they print, and treat it as the tool's result. They read only; nothing you do here writes memory."
           ] : [],
           `When the work is done, write ${shape} to ${outputFile} and hand it back:`,
           `  gate step ${executionId} ${node.id} --output-file ${outputFile}`
@@ -11768,7 +9240,7 @@ function renderValue(v) {
   if (v === null || typeof v === "number" || typeof v === "boolean") return String(v);
   return JSON.stringify(v, null, 2);
 }
-function resumePrompt(nodeId2, visit2, paths, current, previous) {
+function resumePrompt(nodeId2, visit, paths, current, previous) {
   const changed = [];
   for (const raw of paths) {
     const path = raw.replace(/\?$/, "");
@@ -11778,7 +9250,7 @@ function resumePrompt(nodeId2, visit2, paths, current, previous) {
     changed.push([path, now]);
   }
   if (!changed.length) return null;
-  return `Pass ${visit2} of the "${nodeId2}" node \u2014 the same node you worked on before, continued.
+  return `Pass ${visit} of the "${nodeId2}" node \u2014 the same node you worked on before, continued.
 
 Everything you were given last time still holds: the task, the brief, and what you read and decided while doing it. Do not start the node over and do not ask for any of it again; go on from where you left off.
 
@@ -11907,8 +9379,8 @@ async function step(ctx, executionId, nodeId2, answer, opts = {}) {
       finishedAt,
       input: null,
       output,
-      // Done by the session, or by its subagent: the server costs it from
-      // the session's own gateway calls, since nothing here can report them.
+      // Done by the session, or by its subagent, on the person's own login:
+      // nothing here sees what it cost.
       costing: "session"
     },
     false,
@@ -11919,148 +9391,6 @@ async function step(ctx, executionId, nodeId2, answer, opts = {}) {
   if (opts.subagent) rememberSubagent(executionId, nodeId2, opts.subagent);
   clearPending(executionId);
   return next(ctx, executionId);
-}
-async function work(ctx, executionId, nodeId2) {
-  const pending = readPending(executionId);
-  if (!pending || pending.nodeId !== nodeId2 || !pending.worker) {
-    throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `run ${executionId} is not waiting on a worker for "${nodeId2}"`);
-  }
-  const { execution, steps } = await ctx.client.execution(executionId);
-  const scope = runScope(ctx.team, executionId);
-  const workflow = getWorkflow(execution.workflowId, scope);
-  const position = nextInSession(workflow, steps, execution.input);
-  if (position.kind !== "node" || position.node.id !== nodeId2 || position.node.type !== "agent") {
-    throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `run ${executionId} is not at "${nodeId2}"`);
-  }
-  const node = position.node;
-  const prepared = prepareAgentNode(node, stateFor(execution, position.outputs), (id) => getAgent(id, scope));
-  const skills = prepared.agent.skills.map((id) => getSkill(id, scope));
-  const workspace = workspaceOf(execution);
-  const log = pending.worker.log;
-  const controller = new AbortController();
-  const reporter = new RunReporter(ctx.client, executionId, () => {
-    appendFileSync(log, "\u2500\u2500 stop requested from the dashboard\n");
-    controller.abort();
-  });
-  reporter.start();
-  const timeoutMs = prepared.agent.timeoutMs ?? 60 * 6e4;
-  const overrun = timeoutMs > 0 ? setTimeout(
-    () => appendFileSync(
-      log,
-      `\u2500\u2500 past the ${Math.round(timeoutMs / 6e4)} minutes its agent file expected, still running \u2014 not stopped; Stop on the dashboard ends it
-`
-    ),
-    Math.max(0, pending.startedAt + timeoutMs - Date.now())
-  ) : null;
-  overrun?.unref();
-  let step2;
-  try {
-    const res = await runClaudeCodeNode(
-      prepared.agent,
-      prepared.prompt,
-      nodeId2,
-      {
-        skills,
-        workspace,
-        spawnCli: ctx.spawnCli,
-        signal: controller.signal,
-        gatewayUrl: ctx.client.gatewayUrl,
-        authToken: ctx.client.key,
-        sessionId: `workflow:${executionId}`,
-        // The person follows the node through this log, so what it says
-        // and what it does both go there, as they would read in a terminal.
-        onText: (text) => {
-          const line = describeText(text);
-          if (line) appendFileSync(log, line);
-        },
-        onToolCall: (call) => {
-          appendFileSync(log, describeCall(call, workspace?.root ?? ""));
-          reporter.event({
-            type: "tool.called",
-            executionId,
-            at: Date.now(),
-            nodeId: nodeId2,
-            stepIndex: pending.stepIndex,
-            tool: call.tool,
-            ok: call.ok,
-            summary: call.result.split("\n")[0].slice(0, 200),
-            durationMs: call.durationMs
-          });
-        }
-      },
-      null
-    );
-    step2 = {
-      nodeId: nodeId2,
-      stepIndex: pending.stepIndex,
-      visit: pending.visit,
-      status: "completed",
-      startedAt: pending.startedAt,
-      finishedAt: Date.now(),
-      input: prepared.inputs,
-      output: res.output,
-      usage: res.usage,
-      toolCalls: res.toolCalls
-    };
-  } catch (e) {
-    const error = { code: e instanceof WorkflowError ? e.code : "MODEL_EXECUTION_ERROR", message: e.message };
-    step2 = {
-      nodeId: nodeId2,
-      stepIndex: pending.stepIndex,
-      visit: pending.visit,
-      status: "failed",
-      startedAt: pending.startedAt,
-      finishedAt: Date.now(),
-      input: prepared.inputs,
-      output: null,
-      error
-    };
-  }
-  if (overrun) clearTimeout(overrun);
-  await reporter.stop();
-  try {
-    await record(ctx, executionId, step2, false);
-  } catch (e) {
-    if (!(e instanceof WorkflowError && e.code === "RUN_CANCELLED")) throw e;
-  }
-  const seconds = Math.max(1, Math.round((step2.finishedAt - step2.startedAt) / 1e3));
-  appendFileSync(
-    log,
-    step2.status === "completed" ? `\u2500\u2500 \u2713 ${nodeId2} (${seconds}s)
-` : `\u2500\u2500 \u2717 ${nodeId2}: ${step2.error?.message} (${seconds}s)
-`
-  );
-  clearPending(executionId);
-  return step2.status === "completed";
-}
-var WAIT_SLICE_MS = 9e4;
-var WAIT_POLL_MS = 2e3;
-async function wait(ctx, executionId, forMs = WAIT_SLICE_MS) {
-  const until = Date.now() + forMs;
-  for (; ; ) {
-    const pending = readPending(executionId);
-    if (!pending || !pending.worker) return next(ctx, executionId);
-    const shown = pending.shown ?? 0;
-    let text = "";
-    try {
-      text = readFileSync10(pending.worker.log, "utf8");
-    } catch {
-    }
-    if (text.length > shown) {
-      ctx.say(text.slice(shown).trimEnd());
-      writePending({ ...pending, shown: text.length });
-    }
-    if (!alive(pending.worker.pid)) return next(ctx, executionId);
-    if (Date.now() >= until) {
-      const scope = runScope(ctx.team, executionId);
-      const { execution } = await ctx.client.execution(executionId);
-      const workflow = getWorkflow(execution.workflowId, scope);
-      const node = workflow.nodes.find((n) => n.id === pending.nodeId);
-      const agent = node && node.type === "agent" ? getAgent(node.agent, scope) : { id: pending.nodeId, model: "?" };
-      return waitInstruction(executionId, pending, agent);
-    }
-    await new Promise((r) => setTimeout(r, Math.min(WAIT_POLL_MS, Math.max(0, until - Date.now()))));
-  }
 }
 async function record(ctx, executionId, step2, announceStart = true, also = []) {
   const res = await ctx.client.report(executionId, {
@@ -12101,15 +9431,15 @@ async function settle(ctx, executionId, execution, stepCount, status, error, pub
   if (execution.status !== "running") return;
   const workspace = workspaceOf(execution);
   let diff = null;
-  let summary2 = null;
-  if (workspace && existsSync13(workspace.root)) {
-    summary2 = summarizeWorkspace(workspace);
+  let summary = null;
+  if (workspace && existsSync9(workspace.root)) {
+    summary = summarizeWorkspace(workspace);
     try {
       diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
     } catch {
     }
   }
-  await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary2, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
+  await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
   if (workspace) await releaseAndPublish(ctx.client, workspace, executionId, publish, ctx.say);
   if (status === "completed") forgetRun(executionId);
 }
@@ -12122,7 +9452,7 @@ async function continueRun(ctx, executionId) {
   if (execution.driver !== "session") {
     throw new WorkflowError(
       "EXECUTION_NOT_RESUMABLE",
-      "only a run /gate:run drove can be continued here; a run `gate run` drove starts over with `gate run`"
+      "only a run /gate:run drove can be continued; start this one again with /gate:run"
     );
   }
   if (execution.status === "running") return next(ctx, executionId);
@@ -12131,7 +9461,7 @@ async function continueRun(ctx, executionId) {
   }
   const workspace = workspaceOf(execution);
   let restored = false;
-  if (workspace && !existsSync13(workspace.root)) {
+  if (workspace && !existsSync9(workspace.root)) {
     try {
       restored = restoreRunWorkspace(workspace);
       borrowDependencies(workspace);
@@ -12140,13 +9470,6 @@ async function continueRun(ctx, executionId) {
         "EXECUTION_NOT_RESUMABLE",
         `the worktree this run used (${workspace.root}) is gone and could not be brought back from branch ${workspace.branch}: ${e.message}; start the workflow again instead`
       );
-    }
-  }
-  const pending = readPending(executionId);
-  if (pending?.worker && alive(pending.worker.pid)) {
-    try {
-      process.kill(pending.worker.pid);
-    } catch {
     }
   }
   clearPending(executionId);
@@ -12184,12 +9507,12 @@ function judgeWorkspace(root, baseCommit) {
   return "unpushed";
 }
 async function listWorkspaces(client) {
-  const dir = join15(gateHome2(), "workspaces");
-  if (!existsSync14(dir)) return [];
+  const dir = join11(gateHome2(), "workspaces");
+  if (!existsSync10(dir)) return [];
   const out = [];
-  for (const entry of readdirSync9(dir, { withFileTypes: true })) {
+  for (const entry of readdirSync7(dir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const root = join15(dir, entry.name);
+    const root = join11(dir, entry.name);
     let status = "unknown";
     let baseCommit = null;
     let branch = git3(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -12223,11 +9546,11 @@ function applyClean(plan) {
     if (e.repo && e.branch) {
       const ws = { repo: e.repo, root: e.root, branch: e.branch, baseRef: "", baseCommit: e.baseCommit ?? void 0 };
       const released = releaseRunWorkspace(ws, e.executionId);
-      if (released === null && existsSync14(e.root)) removeRunWorkspace(ws, { keepBranch: true });
+      if (released === null && existsSync10(e.root)) removeRunWorkspace(ws, { keepBranch: true });
     } else {
       removeRunWorkspace({ repo: e.root, root: e.root, branch: "" }, { keepBranch: true });
     }
-    if (existsSync14(e.root)) {
+    if (existsSync10(e.root)) {
       notes.push(`kept ${e.executionId.slice(0, 8)}: its worktree could not be removed, or what it left uncommitted could not be committed`);
       continue;
     }
@@ -12252,74 +9575,76 @@ function describeVerdict(v) {
   }
 }
 
-// src/client/live.ts
-import { existsSync as existsSync15, mkdirSync as mkdirSync12, readFileSync as readFileSync11, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname4, join as join16 } from "node:path";
-function gatewayEnv(gatewayUrl2, key) {
-  return {
-    ANTHROPIC_BASE_URL: gatewayUrl2,
-    ANTHROPIC_AUTH_TOKEN: key,
-    // The headless executor sets both; Claude Code takes either, and a
-    // session where the two disagree is a session that authenticates as
-    // somebody else.
-    ANTHROPIC_API_KEY: key,
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-    // Claude Code asks the gateway's /v1/models at startup with this set, and
-    // the connected account's models reach the `/model` picker. Provider
-    // models never do — the client keeps only ids containing "claude" or
-    // "anthropic" — which is why the picker rows below are written by hand.
-    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1"
-  };
-}
+// src/client/claude-settings.ts
+import { existsSync as existsSync11, readFileSync as readFileSync8, writeFileSync as writeFileSync8 } from "node:fs";
+import { join as join12 } from "node:path";
+var GATEWAY_PATH = /\/api\/gateway\/?$/;
+var GATE_KEY = /^gate_/;
+var GATE_ONLY_ENV = ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"];
+var PICKER_PREFIXES = ["provider:", "local:"];
 function settingsPath(global, cwd = process.cwd()) {
-  return global ? join16(claudeConfigDir(), "settings.json") : join16(cwd, ".claude", "settings.local.json");
+  return global ? join12(claudeConfigDir(), "settings.json") : join12(cwd, ".claude", "settings.local.json");
 }
-function readSettings(path) {
-  if (!existsSync15(path)) return {};
-  const text = readFileSync11(path, "utf8");
-  if (!text.trim()) return {};
-  const parsed = JSON.parse(text);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${path} is not a JSON object`);
-  }
-  return parsed;
-}
-var CONNECTORS_SETTING = "disableClaudeAiConnectors";
-function applyGatewaySettings(path, env, on) {
-  const settings = readSettings(path);
-  const current = settings.env && typeof settings.env === "object" ? settings.env : {};
-  const next2 = { ...current };
+function withoutGatewayWiring(settings) {
   const before = JSON.stringify(settings);
-  if (on) {
-    for (const [k, v] of Object.entries(env)) next2[k] = v;
-    settings[CONNECTORS_SETTING] = true;
-  } else {
-    for (const k of Object.keys(env)) delete next2[k];
-    delete settings[CONNECTORS_SETTING];
+  const env = settings.env && typeof settings.env === "object" && !Array.isArray(settings.env) ? { ...settings.env } : null;
+  const base = env?.ANTHROPIC_BASE_URL;
+  if (env && typeof base === "string" && GATEWAY_PATH.test(base.trim())) {
+    delete env.ANTHROPIC_BASE_URL;
+    for (const k of ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]) {
+      if (typeof env[k] === "string" && GATE_KEY.test(env[k])) delete env[k];
+    }
+    for (const k of GATE_ONLY_ENV) delete env[k];
+    if (Object.keys(env).length) settings.env = env;
+    else delete settings.env;
+    delete settings.disableClaudeAiConnectors;
   }
-  if (Object.keys(next2).length) settings.env = next2;
-  else delete settings.env;
-  if (JSON.stringify(settings) === before) return false;
-  mkdirSync12(dirname4(path), { recursive: true });
-  writeFileSync10(path, `${JSON.stringify(settings, null, 2)}
+  const picker = settings.modelPicker;
+  if (picker && typeof picker === "object" && !Array.isArray(picker)) {
+    const p = picker;
+    if (Array.isArray(p.options)) {
+      const foreign = p.options.filter((row) => {
+        const model = row?.model;
+        return !(typeof model === "string" && PICKER_PREFIXES.some((x) => model.startsWith(x)));
+      });
+      if (foreign.length) settings.modelPicker = { ...p, options: foreign };
+      else delete settings.modelPicker;
+    }
+  }
+  return JSON.stringify(settings) !== before;
+}
+function unsetGatewayWiring(path) {
+  if (!existsSync11(path)) return false;
+  let settings;
+  try {
+    const text = readFileSync8(path, "utf8");
+    if (!text.trim()) return false;
+    settings = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return false;
+  if (!withoutGatewayWiring(settings)) return false;
+  writeFileSync8(path, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384 });
   return true;
 }
-function applyPickerRows(rows, on, path = settingsPath(true)) {
-  const settings = readSettings(path);
-  const before = JSON.stringify(settings);
-  if (on) withPickerRows(settings, rows);
-  else withoutPickerRows(settings);
-  if (JSON.stringify(settings) === before) return false;
-  mkdirSync12(dirname4(path), { recursive: true });
-  writeFileSync10(path, `${JSON.stringify(settings, null, 2)}
-`, { mode: 384 });
-  return true;
+function cleanGatewayWiring(cwd = process.cwd()) {
+  const lines = [];
+  for (const global of [true, false]) {
+    const path = settingsPath(global, cwd);
+    try {
+      if (unsetGatewayWiring(path)) lines.push(`took gate's old gateway settings out of ${path} \u2014 Claude Code runs on your own login`);
+    } catch (e) {
+      lines.push(`could not update ${path}: ${e.message}`);
+    }
+  }
+  return lines;
 }
 
 // src/client/teach.ts
 import { execFileSync as execFileSync5 } from "node:child_process";
-import { readFileSync as readFileSync12 } from "node:fs";
+import { readFileSync as readFileSync9 } from "node:fs";
 
 // src/lib/client-api-schemas.ts
 var clientInfo = external_exports.object({
@@ -12336,9 +9661,8 @@ var clientInfo = external_exports.object({
   version: external_exports.string().max(40).optional(),
   /**
    * The Claude Code session driving the run, when the plugin's hook could
-   * learn it. The gateway files that session's own model calls under the
-   * same id, which is what lets the nodes the session does itself be
-   * costed against the run.
+   * learn it: which session a run belongs to, for whoever is watching
+   * several.
    */
   session: external_exports.string().max(80).optional()
 }).partial();
@@ -12415,7 +9739,7 @@ var stepSchema = external_exports.object({
   output: external_exports.unknown().optional(),
   error: external_exports.object({ code: external_exports.string().max(64), message: external_exports.string().max(4e3) }).optional(),
   usage: usageSchema.optional(),
-  /** The session did this node itself: cost it from the session's own gateway calls. */
+  /** The session did this node itself, on the person's own login: no usage comes with it. */
   costing: external_exports.literal("session").optional(),
   toolCalls: external_exports.array(toolCallSchema).optional()
 });
@@ -12672,7 +9996,7 @@ function describeBranch(r) {
 function readAccount(file) {
   let raw;
   try {
-    raw = JSON.parse(readFileSync12(file, "utf8"));
+    raw = JSON.parse(readFileSync9(file, "utf8"));
   } catch (e) {
     throw new TeachError(`cannot read ${file} as JSON: ${e.message}`);
   }
@@ -12693,18 +10017,12 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate login <token>                            connect this machine (one token from your dashboard)
        --url <gate-url> --key <api-key>         \u2026or the two halves separately
   gate whoami                                   who this key belongs to
-  gate usage [--json]                           what the gate's pool has left, and when it resets
   gate version                                  what this build is
   gate pull                                     refresh your team's definitions
   gate list                                     what you can run, and what it needs
   gate agents                                   the agents your team's pipelines use
   gate show <workflow|agent-id>                 print a definition as it is on the server
   gate push <file\u2026> [--replace]                 save definitions to your team (needs an author key)
-  gate run <workflow> [task\u2026]                   run one here, headless, in this repository
-       --input key=value                        (repeat for more than one input)
-       --yes                                    skip the first-run approval prompt
-       --quiet                                  only print the outcome
-       --task-id <id>                           file this run under a cross-team task
 
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task\u2026]                 start a run, print the first instruction
@@ -12716,10 +10034,7 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
         [--subagent <id>]                        the agent id the Agent tool returned, so its next pass
                                                  continues it \u2014 not the gate-<team>-<agent> type name
-  gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
   gate continue <execution-id>                  pick a failed run back up at the node it failed on
-  gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
-  gate env                                      the same, as shell exports for one session
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate clean [--all] [--dry-run]                remove worktrees runs left behind (branches keep the work)
   gate reset                                    disconnect this machine and clear what it pulled
@@ -12733,8 +10048,12 @@ var USAGE = `gate ${CLI_VERSION} \u2014 run your team's agent workflows on this 
   gate memory activity [--json]                 what the rest of your team's tree is running right now
   gate memory features [--json]                 the tree's feature catalogue: the ids a design doc is named by
   gate memory repo [--json]                     whether this checkout's repository is connected and read by the gate
-  gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
-       \u2026or --run <id>                           ask another team what their code does; answered from one commit, with files
+  gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>]
+       \u2026or --run <id>                           ask another team what their code does: starts an ask run here,
+                                                answered from one commit the gate fixes, with files
+  gate source tree <ask> [path] [--depth n]      that commit's files, read through the gate
+  gate source grep <ask> <pattern> [--path p] [--ext ts]
+  gate source file <ask> <path> [--offset n] [--limit n]
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
   gate teach --account-file <f> [--base <ref>] [--force] [--no-wait] [--task-id <id>]
                                                 teach it to your team's memory, recorded the way a run is
@@ -12751,7 +10070,6 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "team",
   "dir",
   "output-file",
-  "for",
   "subagent",
   "path",
   "feature",
@@ -12764,7 +10082,11 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "repo",
   "run",
   "ref",
-  "commit"
+  "commit",
+  // `gate source`: where to look, and how much.
+  "depth",
+  "ext",
+  "offset"
 ]);
 var REPEATABLE_FLAGS = /* @__PURE__ */ new Set(["input", "path"]);
 function parseArgs(argv) {
@@ -12860,18 +10182,18 @@ async function cmdLogin(args) {
   console.log(`connected to ${url} as ${me.user?.email ?? "this key"} \xB7 team ${me.team.name}`);
   const manifest = await sync(client, me.team.id, true);
   console.log(`${manifest.workflows.length} workflow(s) available \u2014 \`gate list\` to see them`);
-  for (const line of setLive(true, true, client.gatewayUrl, key, await pickerRows(client))) console.log(line);
+  for (const line of cleanGatewayWiring()) console.log(line);
   const synced = syncSubagents(me.team.id, cacheScope(me.team.id));
   if (synced.created) console.log("restart Claude Code once: its agents directory did not exist before, and it reads a new one at startup");
   return 0;
 }
 function cmdInstall(args) {
-  const target = typeof args.flags.dir === "string" ? args.flags.dir : join17(homedir8(), ".local", "bin");
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join13(homedir6(), ".local", "bin");
   const script = process.argv[1];
-  const shim = join17(target, "gate");
+  const shim = join13(target, "gate");
   try {
-    mkdirSync13(target, { recursive: true });
-    writeFileSync11(shim, `#!/bin/sh
+    mkdirSync10(target, { recursive: true });
+    writeFileSync9(shim, `#!/bin/sh
 exec node "${script}" "$@"
 `, { mode: 493 });
   } catch (e) {
@@ -12897,53 +10219,6 @@ async function cmdWhoami() {
   console.log(
     `gate ${CLI_VERSION} here \xB7 ${me.server?.version ?? "unknown"} there` + (me.server?.minClientVersion ? ` (needs ${me.server.minClientVersion}+)` : "")
   );
-  return 0;
-}
-function untilText(iso) {
-  if (!iso) return null;
-  const ms = Date.parse(iso) - Date.now();
-  if (!Number.isFinite(ms)) return null;
-  if (ms <= 0) return "any moment";
-  const minutes = Math.round(ms / 6e4);
-  if (minutes < 60) return `in ${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
-  return `in ${Math.floor(hours / 24)}d ${hours % 24}h`;
-}
-var BAR_WIDTH = 16;
-function bar(remaining) {
-  const full = Math.max(0, Math.min(BAR_WIDTH, Math.round(remaining / 100 * BAR_WIDTH)));
-  return `${"\u2588".repeat(full)}${"\u2591".repeat(BAR_WIDTH - full)}`;
-}
-async function cmdUsage(args) {
-  const client = connect();
-  const usage = await client.usage();
-  if (args.flags.json) {
-    console.log(JSON.stringify(usage, null, 2));
-    return 0;
-  }
-  if (!usage.windows.length) {
-    console.log(usage.reason ?? "no window reading yet");
-    return 0;
-  }
-  const rows = usage.windows.map((w) => ({
-    label: w.label ?? windowLabel(w.name),
-    bar: bar(w.remaining),
-    left: `${Math.round(w.remaining * 10) / 10}% left`,
-    reset: untilText(w.resetsAt)
-  }));
-  const labelWidth = Math.max(...rows.map((r) => r.label.length));
-  const leftWidth = Math.max(...rows.map((r) => r.left.length));
-  for (const r of rows) {
-    console.log(`${r.label.padEnd(labelWidth)}  ${r.bar}  ${r.left.padEnd(leftWidth)}${r.reset ? `  \xB7 resets ${r.reset}` : ""}`);
-  }
-  const a = usage.accounts;
-  const parts = [`${a.available} of ${a.enabled} account${a.enabled === 1 ? "" : "s"} serving now`];
-  if (a.coolingDown) parts.push(`${a.coolingDown} cooling down`);
-  if (a.modelBlocked) parts.push(`${a.modelBlocked} parked on a model-scoped limit`);
-  if (a.quotaBlocked) parts.push(`${a.quotaBlocked} held back by the ${usage.floorPercent}% floor`);
-  if (usage.plan) parts.push(usage.plan);
-  console.log(parts.join(" \xB7 "));
   return 0;
 }
 function inputSummary(required, optional) {
@@ -13025,7 +10300,7 @@ async function cmdPush(args) {
   const config = readConfig();
   await teamOf(client, config);
   const items = files.map((file) => {
-    const name = basename2(file);
+    const name = basename(file);
     const kind = name.endsWith(".md") ? "agent" : "workflow";
     if (!/\.(md|ya?ml)$/.test(name)) die(`${file}: expected a .md agent or a .yaml workflow`);
     return { kind, id: name.replace(/\.(md|ya?ml)$/, ""), file };
@@ -13035,7 +10310,7 @@ async function cmdPush(args) {
   for (const item of items) {
     let source;
     try {
-      source = readFileSync13(item.file, "utf8");
+      source = readFileSync10(item.file, "utf8");
     } catch (e) {
       console.error(`${item.file}: ${e.message}`);
       failed++;
@@ -13075,7 +10350,7 @@ function describeCapabilities(workflowId, team) {
     if (node.type === "agent") {
       try {
         const agent = getAgent(node.agent, scope);
-        const how = agent.executor === "claude-code" ? "a headless Claude Code session" : `tools: ${agent.tools.join(", ") || "none"}`;
+        const how = agent.executor === "claude-code" ? "a subagent of your Claude Code session" : `tools: ${agent.tools.join(", ") || "none"}`;
         lines.push(`  agent ${node.agent}: ${how}`);
       } catch {
         lines.push(`  agent ${node.agent}: (definition missing)`);
@@ -13118,66 +10393,6 @@ function parseInputs(flags, trailing) {
   if (task && input.task === void 0) input.task = task;
   return input;
 }
-function printEvent(event) {
-  switch (event.type) {
-    case "node.started":
-      console.error(`\u25B8 ${event.nodeId}`);
-      break;
-    case "tool.called":
-      console.error(`  ${event.ok ? "\xB7" : "\u2717"} ${event.tool} ${event.summary}`);
-      break;
-    case "node.completed":
-      console.error(`  \u2713 ${event.nodeId} (${Math.round(event.durationMs / 1e3)}s)`);
-      break;
-    case "node.failed":
-      console.error(`  \u2717 ${event.nodeId}: ${event.message}`);
-      break;
-    case "edge.selected":
-      console.error(`  \u2192 ${event.to}${event.label ? ` \xB7 ${event.label}` : ""}`);
-      break;
-    default:
-      break;
-  }
-}
-async function cmdRun(args) {
-  const [workflowId, ...trailing] = args.positional;
-  if (!workflowId) die("usage: gate run <workflow> [task\u2026]  \xB7  `gate list` shows what you can run");
-  if ((process.env.CLAUDE_CODE_ENTRYPOINT || process.env.CLAUDECODE) && args.flags.quiet !== true) {
-    console.error(
-      "# heads up: this runs headlessly \u2014 you will see the outcome, not the work.\n# In Claude Code, /gate:run drives the same workflow in this session (gate begin/next/step),\n# where you can watch each node and answer it when it asks."
-    );
-  }
-  const client = connect();
-  const config = readConfig();
-  const team = await teamOf(client, config);
-  const manifest = await sync(client, team, true);
-  const entry = manifest.workflows.find((w) => w.id === workflowId);
-  if (!entry) {
-    die(`no workflow "${workflowId}" for your team \u2014 \`gate list\` shows what there is`);
-  }
-  if (!await confirmTrust(workflowId, entry.sha, team, args.flags.yes === true)) return 1;
-  const quiet = args.flags.quiet === true;
-  const input = parseInputs(args.flags, trailing);
-  const result = await runLocal(client, {
-    workflowId,
-    input,
-    cwd: process.cwd(),
-    team,
-    repos: repoPaths(),
-    taskId: typeof args.flags["task-id"] === "string" ? args.flags["task-id"] : void 0,
-    onEvent: quiet ? void 0 : printEvent,
-    onNotice: (message) => console.error(`# ${message}`)
-  });
-  const { state, workspace, executionId } = result;
-  console.log(`${state.status}: ${workflowId} (${executionId})`);
-  if (state.error) console.log(`${state.error.code}: ${state.error.message}`);
-  if (workspace) {
-    console.log(existsSync16(workspace.root) ? `branch ${workspace.branch} in ${workspace.root}` : `branch ${workspace.branch} in ${workspace.repo}`);
-    console.log(`review it with: ${reviewCommand(workspace)}`);
-  }
-  console.log(`${client.url}/executions/${executionId}`);
-  return state.status === "completed" ? 0 : 1;
-}
 function cmdRepo(args) {
   const [id, path] = args.positional;
   if (!id) {
@@ -13191,25 +10406,12 @@ function cmdRepo(args) {
     return 0;
   }
   if (!path) die(`usage: gate repo ${id} /path/to/your/clone`);
-  setRepoPath(id, resolve6(path));
-  console.log(`${id} \u2192 ${resolve6(path)}`);
+  setRepoPath(id, resolve4(path));
+  console.log(`${id} \u2192 ${resolve4(path)}`);
   return 0;
 }
 function cmdReset() {
-  const config = readConfig();
-  if (config) {
-    const client = connect();
-    for (const global of [true, false]) {
-      const path = settingsPath(global);
-      if (!existsSync16(path)) continue;
-      try {
-        if (applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), false)) console.log(`took the gateway out of ${path}`);
-        if (global && applyPickerRows([], false, path)) console.log(`took the provider models out of ${path}`);
-      } catch (e) {
-        console.log(`could not update ${path}: ${e.message}`);
-      }
-    }
-  }
+  for (const line of cleanGatewayWiring()) console.log(line);
   const agents = removeSubagents();
   if (agents.length) console.log(`removed subagents ${agents.join(", ")} from ~/.claude/agents`);
   for (const line of clearLocalState()) console.log(line);
@@ -13221,98 +10423,13 @@ async function sessionContext() {
   const config = readConfig();
   const team = await teamOf(client, config);
   await sync(client, team, true);
-  const throughGateway = sessionThroughGateway(client);
-  if (throughGateway) {
-    const synced = syncSubagents(team, cacheScope(team));
-    if (synced.created) {
-      console.error("# subagents written to ~/.claude/agents for the first time \u2014 restart Claude Code once so it sees them");
-    } else if (synced.written.length) {
-      console.error(`# subagents updated: ${synced.written.join(", ")}`);
-    }
+  const synced = syncSubagents(team, cacheScope(team));
+  if (synced.created) {
+    console.error("# subagents written to ~/.claude/agents for the first time \u2014 restart Claude Code once so it sees them");
+  } else if (synced.written.length) {
+    console.error(`# subagents updated: ${synced.written.join(", ")}`);
   }
-  return { ctx: { client, team, say: (m) => console.error(m), throughGateway }, team };
-}
-function sessionThroughGateway(client) {
-  const base = process.env.ANTHROPIC_BASE_URL;
-  if (!base) return false;
-  const norm = (u) => u.trim().replace(/\/+$/, "").toLowerCase();
-  return norm(base) === norm(client.gatewayUrl);
-}
-async function cmdLive(args) {
-  const config = readConfig();
-  if (!config) die("not logged in - run `gate login <token>` first");
-  const client = connect();
-  const on = args.flags.off !== true;
-  const lines = setLive(on, args.flags.global === true, client.gatewayUrl, config.key, on ? await pickerRows(client) : []);
-  for (const line of lines) console.log(line);
-  return 0;
-}
-async function pickerRows(client) {
-  try {
-    return (await client.providerModels()).map(pickerRow);
-  } catch (e) {
-    console.error(`# could not read the gateway's model list (${e.message}) \u2014 /model shows the built-in models only`);
-    return [];
-  }
-}
-function setLive(on, global, gatewayUrl2, key, rows = []) {
-  const path = settingsPath(global);
-  const where = global ? "every Claude Code session of yours" : `Claude Code sessions started in ${process.cwd()}`;
-  let changed;
-  try {
-    changed = applyGatewaySettings(path, gatewayEnv(gatewayUrl2, key), on);
-  } catch (e) {
-    die(`could not update ${path}: ${e.message}`);
-  }
-  let pickerPath = null;
-  try {
-    if ((on || global) && applyPickerRows(rows, on)) pickerPath = settingsPath(true);
-  } catch (e) {
-    console.error(`# could not write the model picker (${e.message})`);
-  }
-  if (on && !global) keepOutOfGit(process.cwd());
-  if (on) {
-    return [
-      changed ? `${where} now go through ${gatewayUrl2}` : `${where} already go through ${gatewayUrl2}`,
-      `  written to ${path}`,
-      ...pickerPath ? [`  Claude Code's /model now lists ${rows.length} provider model(s), from ${pickerPath}`] : [],
-      "A session already open picks that up on its own; if the next node in its own model still arrives as `wait` rather than as a subagent, restart Claude Code once."
-    ];
-  }
-  return [
-    changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`,
-    ...pickerPath ? [`  the provider models are out of /model again (${pickerPath})`] : []
-  ];
-}
-function keepOutOfGit(cwd) {
-  let gitDir;
-  try {
-    gitDir = execFileSync6("git", ["rev-parse", "--git-dir"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  } catch {
-    return;
-  }
-  const info = join17(resolve6(cwd, gitDir), "info");
-  const exclude = join17(info, "exclude");
-  const pattern = ".claude/settings.local.json";
-  try {
-    const current = existsSync16(exclude) ? readFileSync13(exclude, "utf8") : "";
-    if (current.split("\n").some((l) => l.trim() === pattern)) return;
-    mkdirSync13(info, { recursive: true });
-    appendFileSync2(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}${pattern}
-`);
-  } catch {
-  }
-}
-function cmdEnv() {
-  const config = readConfig();
-  if (!config) die("not logged in \u2014 run `gate login <token>` first");
-  const client = connect();
-  const q = (s) => `'${s.replace(/'/g, "'\\''")}'`;
-  console.log(`export ANTHROPIC_BASE_URL=${q(client.gatewayUrl)}`);
-  console.log(`export ANTHROPIC_AUTH_TOKEN=${q(config.key)}`);
-  console.log(`export ANTHROPIC_API_KEY=${q(config.key)}`);
-  console.log(`export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`);
-  return 0;
+  return { ctx: { client, team, say: (m) => console.error(m) }, team };
 }
 function printInstruction(instruction) {
   noteSession(instruction);
@@ -13346,20 +10463,13 @@ async function cmdStep(args) {
   if (!file) die("gate step needs --output-file <file>: the node's answer, as the agent declared it");
   let answer;
   try {
-    answer = readFileSync13(file, "utf8");
+    answer = readFileSync10(file, "utf8");
   } catch (e) {
     die(`cannot read ${file}: ${e.message}`);
   }
   const subagent = typeof args.flags.subagent === "string" ? args.flags.subagent : void 0;
   const { ctx } = await sessionContext();
   return printInstruction(await step(ctx, executionId, nodeId2, answer, { subagent }));
-}
-async function cmdWait(args) {
-  const [executionId] = args.positional;
-  if (!executionId) die("usage: gate wait <execution-id> [--for <seconds>]");
-  const seconds = Number(args.flags.for);
-  const { ctx } = await sessionContext();
-  return printInstruction(await wait(ctx, executionId, Number.isFinite(seconds) && seconds > 0 ? seconds * 1e3 : void 0));
 }
 async function cmdContinue(args) {
   const [executionId] = args.positional;
@@ -13400,7 +10510,7 @@ async function cmdPublish(args) {
   const { execution, publish } = await client.execution(executionId);
   const ws = execution.workspace;
   if (!ws?.root || !ws.branch) return die(`run ${executionId.slice(0, 8)} has no worktree on any machine`);
-  if (!existsSync16(ws.root)) {
+  if (!existsSync12(ws.root)) {
     return die(`this run's worktree (${ws.root}) is not on this machine \u2014 publish from the machine that ran it`);
   }
   if (!publish) {
@@ -13418,12 +10528,6 @@ async function cmdPublish(args) {
     published: outcome.ok ? outcome.published : { error: outcome.note }
   }).catch((e) => console.log(`the gate could not be told: ${e.message}`));
   return outcome.ok ? 0 : 1;
-}
-async function cmdWork(args) {
-  const [executionId, nodeId2] = args.positional;
-  if (!executionId || !nodeId2) die("usage: gate work <execution-id> <node>");
-  const { ctx } = await sessionContext();
-  return await work(ctx, executionId, nodeId2) ? 0 : 1;
 }
 async function cmdMemory(args) {
   const [sub, ...rest] = args.positional;
@@ -13537,7 +10641,7 @@ async function cmdTeach(args) {
     startedAt: reading.startedAt,
     finishedAt: reading.finishedAt,
     diff: readBranchDiff(reading),
-    host: hostname4(),
+    host: hostname3(),
     version: CLI_VERSION,
     force: args.flags.force === true,
     taskId: typeof args.flags["task-id"] === "string" ? args.flags["task-id"] : void 0,
@@ -13590,68 +10694,60 @@ async function cmdStatus(args) {
   }
   return 0;
 }
-var ASK_WAIT_MS = 20 * 6e4;
 async function cmdAsk(args) {
   const question = args.positional.join(" ").trim();
   const one = (v) => typeof v === "string" ? v : void 0;
   if (!question) {
     die('usage: gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] | --run <id>');
   }
-  const client = connect();
-  const json = args.flags.json === true;
-  const asked = await client.ask({
+  const { ctx, team } = await sessionContext();
+  const asked = await ctx.client.ask({
     question,
     repo: one(args.flags.repo),
     run: one(args.flags.run),
     ref: one(args.flags.ref),
     commit: one(args.flags.commit)
   });
-  if (asked.status !== "reviewing") {
-    if (json) {
-      console.log(JSON.stringify(asked, null, 2));
-    } else {
-      console.log(asked.reason);
-      if (asked.status === "source_unavailable" && asked.publish?.ref) {
-        console.log(`whoever has ${asked.publish.ref} can publish it with \`gate publish\`, and then this is answerable`);
-      }
+  if (asked.status !== "ready") {
+    console.log(asked.reason);
+    if (asked.status === "source_unavailable" && asked.publish?.ref) {
+      console.log(`whoever has ${asked.publish.ref} can publish it with \`gate publish\`, and then this is answerable`);
     }
     return 1;
   }
   const source = asked.source;
-  if (!json) {
-    console.error(`# reading ${source.repo} at ${source.commit.slice(0, 8)} (${source.ref})\u2026`);
-  }
-  if (args.flags["no-wait"] === true) {
-    console.log(json ? JSON.stringify(asked, null, 2) : `${client.url}/executions/${asked.executionId}`);
-    return 0;
-  }
-  const until = Date.now() + ASK_WAIT_MS;
-  while (Date.now() < until) {
-    await new Promise((r) => setTimeout(r, 3e3));
-    const { execution, steps } = await client.execution(asked.executionId);
-    if (execution?.status === "running") continue;
-    const answered = [...steps ?? []].reverse().find((s) => s.nodeId === "source-review");
-    const output = answered?.output ?? null;
-    if (!output?.answer) {
-      const why = execution?.error?.message ?? "the review ended without an answer";
-      console.log(json ? JSON.stringify({ status: "failed", reason: why, source }, null, 2) : why);
-      return 1;
-    }
-    if (json) {
-      console.log(JSON.stringify({ status: "answered", source, ...output }, null, 2));
-      return 0;
-    }
-    console.log(output.answer);
-    console.log("");
-    console.log(`\u2014 ${source.repo} at ${source.commit.slice(0, 12)} (${source.ref})`);
-    if (output.certainty === "absent") {
-      console.log("  nothing at that commit matched; work published since, or on another branch, is not in this answer");
-    } else if (output.certainty === "partial") {
-      console.log("  partial: the answer above says which part it could not settle here");
-    }
-    return output.certainty === "absent" ? 1 : 0;
-  }
-  console.log(`still reading after ${ASK_WAIT_MS / 6e4} minutes: ${client.url}/executions/${asked.executionId}`);
+  const entry = readManifest(team)?.workflows.find((w) => w.id === asked.workflow);
+  if (!entry) die(`your team has no "${asked.workflow}" workflow \u2014 restore the shipped workflows on the Workflows page`);
+  if (!await confirmTrust(asked.workflow, entry.sha, team, args.flags.yes === true)) return 1;
+  console.error(`# reading ${source.repo} at ${source.commit.slice(0, 12)} (${source.ref}) \u2014 served by the gate, for a day`);
+  return printInstruction(
+    await begin(
+      ctx,
+      asked.workflow,
+      {
+        question,
+        source: source.repoId ?? source.repo,
+        ref: source.ref,
+        commit: source.commit,
+        ask: asked.askId,
+        memory: asked.memory
+      },
+      process.cwd(),
+      repoPaths(),
+      { taskId: one(args.flags["task-id"]) }
+    )
+  );
+}
+async function cmdSource(args) {
+  const [what, askId, ...rest] = args.positional;
+  const one = (v) => typeof v === "string" ? v.split("\0")[0] : void 0;
+  const usage = "usage: gate source tree <ask> [path] [--depth n] \xB7 gate source grep <ask> <pattern> [--path p] [--ext ts] \xB7 gate source file <ask> <path> [--offset n] [--limit n]";
+  if (!askId || what !== "tree" && what !== "grep" && what !== "file") die(usage);
+  const client = connect();
+  const params = what === "tree" ? { path: rest.join(" ") || one(args.flags.path), depth: one(args.flags.depth) } : what === "grep" ? { pattern: rest.join(" "), path: one(args.flags.path), ext: one(args.flags.ext) } : { path: rest.join(" ") || one(args.flags.path), offset: one(args.flags.offset), limit: one(args.flags.limit) };
+  if (what === "grep" && !params.pattern) die(usage);
+  if (what === "file" && !params.path) die(usage);
+  console.log(await client.askRead(askId, what, params));
   return 0;
 }
 async function cmdCancel(args) {
@@ -13676,8 +10772,6 @@ async function main(argv) {
         return cmdVersion();
       case "whoami":
         return await cmdWhoami();
-      case "usage":
-        return await cmdUsage(args);
       case "pull":
         return await cmdPull();
       case "list":
@@ -13690,26 +10784,16 @@ async function main(argv) {
         return await cmdPush(args);
       case "publish":
         return await cmdPublish(args);
-      case "run":
-        return await cmdRun(args);
       case "begin":
         return await cmdBegin(args);
       case "next":
         return await cmdNext(args);
       case "step":
         return await cmdStep(args);
-      case "wait":
-        return await cmdWait(args);
       case "continue":
         return await cmdContinue(args);
       case "clean":
         return await cmdClean(args);
-      case "env":
-        return cmdEnv();
-      case "live":
-        return await cmdLive(args);
-      case "work":
-        return await cmdWork(args);
       case "repo":
         return cmdRepo(args);
       case "reset":
@@ -13722,6 +10806,8 @@ async function main(argv) {
         return await cmdTeach(args);
       case "ask":
         return await cmdAsk(args);
+      case "source":
+        return await cmdSource(args);
       case "cancel":
         return await cmdCancel(args);
       case "help":

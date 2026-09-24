@@ -5,7 +5,7 @@ rule, the block storage and the evidence order are new decisions; the account
 pool's design doc described the intent ("a model-specific 429 is left alone")
 but the code did not follow it, so the doc was already ahead of the behaviour
 and is corrected to describe what now happens
-Design: docs/design/account-pool.md (rotation before tier, availability, the
+Design: account-pool.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md) (rotation before tier, availability, the
 pool's quota and the card)
 
 # A model's weekly limit blocks that model, not the account

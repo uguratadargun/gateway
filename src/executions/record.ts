@@ -16,7 +16,7 @@ import type { StepRecord } from "@/runtime/state";
 
 import { pinnedDefinitions, type PinnedDefinitions } from "@/workflows/snapshot";
 
-import { attributeSessionUsage, getExecutionDefinitions, recordStep } from "./store";
+import { getExecutionDefinitions, recordStep } from "./store";
 import type { ExecutionRecord } from "./types";
 
 /**
@@ -80,12 +80,6 @@ export function recordReportedSteps(execution: ExecutionRecord, steps: StepRecor
       const { inserted } = recordStep(execution.id, step);
       if (!inserted) continue;
       outcome.recorded += 1;
-      // A step the session did itself arrives without usage: its model calls
-      // went through the person's own Claude Code. What that session spent in
-      // the step's minutes is the nearest true figure, and it is marked as one.
-      if (execution.driver === "session" && step.costing === "session" && !step.usage && step.status === "completed") {
-        attributeSessionUsage(execution.id, step.stepIndex);
-      }
       applyStepEffects(execution, step, pinned, outcome, now);
     }
     db.exec("COMMIT");

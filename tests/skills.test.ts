@@ -7,11 +7,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { saveAgent } from "@/agents/registry";
 import { parseAgent } from "@/agents/loader";
 import { scopeAt, teamScope } from "@/lib/def-root";
-import { buildSkillPlugin, skillsBriefing, skillsDirective } from "@/skills/inject";
 import { parseSkill, SkillDefinitionError, withSkillName } from "@/skills/loader";
 import { deleteSkill, getSkill, inheritedSkills, listSkills, saveSkill, skillsDir } from "@/skills/registry";
 import { availableSkills, createSource, getSource, importSkills, importState, syncSource } from "@/skills/sources";
-import { systemPrompt } from "@/runtime/executors/agent";
 
 const BRAINSTORMING = `---
 name: brainstorming
@@ -136,62 +134,6 @@ Plan it.
     saveSkill("brainstorming", BRAINSTORMING, teamScope());
     const other = teamScope("platform");
     expect(saveAgent("planner", planner("[brainstorming]"), other).skills).toEqual(["brainstorming"]);
-  });
-});
-
-describe("delivering a skill to a model", () => {
-  let home: string;
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), "gate-skills-"));
-    process.env.GATE_HOME = home;
-  });
-
-  it("folds the whole skill into gate's own system prompt", () => {
-    const skill = saveSkill("brainstorming", BRAINSTORMING, teamScope());
-    const agent = parseAgent("p", "---\nname: Planner\n---\nPlan.", { sourcePath: "/tmp/p.md", updatedAt: 0 });
-    const prompt = systemPrompt(agent, false, false, [skill]);
-    expect(prompt).toContain("Ask one question at a time");
-    expect(prompt).toContain("brainstorming");
-    // Gate's own loop cannot ask anyone, so the skill's questions are told
-    // where to go instead — before the skill, so it is read in that light.
-    expect(prompt.indexOf("running unattended")).toBeLessThan(prompt.indexOf("# Skills"));
-    // Nothing is said about skills when none were declared.
-    expect(systemPrompt(agent, false, false, [])).not.toContain("# Skills");
-  });
-
-  it("warns gate's own loop that a skill's other files are out of reach", () => {
-    const skill = saveSkill("brainstorming", BRAINSTORMING, teamScope());
-    writeFileSync(join(skillsDir(teamScope()), "brainstorming", "companion.md"), "more");
-    const reloaded = getSkill("brainstorming", teamScope());
-    expect(skillsBriefing([reloaded])).toContain("companion.md");
-    expect(skillsBriefing([reloaded])).toContain("not readable");
-    expect(skillsBriefing([skill])).toContain("Ask one question");
-  });
-
-  it("builds a Claude Code plugin carrying the skill and its files", () => {
-    saveSkill("superpowers-brainstorming", BRAINSTORMING, teamScope());
-    const dir = join(skillsDir(teamScope()), "superpowers-brainstorming");
-    writeFileSync(join(dir, "companion.md"), "more");
-    const skill = getSkill("superpowers-brainstorming", teamScope());
-
-    const plugin = buildSkillPlugin([skill])!;
-    expect(existsSync(join(plugin, ".claude-plugin", "plugin.json"))).toBe(true);
-    const copied = join(plugin, "skills", "superpowers-brainstorming");
-    expect(readFileSync(join(copied, "companion.md"), "utf8")).toBe("more");
-    // Renamed to the id it is known by here, so the harness and gate agree.
-    expect(readFileSync(join(copied, "SKILL.md"), "utf8")).toContain("name: superpowers-brainstorming");
-    // Content-addressed: the same skills build once.
-    expect(buildSkillPlugin([skill])).toBe(plugin);
-    expect(buildSkillPlugin([])).toBe(null);
-    // Named the way the harness namespaces it, so the child can invoke it.
-    expect(skillsDirective([skill])).toContain("gate-skills:superpowers-brainstorming");
-  });
-
-  it("rebuilds under a new address when the skill changes", () => {
-    saveSkill("brainstorming", BRAINSTORMING, teamScope());
-    const first = buildSkillPlugin([getSkill("brainstorming", teamScope())]);
-    saveSkill("brainstorming", BRAINSTORMING.replace("Ask one", "Ask exactly one"), teamScope());
-    expect(buildSkillPlugin([getSkill("brainstorming", teamScope())])).not.toBe(first);
   });
 });
 

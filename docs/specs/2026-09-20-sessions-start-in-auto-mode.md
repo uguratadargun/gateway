@@ -1,7 +1,7 @@
 Status: done
 Branch: main
 Decisions: docs/decisions/0022-a-session-gate-starts-begins-in-auto-mode.md
-Design: docs/design/remote-sessions.md
+Design: remote-sessions.md (a design doc since removed by docs/decisions/0047-a-run-is-driven-only-from-a-persons-session.md)
 
 # A session gate starts begins in auto mode
 

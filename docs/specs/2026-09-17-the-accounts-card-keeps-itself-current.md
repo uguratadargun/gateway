@@ -1,8 +1,8 @@
 Status: done
 Branch: main
 Decisions: none — no recorded decision covers which windows are drawn, and the
-polling rule below is the one `docs/design/account-pool.md` already states
-Design: docs/design/account-pool.md (windows, the polling rules, key files)
+polling rule below is the one `account-pool.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md)` already states
+Design: account-pool.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md) (windows, the polling rules, key files)
 
 # The accounts card drops a window nobody can act on, and stops going stale
 

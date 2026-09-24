@@ -7,18 +7,22 @@ import { deleteAgent, getAgent, readAgentSource, saveAgent } from "@/agents/regi
 import { scopeFromRequest, type DefinitionScope } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
 import { FIELD_TYPES } from "@/agents/types";
-import { fetchAvailableModels } from "@/lib/models";
-import { formatProviderRef, listProviderModels, listProviders } from "@/lib/providers";
 import { EFFORTS } from "@/lib/reasoning";
-import { knownToolNames } from "@/runtime/tools/registry";
+import { knownToolNames } from "@/agents/tools";
 import { inheritedSkills, listSkills } from "@/skills/registry";
 
 export const runtime = "nodejs";
 
 /**
+ * Concrete Claude ids an agent may pin. A node runs on the person's own Claude
+ * Code login, so this is a list of names Claude Code accepts, not of what any
+ * account here serves; an id not in it still loads, and the editor keeps it.
+ */
+const CLAUDE_MODELS = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"];
+
+/**
  * The vocabularies the editor's form needs — efforts, field types, executors,
- * gate's tool names, and every model gate can reach: the account's, and each
- * configured provider's.
+ * gate's tool names, and the Claude models an agent may name.
  *
  * They are served rather than duplicated in the browser because every one of
  * them lives in a module that reaches for `node:fs` somewhere down its import
@@ -26,18 +30,6 @@ export const runtime = "nodejs";
  * first time a tool is added and nobody remembers the second list exists.
  */
 async function editorOptions(scope: DefinitionScope) {
-  const { models, source } = await fetchAvailableModels();
-  // Everything else gate can reach: an Ollama on this machine, a hosted
-  // endpoint like Z.AI. An agent picks one the same way it picks a tier —
-  // which is the whole of what "run this node on GLM" means here.
-  const providerGroups = await Promise.all(
-    listProviders()
-      .filter((p) => p.enabled)
-      .map(async (p) => ({
-        label: p.selfHosted ? `${p.label} (on your network)` : p.label,
-        models: (await listProviderModels(p)).models.map((m) => formatProviderRef(p.name, m)),
-      })),
-  );
   // The team's own skills and the ones it inherits, in one list: an agent
   // naming either resolves, and which library a skill lives in is not a
   // distinction the person assigning it has to hold in their head.
@@ -45,12 +37,10 @@ async function editorOptions(scope: DefinitionScope) {
     .map((s) => ({ id: s.id, name: s.name, description: s.description }))
     .sort((a, b) => a.id.localeCompare(b.id));
   return {
-    // Tier aliases first: this is what an agent file normally says, and the
-    // router resolves it per run against whatever the account actually has.
+    // Aliases first: this is what an agent file normally says, and Claude
+    // Code resolves it to the newest model of that name.
     modelTiers: ["haiku", "sonnet", "opus", "fable"],
-    models,
-    providerGroups: providerGroups.filter((g) => g.models.length > 0),
-    modelSource: source,
+    models: CLAUDE_MODELS,
     efforts: EFFORTS,
     executors: ["gate", "claude-code"],
     fieldTypes: FIELD_TYPES,

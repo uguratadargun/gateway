@@ -2,16 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, Bot, BookOpen, FolderGit2, GitBranch, History, LayoutDashboard, ListChecks, ListTree, LogOut, MessageSquareWarning, MessagesSquare, ScrollText, Sparkles, Users } from "lucide-react";
+import { Bot, BookOpen, FolderGit2, GitBranch, History, LayoutDashboard, ListChecks, LogOut, MessageSquareWarning, Sparkles, Users } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/sessions", label: "Sessions", icon: ListTree },
-  { href: "/traffic", label: "Traffic", icon: ScrollText },
-  { href: "/playground", label: "Playground", icon: MessagesSquare },
   { href: "/agents", label: "Agents", icon: Bot },
   { href: "/skills", label: "Skills", icon: Sparkles },
   { href: "/repos", label: "Repos", icon: FolderGit2 },
@@ -38,7 +34,7 @@ export function Sidebar() {
     <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r bg-muted/30 px-3 py-5">
       <div className="px-2 pb-6">
         <div className="text-lg font-semibold tracking-tight">gate</div>
-        <div className="text-xs text-muted-foreground">claude gateway</div>
+        <div className="text-xs text-muted-foreground">your team&apos;s pipelines</div>
       </div>
       <nav className="flex flex-col gap-1">
         {links.map((l) => {
@@ -69,7 +65,7 @@ export function Sidebar() {
           <LogOut className="size-4" />
           Sign out
         </button>
-        <div className="px-2 text-[11px] text-muted-foreground">Personal use · your own account</div>
+        <div className="px-2 text-[11px] text-muted-foreground">Every run on its own person&apos;s Claude login</div>
       </div>
     </aside>
   );

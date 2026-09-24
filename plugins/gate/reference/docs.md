@@ -50,7 +50,7 @@ repository is the source; memory is the index.
 ## `docs/design/<feature>.md` — how it works today
 
 One file per feature, named for the feature the product has (`memory.md`,
-`account-pool.md`), not for the task that built it. The file name is the
+`offline-sync.md`), not for the task that built it. The file name is the
 feature's id in gate's catalogue, shared by every repository of the team
 tree: when the android and desktop repositories both have `offline-sync.md`,
 that is one feature, built twice. Name a feature the same way the other

@@ -55,6 +55,17 @@ describe("parseAgent", () => {
     expect(() => parseAgent("a", raw, meta)).toThrow(/unknown field type/);
   });
 
+  it("refuses a provider model, which nothing on the person's machine can reach, and still takes a Claude one", () => {
+    expect(() => parseAgent("a", "---\nname: A\nmodel: provider:zai/glm-5.3\n---\nx", meta)).toThrow(/own Claude login/);
+    expect(() => parseAgent("a", "---\nname: A\nmodel: local:ollama/qwen3\n---\nx", meta)).toThrow(/own Claude login/);
+    expect(parseAgent("a", "---\nname: A\nmodel: claude-opus-5-5\n---\nx", meta).model).toBe("claude-opus-5-5");
+  });
+
+  it("still loads an older file that names the loop's own limits", () => {
+    const def = parseAgent("a", "---\nname: A\nmaxTokens: 32000\nmaxToolIterations: 0\n---\nx", meta);
+    expect(def.maxTokens).toBe(32000);
+  });
+
   it("rejects a prompt that reads an undeclared input", () => {
     const raw = "---\nname: A\ninputs: [planner.plan]\n---\n{{inputs.reviewer.verdict}}";
     expect(() => parseAgent("a", raw, meta)).toThrow(/undeclared input/);

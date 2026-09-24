@@ -145,7 +145,6 @@ describe("a merge nobody ran through gate", () => {
       cloned: false,
       baseRef: "main",
       setup: [],
-      prepare: [],
       teamId: "mg-server",
     });
     return { work, repo, base };

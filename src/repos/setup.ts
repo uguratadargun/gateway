@@ -1,12 +1,12 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { WorkflowError } from "@/runtime/errors";
 import { readRemoteUrl } from "@/runtime/workspace";
 
-import { detectRepoCommands, linkedDirectories, type RepoCommands } from "./detect";
+import { detectRepoCommands, type RepoCommands } from "./detect";
 import { canonicalRepoId } from "./identity";
 import { getRepo, listRepos, setRepoRemote, setRepoStatus, type RepoRecord } from "./store";
 
@@ -333,37 +333,6 @@ export async function pullRepo(id: string): Promise<RepoRecord | null> {
   }
   setRepoStatus(id, "ready", parts.join("\n\n").slice(-MAX_LOG_BYTES));
   return getRepo(id);
-}
-
-/**
- * Get a fresh worktree ready: borrow the checkout's installed dependencies,
- * then run whatever the repo said each worktree needs.
- *
- * Symlinked rather than copied — `node_modules` is gigabytes and identical to
- * the one next door. Failures here are fatal on purpose: a run whose worktree
- * is half-prepared fails later, further from the cause, and usually after
- * spending money on a plan.
- */
-export async function prepareWorktree(repo: RepoRecord, worktreeRoot: string): Promise<void> {
-  for (const dir of linkedDirectories(repo.root)) {
-    const target = join(worktreeRoot, dir);
-    if (existsSync(target)) continue;
-    try {
-      symlinkSync(join(repo.root, dir), target, "dir");
-    } catch (e) {
-      throw new WorkflowError("WORKSPACE_ERROR", `could not link ${dir} into the worktree: ${(e as Error).message}`);
-    }
-  }
-
-  for (const argv of repo.prepare) {
-    const { ok, log } = await runOne(argv, worktreeRoot);
-    if (!ok) {
-      throw new WorkflowError(
-        "WORKSPACE_ERROR",
-        `preparing the worktree failed: ${log.split("\n").slice(0, 6).join(" ").slice(0, 400)}`,
-      );
-    }
-  }
 }
 
 /** Absolute paths only, so a repo id can never be mistaken for one. */

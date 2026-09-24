@@ -10,14 +10,12 @@ import { backgroundSubagentNotice, fileReadingNotice } from "@/skills/inject";
 /**
  * The team's claude-code agents, as subagents of the person's own Claude Code.
  *
- * A node that runs in its own model has two ways to run on this machine. As
- * a detached worker it is invisible until `gate wait` relays its log; as a
- * subagent of the session it is drawn live in the terminal the way the
- * session's own work is — every read, every edit as a diff, every command —
- * and the person can stop it. The second needs Claude Code to know the agent:
- * a file under ~/.claude/agents/ whose `model:` is the agent's model, which
- * Claude Code passes straight to the API and gate's gateway routes to the
- * provider. So this mirrors the team's agents there, one file each, and
+ * A node that runs in its own model runs as a subagent of the session, drawn
+ * live in the terminal the way the session's own work is — every read, every
+ * edit as a diff, every command — and the person can stop it. That needs
+ * Claude Code to know the agent: a file under ~/.claude/agents/ whose
+ * `model:` is the agent's model, which Claude Code resolves on the person's
+ * own login. So this mirrors the team's agents there, one file each, and
  * removes what the team no longer has. Claude Code watches the directory,
  * so an edit lands within seconds; only the directory's very first file
  * needs a restart to be seen.

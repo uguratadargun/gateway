@@ -1,6 +1,6 @@
 # 0019. A model's weekly limit blocks that model, not the account
 
-Status: accepted
+Status: superseded by 0046
 Date: 2026-09-18
 
 ## Context

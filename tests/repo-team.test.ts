@@ -26,7 +26,6 @@ function connect(id: string, teamId: string | null) {
     cloned: false,
     baseRef: null,
     setup: [],
-    prepare: [],
     teamId,
   });
 }

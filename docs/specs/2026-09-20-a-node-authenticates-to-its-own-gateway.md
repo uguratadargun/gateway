@@ -1,7 +1,7 @@
 Status: done
 Branch: gate/run-525fd5c1
 Decisions: docs/decisions/0023-a-run-carries-a-token-of-its-own.md
-Design: docs/design/gateway-pipeline.md, docs/design/agents-and-skills.md, docs/design/executions.md
+Design: gateway-pipeline.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md), docs/design/agents-and-skills.md, docs/design/executions.md
 
 # A node authenticates to its own gateway
 

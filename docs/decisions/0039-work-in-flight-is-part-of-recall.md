@@ -1,6 +1,6 @@
 # 0039. Work in flight is part of recall, and an overlap is told to both people
 
-Status: accepted
+Status: superseded by 0047
 Date: 2026-09-23
 Run: gate/memory-best-practices (manual)
 

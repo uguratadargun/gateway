@@ -105,10 +105,9 @@ export interface StepUsage {
    */
   costUsd?: number | null;
   /**
-   * "reported" when the node's own executor measured it; "session" when it
-   * was attributed afterwards from the driving session's gateway traffic
-   * inside the step's time window — an estimate, since that session may have
-   * done other things in the same minutes.
+   * "reported" when the node's own executor measured it; "session" on a
+   * step recorded before gate stopped serving models, when it was attributed
+   * afterwards from the driving session's gateway traffic.
    */
   source?: "reported" | "session";
 }

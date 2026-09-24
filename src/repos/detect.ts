@@ -1,61 +1,23 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * What a repository needs before a run can work in it.
- *
- * Two different questions, and conflating them is what made every pipeline
- * carry its own copy of the answer:
- *
- * - **setup** runs once, in the repository itself: fetch dependencies, build
- *   whatever the tests import. Expensive, and shared by every run.
- * - **prepare** runs in each run's fresh worktree. A worktree carries what git
- *   tracks and nothing else, so the generated files the setup produced are not
- *   in it — measured on one Electron repo as 924 files in the checkout against
- *   2 in the worktree, which failed 19 test files identically on every pass
- *   until the pipeline generated them itself.
- *
- * Detected as a starting point, not a verdict: the guesses are prefilled into
- * the form and the person adding the repo edits them.
+ * What the gate's own checkout of a repository needs once it is cloned:
+ * **setup** runs in it, to fetch dependencies. Detected as a starting point,
+ * not a verdict: the guess is prefilled into the form and the person adding
+ * the repo edits it.
  */
 
 export interface RepoCommands {
   setup: string[][];
-  prepare: string[][];
   /** What the detection keyed off, so the form can say why it guessed this. */
   reason: string;
-}
-
-function readJson(path: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-/** Scripts a JS project defines that are worth running before the tests. */
-function jsPrepare(scripts: Record<string, unknown>, pm: string): string[][] {
-  const out: string[][] = [];
-  // Ordered the way a build does it: generated sources before transpilation.
-  for (const name of ["build-protobuf", "generate", "codegen", "prisma:generate"]) {
-    if (typeof scripts[name] === "string") out.push([pm, "run", name]);
-  }
-  for (const name of ["transpileNew", "transpile", "build:dev"]) {
-    if (typeof scripts[name] === "string") {
-      out.push([pm, "run", name]);
-      break;
-    }
-  }
-  return out;
 }
 
 export function detectRepoCommands(root: string): RepoCommands {
   const has = (f: string) => existsSync(join(root, f));
 
   if (has("package.json")) {
-    const pkg = readJson(join(root, "package.json")) ?? {};
-    const scripts = (pkg.scripts ?? {}) as Record<string, unknown>;
     // The lockfile is the honest answer to "which package manager", ahead of
     // whatever `packageManager` claims — it is what CI would key off too.
     const pm = has("pnpm-lock.yaml") ? "pnpm" : has("yarn.lock") ? "yarn" : has("bun.lockb") ? "bun" : "npm";
@@ -63,7 +25,6 @@ export function detectRepoCommands(root: string): RepoCommands {
       pm === "npm" ? (has("package-lock.json") ? ["npm", "ci"] : ["npm", "install"]) : [pm, "install"];
     return {
       setup: [install],
-      prepare: jsPrepare(scripts, pm),
       reason: has("pnpm-lock.yaml")
         ? "pnpm-lock.yaml"
         : has("yarn.lock")
@@ -76,16 +37,16 @@ export function detectRepoCommands(root: string): RepoCommands {
     };
   }
 
-  if (has("uv.lock")) return { setup: [["uv", "sync"]], prepare: [], reason: "uv.lock" };
-  if (has("poetry.lock")) return { setup: [["poetry", "install"]], prepare: [], reason: "poetry.lock" };
+  if (has("uv.lock")) return { setup: [["uv", "sync"]], reason: "uv.lock" };
+  if (has("poetry.lock")) return { setup: [["poetry", "install"]], reason: "poetry.lock" };
   if (has("requirements.txt")) {
-    return { setup: [["python3", "-m", "pip", "install", "-r", "requirements.txt"]], prepare: [], reason: "requirements.txt" };
+    return { setup: [["python3", "-m", "pip", "install", "-r", "requirements.txt"]], reason: "requirements.txt" };
   }
-  if (has("Cargo.toml")) return { setup: [["cargo", "fetch"]], prepare: [], reason: "Cargo.toml" };
-  if (has("go.mod")) return { setup: [["go", "mod", "download"]], prepare: [], reason: "go.mod" };
-  if (has("Gemfile")) return { setup: [["bundle", "install"]], prepare: [], reason: "Gemfile" };
+  if (has("Cargo.toml")) return { setup: [["cargo", "fetch"]], reason: "Cargo.toml" };
+  if (has("go.mod")) return { setup: [["go", "mod", "download"]], reason: "go.mod" };
+  if (has("Gemfile")) return { setup: [["bundle", "install"]], reason: "Gemfile" };
 
-  return { setup: [], prepare: [], reason: "nothing recognised — say what this repo needs yourself" };
+  return { setup: [], reason: "nothing recognised — say what this repo needs yourself" };
 }
 
 /**

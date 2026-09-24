@@ -141,7 +141,7 @@ export function ProvidersPanel() {
   }
 
   async function remove(id: string, name: string) {
-    if (!confirm(`Remove "${name}"? Any tier pointing at it falls back to the next one.`)) return;
+    if (!confirm(`Remove "${name}"? A recorder or embeddings setting naming it stops working.`)) return;
     await fetch(`/api/providers/${id}`, { method: "DELETE" });
     await refresh();
   }
@@ -156,9 +156,9 @@ export function ProvidersPanel() {
             <HardDrive className="size-4" /> Providers
           </CardTitle>
           <CardDescription>
-            Models that are not one of the connected Claude accounts — Ollama, vLLM, LM Studio or
-            llama.cpp on your own machine, and hosted endpoints like Z.AI. Point a tier or an agent
-            at one and it is routed, metered and billed to nobody at Anthropic.
+            Endpoints this server can call itself — vLLM, Ollama, LM Studio or llama.cpp on your own
+            network, and hosted ones like Z.AI. The recorder runs on one (Settings → Memory, as{" "}
+            <span className="font-mono">provider:&lt;name&gt;/&lt;model&gt;</span>), and embeddings come from one.
           </CardDescription>
         </div>
         {!adding && (
@@ -198,7 +198,7 @@ export function ProvidersPanel() {
                   <Button variant="ghost" size="icon" onClick={() => probe(p.id, true)} title="Test and refresh models">
                     <RefreshCw className="size-4" />
                   </Button>
-                  <span title="Available for routing">
+                  <span title="Available to the recorder and embeddings">
                     <Switch checked={p.enabled} onCheckedChange={(v) => patch(p.id, { enabled: v })} />
                   </span>
                   <Button variant="ghost" size="icon" onClick={() => remove(p.id, p.label)} title="Remove">

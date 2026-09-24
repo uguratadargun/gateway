@@ -1,16 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { createKey, deleteKey, hasActiveKeys, listKeys, revokeKey, verifyKey } from "@/lib/apikeys";
-import { cacheClear, cacheGet, cacheKey, cacheSet, cacheStats } from "@/lib/cache";
-import { costFor, savingsVsOpus, tierOf } from "@/lib/pricing";
-import { readRateLimit, recordRateLimit } from "@/lib/ratelimit";
-import type { ClaudeAccount } from "@/lib/claude/oauth";
-import { addAccount, deleteAccount, listAccounts, loadAccountCredentials } from "@/lib/accounts";
-import type { StoredCredentials } from "@/lib/store";
-import { saveSettings } from "@/lib/settings";
-import { createUser, deleteUser, ensureDefaultTeam, DEFAULT_TEAM_ID } from "@/lib/teams";
-import { clearTraffic, readTraffic, recordTraffic } from "@/lib/traffic";
-import { getSpend, readUsage, recordUsage } from "@/lib/usage";
+import { createKey, deleteKey, listKeys, resolveKey, revokeKey } from "@/lib/apikeys";
+import { forgetTheGateway, getDb, kvGet, kvSet } from "@/lib/db";
+import { apiEquivalentCost, tierOf } from "@/lib/pricing";
+import { loadSettings, saveSettings } from "@/lib/settings";
 
 describe("pricing", () => {
   it("infers tiers from model ids", () => {
@@ -19,191 +12,65 @@ describe("pricing", () => {
     expect(tierOf("claude-opus-5")).toBe("opus");
     expect(tierOf("claude-fable-5-1")).toBe("fable");
   });
-  it("computes cost and savings vs opus", () => {
+  it("prices a Claude model at list price", () => {
     // Sept-2026 list prices: haiku 1/5, opus 5/25 per MTok.
-    expect(costFor("haiku", 10_000, 2_000)).toBeCloseTo(0.02);
-    expect(costFor("opus", 10_000, 2_000)).toBeCloseTo(0.1);
-    expect(savingsVsOpus("haiku", 10_000, 2_000)).toBeCloseTo(0.08);
-  });
-});
-
-describe("usage (sqlite)", () => {
-  it("records events and aggregates totals, cost, and spend windows", () => {
-    recordUsage({ ts: Date.now(), requested: "auto", model: "claude-haiku-4-5-20251001", tier: "haiku", reason: "trivial", status: 200, stream: false, inputTokens: 10_000, outputTokens: 2_000 });
-    recordUsage({ ts: Date.now(), requested: "auto", model: "claude-opus-5", tier: "opus", reason: "heavy", status: 200, stream: true, inputTokens: 1_000, outputTokens: 100 });
-    const u = readUsage();
-    expect(u.total).toBe(2);
-    expect(u.byTier).toEqual({ haiku: 1, opus: 1 });
-    expect(u.inputTokens).toBe(11_000);
-    expect(u.cost).toBeCloseTo(0.02 + 0.0075);
-    expect(u.recent[0].model).toBeDefined();
-    const spend = getSpend();
-    expect(spend.today).toBeCloseTo(u.cost);
-    expect(spend.month).toBeCloseTo(u.cost);
+    expect(apiEquivalentCost("claude-haiku-4-5-20251001", { input: 10_000, output: 2_000 })).toBeCloseTo(0.02);
+    expect(apiEquivalentCost("claude-opus-5-5", { input: 10_000, output: 2_000 })).toBeCloseTo(0.1);
   });
 });
 
 describe("api keys (sqlite)", () => {
-  it("creates, verifies, revokes, and deletes keys; hides the hash", () => {
-    expect(hasActiveKeys()).toBe(false);
+  it("creates, resolves, revokes, and deletes keys; hides the hash", () => {
     const { key, plaintext } = createKey("cli");
     expect(plaintext.startsWith("gate_")).toBe(true);
-    expect(hasActiveKeys()).toBe(true);
-    expect(verifyKey(plaintext)).toBe(true);
-    expect(verifyKey("gate_wrong")).toBe(false);
+    expect(resolveKey(plaintext)?.keyId).toBe(key.id);
+    expect(resolveKey("gate_wrong")).toBeNull();
     const listed = listKeys().find((k) => k.id === key.id)!;
     expect((listed as any).hash).toBeUndefined();
     expect(listed.lastUsedAt).not.toBeNull();
     expect(revokeKey(key.id)).toBe(true);
-    expect(verifyKey(plaintext)).toBe(false);
-    expect(hasActiveKeys()).toBe(false);
+    expect(resolveKey(plaintext)).toBeNull();
     expect(deleteKey(key.id)).toBe(true);
-    expect(listKeys().length).toBe(0);
+    expect(listKeys().find((k) => k.id === key.id)).toBeUndefined();
   });
 });
 
-describe("cache (sqlite)", () => {
-  it("stores and retrieves within TTL, tracks hit rate, and honours disable", () => {
-    saveSettings({ cache: { enabled: true, ttlSeconds: 60 } });
-    cacheClear();
-    const body = { messages: [{ role: "user", content: "2+2" }], max_tokens: 10 };
-    const key = cacheKey("claude-sonnet-5", body);
-    expect(cacheGet(key)).toBeNull();
-    cacheSet(key, { body: '{"ok":1}', model: "claude-sonnet-5", inputTokens: 1, outputTokens: 1 });
-    expect(cacheGet(key)?.body).toBe('{"ok":1}');
-    const s = cacheStats();
-    expect(s.hits).toBe(1);
-    expect(s.misses).toBe(1);
-    expect(s.entries).toBe(1);
-    saveSettings({ cache: { enabled: false } });
-    expect(cacheGet(key)).toBeNull();
-  });
-});
+describe("what gate kept while it served models", () => {
+  it("is dropped on open — the logins first — and a Telegram link's key is revoked with it", () => {
+    const d = getDb();
+    d.exec("CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, sealed TEXT NOT NULL)");
+    d.exec("INSERT INTO accounts (id, sealed) VALUES ('a1', 'sealed-token')");
+    d.exec("CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY, ts INTEGER)");
+    d.exec("CREATE TABLE IF NOT EXISTS traffic (id INTEGER PRIMARY KEY, ts INTEGER)");
+    const { key } = createKey("telegram chat");
+    d.exec("CREATE TABLE IF NOT EXISTS telegram_links (chat_id TEXT PRIMARY KEY, key_id TEXT NOT NULL)");
+    d.prepare("INSERT INTO telegram_links (chat_id, key_id) VALUES ('c1', ?)").run(key.id);
+    kvSet("ratelimit", "{}");
+    kvSet("telegram.botToken", "t");
+    kvSet("memory.index.last", "keep");
 
-describe("traffic + ratelimit (sqlite)", () => {
-  it("records, reads newest-first, and clears traffic", () => {
-    clearTraffic();
-    recordTraffic({ ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r", requestId: "r1" });
-    recordTraffic({ ts: 2, endpoint: "messages", requested: "b", routed: "m", tier: "haiku", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r", requestId: "r2" });
-    const t = readTraffic();
-    expect(t.map((e) => e.requested)).toEqual(["b", "a"]);
-    clearTraffic();
-    expect(readTraffic().length).toBe(0);
-  });
-  it("names the person who called and the account that served, and keeps the row readable when both are gone", () => {
-    clearTraffic();
-    ensureDefaultTeam();
-    const user = createUser({ email: "ada@example.test", name: "Ada Lovelace", teamId: DEFAULT_TEAM_ID });
-    const { key } = createKey({ name: "ada-laptop", userId: user.id, teamId: DEFAULT_TEAM_ID });
-    const account = addAccount(
-      {
-        accessToken: "a",
-        refreshToken: "r",
-        expiresAt: Date.now() + 3_600_000,
-        account: { account_uuid: "traffic-account", account_email: "work@example.test" } as ClaudeAccount,
-        cliUserID: "0".repeat(64),
-        connectedAt: 0,
-        updatedAt: 0,
-      },
-      "work",
-    );
-    const row = { ts: 1, endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r", requestId: "r1" };
-    recordTraffic({ ...row, keyId: key.id, userId: user.id, teamId: DEFAULT_TEAM_ID, accountId: account.id });
+    forgetTheGateway(d);
 
-    const named = readTraffic()[0];
-    expect(named.caller).toBe("Ada Lovelace");
-    expect(named.servedBy).toBe("work");
-
-    // Deleting the person revokes the key rather than removing it, and a
-    // deleted account leaves nothing to join — the row must still read.
-    deleteAccount(account.id);
-    deleteUser(user.id);
-    const orphaned = readTraffic()[0];
-    expect(orphaned.caller).toBe("ada-laptop");
-    expect(orphaned.servedBy).toMatch(/^removed account /);
-    clearTraffic();
-  });
-  it("falls back to the sentinel key ids, then to unknown", () => {
-    clearTraffic();
-    const row = { endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
-    recordTraffic({ ...row, ts: 1, requestId: "r1" });
-    recordTraffic({ ...row, ts: 2, keyId: "workflow", requestId: "r2" });
-    recordTraffic({ ...row, ts: 3, keyId: "local", requestId: "r3" });
-    expect(readTraffic().map((e) => e.caller)).toEqual(["local", "workflow", "unknown"]);
-    // A caller with no account and no provider still reads.
-    expect(readTraffic()[0].servedBy).toBe("—");
-    clearTraffic();
-  });
-  it("keeps only as many rows as the settings say", () => {
-    // maxRows is clamped to a floor of 100 (mergeSettings), so the smallest
-    // value that actually narrows anything is 100 itself.
-    clearTraffic();
-    saveSettings({ traffic: { maxRows: 100 } });
-    try {
-      const row = { endpoint: "messages", requested: "a", routed: "m", tier: "sonnet", status: 200, stream: false, fromCache: false, requestPreview: "q", responsePreview: "r" };
-      const total = 105;
-      for (let i = 1; i <= total; i++) recordTraffic({ ...row, ts: i, requestId: `r${i}` });
-      const kept = readTraffic({ limit: 1000 });
-      expect(kept).toHaveLength(100);
-      expect(kept[0].requestId).toBe(`r${total}`);
-      expect(kept[kept.length - 1].requestId).toBe(`r${total - 100 + 1}`);
-    } finally {
-      saveSettings({ traffic: { maxRows: 5_000 } });
-      clearTraffic();
+    const tables = (d.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((r) => r.name);
+    for (const gone of ["accounts", "usage", "traffic", "telegram_links", "ratelimit_history", "cache", "sessions"]) {
+      expect(tables).not.toContain(gone);
     }
-  });
-  it("persists the latest rate-limit snapshot", () => {
-    recordRateLimit(new Headers({ "anthropic-ratelimit-unified-status": "allowed", "anthropic-ratelimit-tokens-remaining": "1234" }));
-    const rl = readRateLimit();
-    expect(rl?.unifiedStatus).toBe("allowed");
-    expect(rl?.raw["anthropic-ratelimit-tokens-remaining"]).toBe("1234");
+    expect(listKeys().find((k) => k.id === key.id)!.revoked).toBe(true);
+    expect(kvGet("ratelimit")).toBeNull();
+    expect(kvGet("telegram.botToken")).toBeNull();
+    expect(kvGet("memory.index.last")).toBe("keep");
+    // Twice is the same as once.
+    forgetTheGateway(d);
   });
 });
 
-describe("account pool storage", () => {
-  const creds = (uuid: string, token = "a"): StoredCredentials => ({
-    accessToken: token,
-    refreshToken: "r",
-    expiresAt: Date.now() + 3_600_000,
-    account: { account_uuid: uuid, account_email: `${uuid}@example.test` } as ClaudeAccount,
-    cliUserID: "0".repeat(64),
-    connectedAt: 0,
-    updatedAt: 0,
-  });
-
-  it("keeps several logins side by side, each with its own sealed tokens", () => {
-    const one = addAccount(creds("account-1"), "personal");
-    const two = addAccount(creds("account-2", "b"), "work");
-    expect(listAccounts().map((a) => a.label)).toEqual(["personal", "work"]);
-    expect(loadAccountCredentials(one.id)?.accessToken).toBe("a");
-    expect(loadAccountCredentials(two.id)?.accessToken).toBe("b");
-    // Nothing readable leaves the store: the row the dashboard sees has no
-    // token fields at all.
-    expect(Object.keys(one)).not.toContain("sealed");
-    deleteAccount(one.id);
-    deleteAccount(two.id);
-  });
-
-  it("re-authorizing the same account refreshes it in place, not as a duplicate", () => {
-    const first = addAccount(creds("account-1"), "personal");
-    const again = addAccount(creds("account-1", "rotated"));
-    expect(again.id).toBe(first.id);
-    expect(listAccounts().length).toBe(1);
-    // Two rows for one Anthropic account would share — and double-count — one
-    // quota, and the pool would rotate between two views of the same window.
-    expect(loadAccountCredentials(first.id)?.accessToken).toBe("rotated");
-    // A re-login is also how a user clears a cooled-down account.
-    expect(again.enabled).toBe(true);
-    expect(again.cooldownUntil).toBeNull();
-    deleteAccount(first.id);
-  });
-
-  it("orders the pool by priority, newest login last", () => {
-    const a = addAccount(creds("account-1"), "first");
-    const b = addAccount(creds("account-2"), "second");
-    expect(listAccounts().map((x) => x.id)).toEqual([a.id, b.id]);
-    expect(b.priority).toBeGreaterThan(a.priority);
-    deleteAccount(a.id);
-    deleteAccount(b.id);
+describe("settings", () => {
+  it("keeps a recorder on a provider model, and reads a Claude tier left from before as no model", () => {
+    expect(saveSettings({ memory: { model: "provider:vllm/Qwen3.8-27B" } }).memory.model).toBe("provider:vllm/Qwen3.8-27B");
+    expect(saveSettings({ memory: { model: "sonnet" } }).memory.model).toBe("");
+    expect(saveSettings({ memory: { model: "" } }).memory.model).toBe("");
+    // A settings file from the gateway days still loads; what it said about the gateway is dropped.
+    const loaded = loadSettings() as unknown as Record<string, unknown>;
+    expect(Object.keys(loaded).sort()).toEqual(["memory", "plugin"]);
   });
 });

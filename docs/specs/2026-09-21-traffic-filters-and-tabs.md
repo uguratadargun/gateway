@@ -1,7 +1,7 @@
 Status: done
 Branch: gate/run-3115ea44
 Decisions: docs/decisions/0034-a-traffic-row-names-the-run-it-came-from.md
-Design: docs/design/gateway-pipeline.md, docs/design/dashboard.md
+Design: gateway-pipeline.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md), docs/design/dashboard.md
 
 # Traffic: tabs, filters and traceability
 

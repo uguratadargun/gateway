@@ -5,8 +5,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "gate — Claude Gateway",
-  description: "Personal Claude gateway with context-aware model routing.",
+  title: "gate",
+  description: "Your team's agent pipelines, runs and memory — every run on its own person's Claude login.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

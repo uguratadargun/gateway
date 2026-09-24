@@ -6,23 +6,18 @@ import { findNode, skipTargetOf, type WorkflowDefinition, type WorkflowNode } fr
 /**
  * Where a run has got to, worked out by replaying what it has already done.
  *
- * The engine walks a workflow inside one process, holding its state in memory.
- * A run driven from a Claude Code session cannot: each `gate next` is a new
- * process, and the only durable record of the run is its steps. So the walk is
- * reconstructed instead — the graph is traversed from the entry node,
- * consuming recorded steps in the order they were produced, until it reaches a
- * node that has no step yet. That node is what runs next.
+ * A run driven from a Claude Code session has no process that lives as long
+ * as it does: each `gate next` is a new process, and the only durable record
+ * of the run is its steps. So the walk is reconstructed each time — the graph
+ * is traversed from the entry node, consuming recorded steps in the order they
+ * were produced, until it reaches a node that has no step yet. That node is
+ * what runs next.
  *
- * This is the same traversal `runWorkflow` performs and it reuses the same edge
- * selection, so a run cannot take one path here and another there. What differs
- * is `parallel`: the engine starts branches together, and a session can only do
- * one thing at a time, so branches are walked in order. The graph, the
- * conditions and the join are untouched — only the concurrency is gone.
- *
- * `planResume` answers a narrower version of this question (where does a
- * stopped run pick up) and takes the shortcut of stepping over a parallel
- * node's branches, which is right for a resume — those branches already ran —
- * and wrong here.
+ * Edges are chosen by `selectEdge`, the same condition language every
+ * workflow is validated against. A `parallel` node's branches are walked one
+ * after another, in the order the workflow lists them: a session does one
+ * thing at a time. The graph, the conditions and the join are untouched —
+ * only the concurrency is gone.
  */
 
 export type SessionPosition =

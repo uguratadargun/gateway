@@ -49,7 +49,6 @@ function serverRepo() {
       cloned: false,
       baseRef: "main",
       setup: [],
-      prepare: [],
       teamId: "vo-server",
     });
   }

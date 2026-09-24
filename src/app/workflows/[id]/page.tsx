@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Code2, LayoutGrid, Play, Plus, Save, Trash2, Undo2 } from "lucide-react";
+import { ArrowLeft, Code2, LayoutGrid, Plus, Save, Trash2, Undo2 } from "lucide-react";
 
 import {
   WorkflowGraph,
@@ -113,7 +113,6 @@ export default function WorkflowDetailPage() {
   const [agents, setAgents] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [showSource, setShowSource] = useState(false);
-  const [input, setInput] = useState("{}");
   const [requiredInput, setRequiredInput] = useState<string[]>([]);
   const [optionalInput, setOptionalInput] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -137,11 +136,6 @@ export default function WorkflowDetailPage() {
     const required: string[] = data.requiredInput ?? [];
     setRequiredInput(required);
     setOptionalInput(data.optionalInput ?? []);
-    if (required.length) {
-      setInput((current) =>
-        current.trim() === "{}" ? JSON.stringify(Object.fromEntries(required.map((k) => [k, ""])), null, 2) : current,
-      );
-    }
   }, [id, team]);
 
   useEffect(() => {
@@ -191,27 +185,6 @@ export default function WorkflowDetailPage() {
     if (!confirm(`Delete workflow "${id}"? The file is removed from ~/.gate/workflows.`)) return;
     await fetch(withTeam(`/api/workflows/${id}`, team), { method: "DELETE" });
     router.push(withTeam("/workflows", team));
-  }
-
-  async function run() {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(input || "{}");
-    } catch {
-      setError("run input must be valid JSON");
-      return;
-    }
-    const r = await fetch(withTeam("/api/executions", team), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workflowId: id, input: parsed }),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      setError(data.error ?? "could not start run");
-      return;
-    }
-    router.push(`/executions/${data.executionId}`);
   }
 
   const persistLayout = useCallback(
@@ -455,9 +428,6 @@ export default function WorkflowDetailPage() {
           >
             <Code2 /> {showSource ? "Graph" : "YAML"}
           </Button>
-          <Button onClick={run}>
-            <Play /> Run
-          </Button>
         </div>
       </header>
 
@@ -513,16 +483,16 @@ export default function WorkflowDetailPage() {
             {!canvasFull && nodeCard}
             {!canvasFull && routingCard}
 
+            {/* A run happens in someone's own Claude Code session, on their own
+                login, in a worktree of their checkout: this page can say how
+                to start one, not start one. */}
             <Card className="space-y-2 p-4 text-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Run input</div>
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                spellCheck={false}
-                className="h-28 resize-none font-mono text-xs"
-              />
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Run it</div>
+              <code className="block rounded bg-muted px-2 py-1 text-xs">/gate:run {id} &lt;task&gt;</code>
               <p className="text-[11px] text-muted-foreground">
-                JSON object, readable by nodes as <span className="font-mono">input.*</span>.
+                In Claude Code, in a checkout of the repository it works on. Other inputs go as{" "}
+                <span className="font-mono">--input key=value</span>, read by nodes as{" "}
+                <span className="font-mono">input.*</span>.
                 {requiredInput.length > 0 && (
                   <>
                     {" "}

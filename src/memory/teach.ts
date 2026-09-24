@@ -155,8 +155,8 @@ export function teachBranch(who: { teamId: string; userId: string | null }, body
   // Closed at the branch's last commit: that is when the decisions started
   // holding, and the recorder dates them from the run's end.
   finishExecution(state, workspace, body.finishedAt);
-  // A run's quota is where the account pool stood around it; a branch from
-  // months ago used none of it, and a reading taken today would say it had.
+  // A branch from months ago used nothing a run's own steps record, and a
+  // figure summed today would say it had.
   db.prepare("UPDATE workflow_executions SET quota_json = NULL WHERE id = ?").run(executionId);
   if (body.diff) setExecutionDiff(executionId, body.diff);
   // A first teaching was queued when it was closed; a second one has a

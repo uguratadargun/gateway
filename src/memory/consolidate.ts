@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { getDb } from "@/lib/db";
-import { costForUsage, tierOf } from "@/lib/pricing";
+import { apiEquivalentCost } from "@/lib/pricing";
 import { loadSettings } from "@/lib/settings";
 import type { ModelProvider } from "@/providers/types";
 
@@ -199,8 +199,8 @@ export async function consolidateImplementation(
       model: result.model,
       inputTokens: result.usage.inputTokens + result.usage.cacheReadTokens,
       outputTokens: result.usage.outputTokens,
-      costUsd: costForUsage(
-        tierOf(result.model),
+      costUsd: apiEquivalentCost(
+        result.model,
         // The cache write is part of `inputTokens` and priced apart from it:
         // a write bills at 1.25× (5m) or 2× (1h) the input rate.
         {
@@ -209,7 +209,6 @@ export async function consolidateImplementation(
           cacheRead: result.usage.cacheReadTokens,
           cacheCreation: result.usage.cacheCreationTokens ?? 0,
         },
-        { model: result.model, cacheTtl: loadSettings().promptCache.ttl },
       ),
     };
     // Cut off mid-JSON reads as a formatting fault unless it is named; see the

@@ -2,8 +2,9 @@
 
 ## Summary
 
-A gate serves a small group of people through one endpoint. Each of them
-holds a key that names them and the team they are on; the team owns a set of
+A gate serves a small group of people, each on their own machine and their
+own Claude login. Each of them holds a key that names them and the team they
+are on; the team owns a set of
 agents, workflows and skills, and a key can only ever read its own team's.
 Revoking a key, disabling a person, or moving them to another team takes
 effect on the next request. A gate with one person and no teams keeps working
@@ -21,17 +22,17 @@ by two roads, because one of them is closed exactly when it is needed:
 ```
 
 **Connecting never needs a model turn.** The slash command is a prompt, so it
-costs one; a Claude Code whose account is at its weekly limit runs no prompt at
-all, and the person it refuses is precisely the person trying to get onto a
-gateway that would serve them on the team's quota instead. So the plugin writes
-`~/.local/bin/gate` itself, from its SessionStart hook, on every ordinary
-session — ahead of the emergency, and pointing at the bundle that session
-loaded, so a plugin update moves it. The terminal line names the shim by
-absolute path and therefore does not care whether `~/.local/bin` is on anyone's
-PATH. Logging in itself contacts only the gate: the team, the definitions, and
-one optional read of the model list that falls back to a built-in list when the
-account behind it is spent. A rate limit can no more block a login than it can
-block the dashboard.
+costs one; the terminal line costs none, and works with Claude Code closed or
+with its plan's limit spent. So the plugin writes `~/.local/bin/gate` itself,
+from its SessionStart hook, on every ordinary session — ahead of the need, and
+pointing at the bundle that session loaded, so a plugin update moves it. The
+terminal line names the shim by absolute path and therefore does not care
+whether `~/.local/bin` is on anyone's PATH. Logging in contacts only the gate:
+who the key is, and the team's definitions. It then writes the team's
+subagents under `~/.claude/agents/`, and takes out of Claude Code's settings
+anything an older `gate login` put there to send sessions to the gate's
+gateway, so every session is on the person's own login. The SessionStart hook
+does the same removal on every session.
 
 Logging in again keeps what this machine had decided — the workflow versions
 its owner approved to run here, and where their own clone of each connected
@@ -67,38 +68,34 @@ copy always wins, and nothing can write into the fallback, so "whose is this"
 has one answer. Keys issued before there were people carry no owner and read
 as the default team's.
 
-Keys carry **scopes**: `gateway` (model calls), `workflows` (pull definitions,
-report runs), `author` (write them) and `remote` (run sessions on this
-server). A new key gets `gateway` and `workflows` unless the person issuing it
-says otherwise; a key for a third-party tool can be issued `gateway` only.
-`author` and `remote` are off by default and ticked deliberately when the key
-is issued: reading a team's definitions is what everyone on it needs, writing
-them is a decision about that team's pipelines, and a terminal on the gate's
-own machine is a decision about that machine. A key issued before scopes
-existed reads as an ordinary one — everything it could do then, nothing added
-since. A key with no scope at all is inert.
+Keys carry **scopes**: `workflows` (pull definitions, report runs, read
+memory, ask another team) and `author` (write definitions). A new key gets
+`workflows`; `author` is off by default and ticked deliberately when the key
+is issued ("may author" on the Team page): reading a team's definitions is
+what everyone on it needs, writing them is a decision about that team's
+pipelines. A key issued before scopes existed reads as `workflows`. A key
+issued with `gateway` or `remote` keeps only the scopes that still mean
+something; the others are dropped when the key is read, so a key that had
+`gateway` alone has no scope left. A key with no scope at all is inert.
 
-Two surfaces verify keys, and they differ on purpose:
+Two surfaces authenticate, and they differ on purpose:
 
-- The **gateway** (`/api/gateway/*`) takes an issued key with the `gateway`
-  scope when any key exists, else `GATE_API_KEY`, else — when neither is
-  configured — is open, which is what a loopback-only install has always
-  been. Without a person attached it answers as the default team.
+- The **admin session** guards the dashboard and the management routes under
+  `/api/*` ([dashboard](dashboard.md)). It is one secret, not a key.
 - The **client API** (`/api/v1/*`) — what the `gate` CLI on a developer's
-  machine talks to — is **never open**. It hands out a team's definitions and
-  accepts run reports, so an unauthenticated caller there would be handed
-  every workflow the team has written. It refuses a client older than the
-  minimum version first, with the command that fixes it (`426
-  CLIENT_TOO_OLD`); then a missing key (`401 NO_API_KEY`), a key without
+  machine talks to — takes issued keys and is **never open**. It hands out a
+  team's definitions and accepts run reports, so an unauthenticated caller
+  there would be handed every workflow the team has written. It refuses a
+  client older than the minimum version first, with the command that fixes it
+  (`426 CLIENT_TOO_OLD`); then a missing key (`401 NO_API_KEY`), a key without
   `workflows` (`403 SCOPE_MISSING`), a key whose team no longer exists
   (`403 TEAM_GONE`), and an unknown or revoked key (`401 INVALID_API_KEY`).
-  `GATE_API_KEY` still works there, as the default team with `gateway` and
-  `workflows`.
+  `GATE_API_KEY` works there too, as the default team with `workflows`.
 
 Resolving a key is one statement that does the lookup and the liveness check
 together — a revoked key and an unknown one are the same answer — and touches
-`last_used_at` and the reporting host (`x-gate-host`), so the dashboard's
-"last used" column is true for every surface a key can reach.
+`last_used_at` and the host the CLI reports in `x-gate-host`, so the Team
+page's "last used … from <host>" is true.
 
 A run is visible to the team whose workflow produced it. Two people on the
 same team can watch each other's runs; only the run's owner can report steps
@@ -131,22 +128,21 @@ loading are named.
 ## Key files
 
 - `src/lib/teams.ts` — teams (slug ids, parent tree, `teamFamily`), people, the key-follows-owner rule on move, revoke-on-delete
-- `src/lib/apikeys.ts` — key issue and hashing, scopes and their defaults, `resolveKey` (lookup, liveness, disabled-owner check, last-used touch)
-- `src/lib/gate-auth.ts` — `gatePrincipal`: the gateway's issued-key / env-key / open rule
-- `src/lib/tenancy.ts` — `requireClient` for `/api/v1/*` with its error codes, `scopeForPrincipal`, `ownsExecution`
+- `src/lib/apikeys.ts` — key issue and hashing, scopes and their defaults, the scopes read past, `resolveKey` (lookup, liveness, disabled-owner check, last-used touch)
+- `src/lib/tenancy.ts` — `requireClient` for `/api/v1/*` with its error codes and the bearer token, `scopeForPrincipal`, `ownsExecution`
 - `src/lib/def-root.ts` — `DefinitionScope`: a team's root, its fallback to the default team, `ownScope`, the one-time legacy rename, `scopeFromRequest` for `?team=`
 - `src/agents/registry.ts`, `src/workflows/registry.ts`, `src/skills/registry.ts` — the file stores, each taking a scope rather than knowing a path
 - `src/middleware.ts` — the admin cookie that guards the dashboard and `/api/*` management routes, a separate concern from keys
 - `src/lib/protocol.ts` — the lines a key is handed out as: `installLines` for Claude Code, `terminalLoginLine` and `bundleLoginLine` for a terminal
-- `plugins/gate/scripts/session-start.mjs` — the SessionStart hook: writes `~/.local/bin/gate` pointing at the bundle beside it, and only when it would change
+- `plugins/gate/scripts/session-start.mjs` — the SessionStart hook: writes `~/.local/bin/gate` pointing at the bundle beside it, and only when it would change; removes an older login's wiring from Claude Code's settings
 - `src/client/cli.ts` — `cmdLogin`, and `cmdInstall`, the by-hand writer of the same shim
+- `src/client/claude-settings.ts`, `src/client/subagents.ts` — what a login removes from Claude Code's settings, and the team's subagents it writes
 - `src/client/config.ts` — `writeLogin`: a login that keeps this machine's approvals and repo paths on the same gate, and drops them on a different one
 
 ## Pitfalls
 
-- A gateway with no issued keys and no `GATE_API_KEY` is open. Issuing the first key closes it for everyone, including tools that were working keyless.
 - The client API never falls back to open. A developer's `gate login` against a keyless gate needs `GATE_API_KEY` at minimum.
-- Scopes are checked per surface: a `gateway`-only key is refused by `/api/v1/*` with `SCOPE_MISSING`, and a `workflows` key with no `gateway` scope cannot make model calls.
+- A key issued `gateway` only reads with no scope and is refused by `/api/v1/*` with `SCOPE_MISSING`. Issue the person a new key.
 - Moving a person moves their keys; issuing a key to a person on team A and then moving the person to team B means the key now reads team B's definitions. That is the intended rule, but it surprises a tool that cached team A's.
 - The fallback to the default team is read-only. A team that edits an inherited agent gets its own copy; the default team's file is untouched and other teams still see it.
 - Deleting a team does not delete `~/.gate/teams/<team>/`. Re-creating the same slug picks the old files back up.
@@ -156,5 +152,6 @@ loading are named.
 
 ## Decisions
 
-- [0011 — Three auth surfaces, three rules](../decisions/0011-three-auth-surfaces-three-rules.md)
+- [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)
+- [0011 — Three auth surfaces, three rules](../decisions/0011-three-auth-surfaces-three-rules.md) (superseded by 0046: two surfaces remain, with the same rules)
 - [0026 — Connecting a machine never needs a model turn](../decisions/0026-connecting-never-needs-a-model-turn.md)

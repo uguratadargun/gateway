@@ -1,15 +1,8 @@
 import type React from "react";
-import { BarChart3, Plug, Route, SlidersHorizontal, Users } from "lucide-react";
+import { Cpu, SlidersHorizontal } from "lucide-react";
 
-import { AccountsPanel } from "@/components/accounts-panel";
-import { ClientsPanel } from "@/components/clients-panel";
-import { GatewayInfo } from "@/components/gateway-info";
-import { KeysPanel } from "@/components/keys-panel";
 import { ProvidersPanel } from "@/components/providers-panel";
-import { OverviewPanel } from "@/components/overview-panel";
-import { RoutingRulesPanel } from "@/components/routing-rules-panel";
 import { SettingsPanel } from "@/components/settings-panel";
-import { UsagePanel } from "@/components/usage-panel";
 
 /**
  * One band of the page: a heading and the cards that answer it. The headings
@@ -46,56 +39,22 @@ export default function Home() {
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Pooled Claude logins and whatever else you point it at. Context-aware routing across
-          Haiku, Sonnet, Opus, Fable — and any provider you add, hosted or on your own machine.
+          Your team&apos;s pipelines, runs and memory. Every model call a run makes is the person&apos;s own Claude Code
+          login, on their own machine; this server holds no Claude account and serves no models.
         </p>
       </header>
 
       <div className="grid gap-10">
         <Section
-          icon={Users}
-          title="Accounts"
-          description="The logins gate serves from, and what they are doing right now."
-        >
-          <AccountsPanel />
-          <OverviewPanel />
-        </Section>
-
-        <Section
-          icon={Plug}
-          title="Connect"
-          description="Where your tools point, and what they need to get in."
-        >
-          <div className="grid gap-6 md:grid-cols-2">
-            <GatewayInfo />
-            <ClientsPanel />
-          </div>
-          <KeysPanel />
-        </Section>
-
-        <Section
-          icon={Route}
-          title="Models"
-          description="What each model name resolves to. Every card here saves on its own."
+          icon={Cpu}
+          title="The server's own model"
+          description="The one thing this server still asks a model: the recorder that writes what a finished run decided, and memory's embeddings. A provider on your network, or a hosted one."
         >
           <ProvidersPanel />
-          <RoutingRulesPanel />
         </Section>
 
-        <Section
-          icon={SlidersHorizontal}
-          title="Gateway settings"
-          description="Caching, quota protection, reliability, memory and the plugin source."
-        >
+        <Section icon={SlidersHorizontal} title="Settings" description="Memory and the plugin source. Every card here saves on its own.">
           <SettingsPanel />
-        </Section>
-
-        <Section
-          icon={BarChart3}
-          title="Usage"
-          description="What has been routed, what it cost, and what the routing saved."
-        >
-          <UsagePanel />
         </Section>
       </div>
     </main>

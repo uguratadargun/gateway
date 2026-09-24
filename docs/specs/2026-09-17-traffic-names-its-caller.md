@@ -1,7 +1,7 @@
 Status: done
 Branch: main
 Decisions: docs/decisions/0017-the-traffic-log-names-who-called-and-who-served.md
-Design: docs/design/gateway-pipeline.md ("Auth", "Accounting"), docs/design/dashboard.md ("What it must never show")
+Design: gateway-pipeline.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md) ("Auth", "Accounting"), docs/design/dashboard.md ("What it must never show")
 
 # The traffic log names the person who called and the account that served
 

@@ -1,26 +1,26 @@
 import { randomUUID } from "node:crypto";
 
 import { getDb } from "./db";
-import { ANTHROPIC_VERSION } from "./claude/config";
 import { seal, tryOpen } from "./seal";
 
+/** The Messages API wire version, sent on every Anthropic-dialect request. */
+export const ANTHROPIC_VERSION = "2023-06-01";
+
 /**
- * Non-Anthropic endpoints gate can route to. Two dialects:
+ * Endpoints the server calls itself: the memory recorder's model and the
+ * embeddings. Two dialects:
  *
  * - `openai-compat` — anything speaking POST {baseUrl}/chat/completions:
  *   Ollama, vLLM, LM Studio, llama.cpp, or a hosted endpoint. gate translates
  *   Anthropic ↔ OpenAI in both directions (`anthropic-openai.ts`).
  * - `anthropic-compat` — an endpoint that already speaks
  *   POST {baseUrl}/v1/messages, so gate forwards the request as it stands.
- *   Z.AI's `https://api.z.ai/api/anthropic` is the one people reach for; it is
- *   also the dialect a spawned Claude Code wants, because nothing it sends —
- *   tool blocks, cache breakpoints, streamed thinking — has to survive a
- *   round trip through a second wire format first.
+ *   Z.AI's `https://api.z.ai/api/anthropic` is one.
  *
- * Either way a provider's models are addressed as `local:<name>/<model>`
- * wherever gate takes a model id. The prefix is historical: it means "not one
- * of the connected Claude accounts", not "on this machine" — `selfHosted`
- * below is what actually says whether the traffic leaves the network.
+ * Either way a provider's models are addressed as `provider:<name>/<model>`
+ * (`local:` is the older spelling, still read). The name says which
+ * endpoint, not where it is — `selfHosted` below is what says whether the
+ * traffic leaves the network.
  */
 
 export const PROVIDER_KINDS = ["openai-compat", "anthropic-compat"] as const;
@@ -294,16 +294,6 @@ export function formatProviderRef(provider: string, model: string): string {
   return `${REF_PREFIX}${provider}/${model}`;
 }
 
-/**
- * A model id in the form gate compares and stores. Only provider refs change:
- * a legacy `local:` one becomes its `provider:` equivalent, so a tier still
- * written the old way in routing.json matches a picker that now writes the new
- * way. A Claude model id is returned untouched.
- */
-export function canonicalModelRef(model: string): string {
-  const ref = parseProviderRef(model);
-  return ref ? formatProviderRef(ref.provider, ref.model) : model;
-}
 
 // ── live model discovery ────────────────────────────────────────────────────
 
@@ -373,33 +363,3 @@ export function forgetProviderModels(id: string): void {
   modelCache.delete(id);
 }
 
-/**
- * Every enabled provider's models, named the way a person reads them.
- *
- * One list, two readers: `/v1/models` serves it, and the Claude Code picker
- * rows are built from it — the same names in both, whether they are written
- * by the gate itself or by a CLI that only ever saw the endpoint. The name
- * carries the provider because two of them may serve the same model id, and
- * `glm-5.3` alone would not say which endpoint answered.
- *
- * An unreachable provider contributes nothing rather than failing the list;
- * a box that is off should not empty the picker of the ones that are on.
- */
-export async function providerCatalogue(): Promise<
-  Array<{ id: string; display_name: string; description: string; owner: string }>
-> {
-  const providers = listProviders().filter((p) => p.enabled);
-  const lists = await Promise.all(
-    providers.map(async (provider) => {
-      const { models } = await listProviderModels(provider);
-      const where = provider.selfHosted ? "on your network" : "remote";
-      return models.map((model) => ({
-        id: formatProviderRef(provider.name, model),
-        display_name: `${model} (${provider.name})`,
-        description: `${provider.label || provider.name} · ${where}`,
-        owner: provider.name,
-      }));
-    }),
-  );
-  return lists.flat();
-}

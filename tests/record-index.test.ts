@@ -154,7 +154,6 @@ function makeRepo(teamId = "ri-android"): { work: string; remote: string; repo: 
     cloned: false,
     baseRef: "main",
     setup: [],
-    prepare: [],
     teamId,
   });
   return { work, remote, repo };
@@ -440,7 +439,6 @@ describe("the record index", () => {
       cloned: false,
       baseRef: null,
       setup: [],
-      prepare: [],
       teamId: "ri-android",
     });
     const out = await indexRepo(repo);

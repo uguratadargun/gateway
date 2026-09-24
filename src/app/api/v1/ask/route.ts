@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { startExecution } from "@/executions/runner";
 import { askSchema } from "@/lib/client-api-schemas";
 import { requireClient, scopeForPrincipal } from "@/lib/tenancy";
+import { createAsk } from "@/orchestration/ask-source";
 import { fetchAskSource, memoryAt, resolveAskSource, type AskSource, type MemoryCoverage } from "@/orchestration/ask";
-import { WorkflowError } from "@/runtime/errors";
 import { workflowExists } from "@/workflows/registry";
 
 export const runtime = "nodejs";
@@ -15,10 +14,15 @@ const ASK_WORKFLOW = "ask";
 /**
  * One team's question about another team's code, answered from a fixed commit.
  *
- * The route's whole job is to turn "how does desktop do X" into a commit and a
- * run that reads it. What it will not do is answer from anything else: not
- * from the model's impression of the repository, not from a branch name, and
- * not from a decision that was recorded on work this commit has never seen.
+ * The route's whole job is to turn "how does desktop do X" into a commit the
+ * asker's own machine can read. It fixes the commit, checks the family, reads
+ * memory at that commit, and hands back an ask: an id the asker's session reads
+ * the source through (`/api/v1/ask/<id>/tree|grep|file`), for a day. The
+ * reading is the asker's own Claude Code, on their own login, in a run of the
+ * `ask` workflow like any other. What it will not do is answer from anything
+ * else: not from the model's impression of the repository, not from a branch
+ * name, and not from a decision that was recorded on work this commit has
+ * never seen.
  *
  * An unreachable source comes back 200 with a status, not as an HTTP error.
  * It is not a failure of the request — the request was fine, and the answer to
@@ -86,27 +90,11 @@ export async function POST(req: Request) {
   // confident answer nobody can check against a file. So memory arrives as a
   // brief for the reviewer, and the reviewer answers from the code with the
   // decision ids beside it.
-  try {
-    const { executionId } = startExecution(
-      ASK_WORKFLOW,
-      {
-        question: parsed.data.question,
-        // The path, not the connected id: this run reads another team's
-        // checkout and must not inherit its publication — there is nothing
-        // here to publish, and a branch pushed into their remote for a
-        // question would be a strange thing to find.
-        repo: source.repo.root,
-        baseRef: source.commit,
-        commit: source.commit,
-        memory: brief(memory),
-      },
-      scopeForPrincipal(auth),
-    );
-    return NextResponse.json({ status: "reviewing", executionId, source: wire(source) }, { status: 202 });
-  } catch (e) {
-    if (e instanceof WorkflowError) return NextResponse.json({ error: e.message, code: e.code }, { status: 400 });
-    return NextResponse.json({ error: (e as Error).message }, { status: 400 });
-  }
+  const ask = createAsk(source, parsed.data.question, { teamId: auth.teamId, userId: auth.userId });
+  return NextResponse.json(
+    { status: "ready", askId: ask.id, expiresAt: ask.expiresAt, workflow: ASK_WORKFLOW, source: wire(source), memory: brief(memory) },
+    { status: 201 },
+  );
 }
 
 /** What the answer quotes: enough to ask the same question again and get the same source. */

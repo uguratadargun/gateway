@@ -7,12 +7,12 @@ import { DEFAULT_AGENTS, ensureDefaultAgents, writeMissingDefaultAgents } from "
 import { parseAgent } from "@/agents/loader";
 import { agentExists, agentsDir, deleteAgent, getAgent, listAgents, saveAgent } from "@/agents/registry";
 import { teamScope } from "@/lib/def-root";
-import { runWorkflow } from "@/runtime/engine";
 import type { WorkflowEvent } from "@/events/types";
 import { DEFAULT_WORKFLOWS, ensureDefaultWorkflows, writeMissingDefaultWorkflows } from "@/workflows/defaults";
 import { optionalRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { deleteWorkflow, getWorkflow, listWorkflows, workflowsDir } from "@/workflows/registry";
 
+import { driveWorkflow as runWorkflow } from "./fakes/drive-workflow";
 import { FakeModelProvider } from "./fakes/fake-model-provider";
 
 /** What the recall node answers when memory holds nothing: the shipped agent's honest shape. */
@@ -1944,42 +1944,34 @@ Investigate {{input.task}} from {{inputs.base.stdout}} given {{inputs.recall.bri
 });
 
 describe("the shipped ask road", () => {
-  const runCommand = (async (node: { id: string }) => ({
-    ok: true,
-    exitCode: 0,
-    stdout: node.id === "base" ? "c0ffee1" : "",
-    stderr: "",
-  })) as never;
-
   const ANSWER = {
     answer: "They queue writes and flush on idle — src/sync/queue.ts:88.",
     sources: ["src/sync/queue.ts:88"],
     certainty: "answered",
   };
+  const INPUT = { question: "how does sync flush?", source: "github.com/acme/desktop", ref: "main", commit: "c0ffee1", ask: "a1b2c3", memory: "nothing recorded" };
 
-  it("reads one commit and answers, with nothing that could change it", () => {
+  it("reads one commit through the gate and answers, with nothing that could change it", () => {
     ensureDefaultWorkflows();
     const workflow = getWorkflow("ask");
-    expect(workflow.nodes.map((n) => n.id)).toEqual(["base", "source-review", "done", "absent"]);
-    // The guarantee is the tool list, not the prompt: a reviewer that cannot
-    // write and cannot run a command is read-only however it is asked.
+    expect(workflow.nodes.map((n) => n.id)).toEqual(["source-review", "done", "absent"]);
+    // No worktree and no command: the other team's repository is never on
+    // this machine, and nothing on the road can run anything.
+    expect(workflow.workspace).toBeUndefined();
+    expect(workflow.nodes.some((n) => n.type === "command")).toBe(false);
     const reviewer = getAgent("source-review");
     expect(reviewer.executor).toBe("gate");
-    for (const tool of ["write_file", "edit_file", "run_command"]) expect(reviewer.tools).not.toContain(tool);
-    expect(reviewer.tools).toContain("read_file");
-    // The only command on the road reads which commit it is on.
-    const commands = workflow.nodes.flatMap((n) => (n.type === "command" ? [n.command] : []));
-    expect(commands).toEqual([["git", "log", "-1", "--format=format:%H"]]);
+    for (const tool of ["write_file", "edit_file", "run_command", "read_file"]) expect(reviewer.tools).not.toContain(tool);
+    // Every input the session is handed by `gate ask` is one the prompt reads.
+    expect(requiredRunInputs(workflow, (id) => getAgent(id)).sort()).toEqual(["ask", "commit", "memory", "question", "ref", "source"]);
   });
 
   it("ends on absent when the commit holds nothing the question matches", async () => {
     ensureDefaultWorkflows();
-    const input = { question: "how does sync flush?", repo: "/r", commit: "c0ffee1", memory: "nothing recorded" };
     const events: WorkflowEvent[] = [];
     const state = await runWorkflow(getWorkflow("ask"), {
       provider: new FakeModelProvider(() => JSON.stringify({ ...ANSWER, certainty: "absent" })),
-      runCommand,
-      input,
+      input: INPUT,
       emit: (e) => events.push(e),
     });
     expect(state.status).toBe("completed");
@@ -1991,15 +1983,17 @@ describe("the shipped ask road", () => {
     const state = await runWorkflow(getWorkflow("ask"), {
       provider: new FakeModelProvider((req) => {
         if (req.context?.nodeId !== "source-review") return "{}";
+        const prompt = String(req.messages[0].content);
         // The commit and the memory brief both reach the reviewer: an answer
-        // that does not know which commit it read cannot say so.
-        expect(String(req.messages[0].content)).toContain("c0ffee1");
-        expect(String(req.messages[0].content)).toContain("they flush on idle");
+        // that does not know which commit it read cannot say so. And it is
+        // told the one way to read the source, with this ask's id in it.
+        expect(prompt).toContain("c0ffee1");
+        expect(prompt).toContain("they flush on idle");
+        expect(prompt).toContain("gate source grep a1b2c3");
+        expect(prompt).toContain("gate source file a1b2c3");
         return JSON.stringify(ANSWER);
       }),
-      runCommand,
-      input: { question: "how does sync flush?", repo: "/r", commit: "c0ffee1", memory: "d-1: they flush on idle" },
-      emit: () => {},
+      input: { ...INPUT, memory: "d-1: they flush on idle" },
     });
     expect(state.status).toBe("completed");
     expect(state.outputs["source-review"]).toMatchObject({ certainty: "answered" });

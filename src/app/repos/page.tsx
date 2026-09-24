@@ -37,7 +37,6 @@ interface Repo {
   cloned: boolean;
   baseRef: string | null;
   setup: string[][];
-  prepare: string[][];
   /** Whose repository this is; null = nobody has said, and anyone here may read it. */
   teamId: string | null;
   /** Where run branches are pushed so another team can read them; null = nowhere. */
@@ -80,7 +79,6 @@ export default function ReposPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [source, setSource] = useState("");
   const [setup, setSetup] = useState("");
-  const [prepare, setPrepare] = useState("");
   const [team, setTeam] = useState("");
   const [detected, setDetected] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "detect" | "connect">(null);
@@ -119,12 +117,10 @@ export default function ReposPage() {
       // A URL cannot be read without fetching it, and a look should not cost a
       // clone. Connect does that, and comes back with what it found.
       setSetup("");
-      setPrepare("");
       setDetected(data.note);
       return;
     }
     setSetup(toText(data.detected.setup));
-    setPrepare(toText(data.detected.prepare));
     setDetected(`${data.root} · detected from ${data.detected.reason}`);
   }
 
@@ -137,7 +133,6 @@ export default function ReposPage() {
       body: JSON.stringify({
         source,
         setup: toArgv(setup),
-        prepare: toArgv(prepare),
         ...(team ? { teamId: team } : {}),
       }),
     });
@@ -146,7 +141,6 @@ export default function ReposPage() {
     if (!r.ok) return setError(data.error ?? "could not connect that repository");
     setSource("");
     setSetup("");
-    setPrepare("");
     setTeam("");
     // Connecting a URL is the first time anything is known about it, so say
     // what the clone turned up rather than clearing the line to nothing.
@@ -233,9 +227,9 @@ export default function ReposPage() {
         {detected && <p className="font-mono text-[11px] text-muted-foreground">{detected}</p>}
         {error && <p className="text-xs text-destructive">{error}</p>}
 
-        {(detected || setup || prepare) && (
+        {(detected || setup) && (
           <>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3">
               <label className="space-y-1">
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                   setup — once, in the checkout
@@ -248,23 +242,10 @@ export default function ReposPage() {
                   className="h-20 resize-none font-mono text-xs"
                 />
               </label>
-              <label className="space-y-1">
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  prepare — every worktree
-                </span>
-                <Textarea
-                  value={prepare}
-                  onChange={(e) => setPrepare(e.target.value)}
-                  spellCheck={false}
-                  placeholder="pnpm run build-protobuf"
-                  className="h-20 resize-none font-mono text-xs"
-                />
-              </label>
             </div>
             <p className="text-[10px] leading-snug text-muted-foreground">
-              One command per line. <strong>Setup</strong> is the install, run once here. <strong>Prepare</strong> is
-              what a worktree still needs after it borrows those dependencies — generated sources, a transpile — because
-              a worktree carries only what git tracks, and build output is normally gitignored.
+              One command per line: the install, run once in this server&apos;s checkout. Runs happen on people&apos;s own
+              machines, in worktrees of their own clones.
             </p>
             <label className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">team</span>
@@ -341,17 +322,11 @@ export default function ReposPage() {
 
             {assignError?.id === repo.id && <p className="text-[11px] text-destructive">{assignError.message}</p>}
 
-            <div className="grid gap-2 text-[11px] sm:grid-cols-2">
+            <div className="grid gap-2 text-[11px]">
               <div>
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground">setup</span>
                 <pre className="mt-0.5 whitespace-pre-wrap rounded bg-muted/40 p-1.5 font-mono">
                   {toText(repo.setup) || "—"}
-                </pre>
-              </div>
-              <div>
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">prepare</span>
-                <pre className="mt-0.5 whitespace-pre-wrap rounded bg-muted/40 p-1.5 font-mono">
-                  {toText(repo.prepare) || "—"}
                 </pre>
               </div>
             </div>

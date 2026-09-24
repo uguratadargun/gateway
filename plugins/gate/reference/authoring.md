@@ -11,8 +11,8 @@ the error says and save again.
 ---
 name: Planner                       # required, ≤64 chars
 description: One line.              # optional, ≤500
-model: sonnet                       # tier alias (haiku/sonnet/opus), a claude-* id, or
-                                    # provider:<name>/<model> — see Models below
+model: sonnet                       # haiku, sonnet, opus, fable, or a claude-* id
+                                    # — see Models below
 effort: high                        # default | low | medium | high | xhigh | max
 inputs: [planner.plan, tests.stdout?]   # upstream node outputs this agent may read
 tools: [read_file, list_files]      # see Tools
@@ -24,15 +24,10 @@ output:
     findings: "string[]"            #   a trailing "?" makes the field optional: the
     notes: "string?"                #   agent may leave the key out or write null
 timeoutMs: 3600000                  # DEFAULT when omitted, and what a new agent should
-                                    # carry. Covers the whole node — every tool round,
-                                    # not one model call. On the server the node is
-                                    # stopped at it; in a run a session drives it is
-                                    # the point the person is told the node is
-                                    # overrunning, and stopping is theirs (gate cancel).
-                                    # Raise it for an agent that works a large repo;
-                                    # 0 = never mention it.
-maxTokens: 32000                    # optional; thinking counts against it (default 8192)
-maxToolIterations: 0                # optional; 0 (the default) = as many tool rounds as it needs
+                                    # carry. Covers the whole node. It is the point the
+                                    # person is told the node is overrunning, and
+                                    # stopping is theirs (gate cancel). Raise it for an
+                                    # agent that works a large repo; 0 = never mention it.
 executor: gate                      # or: claude-code — see Executors below
 asks: person                        # optional; this node is the person's turn — see below
 ---
@@ -76,8 +71,7 @@ workspace: {}                   # this pipeline works in a git worktree of the
                                 # cost is read on the execution page, not enforced.
 maxWorkflowSteps: 0             # 0 = uncapped, and what the shipped pipeline sets
 maxVisits: 0                    # 0 = uncapped
-maxCostUsd: 0                   # 0 = uncapped. The engine honours a number here on
-                                # the server; a run a session drives does not read it.
+maxCostUsd: 0                   # 0 = uncapped. A run a session drives does not read it.
 nodes:
   - id: planner
     type: agent
@@ -225,8 +219,9 @@ which pins the pipeline to one installed version and breaks on the next upgrade.
 
 ## Tools
 
-Only available when the workflow declares a `workspace`; without one the same
-agent file still runs, with no tools, reasoning over what it is handed.
+The names an `executor: gate` agent's `tools:` may use. The session doing the
+node reads them as the shape of the role and uses its own tools to match; the
+file tools mean something only when the workflow declares a `workspace`.
 
 | tool | what it does |
 | --- | --- |
@@ -235,110 +230,56 @@ agent file still runs, with no tools, reasoning over what it is handed.
 | `search_files` | search the worktree |
 | `write_file` | write a file |
 | `edit_file` | replace a string in a file |
-| `run_command` | run an argv command in the worktree |
+| `run_command` | run a command in the worktree |
+| `memory_search` | `gate memory search` — what the team's tree decided before |
+| `memory_feature` | `gate memory feature` — one feature, every team's build of it |
+| `memory_history` | `gate memory history` — what changed on the base branch, with its record |
 
 Give writing tools only to the agent that implements. A reviewer gets
 `read_file`, `list_files`, `search_files` and nothing more — a reviewer that can
 edit is not a reviewer.
 
-That is also why a reviewer is **handed** the diff rather than left to find it:
-without `run_command` it cannot run `git diff`, and with only a list of changed
-paths it reads each file's current state with no way to tell which lines are
-new. See the diff node in the shape below — it is not optional.
+A reviewer is still **handed** the diff rather than left to find it: with only
+a list of changed paths it reads each file's current state with no way to tell
+which lines are new. See the diff node in the shape below — it is not optional.
 
 ## Models — who answers
 
-`model:` takes three forms. A tier alias (`sonnet`) resolves to whatever that
-tier is pointed at on the dashboard, which is what you want unless the node has
-a reason to pin one. A concrete `claude-*` id pins it. And
-`provider:<name>/<model>` sends the node to one of the endpoints configured
-under **Providers** on the dashboard — an Ollama or vLLM on the machine, or a
-hosted one like Z.AI's GLM.
+`model:` is a Claude model: an alias (`haiku`, `sonnet`, `opus`, `fable`) or a
+concrete `claude-*` id. Every node runs on the person's own Claude Code login —
+gate holds no model credentials and serves no models — so the alias means what
+it means in their Claude Code. A `provider:<name>/<model>` reference is refused:
+nothing on the person's machine can reach it.
 
-Whichever form you use, that is the model the node runs on. gate serves the
-name it is given and never picks a different one, so this line is the only
-place a node's model is decided.
+Whichever you write, it takes effect only on a `claude-code` agent, whose
+subagent file carries it. A `gate` agent is done by the session itself, on the
+session's model, whatever its file says.
 
-A provider model is not a way out of the system: it is metered, logged and
-counted against the run's budget exactly like a Claude call, because it still
-goes through gate. What changes is the bill — a provider model costs
-nothing on the Anthropic account.
+## Executors — who does a node
 
-With `executor: claude-code`, the child's model aliases are pinned to that same
-model, so its own background calls do not quietly fall back onto a Claude tier.
-A node on a provider model needs no connected Claude account.
-
-This is a separate axis from the executor below, and every combination works:
-
-```yaml
-model: provider:zai/glm-5.3         # GLM, driven by the Claude Code harness
-executor: claude-code
-```
-
-```yaml
-model: provider:ollama/qwen3-coder  # a local model on gate's own loop
-executor: gate
-```
-
-## Executors — who runs the loop inside a node
-
-`executor: gate` (the default) means gate holds the conversation and serves the
-six tools above. `executor: claude-code` hands the node to a headless Claude
-Code running in the worktree instead.
+In `/gate:run` every node runs in the person's own Claude Code session. The
+executor says whether the session does it or starts a subagent for it.
 
 |  | `gate` | `claude-code` |
 | --- | --- | --- |
-| tools | the six above, with hard caps: 200KB reads, search stops at 100 matches, 30KB of command output | the whole Claude Code toolset — real ripgrep, ranged reads, uniqueness-checked edits, `Bash`, `TodoWrite` |
-| context | every tool result appended, never trimmed | compacted by the harness |
-| `tools:` | the allowlist, and it is enforced | **ignored** — see below |
-| in `/gate:run` | the session itself does the node, with its tools and its model, and can ask the user | in the agent's model, on that machine: as a subagent of the session, live in the terminal, when the session runs through the gateway (`/gate:live`, once per repository); otherwise as a detached worker the session follows (`gate wait`) |
+| who does it | the session itself, with its own tools and model, in front of the person | a subagent of the session, in the agent's own model, drawn live in the terminal |
+| can ask the person | yes, when the agent declares `asks` | no — it runs unattended and says what it decided in its answer |
+| `tools:` | read as the shape of the role; memory tools become `gate memory …` commands | read as the shape of the role |
+| context | the session's | its own, compacted by the harness |
 
-The last row is what decides which executor an agent gets when its model is
-not a Claude tier. A `provider:` model only takes effect where the node runs
-in its own process — on the server, under `gate run`, and in a session-driven
-run for `claude-code` — because a session cannot change its own model for one
-node. A `gate` agent run from a session runs on the session's model, whatever
-its file says; put a provider model on a `claude-code` agent.
+Put a node that explores or edits a real repository on `claude-code`: it keeps
+its own context, and the session's stays small across a long run. Put a node
+that shows the person something and records their answer on `gate`: only the
+session can ask.
 
-The context row is the one that decides it. A node that reads its way through a
-large repository on the gate loop ends up re-sending a six-figure context every
-round: a planner measured here spent $7 and 9M tokens without answering, most of
-it re-reading itself. No round cap fixes that — a cap kills the node; compaction
-lets it finish. Reach for `claude-code` on any node that explores or edits a real
-repository, and leave short deterministic nodes on `gate`, which starts instantly
-where the harness pays about 50-70K tokens of system prompt to start at all.
+`tools:` is a description, not a fence. Claude Code's permission flags gate
+permission *prompts*, not capability; a node that must work a real repository
+gets the real toolset. Write the list as the shape of the job — reads for a
+reviewer, writes for an implementer — and the node stays inside it.
 
-`tools:` is not enforced for a `claude-code` agent. `--allowed-tools` gates
-permission *prompts*, not capability, and under the permission mode below
-there are no prompts — measured here: a child given `--allowed-tools Read`
-reached for `Bash` on its first move and was not stopped. A node that must work
-a real repository gets the real toolset; that is the trade being made. The list
-still means something: a run driven from a session (`/gate:run`) reads it as
-the shape of the role and stays inside it, which is why the shipped agents
-carry one. Write it as the shape of the job — reads for a reviewer, writes for
-an implementer — and know that headless it is a description, not a fence.
-
-Every tool call it makes is streamed back (`--output-format stream-json`) and
-becomes a `tool.called` event, so a claude-code node is watchable on the
-executions page while it runs, not only once it is over.
-
-Routing and metering are unaffected: the child is pointed at this gate's own
-gateway, so every call it makes is routed and counted exactly like one gate
-made itself. It needs a `workspace` — the worktree is what it runs in — and it
-runs unattended with `--permission-mode auto --permission-prompts none`:
-`auto` decides without asking, and anything that would still have prompted is
-denied rather than left hanging on a question nobody is there to answer. (Not
-`bypassPermissions`: Claude Code refuses that as root, which is how gate runs
-as a service.) An implementer that must run the project's own toolchain cannot
-have its commands enumerated in advance, and a denied call surfaces in the
-step's error as a count of denials. Know what that buys and costs — the
-worktree is a throwaway branch, but Bash is not confined to it, so a node is
-bounded by the machine gate runs on.
-
-A node the session runs itself, or runs as its subagent, is costed too: the
-session's own gateway calls between the step's start and its end are summed
-against the step, marked as an attribution rather than a measurement, so a run
-driven from a session no longer reads as nearly free.
+A node the session does itself, or runs as its subagent, is recorded with the
+answer it handed back; what it cost is on the person's own Claude plan, not in
+gate.
 
 ## Skills — the process an agent follows
 
@@ -346,14 +287,9 @@ driven from a session no longer reads as nearly free.
 names a `SKILL.md` in the team's library, and an agent that declares one is told
 to follow it on every run rather than being left to notice it might apply.
 
-|  | `gate` | `claude-code` |
-| --- | --- | --- |
-| how it arrives | the skill's prose folded into the system prompt | a generated plugin, loaded as `gate-skills:<id>` |
-| the files a skill ships | named, and marked unreadable — gate's tools cannot leave the worktree | there, beside the skill, as written |
-| cost | the whole text, every round | the harness opens it when it is due |
-
-So a skill that is mostly prose works on either executor, and a skill that leans
-on scripts or reference files beside it belongs on a `claude-code` agent.
+Either executor gets the skill the same way: the path of its `SKILL.md` on this
+machine, pulled with the team's definitions, with the instruction to read and
+follow it before starting. The files a skill ships sit beside it, as written.
 
 Import skills on the dashboard's Skills page — `superpowers` ships registered,
 one Sync away, under the `superpowers-` prefix. Assign them in the agent editor,
@@ -370,13 +306,11 @@ with a person in it and a pipeline node often has none. Three things the
 `superpowers` skills do that a prompt has to answer for:
 
 - **They stop for a human.** Brainstorming will not proceed past its approval
-  gate; executing plans raises concerns "before starting". A node run headless
-  or on gate's own loop is told, in its system prompt, that it is running
-  unattended and should rule and record instead. Who gets the notice follows
-  the executor, not the driver: every `claude-code` node does, as a worker
-  and as a subagent of the person's session alike, because neither can ask
-  them; an `executor: gate` node the session does itself never does, because
-  there the person is right there. So a claude-code agent's prompt may take
+  gate; executing plans raises concerns "before starting". A node that cannot
+  ask is told that it is running unattended and should rule and record
+  instead. Who gets the notice follows the executor: every `claude-code` node
+  does, because a subagent cannot ask the person; an `executor: gate` node the
+  session does itself never does, because there the person is right there. So a claude-code agent's prompt may take
   "unattended" as given — a prompt that hedges "when there is a person" is
   hedging against a case that does not happen — and must give the questions
   a skill would ask a way out (an output field the pipeline carries to the
@@ -874,8 +808,8 @@ accept it. The server validates shape, not sense.
 - [ ] **Every agent carries `timeoutMs: 3600000`** — explicitly, all of them, the
       implementer included. Not `0`, which means a wedged node is never
       mentioned. Raise it for an agent you expect to run longer; never lower it
-      below the hour without a reason. It is a cut-off on the server and a
-      notice to the person in a session-driven run, never a budget.
+      below the hour without a reason. It is a notice to the person, never
+      a budget.
 - [ ] **No ceilings: `maxWorkflowSteps: 0`, `maxVisits: 0`, `maxCostUsd: 0`**
       unless the user asked for one. Rounds and revisits cannot be counted in
       advance, and a run stopped mid-review throws away everything it spent;
@@ -929,8 +863,8 @@ accept it. The server validates shape, not sense.
       where it would wait for a person, where it commits, and which skill it
       hands off to that the team does not hold. See Skills above.
 - [ ] **`tools:` on a `claude-code` agent is the role's shape, not a fence** —
-      a session-driven run stays inside it, a headless one does not. Reads for
-      a reviewer, writes for an implementer, and nothing that relies on it.
+      the node stays inside it, but nothing enforces it. Reads for a reviewer,
+      writes for an implementer, and nothing that relies on it.
 - [ ] **Every command you wrote is a command this repository really has**, taken
       from `package.json` / `Makefile` / CI, not invented.
 - [ ] **The generation step runs before the planner** if anything the tests need

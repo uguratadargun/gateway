@@ -124,7 +124,7 @@ yourself while they work.
 
 List the key parts you found, one line each. For each line give:
 
-- its name, as the product names it (`offline sync`, `account pool`), not
+- its name, as the product names it (`offline sync`, `merge requests`), not
   as a task (`refactor of sync`);
 - the file name you will give its design doc;
 - whether that name is an existing feature of the tree, and whose, or a new

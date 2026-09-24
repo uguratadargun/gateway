@@ -1,6 +1,6 @@
 # 0011. Three auth surfaces, three rules
 
-Status: accepted
+Status: superseded by 0046
 Date: 2026-09-16
 Run: 28ad71e (the admin session) / edd57d9 (the client API's own rule)
 

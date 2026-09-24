@@ -176,73 +176,6 @@ export function reopenSessionExecution(id: string, at = Date.now()): { retried: 
   return { retried: failed.map((s) => s.node_id) };
 }
 
-interface SessionUsageRow {
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
-}
-
-/**
- * Costs a step the session did itself, from the gateway's own record.
- *
- * A node the session runs — or runs as its subagent — makes its model calls
- * through the person's own Claude Code, which the gateway files under that
- * session's id, not under the run. So such a step arrives with no usage, and
- * a run driven this way showed as nearly free. The plugin's session hook tells
- * the CLI the session's id, the run records it, and here the calls that
- * session made between the step's start and end are summed against the step.
- * An estimate, and marked as one: the session may have answered something
- * else in the same minutes. Better than a zero nobody believes.
- *
- * Only a step without usage of its own, and only once.
- */
-export function attributeSessionUsage(executionId: string, stepIndex: number): StepUsage | null {
-  const db = getDb();
-  const execution = getExecution(executionId);
-  const session = execution?.client?.session;
-  if (!execution || !session) return null;
-  const step = db
-    .prepare("SELECT started_at, finished_at, model FROM workflow_execution_steps WHERE execution_id = ? AND step_index = ?")
-    .get(executionId, stepIndex) as { started_at: number; finished_at: number; model: string | null } | undefined;
-  if (!step || step.model) return null;
-  const rows = db
-    .prepare(
-      `SELECT model, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-              SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,
-              SUM(COALESCE(cache_creation_tokens, 0)) AS cache_creation_tokens
-         FROM usage
-        WHERE session_id = ? AND ts BETWEEN ? AND ? AND status < 400
-        GROUP BY model`,
-    )
-    .all(session, step.started_at, step.finished_at) as unknown as SessionUsageRow[];
-  if (!rows.length) return null;
-  const usage: StepUsage = { model: "", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0, source: "session" };
-  let dominant = -1;
-  for (const r of rows) {
-    usage.inputTokens += r.input_tokens;
-    usage.outputTokens += r.output_tokens;
-    usage.cacheReadTokens += r.cache_read_tokens;
-    usage.costUsd! += costForUsage(
-      tierOf(r.model),
-      { input: r.input_tokens, output: r.output_tokens, cacheRead: r.cache_read_tokens, cacheCreation: r.cache_creation_tokens },
-      { model: r.model },
-    );
-    // One model names the step; the cost above is exact across all of them.
-    if (r.output_tokens > dominant) {
-      dominant = r.output_tokens;
-      usage.model = r.model;
-    }
-  }
-  db.prepare(
-    `UPDATE workflow_execution_steps
-        SET model = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, usage_source = 'session'
-      WHERE execution_id = ? AND step_index = ?`,
-  ).run(usage.model, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.costUsd, executionId, stepIndex);
-  return usage;
-}
-
 /**
  * A local run reporting that it is still going.
  *
@@ -326,9 +259,8 @@ export function recordStep(executionId: string, step: StepRecord): { inserted: b
 }
 
 export function finishExecution(state: WorkflowState, workspace: ExecutionWorkspace | null = null, finishedAt = Date.now()): void {
-  // Every step is already recorded, and the run's own last call left the
-  // windows where they are, so this is the moment both halves are true.
-  const quota = summarizeExecutionQuota(state.executionId, finishedAt);
+  // Every step is already recorded, so this is the moment the sum is true.
+  const quota = summarizeExecutionQuota(state.executionId);
 
   // A run that ends while it is waiting on the person — stopped, or its
   // session gone — closes that wait first, so the clock is right afterwards.

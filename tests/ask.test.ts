@@ -95,7 +95,6 @@ function connect(over: { root: string; teamId?: string | null; publicationRemote
     cloned: false,
     baseRef: over.baseRef ?? null,
     setup: [],
-    prepare: [],
     teamId: over.teamId === undefined ? "desktop" : over.teamId,
     publicationRemote: over.publicationRemote ?? null,
   });

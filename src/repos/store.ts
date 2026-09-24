@@ -50,8 +50,6 @@ export interface RepoRecord {
   baseRef: string | null;
   /** argv arrays run once in the repo root. */
   setup: string[][];
-  /** argv arrays run in each run's worktree. */
-  prepare: string[][];
   status: RepoStatus;
   lastSetupAt: number | null;
   lastSetupLog: string | null;
@@ -71,7 +69,6 @@ interface Row {
   cloned: number;
   base_ref: string | null;
   setup_json: string;
-  prepare_json: string;
   status: string;
   last_setup_at: number | null;
   last_setup_log: string | null;
@@ -103,7 +100,6 @@ function toRecord(r: Row): RepoRecord {
     cloned: r.cloned === 1,
     baseRef: r.base_ref,
     setup: parseArgv(r.setup_json),
-    prepare: parseArgv(r.prepare_json),
     status: (["new", "installing", "ready", "failed"] as const).includes(r.status as RepoStatus)
       ? (r.status as RepoStatus)
       : "new",
@@ -130,7 +126,6 @@ export interface NewRepo {
   cloned: boolean;
   baseRef: string | null;
   setup: string[][];
-  prepare: string[][];
   remoteUrl?: string | null;
   teamId?: string | null;
   /** Where this repository's branches are published; absent means it does not. */
@@ -142,8 +137,8 @@ export interface NewRepo {
 export function createRepo(repo: NewRepo): RepoRecord {
   getDb()
     .prepare(
-      `INSERT INTO repos (id, name, source, remote_url, repo_id, team_id, publication_remote, branch_policy, root, cloned, base_ref, setup_json, prepare_json, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)`,
+      `INSERT INTO repos (id, name, source, remote_url, repo_id, team_id, publication_remote, branch_policy, root, cloned, base_ref, setup_json, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)`,
     )
     .run(
       repo.id,
@@ -160,7 +155,6 @@ export function createRepo(repo: NewRepo): RepoRecord {
       repo.cloned ? 1 : 0,
       repo.baseRef,
       JSON.stringify(repo.setup),
-      JSON.stringify(repo.prepare),
       Date.now(),
     );
   return getRepo(repo.id)!;
@@ -177,7 +171,6 @@ export interface RepoPatch {
   name?: string;
   baseRef?: string | null;
   setup?: string[][];
-  prepare?: string[][];
   teamId?: string | null;
   publicationRemote?: string | null;
   branchPolicy?: string | null;
@@ -188,13 +181,12 @@ export function updateRepo(id: string, patch: RepoPatch): RepoRecord | null {
   if (!current) return null;
   getDb()
     .prepare(
-      "UPDATE repos SET name = ?, base_ref = ?, setup_json = ?, prepare_json = ?, team_id = ?, publication_remote = ?, branch_policy = ? WHERE id = ?",
+      "UPDATE repos SET name = ?, base_ref = ?, setup_json = ?, team_id = ?, publication_remote = ?, branch_policy = ? WHERE id = ?",
     )
     .run(
       patch.name ?? current.name,
       patch.baseRef !== undefined ? patch.baseRef : current.baseRef,
       JSON.stringify(patch.setup ?? current.setup),
-      JSON.stringify(patch.prepare ?? current.prepare),
       patch.teamId !== undefined ? patch.teamId : current.teamId,
       patch.publicationRemote !== undefined ? patch.publicationRemote : current.publicationRemote,
       // Null goes in as null — the default, not the empty policy that means

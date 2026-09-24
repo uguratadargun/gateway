@@ -1,16 +1,14 @@
 import { anthropicToOpenAIRequest, openAIStreamToAnthropic, openAIToAnthropicResponse } from "./anthropic-openai";
-import { ANTHROPIC_VERSION } from "./claude/config";
-import { formatProviderRef, providerApiKey, type Provider, type ProviderModelRef } from "./providers";
+import { ANTHROPIC_VERSION, formatProviderRef, providerApiKey, type Provider, type ProviderModelRef } from "./providers";
 
 /**
- * Send one already-routed request to a configured provider and hand back an
- * Anthropic-shaped Response.
+ * Send one request to a configured provider and hand back an Anthropic-shaped
+ * Response.
  *
- * That shape is the point: dispatch's usage parsing, the traffic log, the
- * response cache and every client downstream keep speaking Anthropic, so a
- * provider model is a routing decision rather than a second code path. How far
- * the body has to travel to get there depends on the dialect — a full
- * translation for `openai-compat`, a forward for `anthropic-compat`.
+ * That shape is the point: the recorder and consolidation speak Anthropic
+ * whichever endpoint answers. How far the body has to travel to get there
+ * depends on the dialect — a full translation for `openai-compat`, a forward
+ * for `anthropic-compat`.
  */
 
 const TIMEOUT_MS = 300_000;
@@ -26,7 +24,7 @@ export async function sendToOpenAIProvider(opts: {
   provider: Provider;
   /** The upstream's own model id, without the `local:<provider>/` prefix. */
   model: string;
-  /** Anthropic-dialect request body, as the router left it. */
+  /** Anthropic-dialect request body. */
   body: Record<string, unknown>;
   stream: boolean;
   signal?: AbortSignal;
@@ -94,14 +92,11 @@ export async function sendToOpenAIProvider(opts: {
 
 /**
  * Fields only Anthropic's own models take. A third-party Anthropic-dialect
- * endpoint answers 400 on them, and they arrive constantly: Claude Code sends
- * `output_config.effort` and `thinking: adaptive` on every single request, and
- * gate's own router adds context-management edits. Dropping them is not a
- * downgrade — the target model has no such knob to begin with.
+ * endpoint answers 400 on them. Dropping them is not a downgrade — the target
+ * model has no such knob to begin with.
  *
  * What deliberately survives: `tools`, `tool_choice`, `system`, images, and
- * `cache_control` breakpoints. Those are ordinary Messages API, and Z.AI's
- * endpoint exists precisely so Claude Code's traffic works against it.
+ * `cache_control` breakpoints. Those are ordinary Messages API.
  */
 export function sanitizeForAnthropicProvider(body: Record<string, unknown>): Record<string, unknown> {
   delete body.output_config;
@@ -118,17 +113,13 @@ export function sanitizeForAnthropicProvider(body: Record<string, unknown>): Rec
  *
  * There is no translation here and that is the entire value: tool blocks,
  * cache breakpoints, streamed thinking and the SSE event sequence all reach
- * the model exactly as the client wrote them, and come back the same way. A
- * spawned Claude Code, which is the most demanding client gate has, therefore
- * behaves against Z.AI the way it does against Anthropic — while still being
- * routed, metered and counted against the run's budget, because it is still
- * talking to gate.
+ * the model exactly as the caller wrote them, and come back the same way.
  */
 export async function sendToAnthropicProvider(opts: {
   provider: Provider;
   /** The upstream's own model id, without the `provider:<name>/` prefix. */
   model: string;
-  /** Anthropic-dialect request body, as the router left it. */
+  /** Anthropic-dialect request body. */
   body: Record<string, unknown>;
   stream: boolean;
   signal?: AbortSignal;
@@ -175,10 +166,9 @@ export async function sendToAnthropicProvider(opts: {
   }
 
   if (!stream) {
-    // Handed back byte for byte. It is already the shape gate speaks, and the
-    // model id inside it is the upstream's own — which is the truth, and what
-    // the traffic log should show. gate's own name for it rides in the
-    // x-gate-model header, which is where every caller reads it from.
+    // Handed back byte for byte: it is already the shape gate speaks. The
+    // model id inside it is the upstream's own; the caller names the result
+    // by the provider reference it asked for.
     return new Response(res.body, {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -192,7 +182,7 @@ export async function sendToAnthropicProvider(opts: {
   });
 }
 
-/** Dispatch one already-routed request to whichever dialect the provider speaks. */
+/** Send one request to whichever dialect the provider speaks. */
 export function sendToProvider(opts: {
   provider: Provider;
   ref: ProviderModelRef;

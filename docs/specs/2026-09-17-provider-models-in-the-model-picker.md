@@ -1,7 +1,7 @@
 Status: done
 Branch: main
 Decisions: docs/decisions/0020-a-provider-model-reaches-the-picker-under-its-own-name.md
-Design: docs/design/providers.md ("The rows in Claude Code's /model", key files, pitfalls), docs/design/routing.md (how it works, pitfalls)
+Design: docs/design/providers.md ("The rows in Claude Code's /model", key files, pitfalls), routing.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md) (how it works, pitfalls)
 
 # The providers a gate serves are pickable in a normal Claude Code session
 

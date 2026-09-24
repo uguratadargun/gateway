@@ -1,20 +1,16 @@
-import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import { getAgent, listAgents, readAgentSource } from "@/agents/registry";
-import type { WorkflowEvent } from "@/events/types";
 import { optionalRunInputs, requiredRunInputs } from "@/workflows/inputs";
 import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 
-import { windowLabel } from "@/lib/account-pool";
 import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
-import { pickerRow, type PickerRow } from "@/lib/model-picker";
 import { describeActivity, describeFeature, describeFeatureList, describeHistory, describeRepoRecord, describeSearch } from "@/memory/cards";
-import { parseSince } from "@/runtime/tools/memory-tools";
+import { parseSince } from "@/memory/since";
 import { LINKED_DIRECTORIES } from "@/repos/detect";
 import { checkpointWork, publishBranch } from "@/repos/publish";
 import { readRemoteUrl, type RunWorkspace } from "@/runtime/workspace";
@@ -32,9 +28,8 @@ import {
   type ClientConfig,
 } from "./config";
 import { applyClean, describeVerdict, listWorkspaces, planClean } from "./clean";
-import { runLocal } from "./run";
-import { begin, continueRun, next, noteSession, reviewCommand, step, wait, work, type Instruction, type SessionRunContext } from "./step";
-import { applyGatewaySettings, applyPickerRows, gatewayEnv, settingsPath } from "./live";
+import { begin, continueRun, next, noteSession, step, type Instruction, type SessionRunContext } from "./step";
+import { cleanGatewayWiring } from "./claude-settings";
 import { removeSubagents, syncSubagents } from "./subagents";
 import { describeBranch, readAccount, readBranch, readBranchDiff, TeachError, type BranchReading } from "./teach";
 
@@ -42,9 +37,10 @@ import { describeBranch, readAccount, readBranch, readBranchDiff, TeachError, ty
  * `gate` — the command a developer runs, and what /gate:run calls.
  *
  * It connects with the person's own API key, mirrors their team's definitions
- * onto this machine, and runs one of them here: this process is the engine,
- * the worktree is a branch of the repository they are standing in, and only
- * the model calls and the reporting go to the server.
+ * onto this machine, and hands the person's Claude Code session one node at a
+ * time: the worktree is a branch of the repository they are standing in, every
+ * model call is their own Claude login, and only the reporting goes to the
+ * server.
  */
 
 const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this machine
@@ -53,18 +49,12 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate login <token>                            connect this machine (one token from your dashboard)
        --url <gate-url> --key <api-key>         …or the two halves separately
   gate whoami                                   who this key belongs to
-  gate usage [--json]                           what the gate's pool has left, and when it resets
   gate version                                  what this build is
   gate pull                                     refresh your team's definitions
   gate list                                     what you can run, and what it needs
   gate agents                                   the agents your team's pipelines use
   gate show <workflow|agent-id>                 print a definition as it is on the server
   gate push <file…> [--replace]                 save definitions to your team (needs an author key)
-  gate run <workflow> [task…]                   run one here, headless, in this repository
-       --input key=value                        (repeat for more than one input)
-       --yes                                    skip the first-run approval prompt
-       --quiet                                  only print the outcome
-       --task-id <id>                           file this run under a cross-team task
 
   the protocol /gate:run drives, one node at a time in your own session:
   gate begin <workflow> [task…]                 start a run, print the first instruction
@@ -76,10 +66,7 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate step <execution-id> <node> --output-file <f>   hand back a node's answer
         [--subagent <id>]                        the agent id the Agent tool returned, so its next pass
                                                  continues it — not the gate-<team>-<agent> type name
-  gate wait <execution-id> [--for <seconds>]     follow a node running in its own model
   gate continue <execution-id>                  pick a failed run back up at the node it failed on
-  gate live [--global] [--off]                  put Claude Code here on the gateway, by its settings
-  gate env                                      the same, as shell exports for one session
   gate repo [<id> <path>]                       point a pinned repository at your clone
   gate clean [--all] [--dry-run]                remove worktrees runs left behind (branches keep the work)
   gate reset                                    disconnect this machine and clear what it pulled
@@ -93,8 +80,12 @@ const USAGE = `gate ${CLI_VERSION} — run your team's agent workflows on this m
   gate memory activity [--json]                 what the rest of your team's tree is running right now
   gate memory features [--json]                 the tree's feature catalogue: the ids a design doc is named by
   gate memory repo [--json]                     whether this checkout's repository is connected and read by the gate
-  gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] [--json] [--no-wait]
-       …or --run <id>                           ask another team what their code does; answered from one commit, with files
+  gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>]
+       …or --run <id>                           ask another team what their code does: starts an ask run here,
+                                                answered from one commit the gate fixes, with files
+  gate source tree <ask> [path] [--depth n]      that commit's files, read through the gate
+  gate source grep <ask> <pattern> [--path p] [--ext ts]
+  gate source file <ask> <path> [--offset n] [--limit n]
   gate teach [--base <ref>]                     read the finished branch you are on: its range, commits and files
   gate teach --account-file <f> [--base <ref>] [--force] [--no-wait] [--task-id <id>]
                                                 teach it to your team's memory, recorded the way a run is
@@ -119,9 +110,11 @@ export interface Args {
  * the tool exists for.
  */
 const VALUE_FLAGS = new Set([
-  "url", "key", "token", "input", "limit", "team", "dir", "output-file", "for", "subagent", "path", "feature", "since", "as-of", "base", "account-file", "task-id",
+  "url", "key", "token", "input", "limit", "team", "dir", "output-file", "subagent", "path", "feature", "since", "as-of", "base", "account-file", "task-id",
   // `gate ask`: which repository, and which version of it.
   "repo", "run", "ref", "commit",
+  // `gate source`: where to look, and how much.
+  "depth", "ext", "offset",
 ]);
 
 /** Flags that collect when repeated, rather than the last one winning. */
@@ -259,10 +252,9 @@ async function cmdLogin(args: Args): Promise<number> {
   const manifest = await sync(client, me.team.id, true);
   console.log(`${manifest.workflows.length} workflow(s) available — \`gate list\` to see them`);
 
-  // Logging in is joining: from here every Claude Code session of theirs
-  // goes through the gateway, so a run's nodes are its subagents and its
-  // traffic is the team's. `gate live --off --global` is the way out.
-  for (const line of setLive(true, true, client.gatewayUrl, key, await pickerRows(client))) console.log(line);
+  // A machine that joined before 0.47 had its sessions put on the gate's
+  // gateway; that is gone, and every session runs on the person's own login.
+  for (const line of cleanGatewayWiring()) console.log(line);
   const synced = syncSubagents(me.team.id, cacheScope(me.team.id));
   if (synced.created) console.log("restart Claude Code once: its agents directory did not exist before, and it reads a new one at startup");
   return 0;
@@ -320,72 +312,6 @@ async function cmdWhoami(): Promise<number> {
     `gate ${CLI_VERSION} here · ${me.server?.version ?? "unknown"} there` +
       (me.server?.minClientVersion ? ` (needs ${me.server.minClientVersion}+)` : ""),
   );
-  return 0;
-}
-
-/** A reset time as the wait it is: "in 12m" · "in 1h 12m" · "in 4d 3h". */
-function untilText(iso: string | null): string | null {
-  if (!iso) return null;
-  const ms = Date.parse(iso) - Date.now();
-  if (!Number.isFinite(ms)) return null;
-  if (ms <= 0) return "any moment";
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) return `in ${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `in ${hours}h ${minutes % 60}m`;
-  return `in ${Math.floor(hours / 24)}d ${hours % 24}h`;
-}
-
-const BAR_WIDTH = 16;
-
-function bar(remaining: number): string {
-  const full = Math.max(0, Math.min(BAR_WIDTH, Math.round((remaining / 100) * BAR_WIDTH)));
-  return `${"█".repeat(full)}${"░".repeat(BAR_WIDTH - full)}`;
-}
-
-/**
- * What the pool has left — the plan usage Claude Code's own `/usage` stops
- * showing the moment a session is on the gateway. That command reads Anthropic's
- * usage endpoint with the OAuth scopes of a subscription login, and a session
- * here authenticates with a gate key instead, so it hides itself. These are the
- * windows of the accounts gate rotates: the quota that actually stops the work,
- * shared by everyone on this gate rather than owned by this key.
- */
-async function cmdUsage(args: Args): Promise<number> {
-  const client = connect();
-  const usage = await client.usage();
-  if (args.flags.json) {
-    console.log(JSON.stringify(usage, null, 2));
-    return 0;
-  }
-
-  if (!usage.windows.length) {
-    console.log(usage.reason ?? "no window reading yet");
-    return 0;
-  }
-
-  const rows = usage.windows.map((w) => ({
-    label: w.label ?? windowLabel(w.name),
-    bar: bar(w.remaining),
-    left: `${Math.round(w.remaining * 10) / 10}% left`,
-    reset: untilText(w.resetsAt),
-  }));
-  const labelWidth = Math.max(...rows.map((r) => r.label.length));
-  const leftWidth = Math.max(...rows.map((r) => r.left.length));
-  for (const r of rows) {
-    console.log(`${r.label.padEnd(labelWidth)}  ${r.bar}  ${r.left.padEnd(leftWidth)}${r.reset ? `  · resets ${r.reset}` : ""}`);
-  }
-
-  const a = usage.accounts;
-  const parts = [`${a.available} of ${a.enabled} account${a.enabled === 1 ? "" : "s"} serving now`];
-  if (a.coolingDown) parts.push(`${a.coolingDown} cooling down`);
-  // A whole login cooling down and one model's window being out are different
-  // states, and the bars above already name which model the second is.
-  if (a.modelBlocked) parts.push(`${a.modelBlocked} parked on a model-scoped limit`);
-  // A floor is why a window can read 8% left and still serve nobody.
-  if (a.quotaBlocked) parts.push(`${a.quotaBlocked} held back by the ${usage.floorPercent}% floor`);
-  if (usage.plan) parts.push(usage.plan);
-  console.log(parts.join(" · "));
   return 0;
 }
 
@@ -565,7 +491,7 @@ function describeCapabilities(workflowId: string, team: string): string[] {
     if (node.type === "agent") {
       try {
         const agent = getAgent(node.agent, scope);
-        const how = agent.executor === "claude-code" ? "a headless Claude Code session" : `tools: ${agent.tools.join(", ") || "none"}`;
+        const how = agent.executor === "claude-code" ? "a subagent of your Claude Code session" : `tools: ${agent.tools.join(", ") || "none"}`;
         lines.push(`  agent ${node.agent}: ${how}`);
       } catch {
         lines.push(`  agent ${node.agent}: (definition missing)`);
@@ -622,81 +548,6 @@ export function parseInputs(flags: Args["flags"], trailing: string[]): Record<st
   return input;
 }
 
-function printEvent(event: WorkflowEvent): void {
-  switch (event.type) {
-    case "node.started":
-      console.error(`▸ ${event.nodeId}`);
-      break;
-    case "tool.called":
-      console.error(`  ${event.ok ? "·" : "✗"} ${event.tool} ${event.summary}`);
-      break;
-    case "node.completed":
-      console.error(`  ✓ ${event.nodeId} (${Math.round(event.durationMs / 1000)}s)`);
-      break;
-    case "node.failed":
-      console.error(`  ✗ ${event.nodeId}: ${event.message}`);
-      break;
-    case "edge.selected":
-      console.error(`  → ${event.to}${event.label ? ` · ${event.label}` : ""}`);
-      break;
-    default:
-      break;
-  }
-}
-
-async function cmdRun(args: Args): Promise<number> {
-  const [workflowId, ...trailing] = args.positional;
-  if (!workflowId) die("usage: gate run <workflow> [task…]  ·  `gate list` shows what you can run");
-
-  // Said before anything else, because it is about which command you are
-  // running rather than how it went: inside a session this does the whole
-  // pipeline headlessly, so the person watching sees one line and a result
-  // minutes later, and nothing the run does can ask them anything. Not
-  // refused — running headless on purpose is legitimate — but named.
-  if ((process.env.CLAUDE_CODE_ENTRYPOINT || process.env.CLAUDECODE) && args.flags.quiet !== true) {
-    console.error(
-      "# heads up: this runs headlessly — you will see the outcome, not the work.\n" +
-        "# In Claude Code, /gate:run drives the same workflow in this session (gate begin/next/step),\n" +
-        "# where you can watch each node and answer it when it asks.",
-    );
-  }
-
-  const client = connect();
-  const config = readConfig()!;
-  const team = await teamOf(client, config);
-  const manifest = await sync(client, team, true);
-
-  const entry = manifest.workflows.find((w) => w.id === workflowId);
-  if (!entry) {
-    die(`no workflow "${workflowId}" for your team — \`gate list\` shows what there is`);
-  }
-  if (!(await confirmTrust(workflowId, entry.sha, team, args.flags.yes === true))) return 1;
-
-  const quiet = args.flags.quiet === true;
-  const input = parseInputs(args.flags, trailing);
-
-  const result = await runLocal(client, {
-    workflowId,
-    input,
-    cwd: process.cwd(),
-    team,
-    repos: repoPaths(),
-    taskId: typeof args.flags["task-id"] === "string" ? (args.flags["task-id"] as string) : undefined,
-    onEvent: quiet ? undefined : printEvent,
-    onNotice: (message) => console.error(`# ${message}`),
-  });
-
-  const { state, workspace, executionId } = result;
-  console.log(`${state.status}: ${workflowId} (${executionId})`);
-  if (state.error) console.log(`${state.error.code}: ${state.error.message}`);
-  if (workspace) {
-    console.log(existsSync(workspace.root) ? `branch ${workspace.branch} in ${workspace.root}` : `branch ${workspace.branch} in ${workspace.repo}`);
-    console.log(`review it with: ${reviewCommand(workspace)}`);
-  }
-  console.log(`${client.url}/executions/${executionId}`);
-  return state.status === "completed" ? 0 : 1;
-}
-
 /**
  * What a workflow's pinned repository means on this machine.
  *
@@ -736,23 +587,7 @@ function cmdRepo(args: Args): number {
  * here ever made" is a surprise nobody wants twice.
  */
 function cmdReset(): number {
-  // Before the login is gone: the settings carry the same key, and a session
-  // left pointing at the gateway with a key that is forgotten here would
-  // fail in a way that names neither.
-  const config = readConfig();
-  if (config) {
-    const client = connect();
-    for (const global of [true, false]) {
-      const path = settingsPath(global);
-      if (!existsSync(path)) continue;
-      try {
-        if (applyGatewaySettings(path, gatewayEnv(client.gatewayUrl, config.key), false)) console.log(`took the gateway out of ${path}`);
-        if (global && applyPickerRows([], false, path)) console.log(`took the provider models out of ${path}`);
-      } catch (e) {
-        console.log(`could not update ${path}: ${(e as Error).message}`);
-      }
-    }
-  }
+  for (const line of cleanGatewayWiring()) console.log(line);
   const agents = removeSubagents();
   if (agents.length) console.log(`removed subagents ${agents.join(", ")} from ~/.claude/agents`);
   for (const line of clearLocalState()) console.log(line);
@@ -772,150 +607,17 @@ async function sessionContext(): Promise<{ ctx: SessionRunContext; team: string 
   const config = readConfig()!;
   const team = await teamOf(client, config);
   await sync(client, team, true);
-  const throughGateway = sessionThroughGateway(client);
-  if (throughGateway) {
-    // The session can run the team's claude-code agents as its own subagents,
-    // so Claude Code has to know them; kept in step with the mirror here,
-    // before every instruction, so an agent edited in the dashboard is the
-    // one the next node starts.
-    const synced = syncSubagents(team, cacheScope(team));
-    if (synced.created) {
-      console.error("# subagents written to ~/.claude/agents for the first time — restart Claude Code once so it sees them");
-    } else if (synced.written.length) {
-      console.error(`# subagents updated: ${synced.written.join(", ")}`);
-    }
+  // The team's claude-code agents run as the session's own subagents, so
+  // Claude Code has to know them; kept in step with the mirror here, before
+  // every instruction, so an agent edited in the dashboard is the one the
+  // next node starts.
+  const synced = syncSubagents(team, cacheScope(team));
+  if (synced.created) {
+    console.error("# subagents written to ~/.claude/agents for the first time — restart Claude Code once so it sees them");
+  } else if (synced.written.length) {
+    console.error(`# subagents updated: ${synced.written.join(", ")}`);
   }
-  return { ctx: { client, team, say: (m) => console.error(m), throughGateway }, team };
-}
-
-/**
- * Whether this process — and so the Claude Code session that ran it — sends
- * its model calls to the gateway. That is what lets a subagent of the session
- * run in a provider model: the name means nothing to Anthropic's endpoint and
- * everything to the gateway's router.
- */
-function sessionThroughGateway(client: GateClient): boolean {
-  const base = process.env.ANTHROPIC_BASE_URL;
-  if (!base) return false;
-  const norm = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase();
-  return norm(base) === norm(client.gatewayUrl);
-}
-
-/**
- * What a shell needs so that Claude Code — and every subagent it starts —
- * talks to the gateway: `eval "$(gate env)"`, then `claude`. Only then can a
- * run's claude-code nodes be its subagents, live in the terminal, in their
- * own models; otherwise they run as workers the session follows.
- */
-/**
- * `gate live`: the same, written into Claude Code's own settings so that
- * nothing has to be typed: `.claude/settings.local.json` in this repository
- * (Claude Code applies its `env` block to every session started here, and
- * reloads it live), or the user's settings with --global. `--off` takes
- * exactly those variables out again.
- */
-async function cmdLive(args: Args): Promise<number> {
-  const config = readConfig();
-  if (!config) die("not logged in - run `gate login <token>` first");
-  const client = connect();
-  const on = args.flags.off !== true;
-  const lines = setLive(on, args.flags.global === true, client.gatewayUrl, config.key, on ? await pickerRows(client) : []);
-  for (const line of lines) console.log(line);
-  return 0;
-}
-
-/**
- * The provider models, as rows for Claude Code's picker.
- *
- * A gateway that cannot be reached, or one too old to describe its provider
- * models, costs the person their picker rows and nothing else — being on the
- * gateway is the part that matters, and failing `gate live` over a list would
- * take that away too.
- */
-async function pickerRows(client: GateClient): Promise<PickerRow[]> {
-  try {
-    return (await client.providerModels()).map(pickerRow);
-  } catch (e) {
-    console.error(`# could not read the gateway's model list (${(e as Error).message}) — /model shows the built-in models only`);
-    return [];
-  }
-}
-
-/** The body of `gate live`, shared with login and reset. Returns what to tell the person. */
-function setLive(on: boolean, global: boolean, gatewayUrl: string, key: string, rows: PickerRow[] = []): string[] {
-  const path = settingsPath(global);
-  const where = global ? "every Claude Code session of yours" : `Claude Code sessions started in ${process.cwd()}`;
-  let changed: boolean;
-  try {
-    changed = applyGatewaySettings(path, gatewayEnv(gatewayUrl, key), on);
-  } catch (e) {
-    die(`could not update ${path}: ${(e as Error).message}`);
-  }
-  // The picker rows are the user's settings whichever file the variables went
-  // into; `applyPickerRows` says why. Taking one repository off the gateway
-  // does not take them out again, though: the rows belong to the person, not
-  // to this directory, and somebody with the gateway on globally would lose
-  // the list everywhere for having left it here. Only leaving altogether —
-  // `--off --global`, or `gate reset` — removes them.
-  let pickerPath: string | null = null;
-  try {
-    if ((on || global) && applyPickerRows(rows, on)) pickerPath = settingsPath(true);
-  } catch (e) {
-    console.error(`# could not write the model picker (${(e as Error).message})`);
-  }
-  if (on && !global) keepOutOfGit(process.cwd());
-  if (on) {
-    return [
-      changed ? `${where} now go through ${gatewayUrl}` : `${where} already go through ${gatewayUrl}`,
-      `  written to ${path}`,
-      ...(pickerPath
-        ? [`  Claude Code's /model now lists ${rows.length} provider model(s), from ${pickerPath}`]
-        : []),
-      "A session already open picks that up on its own; if the next node in its own model still arrives as " +
-        "`wait` rather than as a subagent, restart Claude Code once.",
-    ];
-  }
-  return [
-    changed ? `${where} no longer go through the gateway (${path})` : `${where} were not on the gateway (${path})`,
-    ...(pickerPath ? [`  the provider models are out of /model again (${pickerPath})`] : []),
-  ];
-}
-
-/**
- * Claude Code excludes settings.local.json from git only when it wrote the
- * file itself; the one gate wrote carries the key, so it is excluded here,
- * in the repository's own exclude file, which is not shared and not committed.
- */
-function keepOutOfGit(cwd: string): void {
-  let gitDir: string;
-  try {
-    gitDir = execFileSync("git", ["rev-parse", "--git-dir"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  } catch {
-    return;
-  }
-  const info = join(resolve(cwd, gitDir), "info");
-  const exclude = join(info, "exclude");
-  const pattern = ".claude/settings.local.json";
-  try {
-    const current = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
-    if (current.split("\n").some((l) => l.trim() === pattern)) return;
-    mkdirSync(info, { recursive: true });
-    appendFileSync(exclude, `${current && !current.endsWith("\n") ? "\n" : ""}${pattern}\n`);
-  } catch {
-    // Not fatal: the settings are in place either way.
-  }
-}
-
-function cmdEnv(): number {
-  const config = readConfig();
-  if (!config) die("not logged in — run `gate login <token>` first");
-  const client = connect();
-  const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-  console.log(`export ANTHROPIC_BASE_URL=${q(client.gatewayUrl)}`);
-  console.log(`export ANTHROPIC_AUTH_TOKEN=${q(config.key)}`);
-  console.log(`export ANTHROPIC_API_KEY=${q(config.key)}`);
-  console.log(`export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`);
-  return 0;
+  return { ctx: { client, team, say: (m) => console.error(m) }, team };
 }
 
 function printInstruction(instruction: Instruction): number {
@@ -932,8 +634,8 @@ async function cmdBegin(args: Args): Promise<number> {
   const manifest = readManifest(team);
   const entry = manifest?.workflows.find((w) => w.id === workflowId);
   if (!entry) die(`no workflow "${workflowId}" for your team — \`gate list\` shows what there is`);
-  // The same approval a headless run asks for. A session makes the work
-  // visible, which is not the same as having agreed to it.
+  // A session makes the work visible, which is not the same as having
+  // agreed to it.
   if (!(await confirmTrust(workflowId, entry.sha, team, args.flags.yes === true))) return 1;
 
   return printInstruction(
@@ -967,14 +669,6 @@ async function cmdStep(args: Args): Promise<number> {
   const subagent = typeof args.flags.subagent === "string" ? args.flags.subagent : undefined;
   const { ctx } = await sessionContext();
   return printInstruction(await step(ctx, executionId, nodeId, answer, { subagent }));
-}
-
-async function cmdWait(args: Args): Promise<number> {
-  const [executionId] = args.positional;
-  if (!executionId) die("usage: gate wait <execution-id> [--for <seconds>]");
-  const seconds = Number(args.flags.for);
-  const { ctx } = await sessionContext();
-  return printInstruction(await wait(ctx, executionId, Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined));
 }
 
 /**
@@ -1065,17 +759,6 @@ async function cmdPublish(args: Args): Promise<number> {
     })
     .catch((e) => console.log(`the gate could not be told: ${(e as Error).message}`));
   return outcome.ok ? 0 : 1;
-}
-
-/**
- * The detached worker `gate next` starts for a claude-code node. Not in the
- * usage text: nothing but this CLI runs it, and its stdout is the node's log.
- */
-async function cmdWork(args: Args): Promise<number> {
-  const [executionId, nodeId] = args.positional;
-  if (!executionId || !nodeId) die("usage: gate work <execution-id> <node>");
-  const { ctx } = await sessionContext();
-  return (await work(ctx, executionId, nodeId)) ? 0 : 1;
 }
 
 /** `gate memory …`: the memory tools, for a person and for the session driving a run. */
@@ -1271,17 +954,17 @@ async function cmdStatus(args: Args): Promise<number> {
 }
 
 /** How long `gate ask` watches a review before saying where to read the rest. */
-const ASK_WAIT_MS = 20 * 60_000;
-
 /**
  * `gate ask "…" --repo <host/owner/name>`: what another team's code does.
  *
- * The question goes to the server because the server is what can reach the
- * other team's repository — this machine has one checkout of one project and
- * no business holding four. What comes back is either an answer with a commit
- * and files under it, or the reason there is no source to read yet, which is
- * usually a branch somebody has not published. Neither is a guess, and that is
- * the whole point of the command.
+ * The server is what can reach the other team's repository — this machine has
+ * one checkout of one project and no business holding four — so it fixes the
+ * commit, checks the family, and reads memory at that commit. The reading is
+ * done here, by this person's own Claude Code, in a run of the `ask` workflow
+ * like any other: this starts it and prints its first instruction, and the
+ * session reads the source through `gate source`. What comes back when there
+ * is nothing to read is the reason, which is usually a branch somebody has not
+ * published. Neither is a guess, and that is the whole point of the command.
  */
 async function cmdAsk(args: Args): Promise<number> {
   const question = args.positional.join(" ").trim();
@@ -1289,9 +972,8 @@ async function cmdAsk(args: Args): Promise<number> {
   if (!question) {
     die('usage: gate ask "<question>" --repo <host/owner/name> [--ref <branch>] [--commit <sha>] | --run <id>');
   }
-  const client = connect();
-  const json = args.flags.json === true;
-  const asked = await client.ask({
+  const { ctx, team } = await sessionContext();
+  const asked = await ctx.client.ask({
     question,
     repo: one(args.flags.repo),
     run: one(args.flags.run),
@@ -1299,59 +981,63 @@ async function cmdAsk(args: Args): Promise<number> {
     commit: one(args.flags.commit),
   });
 
-  if (asked.status !== "reviewing") {
-    if (json) {
-      console.log(JSON.stringify(asked, null, 2));
-    } else {
-      console.log(asked.reason);
-      // Named, not implied: the person reading this has to go and ask someone
-      // to run one command, and it is worth spelling out which branch.
-      if (asked.status === "source_unavailable" && asked.publish?.ref) {
-        console.log(`whoever has ${asked.publish.ref} can publish it with \`gate publish\`, and then this is answerable`);
-      }
+  if (asked.status !== "ready") {
+    console.log(asked.reason);
+    // Named, not implied: the person reading this has to go and ask someone
+    // to run one command, and it is worth spelling out which branch.
+    if (asked.status === "source_unavailable" && asked.publish?.ref) {
+      console.log(`whoever has ${asked.publish.ref} can publish it with \`gate publish\`, and then this is answerable`);
     }
     return 1;
   }
 
   const source = asked.source;
-  if (!json) {
-    console.error(`# reading ${source.repo} at ${source.commit.slice(0, 8)} (${source.ref})…`);
-  }
-  if (args.flags["no-wait"] === true) {
-    console.log(json ? JSON.stringify(asked, null, 2) : `${client.url}/executions/${asked.executionId}`);
-    return 0;
-  }
+  const entry = readManifest(team)?.workflows.find((w) => w.id === asked.workflow);
+  if (!entry) die(`your team has no "${asked.workflow}" workflow — restore the shipped workflows on the Workflows page`);
+  if (!(await confirmTrust(asked.workflow, entry.sha, team, args.flags.yes === true))) return 1;
+  console.error(`# reading ${source.repo} at ${source.commit.slice(0, 12)} (${source.ref}) — served by the gate, for a day`);
+  return printInstruction(
+    await begin(
+      ctx,
+      asked.workflow,
+      {
+        question,
+        source: source.repoId ?? source.repo,
+        ref: source.ref,
+        commit: source.commit,
+        ask: asked.askId,
+        memory: asked.memory,
+      },
+      process.cwd(),
+      repoPaths(),
+      { taskId: one(args.flags["task-id"]) },
+    ),
+  );
+}
 
-  const until = Date.now() + ASK_WAIT_MS;
-  while (Date.now() < until) {
-    await new Promise((r) => setTimeout(r, 3_000));
-    const { execution, steps } = await client.execution(asked.executionId);
-    if (execution?.status === "running") continue;
-    const answered = [...(steps ?? [])].reverse().find((s) => s.nodeId === "source-review");
-    const output = (answered?.output ?? null) as { answer?: string; sources?: string[]; certainty?: string } | null;
-    if (!output?.answer) {
-      const why = execution?.error?.message ?? "the review ended without an answer";
-      console.log(json ? JSON.stringify({ status: "failed", reason: why, source }, null, 2) : why);
-      return 1;
-    }
-    if (json) {
-      console.log(JSON.stringify({ status: "answered", source, ...output }, null, 2));
-      return 0;
-    }
-    console.log(output.answer);
-    console.log("");
-    // Always printed, never only when the answer is old: an answer that does
-    // not say which commit it read is one nobody can check, and "is this
-    // current?" is a question only the asker can settle.
-    console.log(`— ${source.repo} at ${source.commit.slice(0, 12)} (${source.ref})`);
-    if (output.certainty === "absent") {
-      console.log("  nothing at that commit matched; work published since, or on another branch, is not in this answer");
-    } else if (output.certainty === "partial") {
-      console.log("  partial: the answer above says which part it could not settle here");
-    }
-    return output.certainty === "absent" ? 1 : 0;
-  }
-  console.log(`still reading after ${ASK_WAIT_MS / 60_000} minutes: ${client.url}/executions/${asked.executionId}`);
+/**
+ * `gate source tree|grep|file <ask> …`: another team's repository at the one
+ * commit an ask fixed, read through the gate. The files are not on this
+ * machine and are never checked out; every answer is the server's git reading
+ * that commit, and nothing here can write to it.
+ */
+async function cmdSource(args: Args): Promise<number> {
+  const [what, askId, ...rest] = args.positional;
+  const one = (v: string | boolean | undefined) => (typeof v === "string" ? v.split("\u0000")[0] : undefined);
+  const usage =
+    "usage: gate source tree <ask> [path] [--depth n] · gate source grep <ask> <pattern> [--path p] [--ext ts] · " +
+    "gate source file <ask> <path> [--offset n] [--limit n]";
+  if (!askId || (what !== "tree" && what !== "grep" && what !== "file")) die(usage);
+  const client = connect();
+  const params: Record<string, string | undefined> =
+    what === "tree"
+      ? { path: rest.join(" ") || one(args.flags.path), depth: one(args.flags.depth) }
+      : what === "grep"
+        ? { pattern: rest.join(" "), path: one(args.flags.path), ext: one(args.flags.ext) }
+        : { path: rest.join(" ") || one(args.flags.path), offset: one(args.flags.offset), limit: one(args.flags.limit) };
+  if (what === "grep" && !params.pattern) die(usage);
+  if (what === "file" && !params.path) die(usage);
+  console.log(await client.askRead(askId, what, params));
   return 0;
 }
 
@@ -1380,8 +1066,6 @@ export async function main(argv: string[]): Promise<number> {
         return cmdVersion();
       case "whoami":
         return await cmdWhoami();
-      case "usage":
-        return await cmdUsage(args);
       case "pull":
         return await cmdPull();
       case "list":
@@ -1394,26 +1078,16 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdPush(args);
       case "publish":
         return await cmdPublish(args);
-      case "run":
-        return await cmdRun(args);
       case "begin":
         return await cmdBegin(args);
       case "next":
         return await cmdNext(args);
       case "step":
         return await cmdStep(args);
-      case "wait":
-        return await cmdWait(args);
       case "continue":
         return await cmdContinue(args);
       case "clean":
         return await cmdClean(args);
-      case "env":
-        return cmdEnv();
-      case "live":
-        return await cmdLive(args);
-      case "work":
-        return await cmdWork(args);
       case "repo":
         return cmdRepo(args);
       case "reset":
@@ -1426,6 +1100,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdTeach(args);
       case "ask":
         return await cmdAsk(args);
+      case "source":
+        return await cmdSource(args);
       case "cancel":
         return await cmdCancel(args);
       case "help":

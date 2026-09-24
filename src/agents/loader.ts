@@ -1,6 +1,6 @@
 import { dump as dumpYaml, load as parseYaml } from "js-yaml";
 
-import { isKnownTool, knownToolNames } from "@/runtime/tools/registry";
+import { isKnownTool, knownToolNames } from "@/agents/tools";
 
 import { templatePaths } from "./template";
 import { agentFrontmatterSchema, type AgentDefinition } from "./types";
@@ -44,9 +44,9 @@ export function parseAgent(
   if (!prompt) throw new AgentDefinitionError("prompt body is empty", id);
 
   const def: AgentDefinition = { ...parsed.data, id, prompt, sourcePath: meta.sourcePath, updatedAt: meta.updatedAt };
-  // Only gate's own loop serves gate's own tools. A claude-code agent names
-  // Claude Code's (`Read`, `Grep`, `Bash`, …), which this registry has never
-  // heard of and has no business vetoing — the CLI rejects an unknown one.
+  // A gate agent names gate's own vocabulary. A claude-code agent names
+  // Claude Code's (`Read`, `Grep`, `Bash`, …), which this list has never
+  // heard of and has no business vetoing.
   if (def.executor === "gate") {
     const unknownTools = def.tools.filter((t) => !isKnownTool(t));
     if (unknownTools.length) {

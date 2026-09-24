@@ -1,7 +1,7 @@
 Status: done
 Branch: main
 Decisions: docs/decisions/0021-the-records-form-is-checked-by-code.md
-Design: docs/design/the-record.md (new), docs/design/providers.md, docs/design/routing.md (pointers to the renumbered record)
+Design: docs/design/the-record.md (new), docs/design/providers.md, routing.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md) (pointers to the renumbered record)
 
 # The record's form is checked by code
 

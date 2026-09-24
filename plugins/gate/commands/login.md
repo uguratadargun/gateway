@@ -17,23 +17,18 @@ nothing else should be asked for. It is written to `~/.gate/client.json` (0600) 
 immediately pulls their team's agents and workflows, so its output already says how many
 workflows they have.
 
-It also puts their Claude Code on the gateway, by writing it into `~/.claude/settings.json`
-(the `env` block, which Claude Code applies to every session), and writes the team's agents to
-`~/.claude/agents/`. Tell them what that means, in a sentence: from now on their own sessions'
-model traffic goes through the team's gateway — metered there, on the team's provider keys,
-not their personal Claude subscription — and a pipeline's nodes run as subagents they can
-watch live. `/gate:live --off --global` reverses it; `/gate:reset` does too.
+It also writes the team's agents to `~/.claude/agents/`, so a pipeline's nodes run as subagents
+they can watch live. Tell them, in a sentence, that every model call a run makes is their own
+Claude Code login — gate holds no Claude account and serves no models; it keeps the team's
+definitions, the runs and the memory. If the output says it took gate's old gateway settings
+out of their Claude Code settings, tell them to restart Claude Code once.
 
 Then say what they can do next: `/gate:run` alone lists their team's workflows and asks which to
 run; `/gate:run <id> <task>` starts one here, in a worktree of the repository they are in; and
-the nodes that run in their own model show up live in this terminal, already.
+the nodes that run in their own model show up live in this terminal.
 
-If they say this command would not run at all — their Claude Code is at its weekly limit and refuses
-every prompt — the way in is a terminal, with Claude Code closed: `~/.local/bin/gate login <token>`,
-the same login, written there by the plugin itself on every session start. A machine that has the
-plugin but has not restarted Claude Code since installing it has no such file yet and runs
-`node ~/.claude/plugins/cache/gateway/gate/*/scripts/gate.mjs login <token>` instead. Connecting
-spends no model call, so a spent weekly limit cannot stop it.
+In a terminal the same login is `~/.local/bin/gate login <token>`, written there by the plugin
+on every session start.
 
 If it refuses, report what it said rather than retrying. An invalid or revoked key, a key that
 may not pull workflows, and a token pasted in half each say so in their own words — and a

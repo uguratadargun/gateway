@@ -1,7 +1,7 @@
 Status: done
 Branch: remove-difficulty-routing
 Decisions: docs/decisions/0015-the-gateway-resolves-names-never-difficulty.md
-Design: docs/design/routing.md (rewritten), docs/ARCHITECTURE.md, docs/design/gateway-pipeline.md, account-pool.md, providers.md, agents-and-skills.md, dashboard.md, dev-workflow.md, workflows-engine.md
+Design: routing.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md) (rewritten), docs/ARCHITECTURE.md, gateway-pipeline.md (a design doc since removed by docs/decisions/0046-every-person-runs-on-their-own-claude-login.md), account-pool.md, providers.md, agents-and-skills.md, dashboard.md, dev-workflow.md, workflows-engine.md
 
 # Removing difficulty-based model routing
 

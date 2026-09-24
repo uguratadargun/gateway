@@ -36,7 +36,7 @@ nodes:
     type: terminal
 `;
 
-function keyFor(teamId: string, scopes?: ("gateway" | "workflows")[]): string {
+function keyFor(teamId: string, scopes?: ("workflows" | "author")[]): string {
   return createKey({ name: `${teamId} key`, teamId, scopes }).plaintext;
 }
 
@@ -78,7 +78,7 @@ describe("keys as identities", () => {
 
     const principal = resolveKey(plaintext);
     expect(principal).toMatchObject({ userId: user.id, teamId: "delta" });
-    expect(principal!.scopes).toEqual(["gateway", "workflows"]);
+    expect(principal!.scopes).toEqual(["workflows"]);
   });
 
   it("stops working when revoked, and when its owner is disabled", () => {
@@ -117,10 +117,20 @@ describe("client API auth", () => {
     const unknown = requireClient(request("gate_not_a_real_key"));
     expect((unknown as Response).status).toBe(401);
 
-    const gatewayOnly = keyFor("theta", ["gateway"]);
+    // A key issued for the gateway alone, when gate had one: its scope reaches
+    // nothing now, so it reads as having none.
+    const gatewayOnly = keyFor("theta");
+    getDb().prepare("UPDATE apikeys SET scopes = 'gateway' WHERE hash = (SELECT hash FROM apikeys ORDER BY created_at DESC LIMIT 1)").run();
     const refused = requireClient(request(gatewayOnly));
     expect((refused as Response).status).toBe(403);
     expect(await (refused as Response).json()).toMatchObject({ code: "SCOPE_MISSING" });
+  });
+
+  it("reads a key issued with the old gateway and remote scopes as the scopes that still mean something", () => {
+    createTeam("Kappa", "kappa");
+    const key = keyFor("kappa");
+    getDb().prepare("UPDATE apikeys SET scopes = 'gateway,workflows,remote' WHERE hash = (SELECT hash FROM apikeys ORDER BY created_at DESC LIMIT 1)").run();
+    expect(resolveKey(key)!.scopes).toEqual(["workflows"]);
   });
 
   it("serves a key for the default team even before anyone has opened /team", () => {

@@ -1,6 +1,6 @@
 # 0015. The gateway resolves names, never difficulty
 
-Status: accepted
+Status: superseded by 0046
 Date: 2026-09-16
 Run: remove-difficulty-routing
 

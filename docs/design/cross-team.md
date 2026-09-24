@@ -5,11 +5,12 @@
 Several teams build one product in codebases of their own. A person on one of
 them finds out what another's code does without waiting for anybody on that
 team to be awake: the question is answered by reading their published code at
-one fixed version, and the answer names the files it came from. What each
+one fixed version, on the asker's own machine, and the answer names the files
+it came from. What each
 team's repository says about itself — how a feature works, what it provides
 and consumes — is read from its base branch for everyone in the tree. Work
-another team is doing right now is shown before anyone plans the same thing,
-and the two people are told. When a team's plan cannot live with another
+another team is doing right now is shown before anyone plans the same thing.
+When a team's plan cannot live with another
 team's decision, the disagreement is written where that team's next plan will
 read it. And work several teams have a hand in gets a name of its own, so
 what is unsettled between them outlives the runs that served it.
@@ -45,20 +46,48 @@ somebody's laptop cannot be read from here, so the answer names the branch that
 has to be pushed. **Not at that commit**: the reviewer read the tree and found
 nothing under the names it searched, which is narrower than either.
 
-The commit is fetched here and memory read **at it**: decisions whose work is
-in that commit's history hold, the rest describe later or unmerged work, and
-both reach the reviewer labelled, as a brief, never as the answer. A read-only
-agent reads the source and answers with its files; read-only is the tool list,
-not a sentence in a prompt. The run is started against the checkout's path, so
-it inherits no publication and pushes nothing to the other team's remote.
-Nothing is cached: the asker pays a run each time.
+The commit is fetched into the gate's own checkout of the repository, and
+memory is read **at it**: decisions whose work is in that commit's history
+hold, the rest describe later or unmerged work, and both reach the reviewer
+labelled, as a brief, never as the answer. The gate then records an **ask**:
+the asking team and person, the repository, the ref, the commit, the question,
+and an expiry a day later. It answers with the ask's id, the source and the
+brief, and starts nothing.
+
+The reading is the asker's. `gate ask` takes that answer and begins an
+ordinary run of the team's `ask` workflow in the asker's own Claude Code
+session, with the question, the source, the ref, the commit, the ask's id and
+the brief as its inputs; `/gate:ask` drives it the way `/gate:run` drives any
+run. The workflow is one agent node, `source-review`, ending on `done` or on
+`absent` when nothing at the commit matched, with no workspace and no command
+node. The session does that node itself, and its memory tools are the `gate
+memory` commands.
+
+The other team's repository never lands on the asker's disk. The session reads
+it through three views of the ask's commit, served by the gate: `gate source
+tree` lists the files under a path, two levels deep unless told otherwise;
+`gate source grep` gives the lines matching a pattern as `path:line:text`;
+`gate source file` prints one file with line numbers. Each is `git ls-tree`,
+`git grep` or `git show` against the commit in the gate's checkout, so nothing
+is checked out on the server and nothing can be written through them. A
+listing stops at 500 entries and skips dependency and build directories, a
+search at 100 matches, a file at 200 KB; a pattern is always passed to git as
+a pattern, never as an option. Every read checks again that the ask is the
+caller's team's, that it has not expired, and that the repository is still in
+the caller's family, and every refusal is the same "no ask", whatever the
+reason. A path with `..`, a leading `/` or a `:` is refused before git sees
+it.
+
+Nothing is cached: each question is a new ask and a run of the asker's own.
+An ask can be read for a day; after that, asking again makes a new one and
+resolves the ref again.
 
 ### Objecting
 
 The objection record — its states, who may close it, how the other team's
 recall surfaces it — is in [memory](memory.md); what belongs here is how one
-comes to be written. The planner's own output carries it, and the engine
-routes: a plan naming a conflict reaches the node that puts it to the person
+comes to be written. The planner's own output carries it, and the workflow's
+edges route: a plan naming a conflict reaches the node that puts it to the person
 before any question or the plan itself.
 
 The server writes it only against the run's pinned definitions: the node must
@@ -89,15 +118,9 @@ Memory is written when a run ends, so on its own it cannot say that another
 team started the same feature this morning. The runs going right now can: a
 search's words are matched against the tasks of other people's running runs
 in the tree, and recall puts the ones that share enough of them first in the
-brief, before any decision. When a run starts, it is matched against other
-teams' running runs, and against their work taught as unfinished. On a
-strong overlap, the two people get one message where they linked gate:
-
-- each run's person;
-- or, when a run has no person, everyone linked on its team.
-
-The match is shared words cut to a six-letter stem and counted, never a
-model. `gate memory activity` lists everything in flight in the tree
+brief, before any decision, with the person running each. Nobody is messaged:
+an overlap is seen by whoever recalls in the same words. The match is shared
+words cut to a six-letter stem and counted, never a model. `gate memory activity` lists everything in flight in the tree
 ([0039](../decisions/0039-work-in-flight-is-part-of-recall.md)).
 
 Between repositories, the question is usually not "what did they decide"
@@ -119,11 +142,11 @@ that team's family. Work is filed under one when it is recorded, a continued
 run inherits it, and every objection a filed run raises is stamped with it, so
 the task shows what is unsettled across the teams working on it.
 
-Every way work reaches the gate takes the same `--task-id`: a headless `gate
-run`, a session run through `gate begin`, and `gate teach`, which is how a
-branch finished before the task existed gets under it. The id is checked
-against the caller's family before anything is stored, in one wording for all
-three — a task the caller cannot see is not a task. Teaching a branch a second
+Every way work reaches the gate takes the same `--task-id`: a run through
+`gate begin`, an ask through `gate ask`, which begins one, and `gate teach`,
+which is how a branch finished before the task existed gets under it. The id
+is checked against the caller's family before anything is stored, in one
+wording for all of them — a task the caller cannot see is not a task. Teaching a branch a second
 time takes a task the first teaching did not name and keeps the one it did;
 naming none is never a way to unfile it.
 
@@ -137,23 +160,28 @@ it, and closing leaves every objection under it standing.
 
 - `src/orchestration/ask.ts` — a question resolved to one commit, the family
   check, the fetch, memory split by that commit's history
+- `src/orchestration/ask-source.ts` — the ask record, its expiry and the check
+  every read repeats, and the three read-only views of its commit
 - `src/orchestration/tasks.ts` — the task record and the runs filed under it
-- `src/memory/activity.ts` — the tree's runs in flight, matched by words, and the overlap told to both people
+- `src/memory/activity.ts` — the tree's runs in flight, matched by words
 - `src/memory/record-index.ts` — interfaces and design docs across the tree's repositories
 - `src/memory/issues.ts` — objections and the answers people give them
 - `src/executions/record.ts` — an objection written with the step that raised
   it; answers matched to it
 - `src/repos/publish.ts` — the push, the policy, the verified commit
-- `src/client/cli.ts`, `src/client/step.ts`, `src/memory/teach.ts` — the three
-  ways work names the task it serves
-- `src/app/api/v1/ask/route.ts`, `src/app/api/tasks/route.ts`,
+- `src/client/cli.ts` — `gate ask`, which begins the ask run, and `gate
+  source tree|grep|file`
+- `src/client/cli.ts`, `src/client/step.ts`, `src/memory/teach.ts` — the ways
+  work names the task it serves
+- `src/app/api/v1/ask/route.ts`, `src/app/api/v1/ask/[id]/` (`tree`, `grep`,
+  `file`), `src/app/api/tasks/route.ts`,
   `src/app/api/issues/route.ts`, `src/app/api/v1/memory/teach/route.ts` — the
   endpoints
 - `src/app/tasks/page.tsx` — the work's page
 - `src/app/objections/page.tsx`, `src/components/objection-card.tsx` — what is
   unsettled for a team, and the two ways one is closed
-- `src/agents/defaults.ts`, `src/workflows/defaults.ts` — the read-only
-  reviewer, the ask pipeline and the objection nodes
+- `src/agents/defaults.ts`, `src/workflows/defaults.ts` — the source reviewer,
+  the ask workflow and the objection nodes
 - `plugins/gate/commands/ask.md` — `/gate:ask`
 
 ## Pitfalls
@@ -173,16 +201,22 @@ it, and closing leaves every objection under it standing.
   finished run under a task opened later. A branch can be taught again to say
   so, but a run cannot be re-filed, so a task opened mid-flight shows only what
   started after it.
-- A replacement ask pipeline whose agent holds a write, edit or command tool
-  turns a question into a change to someone else's checkout.
-- The overlap message goes only to people who linked Telegram, and once per
-  pair per server process. Without a bot the only place an overlap shows is
-  the next recall in the same words.
+- The session doing an ask stands in a checkout of its own, which is a
+  different repository. A reviewer that reads that checkout instead of `gate
+  source` answers confidently about the wrong codebase.
+- An ask's id is its whole grant: `gate source` with an id older than a day,
+  or one another team made, answers "no ask", the same as a mistyped one.
+- An ask is the asker's own run on their own Claude login; asking the same
+  question twice costs it twice.
+- An overlap is told to nobody. Two teams starting the same work see each
+  other only when one of them recalls in the same words.
 - An interface is matched by its name as written. Two teams writing the same
   endpoint two ways are two interfaces.
 
 ## Decisions
 
+- [0048 — A question to another team is read on the asker's machine, from the commit the gate fixed](../decisions/0048-ask-is-read-on-the-askers-machine.md)
+- [0047 — A run is driven only from a person's own Claude Code session](../decisions/0047-a-run-is-driven-only-from-a-persons-session.md)
 - [0044 — A repository that does not publish is read from its origin](../decisions/0044-a-repository-that-does-not-publish-is-read-from-its-origin.md)
 - [0039 — Work in flight is part of recall, and an overlap is told to both people](../decisions/0039-work-in-flight-is-part-of-recall.md)
 - [0037 — Words read every repository of the tree, paths stay in their own](../decisions/0037-words-read-every-repository-paths-stay-in-their-own.md)

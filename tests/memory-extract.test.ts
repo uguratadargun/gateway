@@ -5,7 +5,7 @@ import { createTeam, getTeam } from "@/lib/teams";
 import { docsInDiff, extractRun, outcomeOf, parseRecorderAnswer, pathsInDiff, readableSteps, recorderPrompt } from "@/memory/extract";
 import { SHIPPED_OUTCOMES, TEACH_WORKFLOW_ID } from "@/memory/types";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
-import { drainExtractions } from "@/memory/queue";
+import { drainExtractions, recorderUnavailable } from "@/memory/queue";
 import {
   decisionsForExecution,
   getExtraction,
@@ -220,6 +220,20 @@ describe("the recorder", () => {
     expect(getExtraction("rec-5")).toMatchObject({ status: "done", decisionCount: 0 });
     expect(getExtraction("rec-6")).toMatchObject({ status: "done", decisionCount: 0 });
     expect(await drainExtractions(provider)).toBe(0);
+  });
+
+  it("leaves a finished run waiting, and says why, until Settings names a provider model", async () => {
+    team();
+    aRun("rec-9", "acme-desktop");
+    // The server holds no Claude account: a Claude tier is no model at all here.
+    expect(recorderUnavailable({ plugin: { source: "x" }, memory: { enabled: true, model: "", embeddings: { provider: "", model: "" }, consolidateEvery: 5, indexEveryMinutes: 15, recordMerges: false } })).toMatch(
+      /provider:<name>\/<model>/,
+    );
+    expect(await drainExtractions()).toBe(0);
+    expect(getExtraction("rec-9")).toMatchObject({ status: "pending" });
+    // Handed a model, it records as ever.
+    expect(await drainExtractions(new FakeModelProvider(() => JSON.stringify({ decisions: [], feature: null })))).toBeGreaterThanOrEqual(1);
+    expect(getExtraction("rec-9")).toMatchObject({ status: "done" });
   });
 });
 

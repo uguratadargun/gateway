@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpen, Coins, Gauge, Layers, Puzzle, Route } from "lucide-react";
+import { BookOpen, Puzzle } from "lucide-react";
 
 import { SaveRow } from "@/components/save-row";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,15 +12,6 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
 interface Settings {
-  compression: { enabled: boolean; maxBlockChars: number; dedupe: boolean };
-  cache: { enabled: boolean; ttlSeconds: number };
-  budget: { enabled: boolean; mode: "warn" | "block"; dailyUsd: number; monthlyUsd: number };
-  fallback: { enabled: boolean; chains: Record<string, string[]> };
-  reasoning: { defaultEffort: "default" | "low" | "medium" | "high" | "xhigh" | "max" };
-  promptCache: { enabled: boolean; ttl: "5m" | "1h" };
-  concurrency: { maxInFlight: number; queueTimeoutMs: number };
-  throttle: { enabled: boolean; blockAt: number };
-  retry: { maxRetries: number; maxRateLimitWaitMs: number };
   memory: {
     enabled: boolean;
     model: string;
@@ -36,7 +27,7 @@ interface Settings {
 function memoryOf(s: Settings): Settings["memory"] {
   return {
     enabled: s.memory?.enabled ?? true,
-    model: s.memory?.model ?? "sonnet",
+    model: s.memory?.model ?? "",
     embeddings: { provider: s.memory?.embeddings?.provider ?? "", model: s.memory?.embeddings?.model ?? "" },
     consolidateEvery: s.memory?.consolidateEvery ?? 5,
     indexEveryMinutes: s.memory?.indexEveryMinutes ?? 15,
@@ -93,14 +84,10 @@ function Group({
 /**
  * What each card owns. A card PUTs these keys alone — `saveSettings` merges
  * group by group — so saving one card cannot write back a stale copy of
- * another's, nor of `accountPool`, which the accounts panel writes.
+ * another's.
  */
 const OWNS = {
-  caching: ["promptCache", "cache", "compression"],
-  quota: ["throttle", "budget"],
-  reliability: ["concurrency", "retry", "fallback"],
   memory: ["memory"],
-  precision: ["reasoning"],
   plugin: ["plugin"],
 } as const satisfies Record<string, readonly (keyof Settings)[]>;
 
@@ -112,12 +99,10 @@ function sliceOf(s: Settings, keys: readonly (keyof Settings)[]) {
 }
 
 /**
- * The knobs here answer six unrelated questions (what is cached, what happens
- * as the quota fills, what happens when upstream fails, what memory records,
- * how precise routing is, where the plugin comes from), so there is one card
- * per question and each saves the keys it shows. They share one settings
- * document, but the server merges group by group, so a narrow write is the
- * safe one.
+ * The knobs here answer two unrelated questions (what memory records, and
+ * where the plugin comes from), so there is one card per question and each
+ * saves the keys it shows. They share one settings document, but the server
+ * merges group by group, so a narrow write is the safe one.
  */
 export function SettingsPanel() {
   const [s, setS] = useState<Settings | null>(null);
@@ -183,156 +168,6 @@ export function SettingsPanel() {
 
   return (
     <div className="grid gap-6 md:grid-cols-2">
-        <Group icon={Layers} title="Caching" description="What gets reused instead of re-sent." {...groupProps("caching")}>
-          <div className="pb-2">
-            <Row>
-              <Head label="Prompt caching" hint="Auto cache_control breakpoints — cached reads bill at 10%." />
-              <Switch
-                checked={s.promptCache.enabled}
-                onCheckedChange={(v) => setS({ ...s, promptCache: { ...s.promptCache, enabled: v } })}
-              />
-            </Row>
-            {s.promptCache.enabled && (
-              <Row>
-                <Label className="text-xs text-muted-foreground">Cache TTL</Label>
-                <Select
-                  value={s.promptCache.ttl}
-                  onChange={(e) => setS({ ...s, promptCache: { ...s.promptCache, ttl: e.target.value as "5m" | "1h" } })}
-                  title="5m: writes 1.25×, refreshed free while active. 1h: writes 2×, for sessions with long pauses."
-                >
-                  <option value="5m">5 min (active sessions)</option>
-                  <option value="1h">1 hour (long pauses)</option>
-                </Select>
-              </Row>
-            )}
-          </div>
-
-          <div className="py-2">
-            <Row>
-              <Head label="Response cache" hint="Reuse identical deterministic (temp 0) replies." />
-              <Switch checked={s.cache.enabled} onCheckedChange={(v) => setS({ ...s, cache: { ...s.cache, enabled: v } })} />
-            </Row>
-            {s.cache.enabled && (
-              <Row>
-                <Label className="text-xs text-muted-foreground">TTL (seconds)</Label>
-                <Input
-                  type="number"
-                  className="h-8 w-28"
-                  value={s.cache.ttlSeconds}
-                  onChange={(e) => setS({ ...s, cache: { ...s.cache, ttlSeconds: Number(e.target.value) } })}
-                />
-              </Row>
-            )}
-          </div>
-
-          <div className="pt-2">
-            <Row>
-              <Head label="Context compression" hint="Trim oversized & duplicate blocks." />
-              <Switch
-                checked={s.compression.enabled}
-                onCheckedChange={(v) => setS({ ...s, compression: { ...s.compression, enabled: v } })}
-              />
-            </Row>
-          </div>
-        </Group>
-
-        <Group icon={Gauge} title="Quota protection" description="What happens as the window and the budget fill." {...groupProps("quota")}>
-          <div className="pb-2">
-            <Row>
-              <Head label="Rate-limit throttle" hint="Park an account, then block, as the 5h window fills." />
-              <Switch
-                checked={s.throttle.enabled}
-                onCheckedChange={(v) => setS({ ...s, throttle: { ...s.throttle, enabled: v } })}
-              />
-            </Row>
-            {s.throttle.enabled && (
-              <Row>
-                <Label className="text-xs text-muted-foreground">Block at (%)</Label>
-                <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    className="h-8 w-20"
-                    value={Math.round(s.throttle.blockAt * 100)}
-                    onChange={(e) => setS({ ...s, throttle: { ...s.throttle, blockAt: Number(e.target.value) / 100 } })}
-                  />
-                </div>
-              </Row>
-            )}
-          </div>
-
-          <div className="pt-2">
-            <Row>
-              <Head label="Budget limits" hint="Warn or block when spend exceeds." />
-              <Switch checked={s.budget.enabled} onCheckedChange={(v) => setS({ ...s, budget: { ...s.budget, enabled: v } })} />
-            </Row>
-            {s.budget.enabled && (
-              <>
-                <Row>
-                  <Label className="text-xs text-muted-foreground">Daily / Monthly (USD)</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="number"
-                      className="h-8 w-24"
-                      value={s.budget.dailyUsd}
-                      onChange={(e) => setS({ ...s, budget: { ...s.budget, dailyUsd: Number(e.target.value) } })}
-                    />
-                    <Input
-                      type="number"
-                      className="h-8 w-24"
-                      value={s.budget.monthlyUsd}
-                      onChange={(e) => setS({ ...s, budget: { ...s.budget, monthlyUsd: Number(e.target.value) } })}
-                    />
-                  </div>
-                </Row>
-                <Row>
-                  <Label className="text-xs text-muted-foreground">When exceeded</Label>
-                  <Select
-                    value={s.budget.mode}
-                    onChange={(e) => setS({ ...s, budget: { ...s.budget, mode: e.target.value as "warn" | "block" } })}
-                  >
-                    <option value="warn">Warn</option>
-                    <option value="block">Block</option>
-                  </Select>
-                </Row>
-              </>
-            )}
-          </div>
-        </Group>
-
-        <Group icon={Coins} title="Reliability" description="How much is in flight, and what happens when upstream refuses." {...groupProps("reliability")}>
-          <div className="pb-2">
-            <Row>
-              <Head label="Concurrency limit" hint="Max simultaneous upstream requests; the rest queue." />
-              <Input
-                type="number"
-                className="h-8 w-20"
-                value={s.concurrency.maxInFlight}
-                onChange={(e) => setS({ ...s, concurrency: { ...s.concurrency, maxInFlight: Number(e.target.value) } })}
-              />
-            </Row>
-          </div>
-          <div className="py-2">
-            <Row>
-              <Head label="Retries" hint="Backoff retries on network/5xx/overloaded." />
-              <Input
-                type="number"
-                className="h-8 w-20"
-                value={s.retry.maxRetries}
-                onChange={(e) => setS({ ...s, retry: { ...s.retry, maxRetries: Number(e.target.value) } })}
-              />
-            </Row>
-          </div>
-          <div className="pt-2">
-            <Row>
-              <Head label="Tier fallback" hint="On 429/529, drop to a cheaper tier." />
-              <Switch
-                checked={s.fallback.enabled}
-                onCheckedChange={(v) => setS({ ...s, fallback: { ...s.fallback, enabled: v } })}
-              />
-            </Row>
-          </div>
-        </Group>
-
         <Group icon={BookOpen} title="Memory" description="After a run, the recorder writes what it decided — why, how, where — for the runs after it." {...groupProps("memory")}>
           <div className="pb-2">
             <Row>
@@ -342,10 +177,14 @@ export function SettingsPanel() {
           </div>
           <div className="py-2">
             <Row>
-              <Head label="Recorder model" hint="A tier (sonnet), a model id, or provider:<name>/<model>. It reads a run and writes a page." />
+              <Head
+                label="Recorder model"
+                hint="provider:<name>/<model>, from the providers above — this server holds no Claude account. It reads a run and writes a page. Empty, finished runs wait until one is set."
+              />
               <Input
                 className="w-56"
-                value={s.memory?.model ?? "sonnet"}
+                placeholder="provider:vllm/…"
+                value={s.memory?.model ?? ""}
                 onChange={(e) => setS({ ...s, memory: { ...memoryOf(s), model: e.target.value } })}
               />
             </Row>
@@ -412,27 +251,6 @@ export function SettingsPanel() {
                 checked={s.memory?.recordMerges ?? false}
                 onCheckedChange={(v) => setS({ ...s, memory: { ...memoryOf(s), recordMerges: v } })}
               />
-            </Row>
-          </div>
-        </Group>
-
-        <Group icon={Route} title="Reasoning effort" description="How hard a model thinks when the client does not say." {...groupProps("precision")}>
-          <div className="pt-2">
-            <Row>
-              <Head label="Default reasoning effort" hint="Used unless the client sets its own or sends x-gate-effort." />
-              <Select
-                value={s.reasoning.defaultEffort}
-                onChange={(e) =>
-                  setS({ ...s, reasoning: { defaultEffort: e.target.value as Settings["reasoning"]["defaultEffort"] } })
-                }
-              >
-                <option value="default">API default (high)</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh">xhigh</option>
-                <option value="max">Max</option>
-              </Select>
             </Row>
           </div>
         </Group>

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { GateClient } from "@/client/api";
 import { RunReporter } from "@/client/reporter";
-import { resolveRepo } from "@/client/run";
+import { resolveRepo } from "@/client/repo";
 import {
   createExecution,
   failAbandonedLocalExecutions,
