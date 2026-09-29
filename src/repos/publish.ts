@@ -121,7 +121,9 @@ export function publishBranch(root: string, branch: string, target: PublicationT
   }
 
   const ref = `refs/heads/${branch}`;
+  let pushed: string;
   try {
+    pushed = git(root, ["rev-parse", "HEAD"]);
     git(root, ["push", target.remote, `HEAD:${ref}`], PUSH_TIMEOUT_MS);
   } catch (e) {
     return { ok: false, code: "push-failed", note: `could not publish ${branch} to ${target.remote}: ${gitMessage(e)}` };
@@ -137,6 +139,17 @@ export function publishBranch(root: string, branch: string, target: PublicationT
   }
   if (!/^[0-9a-f]{7,40}$/.test(remoteSha)) {
     return { ok: false, code: "not-verified", note: `${target.remote} does not report holding ${ref} after the push` };
+  }
+  // Holding the ref is not holding what was pushed. `ls-remote` reads the
+  // remote's fetch URL and `push` its push URL; a remote whose two differ, or
+  // a mirror that lags, answers with an older commit — which was recorded as
+  // published, and another team's question was then answered from it.
+  if (remoteSha !== pushed) {
+    return {
+      ok: false,
+      code: "not-verified",
+      note: `${target.remote} reports ${ref} at ${remoteSha.slice(0, 8)} after the push, not at the pushed ${pushed.slice(0, 8)}`,
+    };
   }
 
   return {

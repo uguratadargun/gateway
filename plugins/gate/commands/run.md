@@ -260,7 +260,9 @@ Each call prints one JSON instruction:
 
 If you need to see where a run is (after an interruption, or if you lose the thread):
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/gate.mjs" next <execution-id>` returns the current
-instruction without changing anything.
+instruction. It is not only a look: it runs any command nodes between here and the next agent
+node, so never run it while another `gate` command for the same run is still going — gate
+refuses the second one and says which process holds the run.
 
 ## Two things gate does itself
 

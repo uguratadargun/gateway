@@ -264,7 +264,9 @@ worktree again. `gate step` refuses that name rather than recording a
 resume target that will not work. A continued pass is sent only what
 changed: gate rebuilds the node's inputs as they stood at its previous
 visit, compares them to the inputs now, and the prompt is the ones that
-differ under their own headings — the task, the brief and everything the
+differ under their own headings — an input that was filled last time and is
+empty now is sent as *cleared*, so feedback since answered is not taken for
+still open — the task, the brief and everything the
 subagent read and decided are already in that conversation, and sending
 them again was measured at thousands of tokens a pass and read by the
 subagent as an instruction to start over. When nothing differs the whole
@@ -278,7 +280,7 @@ files on this machine.
 
 ```bash
 gate begin <workflow> "<task>"          # → the first instruction, as JSON
-gate next <execution-id> [--full]       # → what to do now (no side effects)
+gate next <execution-id> [--full]       # → what to do now, after running any command nodes on the way
 gate step <execution-id> <node> --output-file <file> [--subagent <id>]   # → hand back an answer
 gate continue <execution-id>            # → reopen a failed run at the node that failed
 ```
@@ -294,6 +296,26 @@ process: `nextInSession` replays them from the entry node with the same
 edge selection, and walks a `parallel` node's branches one after another.
 This is the only way a run is driven; nothing starts one from the
 dashboard, a terminal with no session, or CI.
+
+`gate next` is not a look: it runs every command node between here and the
+next agent node. So one `gate` command works on a run at a time on a machine
+— each holds `~/.gate/runs/<execution-id>.lock` while it works, a second is
+refused with the holder's pid, and a lock whose process is gone is taken
+over. Visit counts reach a node as the walk has them, its own pass included:
+`visits.<node>` in an agent's inputs and in a command's argv is the same
+number the edges read. A walk that cannot go on ends the run as failed
+rather than wedging it — an edge whose condition cannot be evaluated against
+what a node answered, a pinned definition that no longer loads — and an input
+nobody produced, or a skill this machine has neither in the run's pin nor in
+the team's mirror, fails the node as a recorded step before the node is
+announced, so a person's turn is never paused on a node that cannot run. A
+run the gate has closed is not walked forward, and a run whose workflow
+works in a worktree but that has none on the record — it ended before one
+was made — runs nothing anywhere: `gate next` fails it and `gate continue`
+refuses it. The outcome is reported to the gate before the worktree and the
+pinned definitions go; when the gate cannot be told, both stay and the next
+`gate next` settles the run again. A node announcement that did not reach
+the gate is made again the next time the node is handed out.
 
 ### Stop works in both directions
 
@@ -439,6 +461,8 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 - `claude plugin update gate@gateway` alone re-installs from an unrefreshed marketplace; use `/gate:update`, or update the marketplace first.
 - Any change under `plugins/` or `src/client/` needs a version bump, or the update is fetched and ignored.
 - A `command` node in a team pipeline runs on the developer's machine; the first-run approval is the only thing between a team's definition and their laptop.
+- The subagent files under `~/.claude/agents/` are one per team and agent, written from the team's mirror, so a running run's delegate uses the agent's current model and effort, not its pinned ones. An agent the team deleted keeps its file for as long as a pinned run on the machine still names it.
+- A `.lock` left under `~/.gate/runs/` by a process that is still alive refuses every other command on that run; it is taken over only once that process is gone.
 - The `begin` warning finds the pull-request node by `gh pr create` in its command; a team node that opens one some other way gets no warning, and fails only at the end.
 
 ## Decisions

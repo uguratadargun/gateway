@@ -11,9 +11,8 @@ import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 import { describeActivity, describeFeature, describeFeatureList, describeHistory, describeRepoRecord, describeSearch } from "@/memory/cards";
 import { parseSince } from "@/memory/since";
-import { LINKED_DIRECTORIES } from "@/repos/detect";
 import { checkpointWork, publishBranch } from "@/repos/publish";
-import { readRemoteUrl, type RunWorkspace } from "@/runtime/workspace";
+import { borrowedLinksToExclude, readRemoteUrl, type RunWorkspace } from "@/runtime/workspace";
 
 import { CLI_VERSION, GateApiError, GateClient } from "./api";
 import { cacheScope, clearLocalState, readManifest, writeBundle, type Manifest } from "./cache";
@@ -535,7 +534,9 @@ export function parseInputs(flags: Args["flags"], trailing: string[]): Record<st
     // repeats the flag, and `parseArgs` joins those on NUL; `--input "a=1 b=2"`
     // groups them into one quoted value separated by spaces. Splitting on only
     // one of the two silently folds every extra pair into the first value.
-    for (const pair of flags.input.split(/[\u0000 ]+/).filter(Boolean)) {
+    // A space splits only where the next word starts a new `key=`, so a value
+    // may hold spaces: `repo=/Users/x/My Projects/app` is one pair.
+    for (const pair of flags.input.split(/\u0000+|\s+(?=[A-Za-z_][\w.-]*=)/).map((p) => p.trim()).filter(Boolean)) {
       const [key, ...rest] = pair.split("=");
       if (!key || !rest.length) die(`--input must be key=value (got "${pair}")`);
       input[key] = rest.join("=");
@@ -712,7 +713,8 @@ async function cmdClean(args: Args): Promise<number> {
   const notes = applyClean(plan);
   for (const note of notes) console.log(note);
   console.log(
-    `removed ${plan.removed.length - notes.length} worktree(s), kept ${plan.kept.length + notes.length}; every branch is still there`,
+    `removed ${plan.removed.length - notes.length} worktree(s), kept ${plan.kept.length + notes.length}; ` +
+      "every branch with work on it is still there, and a branch its run left no commit on went with its worktree",
   );
   return 0;
 }
@@ -747,7 +749,7 @@ async function cmdPublish(args: Args): Promise<number> {
     );
   }
 
-  const committed = checkpointWork(ws.root, `work in progress on ${ws.branch}, published on request`, LINKED_DIRECTORIES);
+  const committed = checkpointWork(ws.root, `work in progress on ${ws.branch}, published on request`, borrowedLinksToExclude(ws.root));
   if (committed) console.log(`checkpointed what was uncommitted as ${committed.slice(0, 8)}`);
   const outcome = publishBranch(ws.root, ws.branch, publish);
   console.log(outcome.ok ? outcome.note : `not published: ${outcome.note}`);

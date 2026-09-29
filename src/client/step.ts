@@ -29,6 +29,7 @@ import { getSkill, resolveSkillDir } from "@/skills/registry";
 import { getWorkflow } from "@/workflows/registry";
 import { definitionsHash } from "@/workflows/snapshot";
 import { findNode, type WorkflowDefinition } from "@/workflows/types";
+import type { AgentDefinition } from "@/agents/types";
 
 import type { GateClient } from "./api";
 import { CLI_VERSION } from "./api";
@@ -38,7 +39,7 @@ import { gateHome } from "./config";
 import { shippingWarnings } from "./preflight";
 import { releaseAndPublish } from "./release";
 import { resolveRepo } from "./repo";
-import { nextInSession } from "./walk";
+import { nextInSession, type SessionPosition } from "./walk";
 
 /**
  * The environment variable the plugin's SessionStart hook sets, carrying the
@@ -70,6 +71,9 @@ export const SESSION_ID_ENV = "GATE_CLAUDE_SESSION";
  * in the terminal like the session's own work. Every model call is the
  * person's own Claude login; gate holds none.
  */
+
+/** A skill an agent declares, as this machine has it. */
+type SkillRef = { id: string; description: string; path: string | null };
 
 /** What the session is told to do next, as JSON on stdout. */
 export type Instruction =
@@ -104,7 +108,7 @@ export type Instruction =
        * already knows what a skill is and can read the files the skill points
        * at.
        */
-      skills: Array<{ id: string; description: string; path: string | null }>;
+      skills: SkillRef[];
       timeoutMs: number | null;
       /**
        * The contract, restated with this node.
@@ -145,7 +149,7 @@ export type Instruction =
       outputFile: string;
       output: { type: "json" | "text"; schema?: Record<string, string> };
       workspace: string | null;
-      skills: Array<{ id: string; description: string; path: string | null }>;
+      skills: SkillRef[];
       timeoutMs: number | null;
       remember: string[];
     }
@@ -174,6 +178,12 @@ interface Pending {
   stepIndex: number;
   visit: number;
   startedAt: number;
+  /**
+   * Set when the report that announced the node — and paused the run, for a
+   * person's turn — did not reach the gate. The next `gate next` that hands
+   * the same node out says it again rather than treating it as said.
+   */
+  unannounced?: true;
 }
 
 function pendingPath(executionId: string): string {
@@ -196,6 +206,62 @@ function writePending(pending: Pending): void {
 
 function clearPending(executionId: string): void {
   rmSync(pendingPath(executionId), { force: true });
+}
+
+/** Runs this process is already working on, so a command that calls another holds one lock. */
+const heldRuns = new Set<string>();
+
+/**
+ * One `gate` command at a time per run, on this machine.
+ *
+ * `gate next` is not a look: it runs every command node between here and the
+ * next agent node — a commit, a push, `gh pr create`. Two of them at once (a
+ * `gate step` left in the background and a `gate next` to see where the run
+ * is, or two sessions on one run) both found the same unrecorded command node
+ * and both ran it; the gate kept the first step and dropped the second, but
+ * the push had happened twice. So the command takes a lock file under the
+ * run's name for as long as it works, and a second one is refused and told
+ * why. A lock whose process is gone is taken over: a command killed mid-run
+ * must not leave the run unreachable.
+ */
+export async function withRunLock<T>(executionId: string, work: () => Promise<T>): Promise<T> {
+  if (heldRuns.has(executionId)) return work();
+  const file = join(gateHome(), "runs", `${executionId}.lock`);
+  mkdirSync(join(gateHome(), "runs"), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      writeFileSync(file, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST" || attempt > 0) throw e;
+      const holder = Number.parseInt(readFileSync(file, "utf8"), 10);
+      if (Number.isInteger(holder) && holder > 0 && holder !== process.pid && processAlive(holder)) {
+        throw new WorkflowError(
+          "WORKFLOW_ROUTING_ERROR",
+          `another gate command (pid ${holder}) is working on run ${executionId} right now — wait for it to finish, ` +
+            `then run \`gate next ${executionId}\` to see where the run is`,
+        );
+      }
+      rmSync(file, { force: true });
+    }
+  }
+  heldRuns.add(executionId);
+  try {
+    return await work();
+  } finally {
+    heldRuns.delete(executionId);
+    rmSync(file, { force: true });
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM: it exists, it is only somebody else's.
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 /**
@@ -438,6 +504,10 @@ export async function next(
   executionId: string,
   opts: { full?: boolean } = {},
 ): Promise<Instruction> {
+  return withRunLock(executionId, () => walkOn(ctx, executionId, opts));
+}
+
+async function walkOn(ctx: SessionRunContext, executionId: string, opts: { full?: boolean }): Promise<Instruction> {
   for (;;) {
     const { execution, steps, publish } = await ctx.client.execution(executionId);
     // Settled from outside since this session last looked: Stop on the
@@ -452,8 +522,25 @@ export async function next(
       return { do: "stopped", executionId, error: stopped };
     }
     const scope = runScope(ctx.team, executionId);
-    const workflow: WorkflowDefinition = getWorkflow(execution.workflowId, scope);
-    const position = nextInSession(workflow, steps as ExecutionStepRecord[], execution.input);
+    // A pinned definition that no longer loads, or an edge whose condition
+    // cannot be evaluated against what a node answered, is the run's failure
+    // and ends it. Left to throw, it wedged the run instead: every later
+    // `gate next` and `gate continue` threw the same error, nothing recorded
+    // a failed step for `continue` to drop, and the run stayed "running".
+    let workflow: WorkflowDefinition;
+    let position: SessionPosition;
+    try {
+      workflow = getWorkflow(execution.workflowId, scope);
+      position = nextInSession(workflow, steps as ExecutionStepRecord[], execution.input);
+    } catch (e) {
+      if (!(e instanceof WorkflowError)) throw e;
+      const error = { code: e.code, message: e.message };
+      const nodeId = typeof e.detail?.nodeId === "string" ? e.detail.nodeId : "";
+      clearPending(executionId);
+      ctx.say(`✗ ${error.message}`);
+      await settle(ctx, executionId, execution, steps.length, "failed", error, publish);
+      return { do: "failed", executionId, nodeId, error };
+    }
 
     if (position.kind === "failed") {
       clearPending(executionId);
@@ -478,10 +565,59 @@ export async function next(
     }
 
     const node = position.node;
-    const state = stateFor(execution, position.outputs);
+    // Only a running run is walked forward. A run that failed without a
+    // failed step — it never got its worktree, say — still has a node ahead
+    // of it in the graph, and walking to it ran that node's commands on a run
+    // the gate had already closed.
+    if (execution.status !== "running") {
+      const error = execution.error ?? { code: "EXECUTION_NOT_RESUMABLE", message: `this run is ${execution.status}` };
+      ctx.say(`this run is ${execution.status}; nothing more of it runs`);
+      return { do: "failed", executionId, nodeId: node.id, error };
+    }
+    // A workflow that works in a worktree runs nowhere else. Without one on
+    // the record, a command node's working directory fell back to wherever
+    // this process was started — the person's own checkout — and the run's
+    // commit and push landed on their current branch.
+    if (workflow.workspace && !workspaceOf(execution)) {
+      const error = {
+        code: "WORKSPACE_ERROR",
+        message: "this run has no worktree — it ended before one was made — so none of it can run: start the workflow again",
+      };
+      clearPending(executionId);
+      await settle(ctx, executionId, execution, steps.length, "failed", error, publish);
+      return { do: "failed", executionId, nodeId: node.id, error };
+    }
+    const state = stateFor(execution, position.outputs, position.visitCounts);
 
     if (node.type === "agent") {
-      const prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
+      // Everything the node needs is settled before it is announced: an input
+      // nobody produced or a skill this machine does not have fails the node
+      // as a recorded step, which ends the run and leaves `gate continue` a
+      // step to drop. Announced first, a person's node paused the run and then
+      // threw, and a paused run is never written off.
+      let prepared: ReturnType<typeof prepareAgentNode>;
+      let skills: SkillRef[];
+      try {
+        prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
+        skills = resolveSkills(prepared.agent, node.id, scope, ctx.team, executionId);
+      } catch (e) {
+        if (!(e instanceof WorkflowError)) throw e;
+        const at = Date.now();
+        clearPending(executionId);
+        ctx.say(`✗ ${node.id}: ${e.message}`);
+        await record(ctx, executionId, {
+          nodeId: node.id,
+          stepIndex: position.stepIndex,
+          visit: position.visit,
+          status: "failed",
+          startedAt: at,
+          finishedAt: at,
+          input: null,
+          output: null,
+          error: { code: e.code, message: e.message },
+        });
+        continue;
+      }
       // A `gate next` repeated while the session still holds this node — it
       // lost the thread, or asked where the run was — hands the same node
       // out again as it was: same start time, and no second announcement.
@@ -489,15 +625,6 @@ export async function next(
       const held = readPending(executionId);
       const again = held && held.nodeId === node.id && held.visit === position.visit ? held : null;
       const startedAt = again?.startedAt ?? Date.now();
-      if (!again) {
-        writePending({
-          executionId,
-          nodeId: node.id,
-          stepIndex: position.stepIndex,
-          visit: position.visit,
-          startedAt,
-        });
-      }
       const workspace = workspaceOf(execution);
 
       // Said now, not when the answer comes back. A node a session works on
@@ -508,7 +635,11 @@ export async function next(
       // dashboard says so and the run's clock stops, because from here until
       // `gate step` the time is theirs.
       const personsTurn = asksPerson(prepared.agent);
-      if (!again) {
+      // Said again when the last attempt to say it did not arrive: a person's
+      // turn the gate never heard of is a run whose clock keeps going and
+      // which the silence sweep can write off while they are thinking.
+      if (!again || again.unannounced) {
+        let announced = true;
         await ctx.client
           .report(executionId, {
             events: [
@@ -523,7 +654,17 @@ export async function next(
             ],
             steps: [],
           })
-          .catch(() => {});
+          .catch(() => {
+            announced = false;
+          });
+        writePending({
+          executionId,
+          nodeId: node.id,
+          stepIndex: position.stepIndex,
+          visit: position.visit,
+          startedAt,
+          ...(announced ? {} : { unannounced: true as const }),
+        });
       }
       ctx.say(
         `▸ ${node.id} · agent ${prepared.agent.id} (${prepared.agent.model}` +
@@ -532,23 +673,6 @@ export async function next(
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
       if (personsTurn) ctx.say("  the user's turn · the run is paused until they answer");
-      // Named by the agent, resolved on this machine. A skill that has gone
-      // missing fails the node here rather than halfway through it.
-      const skills = prepared.agent.skills.map((id) => {
-        let description = "";
-        try {
-          description = getSkill(id, scope).description;
-        } catch {
-          throw new WorkflowError(
-            "AGENT_DEFINITION_INVALID",
-            `node "${node.id}": agent "${prepared.agent.id}" declares skill "${id}", which this machine did not pull — ` +
-              "run `gate pull`, or check it is in your team's skill library",
-            { nodeId: node.id, agentId: prepared.agent.id },
-          );
-        }
-        return { id, description, path: resolveSkillDir(id, scope) };
-      });
-
       if (prepared.agent.executor === "claude-code") {
         // Not the session's own model: a subagent of the session, in the
         // agent's model on the person's own login, drawn live where they are
@@ -567,10 +691,12 @@ export async function next(
         // from nothing.
         let delta: string | null = null;
         if (resume && !opts.full) {
-          const before = outputsBeforePreviousVisit(workflow, steps as ExecutionStepRecord[], node.id, position.stepIndex);
+          const before = stateBeforePreviousVisit(workflow, steps as ExecutionStepRecord[], node.id, position.stepIndex);
           if (before) {
             try {
-              const earlier = prepareAgentNode(node, stateFor(execution, before), (id) => getAgent(id, scope));
+              const earlier = prepareAgentNode(node, stateFor(execution, before.outputs, before.visitCounts), (id) =>
+                getAgent(id, scope),
+              );
               delta = resumePrompt(
                 node.id,
                 position.visit,
@@ -715,7 +841,7 @@ export async function next(
 }
 
 /**
- * The outputs a node saw the last time it ran.
+ * The outputs and visit counts a node saw the last time it ran.
  *
  * Folded straight off the recorded steps rather than by walking the graph
  * again: the steps are linear and each one's output is assigned under its
@@ -723,26 +849,33 @@ export async function next(
  * node's previous visit is what that visit was handed. Null when the node has
  * not run in this execution yet.
  */
-function outputsBeforePreviousVisit(
+function stateBeforePreviousVisit(
   workflow: WorkflowDefinition,
   steps: ExecutionStepRecord[],
   nodeId: string,
   stepIndex: number,
-): Record<string, unknown> | null {
+): { outputs: Record<string, unknown>; visitCounts: Record<string, number> } | null {
   let previous = -1;
   for (let i = 0; i < stepIndex && i < steps.length; i++) {
     if (steps[i].nodeId === nodeId) previous = i;
   }
   if (previous < 0) return null;
   const outputs: Record<string, unknown> = {};
+  const visitCounts: Record<string, number> = {};
   for (let i = 0; i < previous; i++) {
+    visitCounts[steps[i].nodeId] = (visitCounts[steps[i].nodeId] ?? 0) + 1;
     const node = findNode(workflow, steps[i].nodeId);
     // Control nodes route; they contribute no state an agent can read.
     if (!node || node.type === "condition" || node.type === "parallel") continue;
     outputs[steps[i].nodeId] = steps[i].output;
   }
-  return outputs;
+  // That pass counted itself, as every pass does.
+  visitCounts[nodeId] = (visitCounts[nodeId] ?? 0) + 1;
+  return { outputs, visitCounts };
 }
+
+/** An input that was filled on the last pass and is empty on this one. */
+const CLEARED = Symbol("cleared");
 
 function readResolved(root: Record<string, unknown>, path: string): unknown {
   let cur: unknown = root;
@@ -774,7 +907,10 @@ function renderValue(v: unknown): string {
  * Only declared inputs are compared, because they are the only thing that can
  * have changed: the agent's body is fixed and the run's input is fixed. An
  * input that went from empty to filled — the answers, the feedback, the gaps
- * — is what a second pass exists for, and is all that is sent.
+ * — is what a second pass exists for, and is all that is sent. One that went
+ * the other way is sent too, as cleared: the subagent still holds last pass's
+ * gaps, and told only that everything it was given still holds, it went on
+ * treating feedback that had since been answered as open.
  *
  * Null when nothing can be shown to have moved. The caller then sends the
  * whole prompt: a pass that cannot say what is new has no business claiming
@@ -787,21 +923,33 @@ function resumePrompt(
   current: Record<string, unknown>,
   previous: Record<string, unknown>,
 ): string | null {
+  const isEmpty = (v: unknown) => v === undefined || v === "" || v === null || (Array.isArray(v) && !v.length);
   const changed: Array<[string, unknown]> = [];
   for (const raw of paths) {
     const path = raw.replace(/\?$/, "");
     const now = readResolved(current, path);
-    if (now === undefined || now === "" || (Array.isArray(now) && !now.length)) continue;
-    if (JSON.stringify(now) === JSON.stringify(readResolved(previous, path))) continue;
+    const then = readResolved(previous, path);
+    if (isEmpty(now)) {
+      if (!isEmpty(then)) changed.push([path, CLEARED]);
+      continue;
+    }
+    if (JSON.stringify(now) === JSON.stringify(then)) continue;
     changed.push([path, now]);
   }
   if (!changed.length) return null;
   return (
     `Pass ${visit} of the "${nodeId}" node — the same node you worked on before, continued.\n\n` +
-    "Everything you were given last time still holds: the task, the brief, and what you read and " +
-    "decided while doing it. Do not start the node over and do not ask for any of it again; go on " +
-    "from where you left off.\n\nWhat is new since your last pass:\n\n" +
-    changed.map(([path, value]) => `## ${path}\n\n${renderValue(value)}`).join("\n\n")
+    "The task, the brief, and what you read and decided while doing it still hold. Do not start the " +
+    "node over and do not ask for any of it again; go on from where you left off. What follows is " +
+    "every input that moved since your last pass — one marked cleared was answered or withdrawn and " +
+    "no longer applies.\n\nWhat is new since your last pass:\n\n" +
+    changed
+      .map(([path, value]) =>
+        value === CLEARED
+          ? `## ${path}\n\n(cleared — what you were given here last time no longer applies)`
+          : `## ${path}\n\n${renderValue(value)}`,
+      )
+      .join("\n\n")
   );
 }
 
@@ -873,15 +1021,55 @@ function stoppedOutside(execution: { status: string; error: { code: string; mess
   return execution.error.code === "RUN_CANCELLED" || execution.error.code === "RUN_ABANDONED" ? execution.error : null;
 }
 
+/**
+ * The skills an agent declares, found on this machine.
+ *
+ * The run's pin is read first, and the team's mirror after it: a skill is the
+ * process an agent follows, not part of the graph the pin keeps still, and a
+ * skill the pin never got — imported after the run began, or missing when it
+ * did — is otherwise one no `gate pull` could ever supply to this run.
+ */
+function resolveSkills(
+  agent: AgentDefinition,
+  nodeId: string,
+  scope: DefinitionScope,
+  team: string,
+  executionId: string,
+): SkillRef[] {
+  return agent.skills.map((id) => {
+    for (const where of [scope, cacheScope(team)]) {
+      try {
+        return { id, description: getSkill(id, where).description, path: resolveSkillDir(id, where) };
+      } catch {
+        // Not here; the mirror next.
+      }
+    }
+    throw new WorkflowError(
+      "AGENT_DEFINITION_INVALID",
+      `node "${nodeId}": agent "${agent.id}" declares skill "${id}", which this machine did not pull — ` +
+        `run \`gate pull\` (and check it is in your team's skill library), then \`gate continue ${executionId}\``,
+      { nodeId, agentId: agent.id },
+    );
+  });
+}
+
 /** A state the condition language and the input resolver can read. */
-function stateFor(execution: { workflowId: string; input: Record<string, unknown> }, outputs: Record<string, unknown>): WorkflowState {
+function stateFor(
+  execution: { workflowId: string; input: Record<string, unknown> },
+  outputs: Record<string, unknown>,
+  visitCounts: Record<string, number>,
+): WorkflowState {
   return {
     executionId: "",
     workflowId: execution.workflowId,
     status: "running",
     input: execution.input,
     outputs,
-    visitCounts: {},
+    // What `visits.<node>` reads, in an agent's inputs and a command's argv.
+    // Left empty, every one of them read 0: the conflict-review told the
+    // planner's objection came from visit 0 matched no objection the planner
+    // had raised, and the person's confirmation of it never landed.
+    visitCounts,
     stepCount: 0,
     history: [],
     error: null,
@@ -953,6 +1141,16 @@ export async function step(
   nodeId: string,
   answer: string,
   opts: { subagent?: string } = {},
+): Promise<Instruction> {
+  return withRunLock(executionId, () => takeAnswer(ctx, executionId, nodeId, answer, opts));
+}
+
+async function takeAnswer(
+  ctx: SessionRunContext,
+  executionId: string,
+  nodeId: string,
+  answer: string,
+  opts: { subagent?: string },
 ): Promise<Instruction> {
   const pending = readPending(executionId);
   if (!pending || pending.executionId !== executionId) {
@@ -1096,24 +1294,39 @@ async function settle(
   /** Where this run's repository publishes, as the gate answered on this poll. */
   publish?: PublicationTarget | null,
 ): Promise<void> {
-  if (execution.status !== "running") return;
   const workspace = workspaceOf(execution);
-  let diff: string | null = null;
-  let summary = null;
-  if (workspace && existsSync(workspace.root)) {
-    summary = summarizeWorkspace(workspace);
+  if (execution.status === "running") {
+    let diff: string | null = null;
+    let summary = null;
+    if (workspace && existsSync(workspace.root)) {
+      summary = summarizeWorkspace(workspace);
+      try {
+        diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
+      } catch {
+        // A worktree removed mid-run is the run's own failure, not a second one.
+      }
+    }
+    // The gate has to hear the outcome before anything is taken away. Told
+    // "done" while the row stayed running, the session moved on, the
+    // worktree and the pin went, and six hours later a finished run was
+    // written off as abandoned — and a `gate next` to put it right walked a
+    // graph the pin no longer held and reported no diff.
     try {
-      diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
-    } catch {
-      // A worktree removed mid-run is the run's own failure, not a second one.
+      await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary, diff });
+    } catch (e) {
+      throw new WorkflowError(
+        "WORKSPACE_ERROR",
+        `could not report the run's outcome to the gate (${(e as Error).message}); its worktree and definitions are ` +
+          `kept — run \`gate next ${executionId}\` again once the gate answers`,
+      );
     }
   }
-  await ctx.client
-    .finish(executionId, { status, error, stepCount, workspace: summary, diff })
-    .catch((e) => ctx.say(`could not report the run's outcome: ${(e as Error).message}`));
 
   // Ended either way: the worktree goes and its branch keeps the work — a
-  // failed run's `gate continue` checks it out again from there.
+  // failed run's `gate continue` checks it out again from there. A run the
+  // gate had already closed gets here too, when the report of its end went
+  // through and the answer to it did not; releasing a worktree that is
+  // already gone does nothing.
   if (workspace) await releaseAndPublish(ctx.client, workspace, executionId, publish, ctx.say);
   // Over for good: the pinned definitions and the logs have nothing left to
   // serve. A failed run keeps them, because `gate continue` needs them.
@@ -1143,6 +1356,10 @@ async function releaseStopped(
  * out again from the run's branch, at the same path, before anything runs.
  */
 export async function continueRun(ctx: SessionRunContext, executionId: string): Promise<Instruction> {
+  return withRunLock(executionId, () => reopen(ctx, executionId));
+}
+
+async function reopen(ctx: SessionRunContext, executionId: string): Promise<Instruction> {
   const { execution } = await ctx.client.execution(executionId);
   if (execution.driver !== "session") {
     throw new WorkflowError(
@@ -1155,6 +1372,15 @@ export async function continueRun(ctx: SessionRunContext, executionId: string): 
     throw new WorkflowError("EXECUTION_NOT_RESUMABLE", `this run ${execution.status}; there is nothing to continue`);
   }
   const workspace = workspaceOf(execution);
+  // A run that ended before its worktree was made has nothing to continue
+  // in. Reopened anyway, its command nodes ran wherever this was typed — the
+  // person's own checkout, their current branch.
+  if (!workspace && getWorkflow(execution.workflowId, runScope(ctx.team, executionId)).workspace) {
+    throw new WorkflowError(
+      "EXECUTION_NOT_RESUMABLE",
+      "this run ended before its worktree was made, so there is nothing to continue: start the workflow again",
+    );
+  }
   let restored = false;
   if (workspace && !existsSync(workspace.root)) {
     try {

@@ -98,12 +98,15 @@ default, `*` read as `**`, empty meaning never.
 
 The push happens on the person's machine, which holds the worktree; the
 gate's own checkout is never pushed from. Nothing is forced, no upstream is set.
-Afterwards the remote is asked what it holds, and the commit recorded is the
-one the remote reports, never the local head, so nothing is recorded that
-another team cannot fetch. A failed push is reported as itself and leaves the
+Afterwards the remote is asked what it holds, and the push counts only when
+the remote reports the very commit that was pushed; that reported commit is
+what is recorded, so nothing is recorded that another team cannot fetch. A
+remote whose fetch URL answers with another commit — a separate push URL, a
+mirror that lags — is a push that is not verified. A failed push is reported as itself and leaves the
 run's result alone: built and fetchable are separate claims. Mid-run, `gate
 publish` commits the worktree as a checkpoint that says so in its own message,
-then pushes the same way. Work never pushed is unreachable to another team's
+leaving out the borrowed dependency links the repository does not already
+ignore, then pushes the same way. Work never pushed is unreachable to another team's
 question, and is answered as unreachable rather than never built.
 
 Publishing is about pushing, not reading. A repository that names no

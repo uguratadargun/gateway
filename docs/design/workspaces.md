@@ -88,10 +88,13 @@ worktree out again from the branch at the same path (or cuts it fresh from
 the base commit when the branch went because it held nothing). `gate clean`
 (or `/gate:clean`) removes the worktrees left behind by runs that never got
 to end on this machine, the same way: what each left uncommitted is
-committed first, the branch is kept in every case, and a worktree the gate
-has no record of goes only when it plainly holds nothing that could be lost
-— fully pushed, or nothing past its base — unless `--all` says to take it
-anyway. `--dry-run` lists without removing.
+committed first, a branch with work on it is kept in every case (one its run
+left no commit on goes with its worktree), and a worktree the gate has no
+record of goes only when it plainly holds nothing that could be lost —
+fully pushed, or nothing past its base — unless `--all` says to take it
+anyway. A worktree whose run the gate could not be asked about — offline, or
+a key it refused — is kept whatever the flags say. `--dry-run` lists without
+removing.
 
 ### Tools
 
