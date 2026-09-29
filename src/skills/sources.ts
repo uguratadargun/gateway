@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -152,6 +152,12 @@ export function createSource(input: NewSkillSource): SkillSourceRecord {
     throw new WorkflowError("WORKSPACE_ERROR", "invalid source id (use lowercase letters, digits and dashes)");
   }
   if (getSource(input.id)) throw new WorkflowError("WORKSPACE_ERROR", `a skill source called "${input.id}" already exists`);
+  // The skills are read from inside the clone and nowhere else: a subdir
+  // that climbs out of it would list whatever gate's own directory holds.
+  const subdir = (input.subdir ?? "skills").replace(/^\/+|\/+$/g, "") || ".";
+  if (subdir.split("/").some((part) => part === ".." || part === "")) {
+    throw new WorkflowError("WORKSPACE_ERROR", `"${input.subdir}" is not a directory inside the repository`);
+  }
   getDb()
     .prepare(
       `INSERT INTO skill_sources (id, name, url, ref, subdir, prefix, root, status, created_at)
@@ -162,7 +168,7 @@ export function createSource(input: NewSkillSource): SkillSourceRecord {
       input.name.trim() || input.id,
       input.url.trim(),
       input.ref?.trim() || null,
-      (input.subdir ?? "skills").replace(/^\/+|\/+$/g, "") || ".",
+      subdir,
       input.prefix ?? "",
       join(sourcesDir(), input.id),
       Date.now(),
@@ -239,7 +245,7 @@ export async function syncSource(id: string): Promise<SkillSourceRecord | null> 
     if (!existsSync(join(source.root, ".git"))) {
       rmSync(source.root, { recursive: true, force: true });
       mkdirSync(sourcesDir(), { recursive: true, mode: 0o700 });
-      log.push(await git(["clone", ...(source.ref ? ["--branch", source.ref] : []), source.url, source.root]));
+      log.push(await git(["clone", ...(source.ref ? ["--branch", source.ref] : []), "--", source.url, source.root]));
       // A pin holds through a fresh clone too, not only through a fetch.
       if (source.pinnedSha) log.push(await git(["checkout", "--force", "--detach", source.pinnedSha], source.root));
     } else {
@@ -270,6 +276,11 @@ export async function syncSource(id: string): Promise<SkillSourceRecord | null> 
   return getSource(id);
 }
 
+/** The id a library's skill directory is imported under: the prefix, lowercased, dashes only. */
+function skillIdFor(prefix: string, name: string): string {
+  return `${prefix}${name}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 function skillsRootOf(source: SkillSourceRecord): string {
   return source.subdir === "." ? source.root : join(source.root, source.subdir);
 }
@@ -296,7 +307,14 @@ export function availableSkills(source: SkillSourceRecord): AvailableSkill[] {
     const dir = join(root, entry.name);
     const file = join(dir, "SKILL.md");
     if (!existsSync(file)) continue;
-    const id = `${source.prefix}${entry.name}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+    const id = skillIdFor(source.prefix, entry.name);
+    // A library is somebody else's repository. A SKILL.md that is a link
+    // would be read — and, on import, written — wherever it points on this
+    // machine, so it is listed as what it is and never followed.
+    if (lstatSync(file).isSymbolicLink()) {
+      out.push({ sourceSkill: entry.name, id, name: entry.name, description: "", sha: "", error: "its SKILL.md is a symbolic link, which is not imported" });
+      continue;
+    }
     const raw = readFileSync(file, "utf8");
     try {
       const parsed = parseSkill(id, raw, { dir, sourcePath: file, updatedAt: statSync(file).mtimeMs });
@@ -352,17 +370,25 @@ const PROSE_FILE_RE = /\.(md|markdown|txt)$/i;
  * that id. Left as written, every cross-skill link in the copy points at a
  * directory that does not exist, and every `superpowers:x` names a skill the
  * agent was never given. Only names the source actually holds are rewritten,
- * and only in prose files.
+ * and only in prose files, and each is rewritten to the id its directory is
+ * imported under — lowercased, dashes for anything else — not to the name
+ * with a prefix in front, which is a directory that does not exist.
  */
 export function rewriteSiblingReferences(dir: string, sourceId: string, prefix: string, siblings: string[]): string[] {
   if (!prefix || !siblings.length) return [];
-  const names = siblings.filter((s) => /^[a-z0-9][a-z0-9-]*$/i.test(s)).sort((a, b) => b.length - a.length);
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const names = siblings
+    .filter((s) => /^[\w.-]+$/.test(s) && skillIdFor(prefix, s) !== "")
+    .sort((a, b) => b.length - a.length);
   if (!names.length) return [];
-  const alternation = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const idOf = new Map(names.map((n) => [n, skillIdFor(prefix, n)]));
+  const alternation = names.map(escape).join("|");
   // `../name/` and `../name)` — a path up to a sibling; never one already prefixed.
-  const relative = new RegExp(`(\\.\\./)(?!${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(${alternation})(?=[/)\\s\`'"])`, "g");
-  // `source:name` — the harness namespace, as the library writes it.
-  const namespaced = new RegExp(`\\b${sourceId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:(${alternation})\\b`, "g");
+  const relative = new RegExp(`(\\.\\./)(?!${escape(prefix)})(${alternation})(?=[/)\\s\`'"])`, "g");
+  // `source:name` — the harness namespace, as the library writes it. The name
+  // ends where a name cannot go on: `\b` would also end it before a `-`, and
+  // rewrite the front of a longer name that is not a sibling at all.
+  const namespaced = new RegExp(`(?<![\\w-])${escape(sourceId)}:(${alternation})(?![\\w-])`, "g");
   const changed: string[] = [];
   const walk = (d: string) => {
     for (const entry of readdirSync(d, { withFileTypes: true })) {
@@ -373,7 +399,9 @@ export function rewriteSiblingReferences(dir: string, sourceId: string, prefix: 
       }
       if (!entry.isFile() || !PROSE_FILE_RE.test(entry.name)) continue;
       const before = readFileSync(full, "utf8");
-      const after = before.replace(relative, `$1${prefix}$2`).replace(namespaced, `${prefix}$1`);
+      const after = before
+        .replace(relative, (_m, up: string, name: string) => `${up}${idOf.get(name)}`)
+        .replace(namespaced, (_m, name: string) => idOf.get(name)!);
       if (after !== before) {
         writeFileSync(full, after, { mode: 0o600 });
         changed.push(full);
@@ -423,7 +451,12 @@ export function importSkills(sourceId: string, sourceSkills: string[], scope: De
     rmSync(target, { recursive: true, force: true });
     mkdirSync(skillsDir(scope), { recursive: true, mode: 0o700 });
     // A library that keeps a nested checkout inside a skill is not copying it here.
-    cpSync(join(root, wanted), target, { recursive: true, filter: (src) => basename(src) !== ".git" });
+    // Nor are links: a library is somebody else's repository, and a link in
+    // the copy points wherever it points on this machine.
+    cpSync(join(root, wanted), target, {
+      recursive: true,
+      filter: (src) => basename(src) !== ".git" && !lstatSync(src).isSymbolicLink(),
+    });
     // The copy is renamed to the id it is known by here, so the skill is
     // self-consistent wherever it is later handed to a harness — and so are
     // its references to its siblings, which the prefix would otherwise break.
