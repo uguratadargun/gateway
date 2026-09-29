@@ -67,6 +67,17 @@ function trimmedList(values: string[] | undefined): string[] | undefined {
   return out?.length ? out : undefined;
 }
 
+/**
+ * A command's argv, as written. An argument is data the command reads, so
+ * whitespace in it is meaning — `tr -d " "` deletes spaces — and only an
+ * argument with nothing in it at all is dropped. Saving a graph must not
+ * change what a node it did not touch runs.
+ */
+function argvList(values: string[] | undefined): string[] | undefined {
+  const out = values?.filter((v) => v !== "");
+  return out?.length ? out : undefined;
+}
+
 function serializeNode(node: NodeDoc): Record<string, unknown> {
   const out: Record<string, unknown> = { id: node.id.trim(), type: node.type };
   put(out, "label", node.label?.trim());
@@ -81,10 +92,12 @@ function serializeNode(node: NodeDoc): Record<string, unknown> {
   switch (node.type) {
     case "agent":
       put(out, "agent", node.agent?.trim());
-      put(out, "inputs", trimmedList(node.inputs));
+      // An empty list is a declaration, not a blank: the node reads nothing,
+      // where no list at all reads everything its agent declares.
+      if (node.inputs) out.inputs = trimmedList(node.inputs) ?? [];
       break;
     case "command":
-      put(out, "command", trimmedList(node.command));
+      put(out, "command", argvList(node.command));
       put(out, "cwd", node.cwd?.trim());
       put(out, "timeoutMs", node.timeoutMs);
       break;

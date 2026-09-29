@@ -62,7 +62,13 @@ function loadFile(id: string, file: string, scope: DefinitionScope): WorkflowDef
   const stat = statSync(file);
   const key = `${scope.teamId ?? scope.root}\u0000${file}`;
   const hit = cache.get(key);
-  if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
+  // The file is not the whole of what made the reading valid: the agents it
+  // names are other files. One deleted since keeps the file's mtime, so the
+  // hit is checked against them too, and a gone agent is refused here, at
+  // load, rather than at the node in the middle of a run.
+  const agentsStillThere = (def: WorkflowDefinition) =>
+    def.nodes.every((n) => n.type !== "agent" || agentExists(n.agent, scope));
+  if (hit && hit.mtimeMs === stat.mtimeMs && agentsStillThere(hit.def)) return hit.def;
   const def = parseWorkflow(id, readFileSync(file, "utf8"), {
     sourcePath: file,
     updatedAt: stat.mtimeMs,

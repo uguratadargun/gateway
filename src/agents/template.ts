@@ -8,9 +8,10 @@
 
 export class TemplateError extends Error {}
 
-// Segments may contain dashes, because node ids do: an unmatched placeholder
-// would otherwise be neither validated nor substituted, and reach the model raw.
-const PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)\s*\}\}/g;
+// Segments may contain dashes, and after the first may start with a digit,
+// because node ids do both: an unmatched placeholder would otherwise be
+// neither validated nor substituted, and reach the model raw.
+const PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_][A-Za-z0-9_-]*)*)\s*\}\}/g;
 
 /** Every path a template references, for load-time dependency checking. */
 export function templatePaths(tpl: string): string[] {

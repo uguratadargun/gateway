@@ -444,10 +444,9 @@ small agent that may touch documents and nothing else and hands back to
 `stage`; `replan: false` sends a bounded fix straight to the implementer;
 `replan: true` sends a fault in the plan back to the planner. A record round
 skips the implementer and the verifier because it changes nothing they would
-have to re-check, and it does not spend a review: the give-up edges say
-`visits.reviewer - visits.record-fix >= 4`, written out as the three forms
-the condition language can express, so four real reviews stay four whether or
-not the run needed a document fixed. Two record rounds that still do not
+have to re-check, and it does not spend a review: the give-up edge counts
+visits to `rejected`, a node only a real rejection reaches, so four
+rejections stay four whether or not the run needed a document fixed. Two record rounds that still do not
 satisfy the reviewer end on `record-wrong` rather than looping. The person's request
 at `acceptance` goes the same way: the node answers `replan` too, and a
 wording, a name, a translation, a small fix in what the branch already has
@@ -647,8 +646,15 @@ and the `nothing-changed` edge cannot catch it — after the first pass `git dif
 is non-empty whether or not this visit changed anything.
 
 Nothing caps it from outside: `maxVisits` is accepted and read by nothing. The
-pipeline says how many attempts a fix is worth and lands somewhere that
-reports what is stuck:
+pipeline says how many failures a fix is worth and lands somewhere that
+reports what is stuck.
+
+Count **failures**, not runs. `visits.tests` counts every run of the tests,
+green ones included — and a node that runs again on every lap of a longer loop
+(the tests after a review sends the change back) would reach its limit on the
+first red of a late lap, with every earlier run having passed. So the failure
+edge goes to a small `condition` node of its own, which runs only when the
+check failed; its visits are the failures, and the give-up edge lives there:
 
 ```yaml
   - id: tests
@@ -658,11 +664,18 @@ reports what is stuck:
       - when: outputs.tests.ok == true
         to: reviews
         label: tests pass
-      - when: visits.tests >= 6
-        to: tests-stuck
-        label: still red after 6 runs
-      - to: implementer
+      - to: tests-failed
         label: tests failed
+
+  - id: tests-failed
+    type: condition
+    label: Tests failed
+    edges:
+      - when: visits.tests-failed >= 6
+        to: tests-stuck
+        label: still red after 6 failures
+      - to: implementer
+        label: fix it
 
   - id: tests-stuck
     type: terminal
@@ -670,32 +683,18 @@ reports what is stuck:
     status: failed
 ```
 
-Order matters: edges are tried in declaration order and the first match wins, so
-the give-up edge goes after the success edge and before the loop-back fallback.
-Give the same treatment to the review-rejection loop (`visits.reviewer >= 4`,
-counted in reviews because the planner also runs for the person's questions)
-and to the verification loop (`visits.verifier >= 3`).
+The shipped pipelines do this for all three of their loops: `gaps` after the
+verifier (three failed checks, then `not-verified`), `record-missing` after
+the record check (three asks, then `no-spec`), and `rejected` after the
+review verdict (four rejections, then `review-stuck`). A review the reviewer
+approved and the person sent back at acceptance goes nowhere near `rejected`,
+and neither does a record round: they are not failures of the change, and
+they are not counted as one.
 
-A visit is counted when the node **runs**, before its edges are looked at, so
-a counter cannot be avoided by ordering an edge above the give-up one. When a
-loop has a cheap round that should not be charged against the budget — the
-record round is the shipped case — subtract it. The condition language has no
-arithmetic, so `visits.reviewer - visits.record-fix >= 4` is written as one
-edge per value of the cheap counter, in order, above the fallback:
-
-```yaml
-      - when: visits.record-fix == 0 && visits.reviewer >= 4
-        to: review-stuck
-      - when: visits.record-fix == 1 && visits.reviewer >= 5
-        to: review-stuck
-      - when: visits.reviewer >= 6
-        to: review-stuck
-```
-
-The last one is not the general case — it is the ceiling of the cheap loop's
-own give-up edge (two record rounds, then `record-wrong`), so the series
-terminates. A loop whose cheap round is unbounded cannot be written this way,
-which is the reason to bound it.
+Order matters on the node that judges: edges are tried in declaration order
+and the first match wins, so the success edge goes first. A visit is counted
+when a node **runs**, before its edges are looked at — which is why the count
+belongs on a node that only a failure reaches, and not on the node that judges.
 
 ### Approved work has to ship
 
@@ -837,9 +836,10 @@ accept it. The server validates shape, not sense.
       must fix them, **and `ok` alongside them** — an output outlives the pass
       that produced it, so an agent that is not told `ok` reads the last green
       run as a failure.
-- [ ] **Every loop-back edge has a give-up edge**, `visits.<node> >= n`, declared
-      after the success edge and before the fallback, landing on a `status:
-      failed` terminal that names what is stuck.
+- [ ] **Every loop has a give-up edge that counts failures**: the failure edge
+      goes to a `condition` node only a failure reaches, whose
+      `visits.<that node> >= n` edge lands on a `status: failed` terminal that
+      names what is stuck. The loader refuses a loop with no edge out at all.
 - [ ] **If the run is meant to deliver, the pipeline ships what it approved** —
       stage, commit with `{{outputs.<implementer>.summary}}` when anything is
       left to commit, push — and a failed push lands on its own `status: failed`

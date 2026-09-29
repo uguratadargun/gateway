@@ -43,9 +43,20 @@ rather than whether it can start. A
 string built from model output. A run has no ceilings: the file still takes
 `maxWorkflowSteps`, `maxVisits` and `maxCostUsd`, all `0` by default and in
 every shipped workflow, and a run a session drives reads none of them. A
-loop ends on its own give-up edge (`visits.<node> >= n` → a terminal naming
-what is stuck), and a run that is looping is stopped from the dashboard,
-where it can be seen looping.
+loop ends on its own give-up edge, which counts failures: the failure edge
+goes to a `condition` node only a failure reaches, and `visits.<that node> >=
+n` sends the run to a terminal naming what is stuck. A run that is looping
+anyway is stopped from the dashboard, where it can be seen looping.
+
+The loader refuses what would only go wrong in the middle of a run: a node
+that cannot reach any terminal (a loop with no edge out), a guard that reads
+`outputs`, `visits` or `input` whole, a guard that reads the output of a
+`condition`, `parallel` or `terminal` node (none of them has one), and a
+node's own `inputs:` naming a node the workflow does not have — unless the
+path is optional (`?`), which reads as empty. A node's `inputs:` replaces its
+agent's list when it has one. A cached reading of a workflow is dropped when
+an agent it names is deleted, so a gone agent is refused at load and not at
+its node.
 
 The walk is `nextInSession`: each `gate next` is a new process, so it replays
 the run's recorded steps from the entry node, through the same `selectEdge`,
@@ -151,7 +162,7 @@ node, which never runs as a step — is recovered from how the run ended.
 name: Sample dev pipeline
 entry: planner
 maxWorkflowSteps: 0      # no ceilings: loops end on their own give-up edges
-maxVisits: 0             # (visits.<node> >= n → a terminal naming what is stuck)
+maxVisits: 0             # (a failure-only node, visits.<it> >= n → a terminal naming what is stuck)
 nodes:
   - id: planner
     type: agent
@@ -176,7 +187,8 @@ Top level: `name`, `description`, `entry`, `workspace` (`repo`, `baseRef`,
 `branchPrefix`; an empty `workspace: {}` makes `repo` a run input),
 `maxWorkflowSteps`, `maxVisits`, `maxCostUsd` (all default `0`, and read by
 no run a session drives), and
-`nodes` (1–100). A node has `id` (`[a-z0-9-]`, up to 64), optional `label`,
+`nodes` (1–100). A node has `id` (`[a-z0-9-]`, up to 64; one that starts with
+a digit is named in guards and templates like any other), optional `label`,
 and `next` (one unconditional edge) or `edges` (up to 20: `to`, optional
 `when` and `label`). `agent` adds `agent` and an optional `inputs` override;
 `command` adds `command` (argv), `cwd`, `timeoutMs`; both take `disabled` and
@@ -200,9 +212,11 @@ and `next` (one unconditional edge) or `edges` (up to 20: `to`, optional
 ## Pitfalls
 
 - An edge with no `when` is the fallback, and there is exactly one per node. Two unguarded edges are a validation error; a node whose guarded edges all fail and has no fallback ends the run with `WORKFLOW_ROUTING_ERROR`.
-- A `condition` node produces no output; a condition that reads `outputs.<conditionNode>.x` is always undefined.
+- A `condition` node produces no output, so a guard that reads `outputs.<conditionNode>.x` is refused at load.
+- A run's inputs are text, so `input.x == true` or `input.n >= 3` never holds or throws on every run; compare with a quoted string.
+- An agent's `input.x?` declaration makes `x` an optional run input, not a required one; a `{{input.x}}` in the prompt still requires it, because the template reads the run input directly.
 - A branch may not be pointed at from outside its fan-out node, and may not contain a terminal. Adding `next: done` inside a branch is refused with the branch named.
-- Saving from the canvas discards YAML comments. Keep hand-written commentary in `description` or in the labels.
+- Saving from the canvas discards YAML comments. Keep hand-written commentary in `description` or in the labels. It keeps a command's arguments as written, whitespace included, and a node's `inputs: []` (reads nothing) apart from no `inputs:` (reads what its agent declares).
 - A workflow saved without `workspace` has no worktree: its agent nodes are told to work from what the prompt gives them and the commands it names, and to touch no files on the person's machine.
 - `maxWorkflowSteps`, `maxVisits` and `maxCostUsd` are accepted and shown on the workflow's page, but no run a session drives reads them; a loop that must end needs a give-up edge.
 - A guard on a switched-off node contributes no optional input: the run takes `skipTo` and never evaluates that node's edges, so asking for a value nothing will read is noise.

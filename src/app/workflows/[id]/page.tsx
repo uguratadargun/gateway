@@ -67,10 +67,6 @@ function toDraft(wf: ApiWorkflow): Draft {
   };
 }
 
-/**
- * Caps are opt-in, and 0 means there is none — which "max 0 steps" reads as the
- * exact opposite of. Say what is actually true instead.
- */
 function freshId(kind: NodeKind, taken: Set<string>): string {
   for (let i = 1; ; i++) {
     const id = i === 1 ? kind : `${kind}-${i}`;
