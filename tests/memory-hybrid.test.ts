@@ -107,3 +107,29 @@ describe("vectors beside the words", () => {
     expect((await hybridSearchFeatures(scope, "dark", 5, null))[0]?.id).toBe("dark-mode");
   });
 });
+
+describe("the set a vector may rank", () => {
+  it("is everything the scope allows, not the newest 200 with the caller's team first", async () => {
+    if (!getTeam("hy-tree")) {
+      createTeam("Hybrid tree", "hy-tree");
+      createTeam("Hybrid own", "hy-own", "hy-tree");
+      createTeam("Hybrid sibling", "hy-sib", "hy-tree");
+    }
+    const filler = Array.from({ length: 205 }, (_, i) => ({ context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", title: `own filler ${i}`, touches: [] }));
+    const own = replaceDecisions(
+      { executionId: "hy-many", teamId: "hy-own", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "merged", validFrom: 10_000 },
+      filler,
+    );
+    const [sibling] = replaceDecisions(
+      { executionId: "hy-sibling", teamId: "hy-sib", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "merged", validFrom: 20_000 },
+      [{ context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", title: "Batch notifications per device", touches: [] }],
+    );
+    const target = Float32Array.from([1, 0]);
+    const far = Float32Array.from([0, 1]);
+    for (const d of own) storeEmbedding("decision", d.id, "fixed-v1", far);
+    storeEmbedding("decision", sibling.id, "fixed-v1", target);
+    const embedder: Embedder = { model: "fixed-v1", embed: async (t) => t.map(() => target) };
+    const hits = await hybridSearchDecisions(memoryScopeFor("hy-own"), { query: "alerts", limit: 10 }, embedder);
+    expect(hits.map((h) => h.id)).toContain(sibling.id);
+  });
+});

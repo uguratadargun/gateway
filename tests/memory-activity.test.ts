@@ -87,3 +87,10 @@ describe("work in flight", () => {
     finish(id, "voice");
   });
 });
+
+describe("task words with a capital dotted İ", () => {
+  it("keep the word whole", () => {
+    expect([...taskTerms("İptal akışını ekle")]).toContain("iptal");
+    expect([...taskTerms("İptal akışını ekle")]).toEqual([...taskTerms("iptal akışını ekle")]);
+  });
+});

@@ -10,7 +10,7 @@ import { getWorkflow, readWorkflowSource } from "@/workflows/registry";
 import type { TeachAccount } from "@/lib/client-api-schemas";
 import { decodeConnectionToken, looksLikeConnectionToken } from "@/lib/connect-token";
 import { describeActivity, describeFeature, describeFeatureList, describeHistory, describeRepoRecord, describeSearch } from "@/memory/cards";
-import { parseSince } from "@/memory/since";
+import { parseAsOf, parseSince } from "@/memory/since";
 import { checkpointWork, publishBranch } from "@/repos/publish";
 import { borrowedLinksToExclude, readRemoteUrl, type RunWorkspace } from "@/runtime/workspace";
 
@@ -776,7 +776,7 @@ async function cmdMemory(args: Args): Promise<number> {
     const featureId = one(args.flags.feature);
     if (!query && !paths.length && !featureId) die("usage: gate memory search <words…> [--path <prefix>]… [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]");
     const since = parseSince(one(args.flags.since));
-    const asOf = parseSince(one(args.flags["as-of"]));
+    const asOf = parseAsOf(one(args.flags["as-of"]));
     if (one(args.flags.since) && since == null) die(`--since: not a time: ${args.flags.since}`);
     if (one(args.flags["as-of"]) && asOf == null) die(`--as-of: not a time: ${args.flags["as-of"]}`);
     const limit = args.flags.limit ? Number(args.flags.limit) : undefined;

@@ -130,17 +130,38 @@ export function parseConsolidatorAnswer(text: string): ConsolidationAnswer {
   throw new Error(`the consolidator did not answer in the shape asked for: ${lastError instanceof Error ? lastError.message.split("\n")[0] : "not JSON"}`);
 }
 
-/** Implementations with enough new decisions since their last pass. */
+/** Decisions one pass reads, at most. */
+const MAX_DECISIONS_READ = 200;
+/**
+ * Failed passes over the same decisions before the implementation waits for a
+ * new one. A pass that fails on this input — an answer in the wrong shape, an
+ * output limit — fails the same way on the next drain, and each try is a
+ * model call; a new decision is new input, and earns one more try.
+ */
+const FAILED_PASSES_BEFORE_WAITING = 3;
+
+/**
+ * Implementations with enough new decisions since their last pass, leaving
+ * out one whose last passes over these same decisions all failed. Those
+ * failures stay on the feature's consolidation ledger, which is where a
+ * person sees them.
+ */
 export function dueConsolidations(every: number, limit = 5): Array<{ featureId: string; teamId: string }> {
   if (every <= 0) return [];
   const rows = getDb()
     .prepare(
-      `SELECT feature_id, team_id FROM memory_feature_impls
-        WHERE decision_count - COALESCE(consolidated_count, 0) >= ?
-        ORDER BY updated_at ASC
+      `SELECT i.feature_id, i.team_id FROM memory_feature_impls i
+        WHERE i.decision_count - COALESCE(i.consolidated_count, 0) >= ?
+          AND (SELECT COUNT(*) FROM memory_consolidations c
+                WHERE c.feature_id = i.feature_id AND c.team_id = i.team_id AND c.status = 'failed'
+                  AND c.decisions_read >= MIN(i.decision_count, ?)
+                  AND c.started_at >= COALESCE(
+                    (SELECT MAX(d.started_at) FROM memory_consolidations d
+                      WHERE d.feature_id = i.feature_id AND d.team_id = i.team_id AND d.status = 'done'), 0)) < ?
+        ORDER BY i.updated_at ASC
         LIMIT ?`,
     )
-    .all(every, limit) as Array<{ feature_id: string; team_id: string }>;
+    .all(every, MAX_DECISIONS_READ, FAILED_PASSES_BEFORE_WAITING, limit) as Array<{ feature_id: string; team_id: string }>;
   return rows.map((r) => ({ featureId: r.feature_id, teamId: r.team_id }));
 }
 
@@ -163,7 +184,7 @@ export async function consolidateImplementation(
   if (!feature || feature.orgId !== scope.orgId || !scope.teams.includes(teamId)) {
     return { status: "skipped", reason: "no such feature in this tree", decisionsRead: 0, superseded: 0 };
   }
-  const decisions = searchDecisions(scope, { featureId, limit: 200, includeRetracted: false })
+  const decisions = searchDecisions(scope, { featureId, limit: MAX_DECISIONS_READ, includeRetracted: false })
     .filter((d) => d.teamId === teamId)
     .sort((a, b) => a.validFrom - b.validFrom);
   if (!decisions.length) return { status: "skipped", reason: "no decisions to read", decisionsRead: 0, superseded: 0 };
@@ -236,6 +257,10 @@ export async function consolidateImplementation(
       const older = getDecision(pair.id)!;
       const newer = getDecision(pair.by)!;
       if (newer.validFrom < older.validFrom || newer.validTo != null || older.validTo != null) continue;
+      // The same rule a run's own supersedes follows: a team with two
+      // repositories keeps a decision per codebase, and "retries 5" in the app
+      // does not end "retries 3" on the server. Unknown on either side passes.
+      if (older.repoId && newer.repoId && older.repoId !== newer.repoId) continue;
       db.prepare("UPDATE memory_decisions SET valid_to = ? WHERE id = ? AND valid_to IS NULL").run(newer.validFrom, older.id);
       if (!newer.supersedes) db.prepare("UPDATE memory_decisions SET supersedes = ? WHERE id = ?").run(older.id, newer.id);
       superseded++;

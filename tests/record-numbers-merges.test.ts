@@ -162,7 +162,7 @@ describe("a merge nobody ran through gate", () => {
     git(work, "push", "-q", "origin", "main");
     await indexRepo(repo);
 
-    expect(await recordMergesSince(repo, base, merge)).toBe(1);
+    expect((await recordMergesSince(repo, base, merge)).recorded).toBe(1);
     const { getDb } = await import("@/lib/db");
     const row = getDb().prepare("SELECT id FROM workflow_executions WHERE workflow_id = ? AND json_extract(workspace_json, '$.commit') = ?").get(MERGE_WORKFLOW_ID, merge) as { id: string };
     const run = getExecution(row.id)!;
@@ -174,8 +174,25 @@ describe("a merge nobody ran through gate", () => {
     expect(getExtraction(run.id)?.status).toBe("pending");
 
     // Seen once is recorded once.
-    expect(await recordMergesSince(repo, base, merge)).toBe(0);
+    expect((await recordMergesSince(repo, base, merge)).recorded).toBe(0);
   });
+
+  it("records a burst beyond one read's share on the next read, oldest first", async () => {
+    const { work, repo, base } = connect();
+    const shas: string[] = [];
+    for (let i = 0; i < 25; i++) {
+      write(work, `api/burst${i}.go`, `// ${i}\n`);
+      shas.push(commit(work, `feat: burst change ${i}`));
+    }
+    git(work, "push", "-q", "origin", "main");
+    await indexRepo(repo);
+    // Twenty now, and the watermark stops at the twentieth: the other five
+    // are the next read's, not dropped.
+    const first = await recordMergesSince(repo, base, shas[24]);
+    expect(first).toEqual({ recorded: 20, seen: shas[19] });
+    const second = await recordMergesSince(repo, first.seen, shas[24]);
+    expect(second).toEqual({ recorded: 5, seen: shas[24] });
+  }, 60_000);
 
   it("leaves a merge of a gate run's own branch to the run that made it", async () => {
     const { work, repo, base } = connect();
@@ -190,6 +207,6 @@ describe("a merge nobody ran through gate", () => {
     createExecution(runId, "dev", { task: "x" }, Date.now(), null, { teamId: "mg-server", repoId: repo.repoId });
     setExecutionPublication(runId, { ref: "gate/run-abcdef12", commit: head, at: Date.now() });
     await indexRepo(repo);
-    expect(await recordMergesSince(repo, base, merge)).toBe(0);
+    expect((await recordMergesSince(repo, base, merge)).recorded).toBe(0);
   });
 });

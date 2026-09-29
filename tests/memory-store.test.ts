@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { createExecution } from "@/executions/store";
+import { forgetDecision } from "@/memory/forget";
+import { insertIssue, liveIssues } from "@/memory/issues";
 import { getDb } from "@/lib/db";
 import { createTeam, deleteTeam, setTeamParent, teamAncestors, teamFamily, teamPath, teamRoot, teamTree } from "@/lib/teams";
 import {
@@ -8,6 +10,7 @@ import {
   decisionsForExecution,
   getDecision,
   implementationsOf,
+  listFeatures,
   memoryScopeFor,
   pendingExtractions,
   queueExtraction,
@@ -223,5 +226,84 @@ describe("the extraction ledger", () => {
     expect(claimExtraction("run-x")).toBe(true);
     settleExtraction("run-x", { status: "done", decisionCount: 2, model: "claude-sonnet-5", costUsd: 0.01 });
     expect(claimExtraction("run-x")).toBe(false);
+  });
+});
+
+describe("recording a run again", () => {
+  const base = (executionId: string, validFrom: number) => ({
+    executionId,
+    teamId: "android",
+    userId: null,
+    featureId: null,
+    repoId: null,
+    baseCommit: null,
+    headCommit: null,
+    outcome: "merged" as const,
+    validFrom,
+  });
+  const d = (title: string, supersedes?: string) => ({ title, context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", touches: [], ...(supersedes ? { supersedes } : {}) });
+
+  it("reopens what an old decision closed when the new record has no such decision", () => {
+    tree();
+    const [polling] = replaceDecisions(base("rr-old-1", 500), [d("Use polling")]);
+    replaceDecisions(base("rr-new-1", 1_000), [d("Use push", polling.id)]);
+    expect(getDecision(polling.id)!.validTo).toBe(1_000);
+    // Read again, the run is about something else entirely.
+    replaceDecisions(base("rr-new-1", 1_000), [d("Rename the settings screen")]);
+    expect(getDecision(polling.id)!.validTo).toBeNull();
+  });
+
+  it("moves what pointed at an old decision to the same decision read again", () => {
+    tree();
+    const [polling] = replaceDecisions(base("rr-old-2", 500), [d("Use polling v2")]);
+    const [push] = replaceDecisions(base("rr-new-2", 1_000), [d("Use push v2", polling.id)]);
+    // A later run closed it, and another team objects to it.
+    const [later] = replaceDecisions(base("rr-later-2", 2_000), [d("Use push with batching", push.id)]);
+    expect(getDecision(push.id)!.validTo).toBe(2_000);
+    createExecution("rr-objector-2", "dev", {}, 1, null, { teamId: "desktop" });
+    insertIssue({ executionId: "rr-objector-2", stepIndex: 0, sourceNodeId: "planner", sourceVisit: 1, conflictKey: "k", fromTeamId: "desktop", targetTeamId: "android", decisionId: push.id, title: "push breaks desktop" });
+    getDb().prepare("UPDATE decision_issues SET status = 'open' WHERE decision_id = ?").run(push.id);
+
+    // Read again, and this time the recorder does not name what it superseded.
+    const [pushAgain] = replaceDecisions(base("rr-new-2", 1_000), [d("Use push v2")]);
+    // What it closed stays closed and is named, so forgetting it can undo it.
+    expect(pushAgain.supersedes).toBe(polling.id);
+    expect(getDecision(polling.id)!.validTo).toBe(1_000);
+    // The later decision's closing and pointer, and the objection, follow it.
+    expect(getDecision(pushAgain.id)!.validTo).toBe(2_000);
+    expect(getDecision(later.id)!.supersedes).toBe(pushAgain.id);
+    expect(liveIssues(memoryScopeFor("android"), { decisionIds: [pushAgain.id] })).toHaveLength(1);
+
+    forgetDecision(pushAgain.id);
+    expect(getDecision(polling.id)!.validTo).toBeNull();
+  });
+});
+
+describe("a feature's teams", () => {
+  it("names only teams of the feature's own tree", () => {
+    tree();
+    const f = upsertFeature({ orgId: "ulak", name: "Offline sync teams" });
+    upsertImplementation({ featureId: f.id, teamId: "android", summary: "" });
+    // A row for a team of another tree: a design doc of the same file name
+    // in another company's repository reads the same way.
+    upsertImplementation({ featureId: f.id, teamId: "otherco", summary: "" });
+    const mine = listFeatures(memoryScopeFor("desktop")).find((x) => x.id === f.id)!;
+    expect(mine.teams).toEqual(["android"]);
+  });
+});
+
+describe("words with a capital dotted İ", () => {
+  it("finds what the lowercase word finds", () => {
+    tree();
+    createExecution("tr-1", "dev", {}, 1, null, { teamId: "android" });
+    replaceDecisions(
+      { executionId: "tr-1", teamId: "android", userId: null, featureId: null, repoId: null, baseCommit: null, headCommit: null, outcome: "merged", validFrom: 1 },
+      [{ title: "İptal akışı sunucuda doğrulanır", context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", touches: [] }],
+    );
+    const scope = memoryScopeFor("android");
+    expect(searchDecisions(scope, { query: "iptal" }).length).toBe(1);
+    expect(searchDecisions(scope, { query: "İptal" }).length).toBe(1);
+    upsertFeature({ orgId: "ulak", name: "İndirme yöneticisi" });
+    expect(searchFeatures(scope, "İndirme").length).toBe(1);
   });
 });

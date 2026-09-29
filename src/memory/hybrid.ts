@@ -2,7 +2,7 @@ import { getDb } from "@/lib/db";
 
 import { configuredEmbedder, decisionText, docText, featureText, fuseRanks, nearest, storeEmbedding, unembeddedIds, type Embedder } from "./embeddings";
 import { rowToDoc, searchRecordDocs, type RecordDocHit, type RecordDocSearch } from "./record-index";
-import { getDecision, getFeature, searchDecisions, searchFeatures } from "./store";
+import { decisionIdsInScope, getDecision, getFeature, searchDecisions, searchFeatures } from "./store";
 import type { DecisionHit, DecisionSearch, FeatureHit, MemoryScope } from "./types";
 
 /**
@@ -37,8 +37,7 @@ export async function hybridSearchDecisions(scope: MemoryScope, search: Decision
     return words.slice(0, limit);
   }
   // Everything the non-text filters allow, in scope — the set a vector may rank.
-  const candidates = searchDecisions(scope, { ...search, query: undefined, limit: 5_000 });
-  const allowed = new Set(candidates.map((d) => d.id));
+  const allowed = new Set(decisionIdsInScope(scope, search));
   const vectors = nearest("decision", embedder.model, query, allowed, Math.max(limit * 3, 30));
   const fused = fuseRanks([words.map((d) => d.id), vectors.map((v) => v.id)]);
   const byId = new Map(words.map((d) => [d.id, d]));

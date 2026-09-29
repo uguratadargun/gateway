@@ -29,7 +29,11 @@ import { MERGE_WORKFLOW_ID } from "./types";
 
 const exec = promisify(execFile);
 
-/** A burst of merges beyond this waits for the next read, so one read never queues an afternoon of model calls. */
+/**
+ * A burst of merges beyond this waits for the next read, so one read never
+ * queues an afternoon of model calls. The oldest go first, and the watermark
+ * moves only past what was looked at, so the rest are the next read's.
+ */
 const MAX_MERGES_PER_READ = 20;
 /** Commits of one merge the recorder is shown. */
 const MAX_COMMITS = 60;
@@ -59,22 +63,27 @@ function knownToGate(repoId: string | null, commits: string[], mergeSha: string)
 }
 
 /**
- * Records every first-parent commit on the base branch between two reads.
- * A merge commit brings in its second parent's range; a squash or a direct
- * commit is its own. Returns how many were put in the ledger.
+ * Records first-parent commits on the base branch between two reads, oldest
+ * first and at most `MAX_MERGES_PER_READ` of them. A merge commit brings in
+ * its second parent's range; a squash or a direct commit is its own. Returns
+ * how many were put in the ledger, and `seen`: the commit the next read
+ * starts after — `to` when every commit in the range was looked at, the last
+ * one looked at when the burst was cut.
  */
-export async function recordMergesSince(repo: RepoRecord, from: string, to: string): Promise<number> {
-  if (from === to || !repo.teamId) return 0;
+export async function recordMergesSince(repo: RepoRecord, from: string, to: string): Promise<{ recorded: number; seen: string }> {
+  if (from === to || !repo.teamId) return { recorded: 0, seen: to };
   try {
     await git(repo.root, ["merge-base", "--is-ancestor", from, to]);
   } catch {
     // The branch was rewritten under the watermark: nothing between the two
     // is a range, and guessing one would record work twice.
-    return 0;
+    return { recorded: 0, seen: to };
   }
   const firstParent = (await git(repo.root, ["rev-list", "--first-parent", "--reverse", `${from}..${to}`])).split("\n").filter(Boolean);
+  const batch = firstParent.slice(0, MAX_MERGES_PER_READ);
+  const seen = batch.length < firstParent.length ? batch[batch.length - 1] : to;
   let recorded = 0;
-  for (const sha of firstParent.slice(-MAX_MERGES_PER_READ)) {
+  for (const sha of batch) {
     const already = getDb()
       .prepare("SELECT 1 FROM workflow_executions WHERE workflow_id = ? AND json_extract(workspace_json, '$.commit') = ? LIMIT 1")
       .get(MERGE_WORKFLOW_ID, sha);
@@ -134,5 +143,5 @@ export async function recordMergesSince(repo: RepoRecord, from: string, to: stri
     const { scheduleExtraction } = await import("./queue");
     scheduleExtraction();
   }
-  return recorded;
+  return { recorded, seen };
 }

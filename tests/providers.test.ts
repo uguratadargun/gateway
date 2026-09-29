@@ -84,8 +84,10 @@ describe("openai → anthropic response", () => {
     expect(out.content).toEqual([{ type: "text", text: "hello" }]);
     expect(out.stop_reason).toBe("end_turn");
     expect(out.model).toBe("provider:ollama/qwen3");
+    // prompt_tokens includes the cached part; input_tokens does not, since
+    // every reader adds cache_read_input_tokens back on top of it.
     expect(out.usage).toEqual({
-      input_tokens: 30,
+      input_tokens: 20,
       output_tokens: 7,
       cache_read_input_tokens: 10,
       cache_creation_input_tokens: 0,

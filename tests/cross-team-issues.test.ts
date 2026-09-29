@@ -8,6 +8,7 @@ import { createTeam, teamAncestors } from "@/lib/teams";
 import {
   approvalsForExecution,
   findIssue,
+  insertIssue,
   getIssue,
   issuesForExecution,
   liveIssues,
@@ -478,5 +479,21 @@ describe("settling an objection", () => {
     expect(again.status).toBe(409);
     expect(await again.json()).toMatchObject({ code: "SETTLED" });
     expect(getIssue(issue.id)!.resolution).toBe("revised");
+  });
+});
+
+describe("finding an objection by path", () => {
+  it("reads _ and % in a path as themselves", () => {
+    const source = run("srv");
+    insertIssue({ executionId: source.id, stepIndex: 0, sourceNodeId: "planner", sourceVisit: 1, conflictKey: "paths", fromTeamId: "srv", targetTeamId: "desktop", title: "about a_b", paths: ["src/a_b"] });
+    getDb().prepare("UPDATE decision_issues SET status = 'open' WHERE execution_id = ?").run(source.id);
+    const scope = memoryScopeFor("desktop");
+    const titles = (paths: string[]) => liveIssues(scope, { paths, limit: 100 }).filter((i) => i.executionId === source.id).map((i) => i.title);
+    expect(titles(["src/a_b"])).toEqual(["about a_b"]);
+    expect(titles(["src/a_b/file.ts"])).toEqual(["about a_b"]);
+    expect(titles(["src"])).toEqual(["about a_b"]);
+    // `_` is not "any character", and `%` is not "anything".
+    expect(titles(["src/aXb/file.ts"])).toEqual([]);
+    expect(titles(["src/%"])).toEqual([]);
   });
 });

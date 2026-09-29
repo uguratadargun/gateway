@@ -485,8 +485,15 @@ export function liveIssues(scope: MemoryScope, search: IssueSearch = {}): Decisi
   for (const p of paths) {
     // The objection's paths are stored as a JSON array; a prefix match against
     // each element is what makes "this file" find "this directory's decision".
-    any.push(`EXISTS (SELECT 1 FROM json_each(decision_issues.paths_json) WHERE json_each.value = ? OR json_each.value LIKE ? OR ? LIKE json_each.value || '/%')`);
-    args.push(p, `${p}/%`, p);
+    // By substring, not LIKE: `_` and `%` are ordinary in a path and
+    // wildcards in a pattern, so `src/a_b` would match `src/aXb/…`.
+    any.push(
+      `EXISTS (SELECT 1 FROM json_each(decision_issues.paths_json)
+                WHERE json_each.value = ?
+                   OR substr(json_each.value, 1, length(?) + 1) = ? || '/'
+                   OR substr(?, 1, length(json_each.value) + 1) = json_each.value || '/')`,
+    );
+    args.push(p, p, p, p);
   }
   if (search.featureId) {
     any.push("feature_id = ?");
