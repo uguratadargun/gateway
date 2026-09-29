@@ -33,7 +33,10 @@ export function requiredRunInputs(wf: WorkflowDefinition, loadAgent: (id: string
       continue;
     }
     for (const path of templatePaths(agent.prompt)) add(path);
-    for (const declared of node.inputs ?? agent.inputs) add(declared.replace(/\?$/, ""));
+    // A declaration ending in "?" resolves to empty when the value is not
+    // there, so it is not what a run may be refused over; it is listed with
+    // the optional inputs instead.
+    for (const declared of node.inputs ?? agent.inputs) if (!declared.endsWith("?")) add(declared);
   }
   // A workspace without a pinned repository takes it per run, so the same
   // pipeline can be pointed at whatever project the caller is working in.
@@ -42,7 +45,8 @@ export function requiredRunInputs(wf: WorkflowDefinition, loadAgent: (id: string
 }
 
 /**
- * Which run-input keys a workflow's edge guards read, but no agent does.
+ * Which run-input keys a workflow's edge guards read, or an agent declares
+ * as optional (`input.x?`), but nothing requires.
  *
  * A guard like `input.deliver == "branch"` decides where a run ends, not
  * whether it can start — the edge without a match is still there to take. So
@@ -57,6 +61,20 @@ export function optionalRunInputs(wf: WorkflowDefinition, loadAgent: (id: string
     // `skipTo` instead, so asking for a value only that guard would have read
     // is noise, the same reason `requiredRunInputs` skips it.
     if ("disabled" in node && node.disabled) continue;
+    if (node.type === "agent") {
+      let declared: string[] = node.inputs ?? [];
+      if (!node.inputs) {
+        try {
+          declared = loadAgent(node.agent).inputs;
+        } catch {
+          declared = [];
+        }
+      }
+      for (const raw of declared) {
+        const m = /^input\.([^.?]+)[^?]*\?$/.exec(raw);
+        if (m) keys.add(m[1]);
+      }
+    }
     for (const edge of node.edges) {
       if (!edge.condition) continue;
       for (const path of conditionPaths(edge.condition)) {

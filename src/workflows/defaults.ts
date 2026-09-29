@@ -141,11 +141,18 @@ nodes:
   # this returns no such field at all, where "not the empty string" would be
   # true and send every ordinary run down this edge. Absent and empty both
   # have to mean "nothing in the way", which is what negation gives.
+  #
+  # A key with no conflicts beside it is nothing in the way either. The
+  # objection is the entry, not the key: the gate files it from the list, and
+  # the review below needs that list to say what is being objected to. A
+  # planner that set the key and left the list out has raised nothing there
+  # is to confirm, and sending it on to the review only failed the run there
+  # on an input that was never produced.
   - id: conflict-check
     type: condition
     label: Does another team's decision block this?
     edges:
-      - when: "!outputs.planner.conflictKey"
+      - when: "!outputs.planner.conflictKey || !outputs.planner.conflicts"
         to: plan-check
         label: nothing in the way
       - to: conflict-review
@@ -242,12 +249,21 @@ nodes:
       - when: outputs.verifier.verified == true
         to: record
         label: checks green, plan met
-      # Counted in verifications: three rounds of the implementer answering
-      # the same gaps is a change that is not converging, and the branch is
-      # still there to be looked at.
-      - when: visits.verifier >= 3
+      - to: gaps
+        label: gaps found
+
+  # Counted in failed checks, not in checks: a verification that passed on
+  # an earlier lap is not a sign of anything, and counting it ended runs on
+  # the first gap of their third lap. This node runs only when the verifier
+  # found gaps, so its visits are the failures; three of them is a change
+  # that is not converging, and the branch is still there to be looked at.
+  - id: gaps
+    type: condition
+    label: Gaps found
+    edges:
+      - when: visits.gaps >= 3
         to: not-verified
-        label: still failing after 3 checks
+        label: still failing after 3 failed checks
       - to: implementer
         label: gaps to fix
 
@@ -296,11 +312,21 @@ nodes:
       - when: outputs.record.ok == true
         to: stage
         label: spec written, numbers free
-      - when: visits.record >= 3
+      - to: record-missing
+        label: spec missing, or a number taken
+
+  # Counted in asks, not in checks: this node runs only when the record was
+  # not in order, so a check that passed on an earlier lap is not one of the
+  # three.
+  - id: record-missing
+    type: condition
+    label: Record not in order
+    edges:
+      - when: visits.record-missing >= 3
         to: no-spec
         label: record still not in order after 3 asks
       - to: implementer
-        label: spec missing, or a number taken
+        label: write the spec, or renumber
 
   - id: stage
     type: command
@@ -348,46 +374,33 @@ nodes:
       # at the give-up edge below over three documentation sentences, each
       # of which had cost a full fifty-minute lap.
       #
-      # Declared above the give-up edge so that a record round is never
-      # answered with review-stuck. Order alone does not pay for the round,
-      # though: a visit is counted when a node runs, before its edges are
-      # read, so a record round increments visits.reviewer exactly as a
-      # rejection does, and the give-up edge below has to say it does not
-      # count. That is what its three forms are: visits.reviewer minus
-      # visits.record-fix at four, written out, because the condition
-      # language has no arithmetic and record rounds are bounded at two.
+      # Declared above the rejection so that a record round is never counted
+      # as one: it goes to record-fix, never through the rejected node below.
       - when: outputs.reviewer.recordOnly == true && visits.record-fix >= 2
         to: record-wrong
         label: record still wrong after 2 passes
       # An older reviewer that a team has not refreshed answers no
       # recordOnly at all, and an absent value compared against true is
-      # false: both of these fall through to the edges below, which is the
+      # false: both of these fall through to the edge below, which is the
       # behaviour that shipped before this existed.
       - when: outputs.reviewer.recordOnly == true
         to: record-fix
         label: only the record is wrong
-      # Declared after the success edge and before the loop-back: edges are
-      # tried in order. Counted in reviews, not plans — the planner also runs
-      # for the person's questions and plan revisions, which are not failures.
-      # Four reviews without shipping is a change that is not converging, and
-      # the branch is still there to be looked at.
-      #
-      # Three forms of one sum. What this means is
-      # visits.reviewer - visits.record-fix >= 4, and the condition
-      # language has no arithmetic, so each value record-fix can hold is
-      # written out. It can hold three: the edge above stops the loop at
-      # two, so the last form closes that case and every case beyond it.
-      # Without the subtraction two record rounds would spend two of the
-      # four reviews, and a change whose code was rejected twice and whose
-      # documents were wrong twice would reach review-stuck with two real
-      # rejections — worse than before the record round existed.
-      - when: visits.record-fix == 0 && visits.reviewer >= 4
-        to: review-stuck
-        label: still rejected after 4 reviews
-      - when: visits.record-fix == 1 && visits.reviewer >= 5
-        to: review-stuck
-        label: still rejected after 4 reviews
-      - when: visits.reviewer >= 6
+      - to: rejected
+        label: changes requested
+
+  # Counted in rejections, not in reviews: this node runs only for a review
+  # that sent the code back. A review the reviewer approved and the person
+  # then sent back at acceptance is not a failure of the change, and a
+  # record round is not one either. Four rejections is a change that is not
+  # converging, and the branch is still there to be looked at. Counted here
+  # rather than in plans — the planner also runs for the person's questions
+  # and plan revisions, which are not failures.
+  - id: rejected
+    type: condition
+    label: Rejected
+    edges:
+      - when: visits.rejected >= 4
         to: review-stuck
         label: still rejected after 4 reviews
       # The reviewer says where its feedback goes. A bounded fix — a bug, a
@@ -726,11 +739,21 @@ nodes:
       - when: outputs.record.ok == true
         to: stage
         label: spec written, numbers free
-      - when: visits.record >= 3
+      - to: record-missing
+        label: spec missing, or a number taken
+
+  # Counted in asks, not in checks: this node runs only when the record was
+  # not in order, so a check that passed on an earlier lap is not one of the
+  # three.
+  - id: record-missing
+    type: condition
+    label: Record not in order
+    edges:
+      - when: visits.record-missing >= 3
         to: no-spec
         label: record still not in order after 3 asks
       - to: implementer
-        label: spec missing, or a number taken
+        label: write the spec, or renumber
 
   - id: stage
     type: command
@@ -764,9 +787,18 @@ nodes:
       - when: outputs.reviewer.verdict == "approved"
         to: stage-all
         label: approved
-      # Three reviews without shipping is a small change that is not
-      # converging, and the branch is still there to be looked at.
-      - when: visits.reviewer >= 3
+      - to: rejected
+        label: changes requested
+
+  # Counted in rejections, not in reviews, as in dev: a review approved and
+  # then sent back by the person at acceptance is not one. Three rejections
+  # is a small change that is not converging, and the branch is still there
+  # to be looked at.
+  - id: rejected
+    type: condition
+    label: Rejected
+    edges:
+      - when: visits.rejected >= 3
         to: review-stuck
         label: still rejected after 3 reviews
       # Every rejection is a bounded fix here: there is no plan to fault.
@@ -973,13 +1005,13 @@ nodes:
   # The one thing this road does not decide. An objection to another team's
   # decision is a request to that team, and nobody here can confirm one on
   # the person's behalf; the run stops with the objection in the planner's
-  # output, and dev is the road that puts it to the person. Written as "no
-  # key", as in dev, so absent and empty both mean nothing is in the way.
+  # output, and dev is the road that puts it to the person. Written as in
+  # dev: no key, or a key with no objection beside it, is nothing in the way.
   - id: conflict-check
     type: condition
     label: Does another team's decision block this?
     edges:
-      - when: "!outputs.planner.conflictKey"
+      - when: "!outputs.planner.conflictKey || !outputs.planner.conflicts"
         to: plan-check
         label: nothing in the way
       - to: objection-needs-a-person
@@ -1033,9 +1065,17 @@ nodes:
       - when: outputs.verifier.verified == true
         to: record
         label: checks green, plan met
-      - when: visits.verifier >= 3
+      - to: gaps
+        label: gaps found
+
+  # Failed checks, as in dev.
+  - id: gaps
+    type: condition
+    label: Gaps found
+    edges:
+      - when: visits.gaps >= 3
         to: not-verified
-        label: still failing after 3 checks
+        label: still failing after 3 failed checks
       - to: implementer
         label: gaps to fix
 
@@ -1066,11 +1106,21 @@ nodes:
       - when: outputs.record.ok == true
         to: stage
         label: spec written, numbers free
-      - when: visits.record >= 3
+      - to: record-missing
+        label: spec missing, or a number taken
+
+  # Counted in asks, not in checks: this node runs only when the record was
+  # not in order, so a check that passed on an earlier lap is not one of the
+  # three.
+  - id: record-missing
+    type: condition
+    label: Record not in order
+    edges:
+      - when: visits.record-missing >= 3
         to: no-spec
         label: record still not in order after 3 asks
       - to: implementer
-        label: spec missing, or a number taken
+        label: write the spec, or renumber
 
   - id: stage
     type: command
@@ -1117,16 +1167,15 @@ nodes:
       - when: outputs.reviewer.recordOnly == true
         to: record-fix
         label: only the record is wrong
-      # visits.reviewer - visits.record-fix >= 4, in the three forms the
-      # condition language can express. See dev's verdict for the whole of
-      # the reasoning; the edges are identical because the sum is.
-      - when: visits.record-fix == 0 && visits.reviewer >= 4
-        to: review-stuck
-        label: still rejected after 4 reviews
-      - when: visits.record-fix == 1 && visits.reviewer >= 5
-        to: review-stuck
-        label: still rejected after 4 reviews
-      - when: visits.reviewer >= 6
+      - to: rejected
+        label: changes requested
+
+  # Rejections, counted as in dev.
+  - id: rejected
+    type: condition
+    label: Rejected
+    edges:
+      - when: visits.rejected >= 4
         to: review-stuck
         label: still rejected after 4 reviews
       - when: outputs.reviewer.replan == false

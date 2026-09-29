@@ -97,6 +97,20 @@ function validateStructure(wf: WorkflowDefinition, opts: ParseWorkflowOptions): 
             `node "${n.id}" condition reads "${path[0]}"; only "outputs", "input" and "visits" are available`,
           );
         }
+        // A root on its own is an object: compared, it throws on every run;
+        // tested, it is always true. Either way the edge is not what it says.
+        if (path.length === 1) {
+          throw invalid(wf.id, `node "${n.id}" condition reads "${path[0]}" whole; name what in it, e.g. "${path[0]}.<name>"`);
+        }
+        // Only agents and commands answer. A condition, a parallel node or a
+        // terminal leaves nothing behind, so reading its output is reading
+        // absent on every run.
+        if (path[0] === "outputs" && path[1]) {
+          const read = wf.nodes.find((x) => x.id === path[1]);
+          if (read && read.type !== "agent" && read.type !== "command") {
+            throw invalid(wf.id, `node "${n.id}" condition reads the output of ${read.type} node "${path[1]}", which has none`);
+          }
+        }
       }
     }
     if (n.type === "condition" && !n.edges.some((e) => e.condition)) {
@@ -108,6 +122,7 @@ function validateStructure(wf: WorkflowDefinition, opts: ParseWorkflowOptions): 
     if (n.type === "agent" && opts.agentExists && !opts.agentExists(n.agent)) {
       throw invalid(wf.id, `node "${n.id}" references unknown agent "${n.agent}"`);
     }
+    if (n.type === "agent" && n.inputs) validateNodeInputs(wf, n, ids);
     if (n.type === "agent" || n.type === "command") validateSkip(wf, n);
   }
   validateSkipChains(wf);
@@ -126,6 +141,50 @@ function validateStructure(wf: WorkflowDefinition, opts: ParseWorkflowOptions): 
   }
   const orphans = wf.nodes.filter((n) => !reachable.has(n.id)).map((n) => n.id);
   if (orphans.length) throw invalid(wf.id, `unreachable node${orphans.length > 1 ? "s" : ""}: ${orphans.join(", ")}`);
+
+  // The other direction: every node has to be able to get out. A loop whose
+  // every edge leads back into it is a run that walks in circles until a
+  // person stops it — there are no ceilings to end it, by design, so the
+  // one place to refuse it is here. Structural, not a proof the loop ends:
+  // a give-up edge is an edge out, whatever its condition.
+  const predecessors = new Map<string, string[]>();
+  for (const n of wf.nodes) {
+    for (const to of successorsOf(n)) predecessors.set(to, [...(predecessors.get(to) ?? []), n.id]);
+  }
+  const canFinish = new Set(wf.nodes.filter((n) => n.type === "terminal").map((n) => n.id));
+  const back = [...canFinish];
+  while (back.length) {
+    for (const from of predecessors.get(back.shift()!) ?? []) {
+      if (!canFinish.has(from)) {
+        canFinish.add(from);
+        back.push(from);
+      }
+    }
+  }
+  const trapped = wf.nodes.filter((n) => !canFinish.has(n.id)).map((n) => n.id);
+  if (trapped.length) {
+    throw invalid(
+      wf.id,
+      `node${trapped.length > 1 ? "s" : ""} ${trapped.join(", ")} can never reach a terminal; a loop needs a give-up edge out of it`,
+    );
+  }
+}
+
+/**
+ * A node's own `inputs:` replaces its agent's list, so it is checked the way
+ * the graph is: a path to a node this workflow does not have fails the node
+ * on every run, found in the middle of one rather than here. An optional path
+ * (`?`) may name a node the workflow lacks, as an agent's own declaration may:
+ * it reads as empty, which is what lets one agent serve several pipelines.
+ */
+function validateNodeInputs(wf: WorkflowDefinition, node: Extract<WorkflowNode, { type: "agent" }>, ids: Set<string>): void {
+  for (const raw of node.inputs ?? []) {
+    const [root, second] = raw.replace(/\?$/, "").split(".");
+    const named = root === "visits" ? second : root === "input" ? null : root;
+    if (named && !ids.has(named) && (root === "visits" || !raw.endsWith("?"))) {
+      throw invalid(wf.id, `node "${node.id}" input "${raw}" reads node "${named}", which this workflow does not have`);
+    }
+  }
 }
 
 /**

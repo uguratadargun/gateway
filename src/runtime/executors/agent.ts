@@ -30,7 +30,7 @@ export function prepareAgentNode(
   loadAgent: (id: string) => AgentDefinition,
 ): PreparedAgentNode {
   const agent = loadAgent(node.agent);
-  // The node may narrow what the agent declared, never widen it.
+  // A node's own list, when it has one, replaces what the agent declared.
   const paths = node.inputs ?? agent.inputs;
   const inputs = resolveInputs(paths, state, node.id);
 

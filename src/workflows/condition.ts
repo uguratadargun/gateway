@@ -55,6 +55,15 @@ function tokenize(src: string): Token[] {
       out.push({ t: "str", v: s });
       continue;
     }
+    // A segment after a dot is a name even when it starts with a digit: node
+    // ids may ("2fa"), and read as a number it would split into "2" and "fa".
+    const prev = out[out.length - 1];
+    if (/[A-Za-z0-9_]/.test(c) && prev?.t === "op" && prev.v === ".") {
+      let s = "";
+      while (i < src.length && /[A-Za-z0-9_-]/.test(src[i])) s += src[i++];
+      out.push({ t: "ident", v: s });
+      continue;
+    }
     if (/[0-9]/.test(c)) {
       let s = "";
       while (i < src.length && /[0-9._]/.test(src[i])) s += src[i++];
