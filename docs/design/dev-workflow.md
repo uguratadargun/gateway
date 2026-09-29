@@ -67,11 +67,14 @@ decision cannot be lived with here; the objection is put to the person
 and, if confirmed, the run stops at `blocked-by-objection` (see
 `memory.md`). There are no run ceilings: loops end on the workflow's
 own give-up edges — `review-stuck`, `record-wrong`, `not-verified`,
-`no-spec`, `not-shipped`, `nothing-changed` — which say what is stuck. The
-review loop's give-up edge is written three times over, because it means
-"four reviews that were not record rounds" and the condition language has
-no arithmetic: a visit is counted when a node runs, before its edges are
-read, so a record round would otherwise spend one of the four. The starting
+`no-spec`, `not-shipped`, `nothing-changed` — which say what is stuck. Each
+give-up edge counts failures, not rounds: the failure edge out of the
+verifier, the record check and the review verdict goes to a small node of its
+own — `gaps`, `record-missing`, `rejected` — which only a failure reaches,
+and the give-up edge counts visits to it. So three failed checks, three asks
+for the record and four rejections are what end a run; a check that passed,
+a record round, or a review the reviewer approved and the person sent back at
+acceptance spends none of them. The starting
 commit is recorded first and every diff is taken against it, because the
 implementer commits as it goes and a plain `git diff` would show a finished
 run as empty. That diff is taken `--stat`: the node's one job is to say
@@ -87,7 +90,7 @@ and that no decision record this branch added uses a number the remote's
 base branch already holds for another record. It fetches that branch to
 check, and skips the number check when the remote cannot be reached. When
 either check fails it sends the implementer back with what to write or
-what to renumber, three times, before the run ends on `no-spec`
+what to renumber, three times in the run, before it ends on `no-spec`
 ([0040](../decisions/0040-a-decision-number-is-checked-against-the-remote.md)). The plan's `## Documentation`
 section names the design doc and the decision record the change has to
 leave true under `docs/design/` and `docs/decisions/`; the implementer

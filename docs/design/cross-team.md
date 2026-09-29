@@ -88,7 +88,10 @@ The objection record — its states, who may close it, how the other team's
 recall surfaces it — is in [memory](memory.md); what belongs here is how one
 comes to be written. The planner's own output carries it, and the workflow's
 edges route: a plan naming a conflict reaches the node that puts it to the person
-before any question or the plan itself.
+before any question or the plan itself. The objection is the entry in the
+planner's `conflicts`, not the key beside it: a key with no entry is nothing
+the server can file or the person can be asked about, and the run carries on
+to the plan.
 
 The server writes it only against the run's pinned definitions: the node must
 exist, be an agent and declare the field, and a node reporting an answer must

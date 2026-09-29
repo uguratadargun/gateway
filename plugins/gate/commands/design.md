@@ -177,17 +177,18 @@ reviewers, each with its own narrow agent and one job. Then:
   Widen the record edges the same way — a round that skips the implementer
   and the verifier is only safe when *no* reviewer wanted code changed:
   `outputs.reviewer.recordOnly == true && outputs.<yours>.recordOnly == true`.
-  The give-up edges stay where they are, all three of them: they say
-  `visits.reviewer - visits.record-fix >= 4` in the only form the condition
-  language has, and a record round must not spend a review.
+  The give-up edge stays where it is, on the `rejected` node after the
+  verdict: only a real rejection reaches that node, so it counts rejections,
+  and a record round must not spend one.
 
 The default reviewer stays a branch. It is not replaced, and it is not made
 optional.
 
 Its feedback has to reach the planner, or a rejection from your reviewer sends
-the run back to a planner that cannot see why. A node may narrow an agent's
-inputs, never widen them, so this is the one edit to the shipped `planner` a
-design may propose: add `<yours>.feedback?` to its `inputs:` and
+the run back to a planner that cannot see why. A node's own `inputs:` would
+replace the planner's whole list, which is long and moves with the shipped
+agent, so this is the one edit to the shipped `planner` a design may propose:
+add `<yours>.feedback?` to its `inputs:` and
 `{{inputs.<yours>.feedback}}` on the line under the shipped reviewer's, and
 nothing else. Say so in the proposal — saving it needs `--replace` on
 `planner`, which is the user's to agree to.
