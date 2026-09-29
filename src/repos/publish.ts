@@ -77,9 +77,19 @@ export const DEFAULT_BRANCH_POLICY = "gate/*";
 export function branchAllowed(branch: string, policy: string): boolean {
   const p = policy.trim() === "*" ? "**" : policy.trim();
   if (!p) return false;
+  // `**/` is any number of directories, none included, the way git's own
+  // globs read it: `**/release` is `release` as well as `team/release`.
   const pattern = p
-    .split(/(\*\*|\*)/)
-    .map((part) => (part === "**" ? "[\\s\\S]*" : part === "*" ? "[^/]*" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+    .split(/(\*\*\/|\*\*|\*)/)
+    .map((part) =>
+      part === "**/"
+        ? "(?:[\\s\\S]*/)?"
+        : part === "**"
+          ? "[\\s\\S]*"
+          : part === "*"
+            ? "[^/]*"
+            : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    )
     .join("");
   return new RegExp(`^${pattern}$`).test(branch);
 }
@@ -122,7 +132,7 @@ export function publishBranch(root: string, branch: string, target: PublicationT
 
   const ref = `refs/heads/${branch}`;
   try {
-    git(root, ["push", target.remote, `HEAD:${ref}`], PUSH_TIMEOUT_MS);
+    git(root, ["push", "--end-of-options", target.remote, `HEAD:${ref}`], PUSH_TIMEOUT_MS);
   } catch (e) {
     return { ok: false, code: "push-failed", note: `could not publish ${branch} to ${target.remote}: ${gitMessage(e)}` };
   }
@@ -131,7 +141,7 @@ export function publishBranch(root: string, branch: string, target: PublicationT
   try {
     // `ls-remote` rather than a local ref: the local remote-tracking ref is
     // written by the push itself and would agree with it by construction.
-    remoteSha = git(root, ["ls-remote", target.remote, ref]).split(/\s+/)[0] ?? "";
+    remoteSha = git(root, ["ls-remote", "--end-of-options", target.remote, ref]).split(/\s+/)[0] ?? "";
   } catch (e) {
     return { ok: false, code: "not-verified", note: `${branch} was pushed to ${target.remote} but could not be read back: ${gitMessage(e)}` };
   }

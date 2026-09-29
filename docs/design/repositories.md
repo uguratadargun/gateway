@@ -19,7 +19,11 @@ Two clones on two machines agree because each reads it off its own origin, and
 the remote is the only part of a checkout a second machine can use. Where the
 remote does not say — a local path, a `file://` URL, a remote with no owner, a
 host without a dot — the identity is unknown, and unknown is never filled in
-from the path or the slug.
+from the path or the slug. A URL's query and fragment are not part of it, and
+the two forges known to write one repository two ways are read as one:
+GitHub's ssh over port 443 (`ssh.github.com`) is `github.com`, and Azure
+DevOps' `ssh.dev.azure.com:v3/org/proj/repo` and
+`dev.azure.com/org/proj/_git/repo` are both `dev.azure.com/org/proj/repo`.
 
 The name is read off the checkout, never off what was typed, and it is set
 once. A record refuses an identity that disagrees with the one it holds and
@@ -52,10 +56,20 @@ checkout, are guessed from the lockfile and the manifest and prefilled into
 the form — a starting point, not a verdict. Inspecting is offered for paths only: reading a URL would cost a
 clone nobody asked for.
 
+One remote is connected once. Its owner, where it publishes and the memory
+filed under it are all found by its name, so a second record of the same
+remote is refused with the id that already holds it — a URL before it is
+cloned, a path once its origin has been read. Where two records of one remote
+exist from before, a lookup by name takes the first connected, and a question
+takes the asker's own family's first.
+
 A repository is new, installing, ready or failed, and the tail of its setup
-log stays on the record. A pull fast-forwards only — this checkout is shared
-by the record index and every team's questions and is no place to resolve a
-merge — then runs setup again.
+log stays on the record. A pull fetches and fast-forwards to the branch's
+upstream only — this checkout is shared by the record index and every team's
+questions and is no place to resolve a merge — then runs setup again. It
+merges `@{upstream}` rather than running `git pull`, which merges whatever
+`FETCH_HEAD` names, and a question fetching a run's branch writes that file
+in the same checkout.
 
 The gate's checkout is read, never worked in. The [record index](record-index.md)
 reads its base branch, and another team's question fetches into it and reads
@@ -94,7 +108,8 @@ derives the name, so every client names a repository identically.
 
 A repository publishes only if it names a publication remote; nothing does by
 default. A branch policy says which branches that covers, as a glob: `gate/*` by
-default, `*` read as `**`, empty meaning never.
+default, `*` read as `**`, `**/` as any number of directories including none,
+empty meaning never.
 
 The push happens on the person's machine, which holds the worktree; the
 gate's own checkout is never pushed from. Nothing is forced, no upstream is set.
@@ -117,6 +132,7 @@ question and by the record index.
 - `src/repos/detect.ts` — guessing setup; which directories a worktree borrows
 - `src/repos/setup.ts` — connecting, cloning, setup, pull, forgetting, naming repos registered before names
 - `src/repos/publish.ts` — the branch policy, the verified push, the mid-run checkpoint
+- `src/repos/refs.ts` — what a published ref and a commit must look like before they reach git on the server
 - `src/app/api/repos/` — connect, inspect, edit, forget, re-run setup, pull
 - `src/app/repos/page.tsx` — where the detected setup is edited before running, and whose repository it is
 - `src/orchestration/ask.ts`, `src/orchestration/ask-source.ts` — what the team on the record is measured against when another team asks, and the reads of the checkout at one commit
@@ -135,6 +151,9 @@ question and by the record index.
 - A worktree borrows its clone's dependencies as they are. A clone whose lockfile moved and was not reinstalled lends the run dependencies that no longer match the code, and generated files that git does not track are not in the worktree at all.
 - A checkout with worktrees branched from it survives forgetting; the record goes, the directory stays, and the answer names what is holding it.
 - Paths from `git worktree list` are real paths, so they are compared with symlinks resolved — as written, `/var` and `/private/var` made every checkout look held open.
+- A forge not listed in `identity.ts` that writes one repository two ways — Bitbucket Server's `/scm/` in https and not in ssh — gives two names. It is left so rather than guessed from a path's shape, which is how two repositories would come to share one.
+- An identity stored before a forge was read as one keeps its old spelling: a record connected as `ssh.github.com/…` still answers to that, while new runs name `github.com/…`.
+- A record connected twice before connecting refused it stays twice; which one answers is decided by age and the asker's family, not merged.
 
 ## Decisions
 

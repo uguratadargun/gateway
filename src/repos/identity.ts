@@ -64,7 +64,9 @@ export function parseRemote(remote: string): ParsedRemote | null {
     const slash = rest.indexOf("/");
     if (slash <= 0) return null;
     host = rest.slice(0, slash);
-    path = rest.slice(slash + 1);
+    // A query or a fragment is how the URL was asked for, not which
+    // repository it is.
+    path = rest.slice(slash + 1).replace(/[?#].*$/, "");
   } else {
     // scp-like: exactly one colon, and what follows is a path, not a port.
     // `host:22/owner/name` is ambiguous by design in git; it reads the digits
@@ -94,6 +96,16 @@ export function parseRemote(remote: string): ParsedRemote | null {
     .replace(/\/+$/, "")
     .split("/")
     .filter(Boolean);
+  // Forges whose ssh and https remotes spell one repository two ways, each
+  // known from the forge's own documentation rather than guessed from a shape:
+  // GitHub's ssh over port 443 has a host of its own, and Azure DevOps puts
+  // `v3/` in its ssh path and `_git/` in its https one.
+  if (host === "ssh.github.com") host = "github.com";
+  if (host === "ssh.dev.azure.com") {
+    host = "dev.azure.com";
+    if (segments[0]?.toLowerCase() === "v3") segments.shift();
+  }
+  if (host === "dev.azure.com" && segments.length === 4 && segments[2] === "_git") segments.splice(2, 1);
   if (segments.length < 2) return null;
 
   const name = segments[segments.length - 1].replace(/\.git$/i, "").toLowerCase();

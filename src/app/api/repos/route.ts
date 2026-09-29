@@ -5,7 +5,7 @@ import { getTeam } from "@/lib/teams";
 import { detectRepoCommands } from "@/repos/detect";
 import { canonicalRepoId } from "@/repos/identity";
 import { connectRepo, isPathLike, runRepoSetup, slugFor } from "@/repos/setup";
-import { createRepo, getRepo, listRepos } from "@/repos/store";
+import { createRepo, getRepo, listRepos, repoByIdentity } from "@/repos/store";
 import { WorkflowError } from "@/runtime/errors";
 
 export const runtime = "nodejs";
@@ -65,8 +65,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `no team "${body.teamId}"` }, { status: 400 });
   }
 
+  // One remote is one repository here: its memory, its owner and where it
+  // publishes are all looked up by that name, and a second record under
+  // another team makes every one of those lookups a coin toss. A URL is
+  // checked before it is cloned; a path, once its origin has been read.
+  const already = (remote: string | null) => {
+    const repoId = remote ? canonicalRepoId(remote) : null;
+    const existing = repoId ? repoByIdentity(repoId) : null;
+    return existing
+      ? NextResponse.json({ error: `${repoId} is already connected as "${existing.id}"` }, { status: 409 })
+      : null;
+  };
+  if (!isPathLike(body.source)) {
+    const refused = already(body.source.trim());
+    if (refused) return refused;
+  }
+
   try {
     const { root, cloned, commands, remoteUrl } = connectRepo(body.source, id);
+    if (!cloned) {
+      const refused = already(remoteUrl);
+      if (refused) return refused;
+    }
     const repo = createRepo({
       id,
       name: body.name?.trim() || id,

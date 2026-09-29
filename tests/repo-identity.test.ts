@@ -82,3 +82,19 @@ describe("the identity a remote gives a repository", () => {
     expect(sameRepo("/Users/ugur/desktop", "/Users/ugur/desktop")).toBe(false);
   });
 });
+
+describe("forges that spell one repository two ways", () => {
+  it("reads GitHub's ssh over port 443 as GitHub", () => {
+    expect(canonicalRepoId("ssh://git@ssh.github.com:443/ulak/gateway.git")).toBe("github.com/ulak/gateway");
+  });
+
+  it("reads Azure DevOps' ssh and https remotes as one repository", () => {
+    expect(canonicalRepoId("git@ssh.dev.azure.com:v3/org/proj/repo")).toBe("dev.azure.com/org/proj/repo");
+    expect(canonicalRepoId("https://org@dev.azure.com/org/proj/_git/repo")).toBe("dev.azure.com/org/proj/repo");
+  });
+
+  it("leaves a query or a fragment out of the name", () => {
+    expect(canonicalRepoId("https://github.com/ulak/gateway?tab=readme")).toBe("github.com/ulak/gateway");
+    expect(canonicalRepoId("https://github.com/ulak/gateway.git#main")).toBe("github.com/ulak/gateway");
+  });
+});
