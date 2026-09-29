@@ -33,10 +33,15 @@ run pauses for the person and resumes. The events go through an in-process
 bus — gate is one process, so there is no broker — that keeps a replay
 buffer per execution (the last five hundred events, held ten minutes after
 the run finishes), so a page opened mid-run or just after one ends still
-renders the path taken. A cockpit that follows all of a person's runs on one
-connection uses `/api/v1/executions/stream`: a snapshot of their unfinished
-runs first, then every event of every run they own as it happens, never a
-teammate's.
+renders the path taken. A run reopened with `gate continue` is going again:
+the end it reached is taken out of the buffer, so a page opened on it keeps
+its stream open instead of replaying the old end and closing. A cockpit that
+follows all of a person's runs on one connection uses
+`/api/v1/executions/stream`: a snapshot of their unfinished runs first, then
+every event of every run they own as it happens, never a teammate's — a key
+with no person behind it sees only the runs that have no owner. The key is
+asked again on every fifteen-second heartbeat, so revoking it, disabling its
+person or moving them to another team ends the stream within a beat.
 
 ### The history
 
@@ -56,7 +61,10 @@ re-sends the batch without making a second step.
 session drives has no process to reach — between two `gate` calls it exists
 only as rows and a marker on the person's disk, and the session may have
 been closed hours ago — so Stop settles it on the spot as `failed` with
-`RUN_CANCELLED`. The session finds out on its next `gate` call, commits
+`RUN_CANCELLED`. A finish report that was already on its way does not
+overwrite it: a run is closed only while it is still going, and the report
+is answered `alreadyFinished`, keeping the diff it brought. The session finds
+out on its next `gate` call, commits
 what the run left uncommitted onto its branch, and removes the worktree:
 half-done work is still work, and the branch keeps it. A row an older
 headless client drove gets a cancel flag instead, which that client read on
@@ -69,7 +77,9 @@ it; what can be said about it is that silence means the machine went away.
 A session reports when a node begins and ends, and a node can legitimately
 take an hour, so a session-driven run is written off as `RUN_ABANDONED`
 after six hours without a report (a row an older headless client drove,
-which heartbeated between steps, after fifteen minutes). A run that is
+which heartbeated between steps, after fifteen minutes). A report is counted
+before anything else is read, so the report that ends a six-hour node is the
+run being heard from, never the moment it is written off. A run that is
 waiting on the person is never swept: the wait is theirs, it can be days,
 and Stop is there for a run they have given up on. A row the server itself
 was running is settled at boot as `RUN_INTERRUPTED`.
@@ -86,7 +96,8 @@ shows as **paused**: `run.paused` is emitted, its clock stands still, and the
 time waited is added up separately so the run's duration is the run's. The
 answer sets it going again with `run.resumed`. A run that ends while paused
 — stopped, or its session gone — closes that wait first, so the clock is
-right afterwards.
+right afterwards. The wait starts on the client's clock and may end on the
+server's; a client running ahead is read as no wait, never a negative one.
 
 ### Picking a run back up
 
@@ -98,11 +109,16 @@ to start any other one again. `gate continue` reopens the same execution:
 the failed steps at the end of its history are dropped, the run is
 `running` again, the worktree is checked out again from the run's branch at
 the same path, and the next `gate next` hands out the node that failed, with
-everything before it kept. It refuses, with a plain reason, for a run that
-is still going (where `gate next` picks it up), one that completed, one a
-session did not drive, and one whose worktree cannot be brought back from
-its branch. A row that records the run it was resumed from links it, and its
-history is the whole lineage, oldest first.
+everything before it kept. Its row in the memory ledger goes too: the run is
+not finished any more, the recorder never takes a run that is going, and its
+real end queues it again, so what memory keeps is what the run finally did.
+It refuses, with a plain reason, for a run that is still going (where `gate
+next` picks it up), one that completed, one a session did not drive, one
+whose worktree cannot be brought back from its branch, and one with no node
+to try again — a run that ended on its workflow's own give-up terminal, or
+failed before its first node. A stopped or written-off run is continued
+from the node it had in hand. A row that records the run it was resumed
+from links it, and its history is the whole lineage, oldest first.
 
 ### What a run cost
 

@@ -666,12 +666,19 @@ export function getExtraction(executionId: string): Extraction | null {
   return row ? rowToExtraction(row) : null;
 }
 
+/**
+ * A ledger row is never the recorder's while its run is going again — reopened
+ * with `gate continue`, or taught a second time — whatever the row says: what
+ * it would read is half a run.
+ */
+const RUN_NOT_GOING = `NOT EXISTS (SELECT 1 FROM workflow_executions e WHERE e.id = memory_extractions.execution_id AND e.status = 'running')`;
+
 /** Runs waiting to be recorded, or that failed and may be tried again. */
 export function pendingExtractions(limit = 20): Extraction[] {
   const rows = getDb()
     .prepare(
       `SELECT * FROM memory_extractions
-        WHERE status = 'pending' OR (status = 'failed' AND attempts < ?)
+        WHERE (status = 'pending' OR (status = 'failed' AND attempts < ?)) AND ${RUN_NOT_GOING}
         ORDER BY queued_at ASC
         LIMIT ?`,
     )
@@ -692,7 +699,7 @@ export function claimExtraction(executionId: string, at = Date.now()): boolean {
         .prepare(
           `UPDATE memory_extractions
               SET status = 'running', attempts = attempts + 1, started_at = ?, error = NULL
-            WHERE execution_id = ? AND (status = 'pending' OR (status = 'failed' AND attempts < ?))`,
+            WHERE execution_id = ? AND (status = 'pending' OR (status = 'failed' AND attempts < ?)) AND ${RUN_NOT_GOING}`,
         )
         .run(at, executionId, MAX_EXTRACTION_ATTEMPTS).changes,
     ) > 0

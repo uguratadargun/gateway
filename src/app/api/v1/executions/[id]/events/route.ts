@@ -34,9 +34,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (auth instanceof Response) return auth;
   const { id } = await ctx.params;
 
-  const execution = getExecution(id);
+  // Read without the silence sweep, and counted as heard from before anything
+  // else: a node that took six hours ends with this report, and sweeping first
+  // would write the run off by the report that says it is alive.
+  const execution = getExecution(id, { sweep: false });
   if (!execution) return NextResponse.json({ error: "no such run" }, { status: 404 });
   if (!ownsExecution(execution, auth)) return NextResponse.json({ error: "not your run" }, { status: 403 });
+  touchExecution(id);
 
   const parsed = reportSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -69,7 +73,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // The URL owns the id: an event may only ever be about the run it was sent to.
     publishWorkflowEvent({ ...(event as object), executionId: id } as WorkflowEvent);
   }
-  touchExecution(id);
 
   // `skipped` is the part of a step's output the server would not act on. It
   // rides back rather than becoming a 400 for the reason the protocol schemas

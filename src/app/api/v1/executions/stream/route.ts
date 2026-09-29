@@ -16,6 +16,10 @@ export const dynamic = "force-dynamic";
  * client API's rule everywhere: their own runs, never a teammate's. A run
  * that starts after the stream opened is admitted on its first event, since
  * the row exists before the machine running it reports anything.
+ *
+ * The key is asked again on every heartbeat. Revoking it, disabling its
+ * person or moving them to another team ends the stream within one beat —
+ * the same moment every other request with that key stops being answered.
  */
 export async function GET(req: Request) {
   const auth = requireClient(req);
@@ -58,8 +62,10 @@ export async function GET(req: Request) {
         return ok;
       };
 
+      // The same rule as a single run's read: a key with no person behind it
+      // lists the team's runs, and still sees only those that have no owner.
       const open = listExecutions({ teamId: auth.teamId, userId: auth.userId ?? undefined, limit: 100 }).filter(
-        (e) => e.status === "running",
+        (e) => e.status === "running" && ownsExecution(e, auth),
       );
       for (const e of open) admitted.set(e.id, true);
       send({ type: "snapshot", at: Date.now(), executions: open });
@@ -69,6 +75,11 @@ export async function GET(req: Request) {
       });
       hb = setInterval(() => {
         if (closed) return;
+        const now = requireClient(req);
+        if (now instanceof Response || now.keyId !== auth.keyId || now.teamId !== auth.teamId || now.userId !== auth.userId) {
+          close();
+          return;
+        }
         try {
           controller.enqueue(enc.encode(": hb\n\n"));
         } catch {

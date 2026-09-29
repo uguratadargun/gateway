@@ -190,7 +190,11 @@ describe("run ownership", () => {
     const mine = { teamId: "kappa", userId: "u1" };
     expect(ownsExecution(mine, { keyId: "k", userId: "u1", teamId: "kappa", scopes: ["workflows"] })).toBe(true);
     expect(ownsExecution(mine, { keyId: "k", userId: "u2", teamId: "kappa", scopes: ["workflows"] })).toBe(false);
-    expect(ownsExecution(mine, { keyId: "k", userId: "u1", teamId: "other", scopes: ["workflows"] })).toBe(false);
+    // Its owner keeps it after moving to another team: the worktree is theirs.
+    expect(ownsExecution(mine, { keyId: "k", userId: "u1", teamId: "other", scopes: ["workflows"] })).toBe(true);
+    // Nobody else on that other team does, and a key with no person reads no owned run.
+    expect(ownsExecution(mine, { keyId: "k", userId: "u3", teamId: "other", scopes: ["workflows"] })).toBe(false);
+    expect(ownsExecution(mine, { keyId: "k", userId: null, teamId: "kappa", scopes: ["workflows"] })).toBe(false);
   });
 
   it("records where a run happened and who it belongs to", () => {

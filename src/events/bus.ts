@@ -55,6 +55,13 @@ export function publishWorkflowEvent(e: WorkflowEvent): void {
   t.lastAt = e.at;
   if (t.events.length > MAX_BUFFERED) t.events.shift();
   if (e.type === "workflow.completed" || e.type === "workflow.failed") t.done = true;
+  // Reopened: the end it reached is not its end any more. Left in the buffer,
+  // it would be replayed to every page opened on the continued run, and a
+  // page closes its stream on the first end it sees.
+  if (e.type === "workflow.continued") {
+    t.done = false;
+    t.events = t.events.filter((x) => x.type !== "workflow.completed" && x.type !== "workflow.failed");
+  }
   for (const l of [...t.listeners, ...everyone]) {
     try {
       l(e);

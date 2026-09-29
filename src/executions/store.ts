@@ -151,8 +151,19 @@ export function getExecutionDefinitions(id: string): DefinitionSnapshot | null {
  * trailing failed steps go; a failed step is always the last thing such a run
  * recorded, because failing is what ended it.
  *
+ * A run that failed with no failed step at its end has nothing to try again
+ * unless it was cut short from outside — stopped, or written off for silence —
+ * with a node still in hand: one that ended on a give-up terminal would only
+ * walk back to the same terminal, and one that failed before its first step
+ * never had the worktree the next node needs.
+ *
+ * The recorder's ledger row goes too. The run is not finished any more, so
+ * nothing it recorded about the failed attempt is the last word on it, and
+ * the row being there is what would stop its real end from being queued.
+ *
  * Returns which nodes were dropped for retry, or null when the run is not one
- * this applies to: still running, never failed, or not a session's.
+ * this applies to: still running, never failed, not a session's, or with no
+ * node to try again.
  */
 export function reopenSessionExecution(id: string, at = Date.now()): { retried: string[] } | null {
   const db = getDb();
@@ -166,6 +177,8 @@ export function reopenSessionExecution(id: string, at = Date.now()): { retried: 
         ORDER BY step_index ASC`,
     )
     .all(id, id) as Array<{ step_index: number; node_id: string }>;
+  const cutShort = execution.error?.code === "RUN_CANCELLED" || execution.error?.code === "RUN_ABANDONED";
+  if (!failed.length && !cutShort) return null;
   for (const step of failed) {
     db.prepare("DELETE FROM workflow_execution_steps WHERE execution_id = ? AND step_index = ?").run(id, step.step_index);
   }
@@ -176,6 +189,7 @@ export function reopenSessionExecution(id: string, at = Date.now()): { retried: 
             cancel_requested = 0, last_seen_at = ?, step_count = ?, quota_json = NULL, paused_at = NULL
       WHERE id = ?`,
   ).run(at, Number(remaining.n), id);
+  db.prepare("DELETE FROM memory_extractions WHERE execution_id = ?").run(id);
   return { retried: failed.map((s) => s.node_id) };
 }
 
@@ -261,19 +275,26 @@ export function recordStep(executionId: string, step: StepRecord): { inserted: b
   return { inserted: Number(result.changes) > 0 };
 }
 
-export function finishExecution(state: WorkflowState, workspace: ExecutionWorkspace | null = null, finishedAt = Date.now()): void {
+/**
+ * Closes a run that is still going. Returns false, and changes nothing, when it
+ * has already been settled — a Stop that landed while the finish report was
+ * on its way is the last word, not something the report overwrites.
+ */
+export function finishExecution(state: WorkflowState, workspace: ExecutionWorkspace | null = null, finishedAt = Date.now()): boolean {
   // Every step is already recorded, so this is the moment the sum is true.
   const quota = summarizeExecutionQuota(state.executionId);
 
   // A run that ends while it is waiting on the person — stopped, or its
   // session gone — closes that wait first, so the clock is right afterwards.
-  getDb()
+  // The wait began on the client's clock and ends on this one, so a client
+  // running ahead is read as no wait rather than a negative one.
+  const finished = getDb()
     .prepare(
       `UPDATE workflow_executions
           SET status = ?, finished_at = ?, error_code = ?, error_message = ?, step_count = ?,
               workspace_json = COALESCE(?, workspace_json), quota_json = ?,
-              paused_ms = paused_ms + COALESCE(? - paused_at, 0), paused_at = NULL
-        WHERE id = ?`,
+              paused_ms = paused_ms + COALESCE(MAX(0, ? - paused_at), 0), paused_at = NULL
+        WHERE id = ? AND status = 'running'`,
     )
     .run(
       state.status,
@@ -286,11 +307,13 @@ export function finishExecution(state: WorkflowState, workspace: ExecutionWorksp
       finishedAt,
       state.executionId,
     );
+  if (Number(finished.changes) === 0) return false;
   // The run is over, however it ended; the recorder reads it from here. Queued
-  // in the same place the run is closed, so no path to "finished" — the engine,
-  // a local run's report, a stop from the dashboard — can miss it.
+  // in the same place the run is closed, so no path to "finished" — a local
+  // run's report, a stop from the dashboard — can miss it.
   const row = getDb().prepare("SELECT team_id FROM workflow_executions WHERE id = ?").get(state.executionId) as { team_id: string | null } | undefined;
   queueExtraction(state.executionId, row?.team_id ?? DEFAULT_TEAM, finishedAt);
+  return true;
 }
 
 /**
@@ -340,7 +363,7 @@ export function stopSessionExecution(id: string, at = Date.now()): boolean {
           `UPDATE workflow_executions
               SET status = 'failed', finished_at = ?, error_code = 'RUN_CANCELLED',
                   error_message = 'stopped from the dashboard', cancel_requested = 1,
-                  paused_ms = paused_ms + COALESCE(? - paused_at, 0), paused_at = NULL
+                  paused_ms = paused_ms + COALESCE(MAX(0, ? - paused_at), 0), paused_at = NULL
             WHERE id = ? AND status = 'running' AND driver = 'session'`,
         )
         .run(at, at, id).changes,
@@ -478,9 +501,15 @@ export function listExecutions(
   return (rows as unknown as ExecutionRow[]).map(toExecution);
 }
 
-export function getExecution(id: string): ExecutionRecord | null {
+/**
+ * One run. Reading it sweeps runs gone quiet first, except for the caller that
+ * is itself the run's machine reporting in (`sweep: false`): a report is the
+ * opposite of silence, and sweeping before it is counted would write off the
+ * run by the very report that shows it is alive.
+ */
+export function getExecution(id: string, opts: { sweep?: boolean } = {}): ExecutionRecord | null {
   reconcileOnce();
-  sweepAbandonedLocalRuns();
+  if (opts.sweep !== false) sweepAbandonedLocalRuns();
   const row = getDb().prepare("SELECT * FROM workflow_executions WHERE id = ?").get(id);
   return row ? toExecution(row as unknown as ExecutionRow) : null;
 }

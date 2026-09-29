@@ -145,9 +145,14 @@ sequenceDiagram
 
 1. **Queueing.** However a run ends — completed, failed, stopped, written
    off after its machine went quiet — a `pending` row is added in the
-   statement that closes the run; never a second one for the same run.
+   statement that closes the run; never a second one for the same run. A
+   run reopened with `gate continue` loses its row, because it is not
+   finished any more, and its real end queues it again: what memory keeps is
+   what the run finally did, not the attempt that failed.
 2. **Claiming.** The row is set to `running`; SQLite has one writer, so of
-   two processes asking at once only one sees `changes: 1`. A `running` row
+   two processes asking at once only one sees `changes: 1`. A row whose run
+   is going again — continued, or taught a second time — is never claimed,
+   whatever the row says: what it would read is half a run. A `running` row
    whose process died is put back in line after thirty minutes.
 3. **Reading.** The **agents' answers** from the steps — plan, implementer's
    summary, reviewer's verdict — not git output and not the recall brief;

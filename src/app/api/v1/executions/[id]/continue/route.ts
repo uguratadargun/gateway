@@ -38,7 +38,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   const at = Date.now();
   const reopened = reopenSessionExecution(id, at);
-  if (!reopened) return NextResponse.json({ continued: false, reason: "this run cannot be reopened" });
-  publishWorkflowEvent({ type: "workflow.continued", executionId: id, at, retried: reopened.retried } as never);
+  if (!reopened) {
+    return NextResponse.json({
+      continued: false,
+      reason:
+        "this run has no node to try again: it ended where its workflow ends it, or failed before its first node — start a new run",
+    });
+  }
+  publishWorkflowEvent({ type: "workflow.continued", executionId: id, at, retried: reopened.retried });
   return NextResponse.json({ continued: true, retried: reopened.retried });
 }

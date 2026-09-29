@@ -144,6 +144,7 @@ loading are named.
 - The client API never falls back to open. A developer's `gate login` against a keyless gate needs `GATE_API_KEY` at minimum.
 - A key issued `gateway` only reads with no scope and is refused by `/api/v1/*` with `SCOPE_MISSING`. Issue the person a new key.
 - Moving a person moves their keys; issuing a key to a person on team A and then moving the person to team B means the key now reads team B's definitions. That is the intended rule, but it surprises a tool that cached team A's.
+- A run stays filed under the team it was started in, and its owner can still report on, finish, continue or stop it after moving: the worktree and the session are theirs. Nobody else on either team can, and a key with no person behind it reaches only runs that have no owner.
 - The fallback to the default team is read-only. A team that edits an inherited agent gets its own copy; the default team's file is untouched and other teams still see it.
 - Deleting a team does not delete `~/.gate/teams/<team>/`. Re-creating the same slug picks the old files back up.
 - The legacy rename runs once per process per `GATE_HOME`; a rename that fails (permissions, a mount boundary) leaves the old directory in place and the team starts empty and seeded.

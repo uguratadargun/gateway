@@ -26,7 +26,9 @@ export function seal(plaintext: string): string {
 
 export function open(sealed: string): string {
   const [ivB64, tagB64, encB64] = sealed.split(".");
-  const decipher = createDecipheriv("aes-256-gcm", key(), Buffer.from(ivB64, "base64"));
+  // The tag length is fixed, not taken from the blob: without it GCM accepts a
+  // truncated tag, which is a weaker check than the one `seal` wrote.
+  const decipher = createDecipheriv("aes-256-gcm", key(), Buffer.from(ivB64, "base64"), { authTagLength: 16 });
   decipher.setAuthTag(Buffer.from(tagB64, "base64"));
   return Buffer.concat([
     decipher.update(Buffer.from(encB64, "base64")),

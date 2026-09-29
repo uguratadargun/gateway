@@ -26,6 +26,8 @@ export type WorkflowEvent =
   /** The person answered; the run is working again. */
   | (Base & { type: "run.resumed"; nodeId: string })
   | (Base & { type: "workflow.completed"; status: "completed" | "failed"; terminalNodeId: string })
+  /** A failed run reopened with `gate continue`: it is going again, and `retried` names the nodes it tries again. */
+  | (Base & { type: "workflow.continued"; retried: string[] })
   | (Base & { type: "workflow.failed"; code: WorkflowErrorCode; message: string; nodeId?: string });
 
 export type WorkflowEventType = WorkflowEvent["type"];
