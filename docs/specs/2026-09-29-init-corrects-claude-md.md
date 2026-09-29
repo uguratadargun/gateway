@@ -1,6 +1,7 @@
 Status: done
 Branch: gate/init-reconciles-claude-md
-Decisions: docs/decisions/0049-init-corrects-what-the-code-proves-wrong-in-claude-md.md
+Decisions: docs/decisions/0049-init-corrects-what-the-code-proves-wrong-in-claude-md.md,
+docs/decisions/0050-one-spec-per-item.md
 Design: docs/design/dev-workflow.md
 
 # /gate:init corrects an existing CLAUDE.md
@@ -8,6 +9,8 @@ Design: docs/design/dev-workflow.md
 ## What was asked
 
 `/gate:init` should update a repository's existing `CLAUDE.md` so that it matches the code. Until now it only appended the record's table to the file.
+
+The "one spec per item" row that `ulak-desktop` added to its own `CLAUDE.md` should also reach every repository through init.
 
 ## What was found
 
@@ -28,7 +31,11 @@ Design: docs/design/dev-workflow.md
   - The report lists each correction with its proof.
   - Design docs carry no pitfall about `CLAUDE.md`.
 - **`plugins/gate/reference/docs.md`:** the `CLAUDE.md` section says the same.
-- **Record:** decision 0049, `docs/design/dev-workflow.md`, and a changelog line.
+- **One spec per item (0050):**
+  - The reference's record table asks for a spec only when a whole item is finished. An item that already has a spec is updated in place.
+  - Init replaces an older record section in an existing `CLAUDE.md` with the reference's current one.
+  - Gate's own `CLAUDE.md` carries the same row.
+- **Record:** decisions 0049 and 0050, `docs/design/dev-workflow.md`, and two changelog lines.
 - **Release:** version 0.48.0 in the three places, and the CLI rebuilt.
 
 ## What counted as done

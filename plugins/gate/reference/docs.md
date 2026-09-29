@@ -257,11 +257,12 @@ are changing under `docs/design/`. Forms: <link to this reference>.
 | Built something no design doc covers | Create `docs/design/<feature>.md`: Summary, How it works, Key files, Pitfalls, Decisions. |
 | Made a real choice, or reversed an earlier one | Write `docs/decisions/NNNN-<slug>.md`, next free number, all eight sections. Logic, not code. |
 | Reversed a recorded decision | Add `Status: superseded by NNNN` to the old record. Change nothing else in it. |
-| Finished a task | Write `docs/specs/YYYY-MM-DD-<topic>.md`: Status, Branch, Decisions, Design, then what was asked and what counted as done. |
+| Finished a whole item (the user says it is done, or it is being committed / MR'd) | Write `docs/specs/YYYY-MM-DD-<topic>.md`: Status, Branch, Decisions, Design, then what was asked and what counted as done. **One spec per item:** if this branch or topic already has a spec, update that file in place. Follow-up fixes, corrections and review rounds on the same item never create a new spec. |
 | Changed what the product does | One line under `## Unreleased` in `CHANGELOG.md`. |
 
 Not required: a decision record for a bug fix that follows the existing
-design, a design doc for a refactor that changed no behaviour. `docs/plans/`
+design, a design doc for a refactor that changed no behaviour, a new spec
+for an iteration on an item that already has one. `docs/plans/`
 is gitignored scratch space. A commit that touched the record names the
 files in its body: `Documents: docs/decisions/0007-x.md, docs/design/sync.md`.
 ```

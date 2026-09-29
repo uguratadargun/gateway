@@ -4,6 +4,8 @@
 
 - `/gate:init` corrects an existing `CLAUDE.md` instead of only appending the record's table to it. Lines that the code proves wrong are fixed in place: a path that no longer exists, a version, runtime or command that disagrees with the file that owns it, or a statement about the code that is not true (such as "vendored" for a package installed from a fork). Every other line keeps its wording, order and language. The report lists each correction with the file that proves it, and a design doc no longer carries a pitfall saying `CLAUDE.md` is wrong.
 
+- The record table in `CLAUDE.md` asks for one spec per item, written when the item is finished (the user says it is done, or it is being committed or MR'd). An item that already has a spec is updated in place, and follow-up fixes and review rounds no longer each write a new one. `/gate:init` writes the new row, and on a repository initialised earlier it replaces the old record section with the current one.
+
 ## 0.47.0 — 2026-09-24
 
 - Every model call a run makes is now the person's own Claude Code, on their own login. gate holds no Claude account and serves no models: the account pool, the Claude login on the dashboard, the gateway (`/api/gateway`, the OpenAI dialect, Cursor and other clients), model routing and tiers, the response cache, compression, the limiter, the budget, the traffic and usage logs (`/traffic`, `/analytics`, `/sessions`), the quota windows, the playground and the client pages are removed. `gate usage`, `gate live` and `gate env` are removed; your own `/usage` in Claude Code shows your plan again. The first session after updating the plugin takes gate's old gateway settings out of Claude Code's settings and asks you to restart Claude Code once.

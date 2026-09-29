@@ -183,8 +183,11 @@ The forms are in the reference above. Follow them section for section.
 - **`CLAUDE.md`** — where there is none, write one: the record table from the
   reference, this repository's real commands from step 2, its commit
   conventions, and the rules that hold everywhere in it. Where there is one,
-  append the record section (unless it is already there), then **correct
-  every line the code proves wrong**. Every Claude Code session reads this
+  append the record section, then **correct every line the code proves
+  wrong**. Where the record section is already there in an older wording —
+  a `Finished a task` row that asks for a spec after every task, say — replace
+  that section with the reference's as it is now: it is gate's section, not
+  the team's. Every Claude Code session reads this
   file first, so a false line in it misleads each of them before they ever
   reach the design docs. A line is wrong when what you read in step 2
   contradicts it:

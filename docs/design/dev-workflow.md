@@ -351,8 +351,9 @@ part, the decision records the code and the history actually show — marked
 as inferred where the reason was never stated — `CLAUDE.md`, the changelog
 and `docs/plans/.gitignore`. It never overwrites a document that is already
 there, so running it again only fills gaps, and it commits nothing on its
-own. The one file it edits is an existing `CLAUDE.md`: besides appending the
-record's table, it corrects the lines the code proves wrong — a path that is
+own. The one file it edits is an existing `CLAUDE.md`: it appends the
+record's table, or replaces an older wording of it with the reference's
+current one, and it corrects the lines the code proves wrong — a path that is
 gone, a version or command that disagrees with the file that owns it, a
 statement about the code that is not true — and leaves every other line as
 it was. It lists each correction, with the file that proves it, in its
