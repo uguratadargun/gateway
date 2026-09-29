@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.49.0 — 2026-09-29
+
 - An agent's `effort` now reaches Claude Code. The subagent file gate writes for a `claude-code` agent carries `effort:` next to `model:`, so a planner set to `high` thinks at `high` instead of at whatever the session was set to. An agent with no effort, or `default`, still follows the session.
 
 - `gate begin` warns when a run will need `gh` and this machine does not have it: a workflow that opens a pull request with `gh pr create`, on a GitHub remote, where `gh auth status` fails. The warning says to run `gh auth login`. The run still starts.
