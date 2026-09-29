@@ -179,10 +179,20 @@ function isIgnored(root: string, path: string): boolean {
  * match a symlink. Hooks are skipped: this is a snapshot, not a change someone
  * is proposing, and a pre-commit lint must not decide whether it is kept.
  */
+/**
+ * The borrowed dependency links a commit of the worktree has to leave out.
+ *
+ * Only a link nothing ignores yet: git refuses an `:(exclude)` that names an
+ * ignored path ("paths are ignored"), so a repository whose `.gitignore`
+ * already covers `node_modules` needs no exclude and must not be given one.
+ */
+export function borrowedLinksToExclude(root: string): string[] {
+  return LINKED_DIRECTORIES.filter((d) => isSymlink(join(root, d)) && !isIgnored(root, d));
+}
+
 function commitLeftovers(ws: Pick<RunWorkspace, "root" | "branch">, executionId: string): boolean {
   if (!git(ws.root, ["status", "--porcelain"]).length) return false;
-  // Only a link nothing ignores yet: git refuses an exclude that names an ignored path.
-  const excluded = LINKED_DIRECTORIES.filter((d) => isSymlink(join(ws.root, d)) && !isIgnored(ws.root, d)).map((d) => `:(exclude)${d}`);
+  const excluded = borrowedLinksToExclude(ws.root).map((d) => `:(exclude)${d}`);
   git(ws.root, ["add", "-A", "--", ".", ...excluded]);
   if (!git(ws.root, ["diff", "--cached", "--name-only"]).length) return false;
   let identity: string[] = [];

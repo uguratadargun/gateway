@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { isFullyPushed, releaseRunWorkspace, removeRunWorkspace } from "@/runtime/workspace";
 
-import type { GateClient } from "./api";
+import { GateApiError, type GateClient } from "./api";
 import { gateHome } from "./config";
 import { forgetRun } from "./step";
 
@@ -20,8 +20,10 @@ import { forgetRun } from "./step";
  * first, exactly as a run ending does. A worktree the server has no record of
  * goes only when it plainly holds nothing that could be lost — fully pushed,
  * or nothing past its base — unless `--all` says to take it anyway, the same
- * way. The branch is kept in every case, so `git checkout <branch>` brings
- * back everything.
+ * way. A worktree whose run the server could not be asked about — offline, or
+ * a key it refused — is kept whatever the flags say: that run may be going.
+ * A branch with work on it is kept in every case, so `git checkout <branch>`
+ * brings back everything; one its run left no commit on goes with it.
  */
 
 export type WorkspaceVerdict = "running" | "pushed" | "empty" | "unpushed" | "dirty" | "unknown";
@@ -33,7 +35,7 @@ export interface WorkspaceEntry {
   branch: string | null;
   /** The commit the run's branch was cut from, when the server still knows the run. */
   baseCommit: string | null;
-  /** What the server says the run is, or "unknown" when it has no record of it. */
+  /** What the server says the run is; "unknown" when it has no record of it, "unreachable" when it could not be asked. */
   status: string;
   verdict: WorkspaceVerdict;
 }
@@ -81,11 +83,15 @@ export async function listWorkspaces(client: Pick<GateClient, "execution">): Pro
       baseCommit = execution.workspace?.baseCommit ?? null;
       branch = execution.workspace?.branch ?? branch;
       repo = execution.workspace?.repo ?? repo;
-    } catch {
-      // Deleted from the history, or a gate that cannot be reached: the
-      // worktree is judged on what git says alone.
+    } catch (e) {
+      // Deleted from the history: the worktree is judged on what git says
+      // alone. Anything else — a gate that cannot be reached, a key it
+      // refused — says nothing about the run, which may well be running; it
+      // is kept, `--all` or not.
+      if (!(e instanceof GateApiError && e.status === 404)) status = "unreachable";
     }
-    const verdict: WorkspaceVerdict = status === "running" ? "running" : judgeWorkspace(root, baseCommit);
+    const verdict: WorkspaceVerdict =
+      status === "running" || status === "unreachable" ? "running" : judgeWorkspace(root, baseCommit);
     out.push({ executionId: entry.name, root, repo, branch, baseCommit, status, verdict });
   }
   return out;

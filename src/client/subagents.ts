@@ -4,8 +4,10 @@ import { join } from "node:path";
 
 import { listAgents } from "@/agents/registry";
 import type { AgentDefinition } from "@/agents/types";
-import type { DefinitionScope } from "@/lib/def-root";
+import { scopeAt, type DefinitionScope } from "@/lib/def-root";
 import { backgroundSubagentNotice, fileReadingNotice } from "@/skills/inject";
+
+import { gateHome } from "./config";
 
 /**
  * The team's claude-code agents, as subagents of the person's own Claude Code.
@@ -91,6 +93,17 @@ export function syncSubagents(team: string, scope: DefinitionScope): { written: 
   for (const agent of listAgents(scope).agents) {
     if (agent.executor === "claude-code") wanted.set(`${subagentName(team, agent.id)}.md`, subagentFile(team, agent));
   }
+  // An agent the team has since deleted is still one a run on this machine
+  // may hand a node to: that run walks its own pinned copy of the graph. Its
+  // file stays, written from the pin, for as long as the pin does — removed
+  // with the rest, the run's next delegate named a subagent Claude Code no
+  // longer had.
+  for (const pinned of pinnedScopes(team)) {
+    for (const agent of listAgents(pinned).agents) {
+      const file = `${subagentName(team, agent.id)}.md`;
+      if (agent.executor === "claude-code" && !wanted.has(file)) wanted.set(file, subagentFile(team, agent));
+    }
+  }
   const written: string[] = [];
   const removed: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -111,4 +124,16 @@ export function syncSubagents(team: string, scope: DefinitionScope): { written: 
     written.push(file.slice(0, -3));
   }
   return { written, removed, created };
+}
+
+/** The definitions runs on this machine were pinned with, for the ones that still have theirs. */
+function pinnedScopes(team: string): DefinitionScope[] {
+  const runs = join(gateHome(), "runs");
+  if (!existsSync(runs)) return [];
+  const out: DefinitionScope[] = [];
+  for (const entry of readdirSync(runs, { withFileTypes: true })) {
+    const dir = join(runs, entry.name, "definitions");
+    if (entry.isDirectory() && existsSync(join(dir, "agents"))) out.push(scopeAt(dir, team));
+  }
+  return out;
 }

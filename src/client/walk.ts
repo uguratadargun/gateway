@@ -21,7 +21,18 @@ import { findNode, skipTargetOf, type WorkflowDefinition, type WorkflowNode } fr
  */
 
 export type SessionPosition =
-  | { kind: "node"; node: WorkflowNode; visit: number; outputs: Record<string, unknown>; stepIndex: number }
+  | {
+      kind: "node";
+      node: WorkflowNode;
+      visit: number;
+      outputs: Record<string, unknown>;
+      /**
+       * How many times each node has run, this node's pass included — what
+       * `visits.<node>` reads in the node's inputs and in a command's argv.
+       */
+      visitCounts: Record<string, number>;
+      stepIndex: number;
+    }
   | { kind: "done"; status: "completed" | "failed"; terminalNodeId: string; stepIndex: number }
   | { kind: "failed"; nodeId: string; error: { code: string; message: string } };
 
@@ -79,12 +90,16 @@ function walk(
     const step = steps[replay.cursor];
     if (!step || step.nodeId !== node.id) {
       // The hole. Everything before it has been replayed, so the outputs and
-      // visit counts handed back are exactly what this node would see.
+      // visit counts handed back are exactly what this node would see — its
+      // own pass counted, so an agent told which attempt it is on reads 1 on
+      // its first.
+      const visit = (replay.visitCounts[node.id] ?? 0) + 1;
       return {
         kind: "node",
         node,
-        visit: (replay.visitCounts[node.id] ?? 0) + 1,
+        visit,
         outputs: { ...replay.outputs },
+        visitCounts: { ...replay.visitCounts, [node.id]: visit },
         stepIndex: replay.cursor,
       };
     }
