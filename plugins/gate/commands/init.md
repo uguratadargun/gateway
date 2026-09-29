@@ -56,7 +56,8 @@ Two things decide whether that reading is any use to a sibling team:
   others and consumes from them, named as both sides write it.
 
 It writes files. **It does not commit anything on its own**, and it never
-overwrites a document that is already there.
+overwrites a document that is already there. `CLAUDE.md` is the one file it
+edits, and only the lines the code proves wrong.
 
 ## 1. See what is already there
 
@@ -65,9 +66,10 @@ Look for `docs/ARCHITECTURE.md`, `docs/design/`, `docs/decisions/`,
 
 - Anything that exists is **left exactly as it is**. You add what is missing;
   you do not rewrite, reformat or "improve" a file the repository already
-  has. The one exception is `CLAUDE.md`, and only by appending one section —
-  see step 4.
-- Running this command twice is safe, and that is the reason.
+  has. The one exception is `CLAUDE.md`: it gets the record section, and
+  the lines in it that the code proves wrong are corrected — see step 4.
+- Running this command twice is safe, and that is the reason. A second run
+  finds nothing in `CLAUDE.md` left to correct.
 - Run `git status --porcelain`. If the checkout is dirty, say so and carry
   on: nothing here is committed without being asked, but the user should
   know which of the changes are theirs.
@@ -181,7 +183,29 @@ The forms are in the reference above. Follow them section for section.
 - **`CLAUDE.md`** — where there is none, write one: the record table from the
   reference, this repository's real commands from step 2, its commit
   conventions, and the rules that hold everywhere in it. Where there is one,
-  **append the record section only** and leave every other line untouched.
+  append the record section (unless it is already there), then **correct
+  every line the code proves wrong**. Every Claude Code session reads this
+  file first, so a false line in it misleads each of them before they ever
+  reach the design docs. A line is wrong when what you read in step 2
+  contradicts it:
+  - a path, file or directory that does not exist — point it at where that
+    thing lives now, or remove the line if it is gone;
+  - a figure that disagrees with the file that owns it — a version against
+    `package.json`, a runtime against `.nvmrc` or `engines`, a command
+    against the scripts that really exist;
+  - a statement of fact about how the code works that the code contradicts
+    — "X is vendored" where X is installed from a registry or a fork, "file
+    Y does Z" where Y does something else. Rewrite it to what the code does;
+    where it also tells people what to do, keep the instruction and fix its
+    premise.
+
+  Change only those lines, in the file's own language and wording. Order,
+  headings, tone and every line you cannot prove wrong stay exactly as they
+  are: no rewording, reformatting, translating or new sections beyond the
+  record's. A rule the code merely breaks — "always TypeScript" in a
+  repository that still has JavaScript — is the team's intent, not a false
+  fact; leave it. A design doc does not carry a pitfall saying `CLAUDE.md` is
+  wrong; correct `CLAUDE.md` instead.
 - **`docs/plans/.gitignore`** — the single line `*`, so the pipeline's own
   node finds it already there and the plan files never reach a commit.
 - **`CHANGELOG.md`** — where there is none: `## Unreleased`, then one heading
@@ -196,8 +220,9 @@ The forms are in the reference above. Follow them section for section.
 
 Show the file list with line counts, what you did not write and why (already
 there; no decision the history supports), and say in as many words: **nothing
-has been committed**. The user reviews what is on disk before it goes
-anywhere.
+has been committed**. For `CLAUDE.md`, list each corrected line: what it said,
+what it says now, and the file that proves it. The user reviews what is on
+disk before it goes anywhere.
 
 ## 6. Put it where the gate reads it
 

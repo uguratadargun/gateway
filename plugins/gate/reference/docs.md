@@ -239,8 +239,10 @@ The pipeline's agents carry the convention in their prompts. A person using
 Claude Code in the repository without the pipeline does not, unless the
 repository says it: put this table in the repository's `CLAUDE.md`, where
 every Claude Code session reads it. `/gate:init` writes it into a repository
-that has no `CLAUDE.md`, and appends this section to one that has, and
-`/gate:design` proposes it for a
+that has no `CLAUDE.md`. To one that has, it appends this section and
+corrects the lines the code proves wrong (a path that is gone, a version or
+command that disagrees with its source, a fact about the code that is not
+true), leaving every other line as it was. `/gate:design` proposes it for a
 repository that has none.
 
 ```markdown
