@@ -14,6 +14,7 @@ import {
   setExecutionWorkspace,
   touchExecution,
 } from "@/executions/store";
+import { isBranchRef, isFullCommit } from "@/repos/refs";
 import type { StepRecord } from "@/runtime/state";
 
 export const runtime = "nodejs";
@@ -55,7 +56,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // run itself. Nothing about it can fail the report.
   const published = parsed.data.published;
   if (published?.ref && published.commit) {
-    setExecutionPublication(id, { ref: published.ref, commit: published.commit, at: published.at ?? Date.now() });
+    // Both reach `git fetch` on this server when another team asks about the
+    // run, so a value that is not a branch ref and a full commit is not stored
+    // as one. A real push always reports both in that shape.
+    if (isBranchRef(published.ref) && isFullCommit(published.commit)) {
+      setExecutionPublication(id, { ref: published.ref, commit: published.commit, at: published.at ?? Date.now() });
+    } else {
+      setExecutionPublication(id, { error: "the reported publication is not a branch ref and a full commit" });
+    }
   } else if (published?.error) {
     setExecutionPublication(id, { error: published.error });
   }

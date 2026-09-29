@@ -69,7 +69,7 @@ export function connectRepo(source: string, id: string): ConnectResult {
     }
     mkdirSync(reposDir(), { recursive: true, mode: 0o700 });
     try {
-      execFileSync("git", ["clone", trimmed, root], { encoding: "utf8", timeout: CLONE_TIMEOUT_MS, stdio: "pipe" });
+      execFileSync("git", ["clone", "--", trimmed, root], { encoding: "utf8", timeout: CLONE_TIMEOUT_MS, stdio: "pipe" });
     } catch (e) {
       const err = e as Error & { stderr?: string };
       throw new WorkflowError("WORKSPACE_ERROR", `clone failed: ${(err.stderr || err.message).trim().slice(0, 400)}`);
@@ -311,9 +311,12 @@ export async function pullRepo(id: string): Promise<RepoRecord | null> {
 
   setRepoStatus(id, "installing");
   const parts: string[] = [];
+  // A merge of the upstream branch, not `git pull`: pull merges whatever
+  // FETCH_HEAD names when it gets there, and another team's question fetches
+  // a run's branch into this same checkout, which writes FETCH_HEAD too.
   for (const argv of [
     ["git", "fetch", "--prune", "--quiet"],
-    ["git", "pull", "--ff-only"],
+    ["git", "merge", "--ff-only", "@{upstream}"],
   ]) {
     const { ok, log } = await runOne(argv, repo.root);
     parts.push(log);

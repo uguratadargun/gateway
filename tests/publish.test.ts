@@ -111,6 +111,13 @@ describe("what a repository allows to be published", () => {
     // `gate/run-1.2` would also publish a branch nobody named in it.
     expect(branchAllowed("gate/run-1x2", "gate/run-1.2")).toBe(false);
   });
+
+  it("reads **/ as any number of directories, none included", () => {
+    expect(branchAllowed("release", "**/release")).toBe(true);
+    expect(branchAllowed("team/a/release", "**/release")).toBe(true);
+    expect(branchAllowed("gate/run-x", "gate/**/run-x")).toBe(true);
+    expect(branchAllowed("prerelease", "**/release")).toBe(false);
+  });
 });
 
 describe("publishing a run's branch", () => {

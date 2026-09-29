@@ -256,9 +256,15 @@ export function readRemote(repo: RepoRecord): string {
   return repo.publicationRemote?.trim() || "origin";
 }
 
-/** The registered repo with this identity, if gate knows one. */
+/**
+ * The registered repo with this identity, if gate knows one.
+ *
+ * Connecting refuses a second record of a remote, so there is one — except
+ * where two were connected before it did. Then the first connected answers,
+ * every time, rather than whichever row SQLite happens to return.
+ */
 export function repoByIdentity(repoId: string): RepoRecord | null {
-  const r = getDb().prepare("SELECT * FROM repos WHERE repo_id = ?").get(repoId) as unknown as Row | undefined;
+  const r = getDb().prepare("SELECT * FROM repos WHERE repo_id = ? ORDER BY created_at, id LIMIT 1").get(repoId) as unknown as Row | undefined;
   return r ? toRecord(r) : null;
 }
 

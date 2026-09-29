@@ -256,7 +256,7 @@ async function resolveBase(repo: RepoRecord): Promise<{ commit: string; ref: str
   if (!ref) {
     // The remote's default branch: `ref: refs/heads/main	HEAD`.
     try {
-      const out = await git(repo.root, ["ls-remote", "--symref", remote, "HEAD"], FETCH_TIMEOUT_MS);
+      const out = await git(repo.root, ["ls-remote", "--symref", "--end-of-options", remote, "HEAD"], FETCH_TIMEOUT_MS);
       ref = out.match(/^ref:\s+refs\/heads\/(\S+)\s+HEAD/m)?.[1] ?? "";
     } catch {
       // Offline: the local copy of the remote's HEAD still names it.
@@ -269,7 +269,7 @@ async function resolveBase(repo: RepoRecord): Promise<{ commit: string; ref: str
   }
   if (!ref) return { error: `cannot tell which branch is the base of ${remote} — set a base ref on the Repos page` };
   try {
-    await git(repo.root, ["fetch", "--no-tags", "--quiet", remote, `+${ref}:${BASE_REF}`], FETCH_TIMEOUT_MS);
+    await git(repo.root, ["fetch", "--no-tags", "--quiet", "--end-of-options", remote, `+${ref}:${BASE_REF}`], FETCH_TIMEOUT_MS);
   } catch (e) {
     // What was fetched before is still a true read of an older commit; an
     // index that stops on a network blip would tell recall nothing at all.

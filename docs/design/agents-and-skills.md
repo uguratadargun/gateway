@@ -154,10 +154,16 @@ Agents → planner → Skills → ☑ superpowers-brainstorming → Save
 
 A library's skills refer to each other by relative path and by the harness's
 namespace (`superpowers:writing-plans`); on import those references are
-rewritten to the prefixed ids, in prose files only, so the copies still find
-their siblings. Add your own library with a git URL, a ref, the subdirectory
-its skills live in and an id prefix. Forgetting a source deletes gate's
-clone; the skills already imported are the team's copies and stay.
+rewritten to the ids the siblings are imported under — the prefix, lowercased,
+dashes for anything else — in prose files only, so the copies still find
+their siblings. A name is matched whole: `superpowers:writing-plans-extended`
+is not a reference to `writing-plans`. Add your own library with a git URL, a
+ref, the subdirectory its skills live in and an id prefix; the subdirectory is
+inside the clone or refused. A library is somebody else's repository, so its
+links are not followed: a skill whose `SKILL.md` is a link is listed with that
+reason and not imported, and links elsewhere in a skill are not copied.
+Forgetting a source deletes gate's clone; the skills already imported are the
+team's copies and stay.
 
 ## File format
 

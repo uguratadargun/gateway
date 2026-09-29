@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -91,6 +91,62 @@ describe("a skill's references to its siblings", () => {
     writeFileSync(join(dir, "SKILL.md"), "see ../reviewing/x.md and house:reviewing");
     expect(rewriteSiblingReferences(dir, "house", "", ["reviewing"])).toEqual([]);
     expect(readFileSync(join(dir, "SKILL.md"), "utf8")).toBe("see ../reviewing/x.md and house:reviewing");
+  });
+});
+
+describe("a sibling's name, rewritten to the id it is imported under", () => {
+  const rewrite = (text: string, siblings: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "gate-rewrite-"));
+    writeFileSync(join(dir, "SKILL.md"), text);
+    rewriteSiblingReferences(dir, "lib", "lib-", siblings);
+    return readFileSync(join(dir, "SKILL.md"), "utf8");
+  };
+
+  it("leaves a longer name that only starts like a sibling alone", () => {
+    expect(rewrite("Use lib:writing-plans-extended, then lib:writing-plans.\n", ["writing-plans"])).toBe(
+      "Use lib:writing-plans-extended, then lib-writing-plans.\n",
+    );
+  });
+
+  it("writes the lowercased id the directory is imported under, not the name as written", () => {
+    expect(rewrite("See ../Writing-Plans/SKILL.md and lib:Writing-Plans.\n", ["Writing-Plans"])).toBe(
+      "See ../lib-writing-plans/SKILL.md and lib-writing-plans.\n",
+    );
+  });
+
+  it("rewrites a sibling whose name has an underscore or a dot", () => {
+    expect(rewrite("See ../my_skill/SKILL.md and ../v1.2/notes.md.\n", ["my_skill", "v1.2"])).toBe(
+      "See ../lib-my-skill/SKILL.md and ../lib-v1-2/notes.md.\n",
+    );
+  });
+});
+
+describe("a library that points outside itself", () => {
+  it("does not follow a SKILL.md that is a link, and does not copy links", async () => {
+    const upstream = makeUpstream();
+    // A file somewhere else on this machine that happens to read as a skill.
+    const victim = join(mkdtempSync(join(tmpdir(), "gate-victim-")), "agent.md");
+    writeFileSync(victim, SKILL("victim", "Somebody else's file."));
+    mkdirSync(join(upstream, "skills", "linked"), { recursive: true });
+    symlinkSync(victim, join(upstream, "skills", "linked", "SKILL.md"));
+    symlinkSync(victim, join(upstream, "skills", "reviewing", "extra.md"));
+    git(upstream, "add", "-A");
+    git(upstream, "commit", "-qm", "links");
+    createSource({ id: "linky", name: "Linky", url: upstream, subdir: "skills", prefix: "linky-" });
+    await syncSource("linky");
+    const scope = teamScope();
+
+    const result = importSkills("linky", ["linked", "reviewing"], scope);
+    expect(result.imported).toEqual(["linky-reviewing"]);
+    expect(result.skipped[0]?.reason).toContain("symbolic link");
+    expect(readFileSync(victim, "utf8")).toBe(SKILL("victim", "Somebody else's file."));
+    expect(existsSync(join(scope.root, "skills", "linky-reviewing", "extra.md"))).toBe(false);
+  });
+
+  it("refuses a subdirectory that climbs out of the clone", () => {
+    expect(() => createSource({ id: "climber", name: "Climber", url: "https://example.com/x.git", subdir: "../../teams" })).toThrow(
+      /not a directory inside the repository/,
+    );
   });
 });
 

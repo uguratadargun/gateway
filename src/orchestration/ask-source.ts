@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 
 import { getDb } from "@/lib/db";
 import { teamFamily } from "@/lib/teams";
+import { isFullCommit } from "@/repos/refs";
 import { getRepo, type RepoRecord } from "@/repos/store";
 
 import type { AskSource } from "./ask";
@@ -104,7 +105,9 @@ export function openAsk(id: string, teamId: string, now = Date.now()): { ask: As
   const row = getDb().prepare("SELECT * FROM asks WHERE id = ?").get(id);
   const ask = row ? rowToAsk(row) : null;
   const gone = new AskReadError(`no ask "${id}" — asks expire after a day; ask again`, 404);
-  if (!ask || ask.teamId !== teamId || ask.expiresAt < now) throw gone;
+  // The commit is handed to `git ls-tree`, `git grep` and `git show` as it is,
+  // so an ask whose commit is not a full object name is not read at all.
+  if (!ask || ask.teamId !== teamId || ask.expiresAt < now || !isFullCommit(ask.commit)) throw gone;
   const repo = getRepo(ask.repo);
   if (!repo) throw gone;
   if (repo.teamId && !teamFamily(teamId).includes(repo.teamId)) throw gone;
