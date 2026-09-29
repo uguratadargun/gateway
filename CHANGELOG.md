@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.50.0 — 2026-09-29
+
 - Security: a run's reported publication can no longer reach `git` as an option. The server takes a published ref only as a branch and a commit only as a full sha, re-checks them when a question reads them, and passes `--end-of-options` to every `git` call built from stored or user values. Before this, anyone with a key could make the gate's own `git fetch` run a command.
 
 - A cross-team objection the person confirms now reaches the other team. The planner's objection check was always told it was on visit 0, so the confirmation never matched the objection and waited for ever; every node and command template now reads the run's real visit counts.
