@@ -1,10 +1,10 @@
 import type { WorkflowEvent } from "./types";
 
 /**
- * Per-execution pub/sub for the live graph, mirroring lib/activity.ts. Gate is
- * a single process, so an in-memory bus is the whole requirement — no broker.
- * Each execution keeps a replay buffer so a page opened mid-run (or just after
- * one finishes) still renders the path taken.
+ * Per-execution pub/sub for the live graph. Gate is a single process, so an
+ * in-memory bus is the whole requirement — no broker. Each execution keeps a
+ * replay buffer so a page opened mid-run (or just after one finishes) still
+ * renders the path taken.
  */
 
 type Listener = (e: WorkflowEvent) => void;

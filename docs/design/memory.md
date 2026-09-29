@@ -494,7 +494,7 @@ no agent, run or CLI can forget anything.
 - `src/memory/hybrid.ts`, `embeddings.ts`, `cards.ts`, `access.ts` — words and vectors fused, for decisions, features and documents; the shared shapes and the text a model reads
 - `src/memory/record-index.ts`, `merges.ts` — the repositories' record read from their base branches, the decisions reconciled against it, path history; merges made without gate
 - `src/memory/activity.ts` — the tree's runs in flight, matched against a task's words for recall
-- `src/client/memory.ts`, `src/client/cli.ts`, `src/agents/tools.ts` — `gate memory`, `gate teach`, `gate ask`; the tool names an agent file lists for the three reads
+- `src/client/cli.ts`, `src/agents/tools.ts` — `gate memory`, `gate teach`, `gate ask`; the tool names an agent file lists for the three reads
 - `src/lib/db.ts` — the DDL and the FTS indexes; `src/app/api/memory/` (with `index/`), `src/app/api/v1/memory/` (with `history/` and `activity/`), `src/app/api/executions/[id]/memory/` — the routes
 
 ## Pitfalls

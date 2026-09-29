@@ -1,57 +1,22 @@
-import type { Effort } from "@/lib/reasoning";
-
 /**
- * The runtime's only way to reach a model. Everything model-specific lives
- * behind this interface, so the engine never knows which provider — or which
- * vendor — actually serves a node, and tests can run the whole orchestrator
- * with no network at all.
+ * The server's only way to reach a model: the memory recorder and
+ * consolidation hand it one prompt and read one text answer. The interface
+ * keeps them free of any endpoint's wire shape, and lets tests script the
+ * answer with no network at all.
  */
-
-export interface TextBlock {
-  type: "text";
-  text: string;
-}
-
-/** A model's request to run one tool. */
-export interface ToolUseBlock {
-  type: "tool_use";
-  id: string;
-  name: string;
-  input: unknown;
-}
-
-/** The answer handed back for one `tool_use`, on the next turn. */
-export interface ToolResultBlock {
-  type: "tool_result";
-  toolUseId: string;
-  content: string;
-  isError?: boolean;
-}
-
-export type ProviderContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
 
 export interface ModelProviderMessage {
   role: "user" | "assistant";
-  content: string | ProviderContentBlock[];
-}
-
-/** A tool as the model sees it: a name, a description and a JSON Schema. */
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
+  content: string;
 }
 
 export interface ModelProviderRequest {
-  /** Tier alias ("sonnet"), or a concrete model id. Resolved downstream. */
+  /** A `provider:<name>/<model>` reference; `ProviderModelProvider` refuses anything else. */
   model: string;
   system?: string;
   messages: ModelProviderMessage[];
-  effort?: Effort;
   maxTokens?: number;
-  /** Tools the model may call this turn. Omitted entirely when there are none. */
-  tools?: ToolDefinition[];
-  /** Attribution for cost/traffic reporting; ignored by providers that lack it. */
+  /** Which caller made the call. No provider reads it; tests pick calls out by `nodeId`. */
   context?: { executionId?: string; nodeId?: string; workflowId?: string };
   /** Cancels the call. Aborting really drops the upstream request, so a
    *  cancelled run stops paying for the answer it will never read. */
@@ -60,12 +25,8 @@ export interface ModelProviderRequest {
 
 export interface ModelProviderResult {
   text: string;
-  /** The assistant turn verbatim, to be appended before any tool results. */
-  content: Array<TextBlock | ToolUseBlock>;
-  /** Tool calls the model wants run before it can answer. */
-  toolUses: ToolUseBlock[];
   stopReason: string | null;
-  /** The model that actually served the request (may differ after routing). */
+  /** The model reference the call was made with. */
   model: string;
   /**
    * `inputTokens` is the whole prompt the model was shown, cache write

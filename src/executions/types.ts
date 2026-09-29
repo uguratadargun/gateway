@@ -24,13 +24,15 @@ export interface ExecutionRecord {
   error: { code: string; message: string } | null;
   stepCount: number;
   workspace: ExecutionWorkspace | null;
-  /** Where the account's rate-limit windows stood before and after the run. */
+  /** The tokens and API-equivalent cost of the steps this run recorded. */
   quota: ExecutionQuota | null;
   /** The execution this one continued from, if it was resumed rather than started fresh. */
   resumedFrom: string | null;
   /**
-   * Where the engine ran. "server" is a run started from the dashboard; "local"
-   * is one the client CLI ran on someone's own machine and reported here.
+   * Where it happened. "local" is a run on someone's own machine, reported
+   * here — every run since 0.47.0. "server" is a run recorded by the server
+   * itself: a merge made without gate, or a run the dashboard started before
+   * 0.47.0.
    */
   origin: "server" | "local";
   /** Who ran it, when a key with an owner did. */
@@ -42,9 +44,10 @@ export interface ExecutionRecord {
   /** Set when someone pressed Stop on a run this process does not own. */
   cancelRequested: boolean;
   /**
-   * What is walking the graph. An engine-driven run reports every few seconds,
-   * so silence means its machine went away; a session-driven one reports when
-   * a node begins and ends, and a node can legitimately take an hour.
+   * What walked the graph. Every run since 0.47.0 is "session": it reports
+   * when a node begins and ends, and a node can legitimately take an hour.
+   * "engine" is a row from before, when gate's own engine ran the walk and
+   * reported every few seconds.
    */
   driver: "engine" | "session";
   /**

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- An agent's `effort` now reaches Claude Code. The subagent file gate writes for a `claude-code` agent carries `effort:` next to `model:`, so a planner set to `high` thinks at `high` instead of at whatever the session was set to. An agent with no effort, or `default`, still follows the session.
+
+- `gate begin` warns when a run will need `gh` and this machine does not have it: a workflow that opens a pull request with `gh pr create`, on a GitHub remote, where `gh auth status` fails. The warning says to run `gh auth login`. The run still starts.
+
+- The README, `/gate:login` and the Team page say what a person's machine needs now that every run happens there: Claude Code on their own login, git access that can push, `gh auth login` for GitHub (GitLab works with the SSH key alone, or `glab`), and `gate repo` for a connected repository.
+
+- The agent editor offers `claude-sonnet-5-5` in place of `claude-sonnet-5`.
+
+- Leftovers of the gateway and the server runner are removed: the tool-activity card on a run's page (nothing sent it), the ceilings shown on a workflow's page (nothing enforces them; the new-workflow template now says to end a loop on a give-up edge), and the Repos page's description of runs working in the gate's checkout.
+
 ## 0.48.0 — 2026-09-29
 
 - `/gate:init` corrects an existing `CLAUDE.md` instead of only appending the record's table to it. Lines that the code proves wrong are fixed in place: a path that no longer exists, a version, runtime or command that disagrees with the file that owns it, or a statement about the code that is not true (such as "vendored" for a package installed from a fork). Every other line keeps its wording, order and language. The report lists each correction with the file that proves it, and a design doc no longer carries a pitfall saying `CLAUDE.md` is wrong.

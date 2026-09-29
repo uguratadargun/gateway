@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { createKey, deleteKey, listKeys, resolveKey, revokeKey } from "@/lib/apikeys";
-import { forgetTheGateway, getDb, kvGet, kvSet } from "@/lib/db";
+import { forgetTheGateway, getDb } from "@/lib/db";
 import { apiEquivalentCost, tierOf } from "@/lib/pricing";
 import { loadSettings, saveSettings } from "@/lib/settings";
+
+const kvSet = (key: string, value: string) =>
+  getDb().prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+const kvGet = (key: string): string | null => (getDb().prepare("SELECT value FROM kv WHERE key = ?").get(key)?.value as string) ?? null;
 
 describe("pricing", () => {
   it("infers tiers from model ids", () => {

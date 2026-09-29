@@ -37,8 +37,11 @@ export const startRunSchema = z
     workflowId: z.string().min(1).max(64),
     input: z.record(z.string(), z.unknown()).default({}),
     client: clientInfo.default({}),
-    /** "session" when a Claude Code session walks the graph a node at a time. */
-    driver: z.enum(["engine", "session"]).default("engine"),
+    /**
+     * A Claude Code session walks the graph a node at a time; since 0.47.0
+     * nothing else does, so a run that does not say is one too.
+     */
+    driver: z.literal("session").default("session"),
     /**
      * The cross-team task this run serves. Optional, and checked against the
      * caller's family: an unknown or out-of-family id is refused rather than
@@ -86,10 +89,9 @@ const toolCallSchema = z.object({
  * can widen.
  *
  * They are read out of the step's output rather than added to `stepSchema`,
- * and a malformed one is skipped instead of failing the report. The reason is
- * `RunReporter`: it re-queues a rejected batch whole and gives up after four
- * tries, so a single model that answered `conflicts: "none"` would cost the
- * run every step it had left to send.
+ * and a malformed one is skipped instead of failing the report: a rejected
+ * report loses every step in it, so a single model that answered
+ * `conflicts: "none"` would cost the run steps that were right.
  */
 export const CONFLICT_PROTOCOL_VERSION = 1;
 

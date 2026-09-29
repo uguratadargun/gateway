@@ -37,6 +37,7 @@ beforeAll(() => {
     `---
 name: Builder
 model: opus
+effort: high
 executor: claude-code
 output:
   type: json
@@ -174,6 +175,13 @@ describe("a claude-code node in a session-driven run", () => {
       const file = readFileSync(join(process.env.CLAUDE_CONFIG_DIR, "agents", "gate-t-builder.md"), "utf8");
       expect(file).toContain("name: gate-t-builder");
       expect(file).toContain("model: opus");
+      // The effort rides the file too: nothing else carries it to a subagent,
+      // and without it the node thinks as hard as the session happens to.
+      expect(file).toContain("effort: high");
+      // An agent that names no effort leaves it to the session.
+      expect(readFileSync(join(process.env.CLAUDE_CONFIG_DIR, "agents", "gate-t-reviser.md"), "utf8")).not.toContain(
+        "effort:",
+      );
       // The subagent is told its own subagents run in the background here, and
       // how reading a file costs what it costs. Both ride the mirror file
       // because a subagent gets no appended system prompt.

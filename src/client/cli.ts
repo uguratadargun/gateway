@@ -104,7 +104,7 @@ export interface Args {
  * Which flags take a value.
  *
  * Guessing from "the next word does not start with --" cannot work here: the
- * task a run is given is a positional sentence, so `run smoke --yes make a
+ * task a run is given is a positional sentence, so `begin smoke --yes make a
  * file` would swallow "make" as the value of --yes and lose the task. The list
  * is short, and the alternative is a parser that is wrong in exactly the case
  * the tool exists for.
@@ -953,7 +953,6 @@ async function cmdStatus(args: Args): Promise<number> {
   return 0;
 }
 
-/** How long `gate ask` watches a review before saying where to read the rest. */
 /**
  * `gate ask "…" --repo <host/owner/name>`: what another team's code does.
  *

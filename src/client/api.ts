@@ -197,7 +197,7 @@ export class GateClient {
     input: Record<string, unknown>;
     client: { host?: string; repo?: string; remoteUrl?: string; branch?: string; version?: string; session?: string };
     /** Who walks the graph — see the execution's `driver`. */
-    driver?: "engine" | "session";
+    driver?: "session";
     /** The cross-team task the run serves. Refused if the team cannot see it. */
     taskId?: string;
     /**
@@ -292,10 +292,8 @@ export class GateClient {
   }
 
   /** The team's memory: decisions and features matching words, paths, or a time. */
-  async memorySearch(req: MemorySearchRequest, remoteUrl?: string | null, executionId?: string | null): Promise<MemorySearchResult> {
+  async memorySearch(req: MemorySearchRequest, remoteUrl?: string | null): Promise<MemorySearchResult> {
     const params = new URLSearchParams();
-    // The run asking, so the server leaves it out of what is in flight.
-    if (executionId) params.set("run", executionId);
     if (req.query) params.set("q", req.query);
     for (const p of req.paths ?? []) params.append("path", p);
     // The remote as git gives it; the server is what turns it into a name.

@@ -12,8 +12,8 @@ export const runtime = "nodejs";
  * kept.
  *
  * Only the session that drove it can continue it — the worktree is on that
- * machine — which is why this is a client route and not the dashboard's
- * Continue, which resumes a run the server itself can pick up. The failed
+ * machine — which is why this is a client route; the dashboard only shows
+ * the command. The failed
  * attempt is dropped from the history so the session's replay lands on the
  * node as if it had never run; the reason it failed stays in the events the
  * dashboard already showed.

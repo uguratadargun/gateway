@@ -382,11 +382,10 @@ CREATE INDEX IF NOT EXISTS decision_issues_feature ON decision_issues(feature_id
 
 -- The person's answer, kept whether or not the step it is about has arrived.
 --
--- The client reports steps in batches and a batch can reach the server in any
--- order after a retry; rejecting the report until the source step turns up
--- would make RunReporter re-queue the whole batch, be refused again, and give
--- up — losing the very confirmation this table exists to keep. So the answer
--- is stored as pending_source and reconciled when the source arrives.
+-- A step can reach the server before the step it answers; rejecting the
+-- report until the source step turns up would refuse the report whole and
+-- lose the very confirmation this table exists to keep. So the answer is
+-- stored as pending_source and reconciled when the source arrives.
 CREATE TABLE IF NOT EXISTS decision_issue_approvals (
   id TEXT PRIMARY KEY,
   execution_id TEXT NOT NULL,
@@ -711,17 +710,6 @@ export function forgetTheGateway(d: SqlDatabase): void {
     d.exec(`DROP TABLE IF EXISTS ${t}`);
   }
   d.exec("DELETE FROM kv WHERE key = 'ratelimit' OR key LIKE 'telegram.%' OR key LIKE 'sessions_retitled_%'");
-}
-
-export function kvGet(key: string): string | null {
-  const row = getDb().prepare("SELECT value FROM kv WHERE key = ?").get(key);
-  return row ? (row.value as string) : null;
-}
-
-export function kvSet(key: string, value: string): void {
-  getDb()
-    .prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-    .run(key, value);
 }
 
 /** One-time import of the pre-SQLite JSON/JSONL files, then rename them. */

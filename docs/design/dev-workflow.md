@@ -97,7 +97,12 @@ names: `gh pr create` on a GitHub remote, and on anything else `glab` when it
 is signed in, else GitLab's push options. A GitHub remote on a machine whose
 `gh` is not signed in ends the run saying so, rather than pushing a branch no
 pull request will point at — GitHub has no push option that opens one, so
-there is nothing there to fall back to. There is no `npm ci` and no `npm test` in the graph:
+there is nothing there to fall back to. Because that is only found at the
+end, `gate begin` asks first: a workflow with a `gh pr create` node, on a
+GitHub remote, on a machine whose `gh auth status` fails, starts with a `⚠`
+line saying to run `gh auth login`, and the session passes it on. It warns
+and does not refuse — a run that stops at the commit never reaches the node
+([0051](../decisions/0051-a-run-warns-at-its-start-about-what-its-end-needs.md)). There is no `npm ci` and no `npm test` in the graph:
 those are facts about one project, for `/gate:design` to add.
 
 ### The shipped pipelines
@@ -184,6 +189,16 @@ so every `gate begin` names the session driving the run. The slash commands
 do not need the shim — they call the bundled script
 (`plugins/gate/scripts/gate.mjs`, built by `npm run build:cli`) through
 `${CLAUDE_PLUGIN_ROOT}`.
+
+A machine needs, besides the plugin and the token: Claude Code signed in to
+the person's own Claude account, since every model call is theirs; git access
+to the repository that can push, since the branch is pushed from here; `gh auth
+login` for a GitHub remote, and `glab auth login` or just the SSH key for a
+GitLab one, since the merge request is opened from here; and, for a workflow
+that names a connected repository, `gate repo` mapping it to this person's
+clone once. The gate's server needs none of these for runs: its only git
+access is read-only fetches into its own checkouts, for the record index and
+another team's questions, with whatever key its own user has.
 
 ### What travels where
 
@@ -411,6 +426,7 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 - `src/agents/defaults.ts` — the shipped agents and their `super-*` and `quick-*` counterparts, the three gates to the person and `decide` in their place on the autonomous road, `record-fix`, the investigator, source-review
 - `src/client/cli.ts`, `step.ts` — the `gate` command (login, the mirror, the first-run approval, every subcommand) and the session-driven loop: `begin` / `next` / `step` / `continue`, the instructions, the definition pin, the session pointer
 - `src/client/walk.ts`, `subagents.ts`, `cache.ts` — the replay (`nextInSession`), the team's claude-code agents written as subagents under `~/.claude/agents/`, the mirror
+- `src/client/preflight.ts` — what a run's end will need that this machine lacks (`gh` signed in for a GitHub pull request), said at `begin`
 - `src/client/claude-settings.ts` — taking an older gate's gateway wiring out of Claude Code's settings at login and reset
 - `src/lib/protocol.ts`, `src/app/api/v1/` — the version headers and `MIN_CLIENT_VERSION`; the client API: identity, the bundle, run registration, progress, stop, continue
 - `plugins/gate/commands/run.md`, `design.md`, `login.md`, `update.md` — the slash commands; `plugins/gate/scripts/session-start.mjs` — the hook that writes the shim, removes old gateway wiring and names the session
@@ -423,9 +439,11 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 - `claude plugin update gate@gateway` alone re-installs from an unrefreshed marketplace; use `/gate:update`, or update the marketplace first.
 - Any change under `plugins/` or `src/client/` needs a version bump, or the update is fetched and ignored.
 - A `command` node in a team pipeline runs on the developer's machine; the first-run approval is the only thing between a team's definition and their laptop.
+- The `begin` warning finds the pull-request node by `gh pr create` in its command; a team node that opens one some other way gets no warning, and fails only at the end.
 
 ## Decisions
 
+- [0051 — A run warns at its start about what its end needs](../decisions/0051-a-run-warns-at-its-start-about-what-its-end-needs.md)
 - [0048 — A question to another team is read on the asker's machine, from the commit the gate fixed](../decisions/0048-ask-is-read-on-the-askers-machine.md)
 - [0047 — A run is driven only from a person's own Claude Code session](../decisions/0047-a-run-is-driven-only-from-a-persons-session.md)
 - [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)

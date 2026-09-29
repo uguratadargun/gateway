@@ -124,7 +124,8 @@ export async function recordMergesSince(repo: RepoRecord, from: string, to: stri
       { root: repo.root, repo: repo.id, branch: repo.baseRef ?? "", baseRef: p1, baseCommit: p1, commit: sha, changedFiles: files.slice(0, 500) },
       finishedAt,
     );
-    // A merge from last month used none of today's quota window.
+    // A merge made without gate had no steps that spent anything, and a
+    // figure summed today would say it had.
     getDb().prepare("UPDATE workflow_executions SET quota_json = NULL WHERE id = ?").run(executionId);
     if (docsDiff) setExecutionDiff(executionId, docsDiff.slice(0, MAX_DIFF_CHARS));
     recorded++;

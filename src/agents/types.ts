@@ -119,14 +119,6 @@ export interface AgentDefinition extends AgentFrontmatter {
   updatedAt: number;
 }
 
-/** A tool an agent may call. The boundary between reasoning and side effects. */
-export interface AgentTool {
-  name: string;
-  description: string;
-  inputSchema: z.ZodTypeAny;
-  execute(input: unknown): Promise<unknown>;
-}
-
 /** Build a zod validator for an agent's declared output shape. */
 export function buildOutputSchema(spec: AgentOutputSpec): z.ZodTypeAny {
   if (spec.type === "text") return z.string();

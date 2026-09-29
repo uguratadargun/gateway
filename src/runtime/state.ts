@@ -53,29 +53,20 @@ export interface WorkflowState {
   error: { code: string; message: string } | null;
 }
 
-/** Carries a resumed run's progress into a fresh state instead of starting empty. */
-export interface ResumeSeed {
-  outputs: Record<string, unknown>;
-  visitCounts: Record<string, number>;
-  stepCount: number;
-  history: StepRecord[];
-}
-
 export function createState(
   executionId: string,
   workflowId: string,
   input: Record<string, unknown> = {},
-  seed?: ResumeSeed,
 ): WorkflowState {
   return {
     executionId,
     workflowId,
     status: "running",
     input,
-    outputs: seed?.outputs ?? {},
-    visitCounts: seed?.visitCounts ?? {},
-    stepCount: seed?.stepCount ?? 0,
-    history: seed?.history ?? [],
+    outputs: {},
+    visitCounts: {},
+    stepCount: 0,
+    history: [],
     error: null,
   };
 }
@@ -83,9 +74,8 @@ export function createState(
 /**
  * Context for condition evaluation: the three roots a workflow may read.
  *
- * `visits` is how a loop is given an end. Without it a pipeline can only be
- * bounded by `maxVisits`, which fails the whole run from the engine; with it
- * an edge can say `visits.implementer >= 5` and route somewhere that reports
+ * `visits` is how a loop is given an end: nothing caps a run from outside, so
+ * an edge says `visits.implementer >= 5` and routes somewhere that reports
  * what is stuck, and an agent can be told which attempt it is on.
  */
 export function conditionContext(

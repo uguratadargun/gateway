@@ -1,6 +1,6 @@
 Status: done
 Branch: feat/own-claude-login
-Decisions: docs/decisions/0046-every-person-runs-on-their-own-claude-login.md, docs/decisions/0047-a-run-is-driven-only-from-a-persons-session.md, docs/decisions/0048-ask-is-read-on-the-askers-machine.md
+Decisions: docs/decisions/0046-every-person-runs-on-their-own-claude-login.md, docs/decisions/0047-a-run-is-driven-only-from-a-persons-session.md, docs/decisions/0048-ask-is-read-on-the-askers-machine.md, docs/decisions/0051-a-run-warns-at-its-start-about-what-its-end-needs.md
 Design: docs/ARCHITECTURE.md, docs/design/providers.md, docs/design/memory.md, docs/design/teams-and-keys.md, docs/design/dashboard.md, docs/design/dev-workflow.md, docs/design/executions.md, docs/design/workflows-engine.md, docs/design/workspaces.md, docs/design/cross-team.md, docs/design/repositories.md, docs/design/agents-and-skills.md, docs/design/the-record.md; removed: account-pool, gateway-pipeline, routing, remote-sessions and telegram
 
 # Every person on their own Claude login
@@ -51,6 +51,28 @@ Nothing is pushed until the person has talked it through.
 - The record says all of this in the present tense: three decisions, the
   superseded ones marked, the design docs rewritten or removed, the map, the
   README and the changelog.
+
+## The follow-up (0.49.0)
+
+Asked after it shipped: what a person has to set up on their own machine now
+that every run happens there, which model an agent runs on and how it is
+chosen, and what the removal left behind. Done when:
+
+- An agent's `effort` reaches Claude Code: the subagent file carries it next to
+  `model`, and an agent with none (or `default`) leaves it to the session.
+- A GitHub run on a machine whose `gh` is not signed in says so at `gate begin`,
+  and `/gate:run` passes it on; it warns and does not refuse.
+- The README, `/gate:login` and the Team page say what each machine needs:
+  its own Claude login, git access that can push, `gh` or `glab` for the merge
+  request, and `gate repo` for a connected repository.
+- The editor's model list names the current Sonnet.
+- What the removal left behind is gone or says what is true: unused components
+  and client modules, dead exports, the provider layer's streaming and tool
+  calling, the `tool.called` event and its card, the resume seed, the ceilings
+  shown and advertised as if enforced, a client that could still start an
+  "engine" run, and comments naming the engine, the worker, the account's
+  quota window or server-side runs.
+- `npm run typecheck` and `npm test` pass; the three versions are 0.49.0.
 
 ## Not done here
 

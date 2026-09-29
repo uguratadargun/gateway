@@ -35,6 +35,7 @@ import { CLI_VERSION } from "./api";
 import { subagentName } from "./subagents";
 import { cacheDir, cacheScope } from "./cache";
 import { gateHome } from "./config";
+import { shippingWarnings } from "./preflight";
 import { releaseAndPublish } from "./release";
 import { resolveRepo } from "./repo";
 import { nextInSession } from "./walk";
@@ -394,9 +395,8 @@ export async function begin(
       session,
     },
     driver: "session",
-    // Which piece of cross-team work this run serves. A session run is filed
-    // the same way a headless one is: the work outlives both, and which of
-    // the two walked the graph says nothing about what the work was for.
+    // Which piece of cross-team work this run serves: the work outlives the
+    // session that walked it, so the run is filed under it from the start.
     taskId: opts.taskId,
     // From the mirror, which is what `pinDefinitions` freezes a line below:
     // the hash the server agrees to is the one for the copy this run walks.
@@ -412,6 +412,7 @@ export async function begin(
       ctx.say(`worktree ${workspace.root} on branch ${workspace.branch}`);
       const linked = borrowDependencies(workspace);
       if (linked.length) ctx.say(`  linked ${linked.join(", ")} from ${workspace.repo}`);
+      for (const warning of shippingWarnings(workflow, readRemoteUrl(workspace.repo))) ctx.say(warning);
       // Recorded now, not at the end: the dashboard should show the branch
       // while the run is going, and every later `gate next` reads the
       // worktree back from here rather than recomputing it.

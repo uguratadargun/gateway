@@ -262,6 +262,11 @@ export default function TeamPage() {
             <Copy />
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          A run pushes its branch and opens the merge request from the person&apos;s own machine, so that machine needs
+          git access that can push, and <code>gh auth login</code> for a GitHub repository — a GitLab one works with the
+          SSH key alone, or <code>glab auth login</code>.
+        </p>
       </Card>
 
       <Card className="space-y-4 p-4">

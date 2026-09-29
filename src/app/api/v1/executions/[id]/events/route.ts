@@ -19,16 +19,15 @@ import type { StepRecord } from "@/runtime/state";
 export const runtime = "nodejs";
 
 /**
- * What a local run reports while it is going: steps to keep, events to replay.
+ * What a run reports while it is going: steps to keep, events to replay.
  *
- * Steps land in the same table a server-side run writes to and events go onto
- * the same bus, so `/executions/<id>` and its SSE stream light up for a run on
- * someone's laptop exactly as they do for one in this process — the dashboard
- * never learns there is a difference.
+ * Steps land in the run's table and events go onto the bus, so
+ * `/executions/<id>` and its SSE stream light up while the run is going on
+ * someone's laptop.
  *
  * The reply carries the one thing that has to travel the other way: whether
- * someone pressed Stop. There is no channel from here into another machine's
- * engine, so the answer rides back on the report the client was making anyway.
+ * someone pressed Stop. There is no channel from here into another machine,
+ * so the answer rides back on the report the client was making anyway.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const auth = requireClient(req);

@@ -40,13 +40,13 @@ export class ProviderModelProvider implements ModelProvider {
       );
     }
 
-    const body = toAnthropicBody(req) as Record<string, unknown>;
+    const body = toAnthropicBody(req);
     let res: Response | null = null;
     let failure = "";
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (req.signal?.aborted) throw new WorkflowError("RUN_CANCELLED", "run cancelled");
       try {
-        res = await sendToProvider({ provider, ref, body: structuredClone(body), stream: false, signal: req.signal });
+        res = await sendToProvider({ provider, ref, body: structuredClone(body), signal: req.signal });
         if (!retryable(res.status)) break;
         failure = `${res.status}`;
       } catch (e) {
@@ -74,9 +74,7 @@ export class ProviderModelProvider implements ModelProvider {
     } catch {
       throw new WorkflowError("MODEL_EXECUTION_ERROR", "model returned a non-JSON response");
     }
-    // Named as it was asked for: the endpoint's own name for the model says
-    // nothing about which provider served it.
-    return fromAnthropicMessage(json, req.model, req.model);
+    return fromAnthropicMessage(json, req.model);
   }
 }
 

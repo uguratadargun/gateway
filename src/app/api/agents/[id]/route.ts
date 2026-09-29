@@ -18,7 +18,7 @@ export const runtime = "nodejs";
  * Code login, so this is a list of names Claude Code accepts, not of what any
  * account here serves; an id not in it still loads, and the editor keeps it.
  */
-const CLAUDE_MODELS = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"];
+const CLAUDE_MODELS = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001"];
 
 /**
  * The vocabularies the editor's form needs — efforts, field types, executors,

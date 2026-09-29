@@ -27,8 +27,8 @@ interface WorkflowSummary {
 const TEMPLATE = (id: string) => `name: ${id}
 description: What this pipeline does.
 entry: start
-# Uncapped by default. Add "maxWorkflowSteps:" / "maxVisits:" to stop a loop
-# that would otherwise only end when you stop it from this dashboard.
+# No ceilings: a loop ends on its own give-up edge, for example
+# "visits.implementer >= 3" routed to a terminal that says what is stuck.
 nodes:
   - id: start
     type: command

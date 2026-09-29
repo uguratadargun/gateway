@@ -288,5 +288,11 @@ approve; pass `--yes` only if they say so.
 ## The first run on a machine
 
 The first time, gate writes the team's claude-code agents to `~/.claude/agents/`, one file
-each, which is how a node's subagent carries the agent's own model. If that directory did not
+each, which is how a node's subagent carries the agent's own model and effort. If that directory did not
 exist before, Claude Code needs one restart to see them; `begin` says so when it happens.
+
+Pushing the branch and opening the merge request happen on this machine too, with its own git
+credentials. When `begin` prints a line starting with `⚠` — a GitHub remote whose `gh` is not
+signed in, so the pull request at the end cannot be opened — tell the user in one sentence
+before the first node, so they can run `gh auth login` while the run is still early. It does
+not stop the run.

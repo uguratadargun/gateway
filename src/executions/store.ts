@@ -59,10 +59,13 @@ function reconcileOnce(): void {
   }
 }
 
-/** Who a run belongs to and where its engine is. Absent means this server. */
+/**
+ * Who a run belongs to and where it happened. Absent means the server's own
+ * record — a merge made without gate — which no engine drives; the "engine"
+ * default is only a value that sweeps treat as not waiting on a session.
+ */
 export interface ExecutionOrigin {
   origin?: "server" | "local";
-  /** Defaults to the engine, which is what everything but a session is. */
   driver?: "engine" | "session";
   userId?: string | null;
   teamId?: string;
@@ -190,9 +193,9 @@ export function touchExecution(id: string, at = Date.now()): void {
 /**
  * Stop, for a run this process is not running.
  *
- * Nothing here can abort someone else's engine; the flag is picked up by the
- * client on its next report, which then aborts its own run — the same
- * RUN_CANCELLED path a server-side stop takes.
+ * Nothing here can reach the machine running it; the flag is picked up by the
+ * client on its next report. A session-driven run is settled on the spot
+ * instead, by `stopSessionExecution`.
  */
 export function requestExecutionCancel(id: string): boolean {
   return (
@@ -325,9 +328,8 @@ export function resumeExecution(id: string, at = Date.now()): boolean {
  *
  * Such a run has no process to reach and nothing to unwind: between two CLI
  * calls it exists only as rows here, and the session may have been closed
- * hours ago. So it is settled on the spot — the same `RUN_CANCELLED` an engine
- * lands on — rather than flagged for a report that may never come. The flag
- * is set too, so a worker still mid-node aborts on its next report, and the
+ * hours ago. So it is settled on the spot, as `RUN_CANCELLED`, rather than
+ * flagged for a report that may never come. The flag is set too, and the
  * session finds the run stopped on its next `gate next`.
  */
 export function stopSessionExecution(id: string, at = Date.now()): boolean {
@@ -350,18 +352,6 @@ export function stopSessionExecution(id: string, at = Date.now()): boolean {
     queueExtraction(id, row?.team_id ?? DEFAULT_TEAM, at);
   }
   return stopped;
-}
-
-/**
- * Names the repository a server-started run turned out to work in.
- *
- * Which repository that is only becomes known once the run input has been
- * resolved to a connected repo, which happens after the row exists. Written
- * once and never moved: everything recorded under this run — decisions,
- * touches, objections — is filed against this identity.
- */
-export function setExecutionRepo(executionId: string, repoId: string): void {
-  getDb().prepare("UPDATE workflow_executions SET repo_id = ? WHERE id = ?").run(repoId, executionId);
 }
 
 /**
@@ -591,9 +581,11 @@ export function getExecutionSteps(executionId: string): ExecutionStepRecord[] {
 /**
  * Closes out runs left behind by a process that is gone.
  *
- * A run lives in the server process; nothing survives a restart. Rows left at
- * "running" would otherwise sit there for ever, streaming nothing and claiming
- * to be alive, so they are settled at boot for what they are: interrupted.
+ * A run the server recorded itself, not one on somebody's machine, cannot
+ * outlive the process that was writing it. Rows of that kind left at
+ * "running" would otherwise sit there for ever, streaming nothing and
+ * claiming to be alive, so they are settled at boot for what they are:
+ * interrupted. A local run is left alone: its machine is still reporting.
  */
 export function failInterruptedExecutions(startedBefore: number, at = Date.now()): number {
   const db = getDb();

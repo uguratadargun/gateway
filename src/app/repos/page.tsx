@@ -12,8 +12,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 /**
- * Connected repositories: where a run's worktree comes from, and what has to
- * happen before one can be worked in.
+ * Connected repositories: the gate's own checkouts, which the record index and
+ * other teams' questions read, and the setup run once in each.
  *
  * The commands are shown, not hidden behind a spinner — they are guessed from
  * the lockfile and the guess is often nearly right, so the useful thing is to
@@ -203,8 +203,8 @@ export default function ReposPage() {
       <header>
         <h1 className="text-lg font-semibold">Repositories</h1>
         <p className="text-xs text-muted-foreground">
-          Where a run works. Each run branches a fresh git worktree from the checkout, borrows its installed
-          dependencies, and runs whatever the repo says a worktree still needs.
+          The gate&apos;s own checkout of each project: what the record index and another team&apos;s questions read.
+          Runs never work here — each person&apos;s run branches a worktree from their own clone.
         </p>
       </header>
 

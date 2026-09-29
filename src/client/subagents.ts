@@ -31,10 +31,15 @@ export function subagentName(team: string, agentId: string): string {
 
 function subagentFile(team: string, agent: AgentDefinition): string {
   const name = subagentName(team, agent.id);
+  // The file is the only place a subagent's settings reach Claude Code, so an
+  // effort left out here is the session's effort, whatever the agent says.
+  // "default" is gate's word for exactly that, and Claude Code has no such
+  // value, so it is left out rather than written.
+  const effort = agent.effort && agent.effort !== "default" ? `\neffort: ${agent.effort}` : "";
   return `---
 name: ${name}
 description: gate's "${agent.id}" agent for team "${team}". Only /gate:run starts it; it is not for other work.
-model: ${agent.model}
+model: ${agent.model}${effort}
 ---
 
 You are the \`${agent.id}\` agent of a gate run, started by the session driving the run. The

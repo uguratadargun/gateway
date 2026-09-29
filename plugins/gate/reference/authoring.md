@@ -252,8 +252,10 @@ it means in their Claude Code. A `provider:<name>/<model>` reference is refused:
 nothing on the person's machine can reach it.
 
 Whichever you write, it takes effect only on a `claude-code` agent, whose
-subagent file carries it. A `gate` agent is done by the session itself, on the
-session's model, whatever its file says.
+subagent file carries it. `effort:` (`low` … `max`) is the same: the subagent
+file carries it, and an agent with none thinks as hard as the session does. A
+`gate` agent is done by the session itself, on the session's model and effort,
+whatever its file says.
 
 ## Executors — who does a node
 
@@ -644,9 +646,9 @@ end: an implementer that cannot fix a failure produces the same failure forever,
 and the `nothing-changed` edge cannot catch it — after the first pass `git diff`
 is non-empty whether or not this visit changed anything.
 
-`maxVisits` is the engine's ceiling and it fails the whole run with "node ran N
-times". A pipeline that knows how many attempts a fix is worth should say so
-itself and land somewhere that reports what is stuck:
+Nothing caps it from outside: `maxVisits` is accepted and read by nothing. The
+pipeline says how many attempts a fix is worth and lands somewhere that
+reports what is stuck:
 
 ```yaml
   - id: tests

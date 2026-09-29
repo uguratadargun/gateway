@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Clock, GitBranch, Gauge, Maximize2, Radio, RefreshCw, Square, Wrench } from "lucide-react";
+import { ArrowLeft, Clock, GitBranch, Gauge, Maximize2, Radio, RefreshCw, Square } from "lucide-react";
 
 import { WorkflowGraph, toGraphNodes, type ApiWorkflowNode, type NodeStatus } from "@/components/workflow-graph";
 import { Badge } from "@/components/ui/badge";
@@ -55,7 +55,6 @@ export default function ExecutionDetailPage() {
   const [liveEdges, setLiveEdges] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [liveTools, setLiveTools] = useState<Array<{ nodeId: string; tool: string; ok: boolean; summary: string }>>([]);
   /** Steps the engine has announced but not yet recorded, so the list shows a step while it runs. */
   const [liveSteps, setLiveSteps] = useState<Record<number, { nodeId: string; visit: number; startedAt: number }>>({});
   /** Ticks once a second so the running steps' stopwatches move. */
@@ -96,8 +95,8 @@ export default function ExecutionDetailPage() {
 
   const running = detail?.execution.status === "running";
 
-  // Asking is all this does: the engine stops at its next check and settles the
-  // run itself, so the page keeps streaming until the status actually changes.
+  // The server settles the run on the spot; the session driving it finds it
+  // stopped on its next `gate next`. Reloading shows the settled row.
   async function stop() {
     setStopping(true);
     try {
@@ -134,9 +133,6 @@ export default function ExecutionDetailPage() {
       if (e.type === "node.failed") {
         setLive((p) => ({ ...p, [e.nodeId]: "failed" }));
         load();
-      }
-      if (e.type === "tool.called") {
-        setLiveTools((p) => [...p, { nodeId: e.nodeId, tool: e.tool, ok: e.ok, summary: e.summary }].slice(-12));
       }
       if (e.type === "edge.selected") setLiveEdges((p) => [...p, `${e.from}->${e.to}`].slice(-20));
       // The pause is on the row (the clock and the badge read it from there),
@@ -333,20 +329,6 @@ export default function ExecutionDetailPage() {
       )}
 
       {ex?.quota && <QuotaCard quota={ex.quota} />}
-
-      {running && liveTools.length > 0 && (
-        <Card className="space-y-0.5 p-3 text-[11px]">
-          <div className="pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tool activity</div>
-          {liveTools.map((t, i) => (
-            <div key={i} className="flex items-center gap-2 font-mono">
-              <Wrench className={t.ok ? "size-3 text-muted-foreground" : "size-3 text-destructive"} />
-              <span className="shrink-0 text-muted-foreground">{t.nodeId}</span>
-              <span className="shrink-0">{t.tool}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{t.summary}</span>
-            </div>
-          ))}
-        </Card>
-      )}
 
       {detail && !detail.workflow && (
         <Card className="p-3 text-sm text-muted-foreground">

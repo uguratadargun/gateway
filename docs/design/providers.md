@@ -43,24 +43,24 @@ the reference with `parseProviderRef`, finds the provider with
 `getProviderByName`, and refuses one that is missing or switched off with the
 place that fixes it; anything that is not a `provider:` reference is refused
 with the setting to change. It then hands the body to `sendToProvider`, which
-picks the dialect. The call is not streamed. A 5xx, a 529 or a connection that
-did not open is tried twice more, after about half a second and then a
-second; any other answer is final. An aborted call ends as `RUN_CANCELLED`, a
-failed one as `MODEL_EXECUTION_ERROR` with the status and the first 300
-characters of the body. The result names its model as the reference it was
-asked for, not the endpoint's own name for it, so the ledger says which
-provider did the work. `apiEquivalentCost` prices that work at zero: it is on
+picks the dialect. The call is never streamed: both senders ask for one JSON
+answer. A 5xx, a 529 or a connection that did not open is tried twice more,
+after about half a second and then a second; any other answer is final. An
+aborted call ends as `RUN_CANCELLED`, a failed one as `MODEL_EXECUTION_ERROR`
+with the status and the first 300 characters of the body. An answer with no
+text is a `MODEL_EXECUTION_ERROR` too: `fromAnthropicMessage` reads only the
+text blocks of the Anthropic message that comes back. The result names its
+model as the reference it was asked for, not the endpoint's own name for it,
+so the ledger says which provider did the work. `apiEquivalentCost` prices that work at zero: it is on
 nobody's Anthropic bill, whatever it costs on its own.
 
-gate's recorder speaks Anthropic, so the OpenAI translation is a real round
-trip, not a passthrough: system blocks are hoisted into a system message,
-`tool_use` becomes `tool_calls`, `tool_result` becomes the `role: "tool"`
-messages OpenAI expects (ordered so each answers the call before it), images
-become data URLs, and thinking blocks — whose signatures only Anthropic can
-verify — are dropped. The answer is rebuilt into an Anthropic message with
-its usage. The translator also rebuilds an OpenAI chunk stream into the full
-Anthropic event sequence, asking for `stream_options.include_usage` so the
-usage is reported, though the server's own calls never stream.
+The request is plain text chat: a system prompt and user and assistant turns,
+with no tools. gate's recorder speaks Anthropic, so the OpenAI translation is
+a real round trip, not a passthrough: system blocks are hoisted into a system
+message, text blocks cross over, images become data URLs, and thinking
+blocks — whose signatures only Anthropic can verify — are dropped. The
+answer's text is rebuilt into an Anthropic message with its usage, and its
+finish reason becomes `max_tokens` for `length` and `end_turn` otherwise.
 
 An `anthropic-compat` provider skips all of that. The body is forwarded with
 the model id swapped, the provider's key attached and `ANTHROPIC_VERSION`
@@ -131,9 +131,9 @@ field.
 
 - `src/lib/providers.ts` — the provider rows, the two dialects, `ANTHROPIC_VERSION`, `parseProviderRef` / `formatProviderRef`, self-hosted detection, and the declared-or-discovered catalogue
 - `src/providers/direct-provider.ts` — `ProviderModelProvider`: the server's one model call, its retries and its errors
-- `src/providers/anthropic-shape.ts`, `types.ts` — the `ModelProvider` interface and the Anthropic body the recorder hands it
+- `src/providers/anthropic-shape.ts`, `types.ts` — the `ModelProvider` interface, the Anthropic body the recorder hands it, and the text read back out of the answer
 - `src/lib/provider-exec.ts` — `sendToProvider`, and behind it `sendToOpenAIProvider` (translate out and back) and `sendToAnthropicProvider` (forward, strip Anthropic-only fields)
-- `src/lib/anthropic-openai.ts` — Anthropic Messages → OpenAI Chat Completions and back, JSON and SSE
+- `src/lib/anthropic-openai.ts` — Anthropic Messages → OpenAI Chat Completions and back, for plain text chat
 - `src/lib/pricing.ts` — `apiEquivalentCost`, zero for a provider model
 - `src/lib/settings.ts` — `memory.model` kept only when it is a provider reference; `memory.embeddings`
 - `src/memory/embeddings.ts` — the embedder on a provider's `/embeddings`
@@ -144,7 +144,8 @@ field.
 - An `anthropic-compat` endpoint with an empty Models field shows no models, because there is no catalogue to discover. Write the list.
 - There is no fallback. A provider that is down, switched off or deleted fails the recorder's call; the ledger row is `failed` and retried, and nothing records on any other model meanwhile.
 - A recorder model left empty is not an error anywhere but the ledger: finished runs stay `pending` until one is set, and the consolidate button answers 409 with the reason.
-- `openai-compat` drops thinking blocks on the way out, and a server that ignores `stream_options.include_usage` reports no usage on a stream.
+- `openai-compat` drops thinking blocks on the way out, and anything but text and images in a message.
+- Neither sender streams and neither carries tools. A caller that needs either needs them built here first.
 
 ## Decisions
 

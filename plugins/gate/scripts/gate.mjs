@@ -7264,16 +7264,13 @@ var workflowDefinitionSchema = external_exports.object({
   entry: nodeId,
   /** Declared to give agents file/command tools and to run commands in a worktree. */
   workspace: workspaceSchema.optional(),
-  /** Stop for the whole run. 0 — the default — means the run is not capped. */
-  maxWorkflowSteps: external_exports.number().int().min(0).default(0),
-  /** Stop for revisits of any single node (loop protection). 0 = uncapped. */
-  maxVisits: external_exports.number().int().min(0).default(0),
   /**
-   * Spend ceiling for the whole run, in USD of API-list-equivalent cost.
-   * 0 — the default — means none. This is the ceiling worth setting: how many
-   * tool rounds or node visits a task needs cannot be known in advance, but
-   * what you are willing to spend on it can.
+   * The three ceilings gate's own engine once enforced. Accepted, so every
+   * workflow file written with them keeps loading, and read by nothing: a run
+   * a session drives has no ceiling, and a loop ends on its own give-up edge.
    */
+  maxWorkflowSteps: external_exports.number().int().min(0).default(0),
+  maxVisits: external_exports.number().int().min(0).default(0),
   maxCostUsd: external_exports.number().min(0).default(0),
   nodes: external_exports.array(workflowNodeSchema).min(1).max(100)
 }).strict();
@@ -8048,7 +8045,7 @@ function removeRunWorkspace(ws, opts = {}) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.48.0";
+var GATE_VERSION = "0.49.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8220,9 +8217,8 @@ var GateClient = class {
     )).body;
   }
   /** The team's memory: decisions and features matching words, paths, or a time. */
-  async memorySearch(req, remoteUrl, executionId) {
+  async memorySearch(req, remoteUrl) {
     const params = new URLSearchParams();
-    if (executionId) params.set("run", executionId);
     if (req.query) params.set("q", req.query);
     for (const p of req.paths ?? []) params.append("path", p);
     if (remoteUrl) params.set("remote", remoteUrl);
@@ -8455,7 +8451,7 @@ function clearLocalState() {
 }
 
 // src/client/clean.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
+import { execFileSync as execFileSync5 } from "node:child_process";
 import { existsSync as existsSync10, readdirSync as readdirSync7 } from "node:fs";
 import { join as join11 } from "node:path";
 
@@ -8674,10 +8670,12 @@ function subagentName(team, agentId) {
 }
 function subagentFile(team, agent) {
   const name = subagentName(team, agent.id);
+  const effort = agent.effort && agent.effort !== "default" ? `
+effort: ${agent.effort}` : "";
   return `---
 name: ${name}
 description: gate's "${agent.id}" agent for team "${team}". Only /gate:run starts it; it is not for other work.
-model: ${agent.model}
+model: ${agent.model}${effort}
 ---
 
 You are the \`${agent.id}\` agent of a gate run, started by the session driving the run. The
@@ -8740,6 +8738,27 @@ function syncSubagents(team, scope) {
   return { written, removed, created };
 }
 
+// src/client/preflight.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+function shippingWarnings(workflow, remoteUrl, ghSignedIn = ghIsSignedIn) {
+  if (!remoteUrl || !/github\.com/i.test(remoteUrl)) return [];
+  const opensPullRequest = workflow.nodes.some(
+    (n) => n.type === "command" && !n.disabled && /\bgh\s+pr\s+create\b/.test(n.command.join(" "))
+  );
+  if (!opensPullRequest || ghSignedIn()) return [];
+  return [
+    "\u26A0 this workflow opens a pull request with gh at its end, and gh is not signed in on this machine: run `gh auth login` before the run gets there, or it ends with the branch committed and no pull request"
+  ];
+}
+function ghIsSignedIn() {
+  try {
+    execFileSync3("gh", ["auth", "status"], { stdio: "ignore", timeout: 15e3 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/client/release.ts
 async function releaseAndPublish(client, workspace, executionId, publish, say) {
   const captured = { outcome: null };
@@ -8760,7 +8779,7 @@ async function releaseAndPublish(client, workspace, executionId, publish, say) {
 }
 
 // src/client/repo.ts
-import { execFileSync as execFileSync3 } from "node:child_process";
+import { execFileSync as execFileSync4 } from "node:child_process";
 import { homedir as homedir5 } from "node:os";
 import { resolve as resolve3 } from "node:path";
 function isPathLike(value) {
@@ -8780,7 +8799,7 @@ function resolveRepo(workflow, input, cwd, repos = {}) {
   }
   if (named) return resolve3(named.replace(/^~(?=\/|$)/, homedir5()));
   try {
-    return execFileSync3("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
+    return execFileSync4("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
   } catch {
     throw new WorkflowError(
       "WORKSPACE_ERROR",
@@ -9000,9 +9019,8 @@ async function begin(ctx, workflowId, input, cwd, repos, opts = {}) {
       session
     },
     driver: "session",
-    // Which piece of cross-team work this run serves. A session run is filed
-    // the same way a headless one is: the work outlives both, and which of
-    // the two walked the graph says nothing about what the work was for.
+    // Which piece of cross-team work this run serves: the work outlives the
+    // session that walked it, so the run is filed under it from the start.
     taskId: opts.taskId,
     // From the mirror, which is what `pinDefinitions` freezes a line below:
     // the hash the server agrees to is the one for the copy this run walks.
@@ -9015,6 +9033,7 @@ async function begin(ctx, workflowId, input, cwd, repos, opts = {}) {
       ctx.say(`worktree ${workspace.root} on branch ${workspace.branch}`);
       const linked = borrowDependencies(workspace);
       if (linked.length) ctx.say(`  linked ${linked.join(", ")} from ${workspace.repo}`);
+      for (const warning of shippingWarnings(workflow, readRemoteUrl(workspace.repo))) ctx.say(warning);
       await ctx.client.report(executionId, { events: [], steps: [], workspace });
     } catch (e) {
       const error = { code: e instanceof WorkflowError ? e.code : "WORKSPACE_ERROR", message: e.message };
@@ -9488,7 +9507,7 @@ async function continueRun(ctx, executionId) {
 // src/client/clean.ts
 function git3(cwd, args) {
   try {
-    return execFileSync4("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return execFileSync5("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   } catch {
     return null;
   }
@@ -9643,7 +9662,7 @@ function cleanGatewayWiring(cwd = process.cwd()) {
 }
 
 // src/client/teach.ts
-import { execFileSync as execFileSync5 } from "node:child_process";
+import { execFileSync as execFileSync6 } from "node:child_process";
 import { readFileSync as readFileSync9 } from "node:fs";
 
 // src/lib/client-api-schemas.ts
@@ -9670,8 +9689,11 @@ var startRunSchema = external_exports.object({
   workflowId: external_exports.string().min(1).max(64),
   input: external_exports.record(external_exports.string(), external_exports.unknown()).default({}),
   client: clientInfo.default({}),
-  /** "session" when a Claude Code session walks the graph a node at a time. */
-  driver: external_exports.enum(["engine", "session"]).default("engine"),
+  /**
+   * A Claude Code session walks the graph a node at a time; since 0.47.0
+   * nothing else does, so a run that does not say is one too.
+   */
+  driver: external_exports.literal("session").default("session"),
   /**
    * The cross-team task this run serves. Optional, and checked against the
    * caller's family: an unknown or out-of-family id is refused rather than
@@ -9895,7 +9917,7 @@ var MAX_COMMITS = 500;
 var MAX_FILES = 200;
 var MAX_DIFF_BYTES2 = 4e6;
 function git4(cwd, args) {
-  return execFileSync5("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 }).trimEnd();
+  return execFileSync6("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 }).trimEnd();
 }
 function tryGit(cwd, args) {
   try {

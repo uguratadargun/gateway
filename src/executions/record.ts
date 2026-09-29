@@ -63,7 +63,7 @@ function emptyOutcome(): ReportOutcome {
  *
  * The transaction is opened here rather than by the callers so that there is
  * exactly one place that opens one — a second `BEGIN` on this connection would
- * throw, and the engine-side runner reports its steps through this same door.
+ * throw.
  */
 export function recordReportedSteps(execution: ExecutionRecord, steps: StepRecord[], now = Date.now()): ReportOutcome {
   if (!steps.length) return emptyOutcome();

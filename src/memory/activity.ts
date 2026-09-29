@@ -53,11 +53,6 @@ export function overlap(a: Set<string>, b: Set<string>): { shared: string[]; sco
   return { shared, score: smaller ? shared.length / smaller : 0 };
 }
 
-/** Close enough to tell a person: several words in common, and a real share of the smaller task. */
-export function isOverlap(o: { shared: string[]; score: number }): boolean {
-  return o.shared.length >= 3 && o.score >= 0.4;
-}
-
 /** Close enough to show a planner, who reads the line and judges it. */
 function isRelated(o: { shared: string[]; score: number }): boolean {
   return o.shared.length >= 2 && o.score >= 0.25;

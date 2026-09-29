@@ -121,16 +121,13 @@ export const workflowDefinitionSchema = z
     entry: nodeId,
     /** Declared to give agents file/command tools and to run commands in a worktree. */
     workspace: workspaceSchema.optional(),
-    /** Stop for the whole run. 0 — the default — means the run is not capped. */
-    maxWorkflowSteps: z.number().int().min(0).default(0),
-    /** Stop for revisits of any single node (loop protection). 0 = uncapped. */
-    maxVisits: z.number().int().min(0).default(0),
     /**
-     * Spend ceiling for the whole run, in USD of API-list-equivalent cost.
-     * 0 — the default — means none. This is the ceiling worth setting: how many
-     * tool rounds or node visits a task needs cannot be known in advance, but
-     * what you are willing to spend on it can.
+     * The three ceilings gate's own engine once enforced. Accepted, so every
+     * workflow file written with them keeps loading, and read by nothing: a run
+     * a session drives has no ceiling, and a loop ends on its own give-up edge.
      */
+    maxWorkflowSteps: z.number().int().min(0).default(0),
+    maxVisits: z.number().int().min(0).default(0),
     maxCostUsd: z.number().min(0).default(0),
     nodes: z.array(workflowNodeSchema).min(1).max(100),
   })

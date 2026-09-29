@@ -51,6 +51,30 @@ one thing the server asks a model itself: add a provider on the dashboard (a
 vLLM or Ollama on your network, or a hosted endpoint) and name its model under
 Settings → Memory as `provider:<name>/<model>`.
 
+The server's only git access is read-only: it clones and fetches the
+repositories connected on the Repos page into its own checkouts, as the user
+it runs as, with that user's SSH key or credential helper. Nothing is stored
+in gate for it.
+
+### Each person's machine
+
+A run happens entirely on the machine of the person who starts it, so that
+machine needs:
+
+- **Claude Code on their own Claude login.** Every model call a run makes is
+  theirs; each agent's `model` and `effort` reach their Claude Code through
+  the subagent files gate writes under `~/.claude/agents/`.
+- **The plugin and their key:** the two `/plugin` lines above, then the
+  `/gate:login …` line from the Team page.
+- **Git access that can push** to the repository, since the branch is pushed
+  from here.
+- **The host's CLI, to open the merge request:** `gh auth login` for a GitHub
+  remote; for GitLab, `glab auth login`, or nothing beyond the SSH key, which
+  push options use. `gate begin` warns when a GitHub run will need `gh` and it
+  is not signed in.
+- **`gate repo`, once per connected repository** a workflow names, to say
+  which of their clones it is.
+
 ## Documentation
 
 The repository keeps its own record, in four places, and the pipeline keeps

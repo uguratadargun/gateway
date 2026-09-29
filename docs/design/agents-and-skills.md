@@ -38,13 +38,20 @@ packaging was wrong.
 `provider:` reference is refused when the agent is saved, because every node
 runs on the person's own Claude login and nothing there can reach another
 provider. The editor offers the four aliases and `claude-fable-5-1`,
-`claude-opus-5-5`, `claude-sonnet-5` and `claude-haiku-4-5-20251001`.
+`claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-4-5-20251001`.
 
 `executor` says who does the node in a run the person's session drives. `gate` is the session itself, with
-its own tools and its own model, in front of the person: `model` names
-nothing that runs there. `claude-code` is always a subagent of the session,
-in the agent's own `model`, started from the file gate keeps for the agent
+its own tools and its own model, in front of the person: `model` and `effort`
+name nothing that runs there. `claude-code` is always a subagent of the session,
+in the agent's own `model` and `effort`, started from the file gate keeps for the agent
 under `~/.claude/agents/` (`gate-<team>-<agent>`), with a context of its own.
+That file is the only thing that reaches Claude Code, so it carries both; an
+agent with no `effort`, or `default`, leaves the line out and the subagent
+thinks as hard as the session does. Which model an alias means is the
+person's Claude Code's business: it resolves `opus` to the session's own model
+when the session is already an Opus, and a person can repoint an alias on
+their machine (`ANTHROPIC_DEFAULT_OPUS_MODEL` and its siblings) without gate
+knowing.
 `tools` names what the agent's role uses, in the vocabulary of its executor
 — gate's `read_file`, `list_files`, `search_files`, `write_file`,
 `edit_file`, `run_command`, `memory_search`, `memory_feature` and

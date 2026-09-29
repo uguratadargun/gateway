@@ -54,8 +54,6 @@ export interface Principal {
   userId: string | null;
   teamId: string;
   scopes: KeyScope[];
-  /** The run this caller is acting for, when it is one. Trace data: it is never consulted by an authority check. */
-  executionId?: string | null;
 }
 
 function hashKey(raw: string): string {
@@ -100,13 +98,6 @@ export function listKeys(teamId?: string): PublicApiKey[] {
     const { hash: _hash, ...rest } = rowToKey(r);
     return rest;
   });
-}
-
-export function getKey(id: string): PublicApiKey | null {
-  const row = getDb().prepare("SELECT * FROM apikeys WHERE id = ?").get(id);
-  if (!row) return null;
-  const { hash: _hash, ...rest } = rowToKey(row);
-  return rest;
 }
 
 export interface CreateKeyInput {

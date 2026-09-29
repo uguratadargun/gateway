@@ -23,6 +23,10 @@ Claude Code login — gate holds no Claude account and serves no models; it keep
 definitions, the runs and the memory. If the output says it took gate's old gateway settings
 out of their Claude Code settings, tell them to restart Claude Code once.
 
+Say in one more sentence that a run pushes its branch and opens the merge request from this
+machine, with its own git access: a GitHub repository needs `gh auth login` here, a GitLab one
+works with the SSH key alone (or `glab auth login`).
+
 Then say what they can do next: `/gate:run` alone lists their team's workflows and asks which to
 run; `/gate:run <id> <task>` starts one here, in a worktree of the repository they are in; and
 the nodes that run in their own model show up live in this terminal.

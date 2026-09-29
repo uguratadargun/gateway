@@ -12,9 +12,8 @@ import type { GateClient } from "./api";
  * wanted to. What it gets is the result: the ref and the commit the remote
  * itself reported, or the reason there is none.
  *
- * Both `gate run` and a session-driven run end this way, which is why it is
- * one function: the two paths had already drifted apart once over what a
- * released worktree prints.
+ * A run that finishes and a run that is stopped both end this way, which is
+ * why it is one function: what a released worktree prints is said once.
  */
 export async function releaseAndPublish(
   client: GateClient,

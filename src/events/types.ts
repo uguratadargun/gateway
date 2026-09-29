@@ -20,7 +20,6 @@ export type WorkflowEvent =
   | (Base & { type: "node.output"; nodeId: string; stepIndex: number; output: unknown })
   | (Base & { type: "node.completed"; nodeId: string; stepIndex: number; durationMs: number; usage?: NodeUsage })
   | (Base & { type: "node.failed"; nodeId: string; stepIndex: number; code: WorkflowErrorCode; message: string })
-  | (Base & { type: "tool.called"; nodeId: string; stepIndex: number; tool: string; ok: boolean; summary: string; durationMs: number })
   | (Base & { type: "edge.selected"; from: string; to: string; label?: string })
   /** A session handed a node to the person; the run waits, and its clock with it. */
   | (Base & { type: "run.paused"; nodeId: string })

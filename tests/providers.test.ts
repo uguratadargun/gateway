@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  anthropicToOpenAIRequest,
-  openAIStreamToAnthropic,
-  openAIToAnthropicResponse,
-} from "@/lib/anthropic-openai";
+import { anthropicToOpenAIRequest, openAIToAnthropicResponse } from "@/lib/anthropic-openai";
 import { getDb } from "@/lib/db";
 import {
   catalogueRequest,
@@ -40,47 +36,24 @@ describe("anthropic → openai request", () => {
     expect(out.model).toBe("qwen3");
   });
 
-  it("turns tool_use into tool_calls and tool_result into a tool message", () => {
+  it("keeps text turns, drops thinking blocks, and carries the sampling knobs", () => {
     const out = anthropicToOpenAIRequest(
       {
         messages: [
-          { role: "user", content: "weather?" },
-          { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "get_weather", input: { city: "Ankara" } }] },
-          { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "12C" }, { type: "text", text: "thanks" }] },
+          { role: "user", content: "hi" },
+          { role: "assistant", content: [{ type: "thinking", thinking: "hmm", signature: "sig" }, { type: "text", text: "ok" }] },
+          { role: "user", content: [{ type: "text", text: "and" }, { type: "text", text: "then" }] },
         ],
-      },
-      "qwen3",
-    );
-    expect(out.messages).toEqual([
-      { role: "user", content: "weather?" },
-      {
-        role: "assistant",
-        content: null,
-        tool_calls: [{ id: "t1", type: "function", function: { name: "get_weather", arguments: '{"city":"Ankara"}' } }],
-      },
-      // The result has to come before the prose that followed it, or OpenAI
-      // rejects the tool message for not answering the preceding call.
-      { role: "tool", tool_call_id: "t1", content: "12C" },
-      { role: "user", content: "thanks" },
-    ]);
-  });
-
-  it("translates tools and tool_choice, and drops thinking blocks", () => {
-    const out = anthropicToOpenAIRequest(
-      {
-        messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "hmm", signature: "sig" }, { type: "text", text: "ok" }] }],
-        tools: [{ name: "search", description: "find", input_schema: { type: "object", properties: { q: { type: "string" } } } }],
-        tool_choice: { type: "any" },
         max_tokens: 512,
         stop_sequences: ["</done>"],
       },
       "qwen3",
     );
-    expect(out.messages).toEqual([{ role: "assistant", content: "ok" }]);
-    expect(out.tools).toEqual([
-      { type: "function", function: { name: "search", description: "find", parameters: { type: "object", properties: { q: { type: "string" } } } } },
+    expect(out.messages).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: [{ type: "text", text: "and" }, { type: "text", text: "then" }] },
     ]);
-    expect(out.tool_choice).toBe("required");
     expect(out.max_tokens).toBe(512);
     expect(out.stop).toEqual(["</done>"]);
   });
@@ -99,30 +72,18 @@ describe("anthropic → openai request", () => {
 // ── response translation ────────────────────────────────────────────────────
 
 describe("openai → anthropic response", () => {
-  it("maps content, tool calls, finish reason and usage", () => {
+  it("maps content, finish reason and usage", () => {
     const out = openAIToAnthropicResponse(
       {
         id: "chatcmpl-1",
-        choices: [
-          {
-            finish_reason: "tool_calls",
-            message: {
-              role: "assistant",
-              content: "let me look",
-              tool_calls: [{ id: "call_1", type: "function", function: { name: "search", arguments: '{"q":"x"}' } }],
-            },
-          },
-        ],
+        choices: [{ finish_reason: "stop", message: { role: "assistant", content: "hello" } }],
         usage: { prompt_tokens: 30, completion_tokens: 7, prompt_tokens_details: { cached_tokens: 10 } },
       },
-      "local:ollama/qwen3",
+      "provider:ollama/qwen3",
     );
-    expect(out.content).toEqual([
-      { type: "text", text: "let me look" },
-      { type: "tool_use", id: "call_1", name: "search", input: { q: "x" } },
-    ]);
-    expect(out.stop_reason).toBe("tool_use");
-    expect(out.model).toBe("local:ollama/qwen3");
+    expect(out.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(out.stop_reason).toBe("end_turn");
+    expect(out.model).toBe("provider:ollama/qwen3");
     expect(out.usage).toEqual({
       input_tokens: 30,
       output_tokens: 7,
@@ -131,98 +92,8 @@ describe("openai → anthropic response", () => {
     });
   });
 
-  it("keeps malformed tool arguments instead of throwing them away", () => {
-    const out = openAIToAnthropicResponse(
-      { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{ id: "c", function: { name: "f", arguments: "{not json" } }] } }] },
-      "m",
-    );
-    expect((out.content as Array<Record<string, unknown>>)[0].input).toEqual({ _raw: "{not json" });
-  });
-
   it("maps a length stop to max_tokens", () => {
     expect(openAIToAnthropicResponse({ choices: [{ finish_reason: "length", message: { content: "…" } }] }, "m").stop_reason).toBe("max_tokens");
-  });
-});
-
-// ── stream translation ──────────────────────────────────────────────────────
-
-function sse(chunks: unknown[]): ReadableStream<Uint8Array> {
-  const enc = new TextEncoder();
-  return new ReadableStream({
-    start(c) {
-      for (const chunk of chunks) c.enqueue(enc.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-      c.enqueue(enc.encode("data: [DONE]\n\n"));
-      c.close();
-    },
-  });
-}
-
-async function events(stream: ReadableStream<Uint8Array>): Promise<Array<Record<string, any>>> {
-  const text = await new Response(stream).text();
-  return text
-    .split("\n")
-    .filter((l) => l.startsWith("data:"))
-    .map((l) => JSON.parse(l.slice(5).trim()));
-}
-
-describe("openai → anthropic stream", () => {
-  it("rebuilds the message/content-block event sequence", async () => {
-    const out = await events(
-      openAIStreamToAnthropic(
-        sse([
-          { choices: [{ delta: { role: "assistant" } }] },
-          { choices: [{ delta: { content: "Hel" } }] },
-          { choices: [{ delta: { content: "lo" } }] },
-          { choices: [{ delta: {}, finish_reason: "stop" }] },
-          { choices: [], usage: { prompt_tokens: 11, completion_tokens: 2 } },
-        ]),
-        "local:ollama/qwen3",
-      ),
-    );
-    expect(out.map((e) => e.type)).toEqual([
-      "message_start",
-      "content_block_start",
-      "content_block_delta",
-      "content_block_delta",
-      "content_block_stop",
-      "message_delta",
-      "message_stop",
-    ]);
-    expect(out[2].delta).toEqual({ type: "text_delta", text: "Hel" });
-    // Usage arrives on the trailing chunk; gate's accounting reads it from
-    // message_delta, so a stream that lost it would bill zero tokens.
-    expect(out[5].usage).toMatchObject({ input_tokens: 11, output_tokens: 2 });
-    expect(out[5].delta.stop_reason).toBe("end_turn");
-  });
-
-  it("opens a tool_use block and streams its arguments as input_json_delta", async () => {
-    const out = await events(
-      openAIStreamToAnthropic(
-        sse([
-          { choices: [{ delta: { content: "sure" } }] },
-          { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "search", arguments: "" } }] } }] },
-          { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"q":' } }] } }] },
-          { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"x"}' } }] } }] },
-          { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
-        ]),
-        "m",
-      ),
-    );
-    const types = out.map((e) => e.type);
-    // The text block must close before the tool block opens: Anthropic content
-    // blocks never overlap.
-    expect(types.indexOf("content_block_stop")).toBeLessThan(types.lastIndexOf("content_block_start"));
-    const toolStart = out.find((e) => e.type === "content_block_start" && e.content_block?.type === "tool_use")!;
-    expect(toolStart.content_block).toMatchObject({ id: "call_1", name: "search" });
-    expect(toolStart.index).toBe(1);
-    const json = out.filter((e) => e.delta?.type === "input_json_delta").map((e) => e.delta.partial_json).join("");
-    expect(json).toBe('{"q":"x"}');
-    expect(out.at(-2)!.delta.stop_reason).toBe("tool_use");
-  });
-
-  it("still emits a well-formed empty message when the upstream says nothing", async () => {
-    const out = await events(openAIStreamToAnthropic(sse([]), "m"));
-    expect(out.map((e) => e.type)).toEqual(["message_start", "message_delta", "message_stop"]);
   });
 });
 
@@ -405,7 +276,7 @@ describe("sendToOpenAIProvider", () => {
     getDb().exec("DELETE FROM providers");
   });
 
-  it("posts OpenAI, answers Anthropic, and asks for streamed usage", async () => {
+  it("posts OpenAI, unstreamed, and answers Anthropic JSON", async () => {
     const p = createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1" });
     let seen: { url: string; body: any } | null = null;
     vi.stubGlobal(
@@ -422,12 +293,12 @@ describe("sendToOpenAIProvider", () => {
     const res = await sendToOpenAIProvider({
       provider: p,
       model: "qwen3",
-      body: { model: "local:ollama/qwen3", system: "be terse", messages: [{ role: "user", content: "hi" }] },
-      stream: false,
+      body: { model: "provider:ollama/qwen3", system: "be terse", messages: [{ role: "user", content: "hi" }] },
     });
     expect(seen!.url).toBe("http://localhost:11434/v1/chat/completions");
     expect(seen!.body.model).toBe("qwen3");
     expect(seen!.body.stream).toBe(false);
+    expect(seen!.body.stream_options).toBeUndefined();
     const json = (await res.json()) as Record<string, any>;
     expect(json.type).toBe("message");
     expect(json.content).toEqual([{ type: "text", text: "hey" }]);
@@ -435,30 +306,10 @@ describe("sendToOpenAIProvider", () => {
     vi.unstubAllGlobals();
   });
 
-  it("asks for usage on the trailing chunk when streaming", async () => {
-    const p = createProvider({ name: "ollama", baseUrl: "http://localhost:11434/v1" });
-    let body: any = null;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init: RequestInit) => {
-        body = JSON.parse(init.body as string);
-        return new Response(sse([{ choices: [{ delta: { content: "x" }, finish_reason: "stop" }] }]), {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
-        });
-      }),
-    );
-    const res = await sendToOpenAIProvider({ provider: p, model: "qwen3", body: { messages: [] }, stream: true });
-    expect(body.stream_options).toEqual({ include_usage: true });
-    expect(res.headers.get("content-type")).toBe("text/event-stream");
-    expect(await new Response(res.body).text()).toContain("event: message_start");
-    vi.unstubAllGlobals();
-  });
-
   it("turns an unreachable box into an Anthropic-shaped error", async () => {
     const p = createProvider({ name: "ollama", baseUrl: "http://127.0.0.1:1/v1" });
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connect ECONNREFUSED"); }));
-    const res = await sendToOpenAIProvider({ provider: p, model: "qwen3", body: { messages: [] }, stream: false });
+    const res = await sendToOpenAIProvider({ provider: p, model: "qwen3", body: { messages: [] } });
     expect(res.status).toBe(502);
     const json = (await res.json()) as Record<string, any>;
     expect(json.error.message).toContain("unreachable");
@@ -502,10 +353,8 @@ describe("sendToAnthropicProvider", () => {
       body: {
         model: "provider:zai/glm-4.6",
         system: "be terse",
-        messages: [{ role: "user", content: "hi" }],
-        tools: [{ name: "read_file", description: "read", input_schema: { type: "object" } }],
+        messages: [{ role: "user", content: [{ type: "text", text: "hi", cache_control: { type: "ephemeral" } }] }],
       },
-      stream: false,
     });
 
     expect(seen!.url).toBe("https://api.z.ai/api/anthropic/v1/messages");
@@ -513,9 +362,9 @@ describe("sendToAnthropicProvider", () => {
     expect(seen!.headers["anthropic-version"]).toBe("2023-06-01");
     expect(seen!.body.model).toBe("glm-4.6");
     expect(seen!.body.stream).toBe(false);
-    // Untranslated is the whole point: the tool block reaches the model in the
-    // shape the client wrote it, not as an OpenAI function.
-    expect(seen!.body.tools).toEqual([{ name: "read_file", description: "read", input_schema: { type: "object" } }]);
+    // Untranslated is the whole point: the message reaches the model in the
+    // shape the caller wrote it, cache breakpoint and all.
+    expect(seen!.body.messages).toEqual([{ role: "user", content: [{ type: "text", text: "hi", cache_control: { type: "ephemeral" } }] }]);
     expect(seen!.body.system).toBe("be terse");
     const json = (await res.json()) as Record<string, any>;
     expect(json.content).toEqual([{ type: "text", text: "hey" }]);
@@ -528,13 +377,13 @@ describe("sendToAnthropicProvider", () => {
       output_config: { effort: "high" },
       thinking: { type: "adaptive" },
       context_management: { edits: [{ type: "clear_thinking_20250101" }] },
-      tools: [{ name: "Read" }],
+      system: "be terse",
     });
     expect(body.output_config).toBeUndefined();
     expect(body.thinking).toBeUndefined();
     expect(body.context_management).toBeUndefined();
     // Ordinary Messages API survives untouched.
-    expect(body.tools).toEqual([{ name: "Read" }]);
+    expect(body.system).toBe("be terse");
   });
 
   it("keeps a thinking block the Messages API has always had", () => {
@@ -542,28 +391,10 @@ describe("sendToAnthropicProvider", () => {
     expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
   });
 
-  it("hands a stream back as it came, without rebuilding it", async () => {
-    const p = zai();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response("event: message_start\ndata: {}\n\n", {
-            status: 200,
-            headers: { "Content-Type": "text/event-stream" },
-          }),
-      ),
-    );
-    const res = await sendToAnthropicProvider({ provider: p, model: "glm-4.6", body: { messages: [] }, stream: true });
-    expect(res.headers.get("content-type")).toBe("text/event-stream");
-    expect(await new Response(res.body).text()).toBe("event: message_start\ndata: {}\n\n");
-    vi.unstubAllGlobals();
-  });
-
   it("turns an unreachable endpoint into an Anthropic-shaped error", async () => {
     const p = zai();
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connect ECONNREFUSED"); }));
-    const res = await sendToAnthropicProvider({ provider: p, model: "glm-4.6", body: { messages: [] }, stream: false });
+    const res = await sendToAnthropicProvider({ provider: p, model: "glm-4.6", body: { messages: [] } });
     expect(res.status).toBe(502);
     expect(((await res.json()) as Record<string, any>).error.message).toContain("unreachable");
     vi.unstubAllGlobals();
@@ -583,8 +414,8 @@ describe("sendToAnthropicProvider", () => {
         });
       }),
     );
-    await sendToProvider({ provider: anthropic, ref: { provider: "zai", model: "glm-4.6" }, body: { messages: [] }, stream: false });
-    await sendToProvider({ provider: openai, ref: { provider: "ollama", model: "qwen3" }, body: { messages: [] }, stream: false });
+    await sendToProvider({ provider: anthropic, ref: { provider: "zai", model: "glm-4.6" }, body: { messages: [] } });
+    await sendToProvider({ provider: openai, ref: { provider: "ollama", model: "qwen3" }, body: { messages: [] } });
     expect(urls).toEqual([
       "https://api.z.ai/api/anthropic/v1/messages",
       "http://localhost:11434/v1/chat/completions",
