@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { getExecution } from "@/executions/store";
 import { teamFamily } from "@/lib/teams";
 import { LocalMemoryAccess, type DecisionCard, type IssueCard } from "@/memory/access";
+import { isBranchRef, isFullCommit } from "@/repos/refs";
 import { getRepo, listRepos, readRemote, repoByIdentity, type RepoRecord } from "@/repos/store";
 
 /**
@@ -60,6 +61,12 @@ export interface AskSource {
   remote: string;
   /** How the commit was arrived at, for the answer to quote. */
   via: "run" | "ref" | "commit";
+  /**
+   * The full ref the commit was found under — `refs/heads/main`, a run's
+   * published `refs/heads/gate/…` — for a remote that will not fetch by sha.
+   * Null when there is none worth trying: a commit asked for by itself.
+   */
+  fetchRef?: string | null;
 }
 
 export type AskResolution =
@@ -97,8 +104,19 @@ const SHA = /^[0-9a-f]{7,40}$/;
  * canonical `host/owner/name` is what a decision carries, and the connected
  * id is what the Repos page shows. Neither is guessed from the other.
  */
-function findRepo(name: string): RepoRecord | null {
-  return repoByIdentity(name) ?? getRepo(name) ?? listRepos().find((r) => r.repoId === name) ?? null;
+function findRepo(name: string, askerTeamId: string): RepoRecord | null {
+  return byIdentity(name, askerTeamId) ?? getRepo(name) ?? null;
+}
+
+/**
+ * The connected repository with this identity, the asker's own family's
+ * first. One remote can have been connected twice, under two ids and two
+ * teams, before connecting refused it; picking either of them blindly would
+ * refuse a team its own repository because a stranger's record came first.
+ */
+function byIdentity(repoId: string, askerTeamId: string): RepoRecord | null {
+  const same = listRepos().filter((r) => r.repoId === repoId);
+  return same.find((r) => withinFamily(r, askerTeamId)) ?? same[0] ?? repoByIdentity(repoId);
 }
 
 /** Whether the asker may read this repository at all. */
@@ -128,7 +146,7 @@ export function resolveAskSource(req: AskRequest, askerTeamId: string): AskResol
   if (!name) {
     return { ok: false, status: "not_found", reason: "say which repository to read: --repo <host/owner/name>, or --run <id>" };
   }
-  const repo = findRepo(name);
+  const repo = findRepo(name, askerTeamId);
   if (!repo) {
     return { ok: false, status: "not_found", reason: `gate has no repository called "${name}"` };
   }
@@ -143,16 +161,35 @@ export function resolveAskSource(req: AskRequest, askerTeamId: string): AskResol
   // needs gate to have pushed it (`fromRun`).
   const remote = readRemote(repo);
 
-  const commit = req.commit?.trim();
-  if (commit) {
-    if (!SHA.test(commit)) return { ok: false, status: "not_found", reason: `"${commit}" is not a commit` };
-    return { ok: true, source: { repo, repoId: repo.repoId, teamId: repo.teamId, ref: commit, commit, remote, via: "commit" } };
+  const asked = req.commit?.trim();
+  if (asked) {
+    if (!SHA.test(asked)) return { ok: false, status: "not_found", reason: `"${asked}" is not a commit` };
+    // A remote is fetched from by the full name only; an abbreviation is
+    // good for as long as this checkout already has the commit it names.
+    const commit = isFullCommit(asked) ? asked : expandCommit(repo.root, asked);
+    if (!commit) {
+      return { ok: false, status: "not_found", reason: `"${asked}" is not a commit this gate has — give the full 40-character commit` };
+    }
+    return { ok: true, source: { repo, repoId: repo.repoId, teamId: repo.teamId, ref: asked, commit, remote, via: "commit", fetchRef: null } };
   }
 
   const ref = req.ref?.trim() || repo.baseRef?.trim() || "HEAD";
   const resolved = resolveRemoteRef(repo, remote, ref);
   if (!resolved.ok) return resolved;
-  return { ok: true, source: { repo, repoId: repo.repoId, teamId: repo.teamId, ref, commit: resolved.commit, remote, via: "ref" } };
+  return {
+    ok: true,
+    source: { repo, repoId: repo.repoId, teamId: repo.teamId, ref, commit: resolved.commit, remote, via: "ref", fetchRef: resolved.ref },
+  };
+}
+
+/** The full name of a commit this checkout already has, or null. */
+function expandCommit(root: string, abbreviated: string): string | null {
+  try {
+    const full = git(root, ["rev-parse", "--verify", "--quiet", `${abbreviated}^{commit}`]);
+    return isFullCommit(full) ? full : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -167,7 +204,12 @@ function fromRun(executionId: string, askerTeamId: string): AskResolution {
   if (!teamFamily(askerTeamId).includes(execution.teamId)) {
     return { ok: false, status: "not_found", reason: `no run "${executionId}"` };
   }
-  const repo = execution.repoId ? repoByIdentity(execution.repoId) : null;
+  // The run's repository is named by the origin its client reported, so the
+  // run being in the family says nothing about whose repository that is. It
+  // is held to the same boundary a question by name is, and one outside it is
+  // answered exactly as one gate has never heard of.
+  const found = execution.repoId ? byIdentity(execution.repoId, askerTeamId) : null;
+  const repo = found && withinFamily(found, askerTeamId) ? found : null;
   if (!repo) {
     return {
       ok: false,
@@ -177,7 +219,9 @@ function fromRun(executionId: string, askerTeamId: string): AskResolution {
     };
   }
   const branch = execution.workspace?.branch ?? null;
-  if (!execution.publishedCommit) {
+  // What the client reported is checked where it arrives; a row written
+  // before that is checked here, since both values go to `git fetch`.
+  if (!isFullCommit(execution.publishedCommit)) {
     return {
       ok: false,
       status: "source_unavailable",
@@ -208,18 +252,40 @@ function fromRun(executionId: string, askerTeamId: string): AskResolution {
       commit: execution.publishedCommit,
       remote,
       via: "run",
+      fetchRef: isBranchRef(execution.publishedRef) ? execution.publishedRef : null,
     },
   };
 }
 
+/**
+ * The refs a name can mean on a remote, in the order they win: `HEAD` and a
+ * full `refs/…` name mean themselves; anything else is a branch, then a tag.
+ */
+function refCandidates(ref: string): string[] {
+  if (ref === "HEAD" || ref.startsWith("refs/")) return [ref];
+  return [`refs/heads/${ref}`, `refs/tags/${ref}`];
+}
+
+/**
+ * The commit a remote holds under one exact ref.
+ *
+ * `ls-remote <remote> main` matches by the end of the name, so it also
+ * answers `refs/heads/archive/main`, and that sorts first. Only an exact
+ * match counts here, and a tag is read as the commit it points at (`^{}`),
+ * not as the tag object.
+ */
 function resolveRemoteRef(
   repo: RepoRecord,
   remote: string,
   ref: string,
-): { ok: true; commit: string } | Extract<AskResolution, { ok: false }> {
+): { ok: true; commit: string; ref: string } | Extract<AskResolution, { ok: false }> {
+  const candidates = refCandidates(ref);
   let out = "";
   try {
-    out = git(repo.root, ["ls-remote", remote, ref], LS_REMOTE_TIMEOUT_MS);
+    // The peeled name is asked for by itself: a pattern for the tag does not
+    // match the `^{}` line that says which commit it points at.
+    const patterns = candidates.flatMap((c) => (c.startsWith("refs/tags/") ? [c, `${c}^{}`] : [c]));
+    out = git(repo.root, ["ls-remote", "--end-of-options", remote, ...patterns], LS_REMOTE_TIMEOUT_MS);
   } catch (e) {
     return {
       ok: false,
@@ -228,8 +294,14 @@ function resolveRemoteRef(
       publish: null,
     };
   }
-  const commit = out.split(/\s+/)[0] ?? "";
-  if (!SHA.test(commit)) {
+  const held = new Map<string, string>();
+  for (const line of out.split("\n")) {
+    const [sha, name] = line.trim().split(/\s+/);
+    if (sha && name) held.set(name, sha);
+  }
+  const match = candidates.find((c) => held.has(c));
+  const commit = match ? (held.get(`${match}^{}`) ?? held.get(match)!) : "";
+  if (!match || !isFullCommit(commit)) {
     return {
       ok: false,
       status: "source_unavailable",
@@ -239,7 +311,7 @@ function resolveRemoteRef(
       publish: { repo: repo.id, ref },
     };
   }
-  return { ok: true, commit };
+  return { ok: true, commit, ref: match };
 }
 
 /**
@@ -249,14 +321,15 @@ function resolveRemoteRef(
  * Four teams do not mean four clones here, and the plan never assumed them:
  * what gate has is whatever repositories are connected to *this* gate, and
  * the fetch is what turns "the remote has it" into "this machine has it".
- * Fetched by commit where the server allows it, by ref otherwise — an older
- * or locked-down git refuses `fetch <sha>`, and the ref it came from is
- * always known.
+ * Fetched by the full ref it was found under where there is one — an older
+ * or locked-down git refuses `fetch <sha>` — and by commit otherwise. Every
+ * value after `--end-of-options` is a remote and a refspec, never an option,
+ * whoever supplied it.
  */
 export function fetchAskSource(source: AskSource): { ok: true } | { ok: false; reason: string } {
-  for (const spec of source.via === "commit" ? [source.commit] : [source.ref, source.commit]) {
+  for (const spec of source.fetchRef ? [source.fetchRef, source.commit] : [source.commit]) {
     try {
-      git(source.repo.root, ["fetch", "--no-tags", source.remote, spec], FETCH_TIMEOUT_MS);
+      git(source.repo.root, ["fetch", "--no-tags", "--end-of-options", source.remote, spec], FETCH_TIMEOUT_MS);
       git(source.repo.root, ["cat-file", "-e", `${source.commit}^{commit}`]);
       return { ok: true };
     } catch {

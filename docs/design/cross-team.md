@@ -27,19 +27,30 @@ branch.
 Everything resolves to **one commit before anything is read**, and that commit
 is quoted back, so the same question asked twice either gives the same answer
 or says why the source moved. A branch is resolved once, to what the remote
-holds now; a run is answered at the commit its publication was verified at, not
-where its branch points today. A repository is read from its publication
+holds now under exactly that name — `refs/heads/<name>`, then
+`refs/tags/<name>` read as the commit the tag points at, never another ref
+whose name merely ends the same way; a run is answered at the commit its
+publication was verified at, not where its branch points today. A commit is
+taken whole; an abbreviation only when the gate's checkout already has the
+commit it names, since a remote cannot be fetched from by one. A repository is read from its publication
 remote, or from its `origin` when it names none: not publishing means gate
 never pushes there, not that nobody does, and the base branch its team pushed
 is readable either way. A run's branch is different. Only gate could have
 pushed it, so it is readable once the run has published it to the publication
 remote, within a branch glob, and the commit recorded is what the remote
-reports holding afterwards, never the local head.
+reports holding afterwards, never the local head. The publication is the
+client's report, and it reaches `git fetch` on the server, so the server
+stores it only as a `refs/heads/…` name git would accept and a full commit;
+anything else is stored as a failed publication. Every git call built from a
+stored or asked-for value puts `--end-of-options` in front of it.
 
 Three refusals, each a different fact, never conflated. **Outside the family**:
 the asker's team tree is the boundary memory uses, and a repository outside it
 is refused in the words a misspelled name gets, so the shape of a refusal
-confirms nothing about another company. Which team a repository is in is set on
+confirms nothing about another company. That holds however the repository is
+reached: a run in the asker's family that worked in a repository outside it —
+its client named that repository by the origin it reported — is answered as a
+run in a repository the gate has no record of. Which team a repository is in is set on
 the Repos page; one nobody has claimed is outside no family and answers
 everyone. **Not published**: a branch on
 somebody's laptop cannot be read from here, so the answer names the branch that
@@ -190,6 +201,12 @@ it, and closing leaves every objection under it standing.
   done; reporting it as "they have not built it" is the failure this guards.
 - An answer is true of one commit; restating it without the commit is a
   different claim, and usually a wrong one.
+- `git ls-remote <remote> <name>` matches by the end of a ref's name, so
+  `main` also finds `archive/main`, which sorts first. The name is asked for
+  as full refs and only an exact match counts.
+- A value from a client or an asker that starts with `-` is an option to git
+  (`--upload-pack=<command>` runs one). It is refused where it arrives and put
+  after `--end-of-options` where it is used, both.
 - An objection is closed by a person, from the dashboard, and nothing verifies
   the note: a resolution can be written while the code still disagrees.
 - A withdrawal is quiet. The team objected to may have planned around it

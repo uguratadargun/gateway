@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -452,5 +452,129 @@ describe("what memory already knows at that commit", () => {
     // as if it were in the code being asked about.
     expect(coverage.covering).toEqual([]);
     expect(coverage.elsewhere).toHaveLength(1);
+  });
+});
+
+describe("what reaches git from outside", () => {
+  it("never hands git a reported publication as an option", () => {
+    const { remote, work } = makeUpstream();
+    const published = pushCommit(work, remote, "gate/run-ask", "the work");
+    const repo = connect({ root: makeCheckout(remote), publicationRemote: remote });
+    const id = runIn(repo);
+    const marker = join(temp("gate-ask-marker-"), "ran");
+    // Written straight to the row, the way one stored before the events route
+    // checked publications would be: the ref is whatever a client said.
+    setExecutionPublication(id, { ref: `--upload-pack=touch ${marker}; git-upload-pack`, commit: published, at: Date.now() });
+
+    const resolved = resolveAskSource({ question, run: id }, "srv");
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(fetchAskSource(resolved.source)).toEqual({ ok: true });
+    // A value that became an option would have run a command on the server.
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("reads everything after the options as a remote and a refspec", () => {
+    const { remote, work } = makeUpstream();
+    const head = pushCommit(work, remote, "release", "shipped");
+    const repo = connect({ root: makeCheckout(remote), publicationRemote: remote });
+    const marker = join(temp("gate-ask-marker-"), "ran");
+    const source: AskSource = {
+      repo,
+      repoId: repo.repoId,
+      teamId: repo.teamId,
+      ref: "release",
+      commit: head,
+      remote,
+      via: "ref",
+      fetchRef: `--upload-pack=touch ${marker}; git-upload-pack`,
+    };
+    fetchAskSource(source);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("refuses a run whose published commit is not a full one", () => {
+    const { remote } = makeUpstream();
+    const repo = connect({ root: makeCheckout(remote), publicationRemote: remote });
+    const id = runIn(repo);
+    setExecutionPublication(id, { ref: "refs/heads/gate/run-ask", commit: "--output=/tmp/x", at: Date.now() });
+
+    expect(resolveAskSource({ question, run: id }, "srv").ok).toBe(false);
+  });
+
+  it("answers a branch from that branch, not from another whose name ends the same way", () => {
+    const { remote, work } = makeUpstream();
+    const main = git(work, "rev-parse", "HEAD");
+    // `archive/main` sorts before `main`, and `ls-remote <remote> main`
+    // matches both by the end of the name.
+    pushCommit(work, remote, "archive/main", "an old experiment");
+    const repo = connect({ root: makeCheckout(remote), publicationRemote: remote, baseRef: "main" });
+
+    const resolved = resolveAskSource({ question, repo: repo.repoId }, "srv");
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.source.commit).toBe(main);
+    expect(resolved.source.ref).toBe("main");
+    expect(fetchAskSource(resolved.source)).toEqual({ ok: true });
+  });
+
+  it("reads a tag as the commit it points at", () => {
+    const { remote, work } = makeUpstream();
+    const head = git(work, "rev-parse", "HEAD");
+    git(work, "tag", "-a", "v1", "-m", "one");
+    git(work, "push", "-q", remote, "v1");
+    const repo = connect({ root: makeCheckout(remote), publicationRemote: remote });
+
+    const resolved = resolveAskSource({ question, repo: repo.repoId, ref: "v1" }, "srv");
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) expect(resolved.source.commit).toBe(head);
+  });
+
+  it("expands an abbreviated commit this checkout has, and refuses one it does not", () => {
+    const { remote, work } = makeUpstream();
+    const head = git(work, "rev-parse", "HEAD");
+    const repo = connect({ root: makeCheckout(remote), publicationRemote: remote });
+
+    const known = resolveAskSource({ question, repo: repo.repoId, commit: head.slice(0, 8) }, "srv");
+    expect(known.ok).toBe(true);
+    if (known.ok) expect(known.source.commit).toBe(head);
+    // An abbreviation cannot be fetched by; saying so beats a fetch failure
+    // that reads as unpublished work.
+    const unknown = resolveAskSource({ question, repo: repo.repoId, commit: "abcdef12" }, "srv");
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) expect(unknown.reason).toContain("full 40-character commit");
+  });
+});
+
+describe("the family, whichever way the repository is reached", () => {
+  it("does not answer a run in the family about a repository outside it", () => {
+    const { remote, work } = makeUpstream();
+    const published = pushCommit(work, remote, "gate/run-ask", "the work");
+    const theirs = connect({ root: makeCheckout(remote), publicationRemote: remote, teamId: "otherco" });
+    // The run is the asker's own family's; its client reported another
+    // company's origin, which is all it takes to name a repository.
+    const id = runIn(theirs, "desktop");
+    setExecutionPublication(id, { ref: "refs/heads/gate/run-ask", commit: published, at: Date.now() });
+
+    const resolved = resolveAskSource({ question, run: id }, "srv");
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok || resolved.status !== "source_unavailable") return;
+    // Worded as a repository gate has no record of: naming it would confirm it.
+    expect(resolved.reason).toContain("no record of");
+    expect(resolved.reason).not.toContain(theirs.id);
+    expect(resolved.publish).toBeNull();
+  });
+
+  it("finds the asker's own record of a remote another team connected too", () => {
+    const { remote } = makeUpstream();
+    tree();
+    const shared = `git@github.com:ulak/shared-${++n}.git`;
+    const base = { name: "shared", source: remote, cloned: false, baseRef: "main", setup: [], publicationRemote: null, remoteUrl: shared };
+    createRepo({ ...base, id: `shared-other-${n}`, root: makeCheckout(remote), teamId: "otherco" });
+    const mine = createRepo({ ...base, id: `shared-mine-${n}`, root: makeCheckout(remote), teamId: "desktop" });
+
+    const resolved = resolveAskSource({ question, repo: mine.repoId }, "srv");
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) expect(resolved.source.repo.id).toBe(mine.id);
   });
 });
