@@ -41,9 +41,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     error: error ? { code: error.code, message: error.message } : null,
   };
 
-  finishExecution(state, workspace ?? null);
+  // The check above was before the body was read, and a Stop may have landed
+  // while it was on its way; the write itself only closes a run still going.
+  const finished = finishExecution(state, workspace ?? null);
+  // What the run did is worth keeping however it ended.
   if (diff) setExecutionDiff(id, diff);
   // The diff is in; the recorder may read the run now.
   scheduleExtraction();
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(finished ? { ok: true } : { ok: true, alreadyFinished: true });
 }

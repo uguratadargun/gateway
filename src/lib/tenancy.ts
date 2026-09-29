@@ -110,11 +110,17 @@ export function scopeForPrincipal(principal: Principal): DefinitionScope {
  * workflow produced it — and a run with an owner may only be reported on by
  * that owner. Two people on the same team can watch each other's runs in the
  * dashboard; neither can write steps into the other's.
+ *
+ * A run's owner keeps it when they move to another team: the run was started
+ * under the old team and stays filed there, but the worktree and the session
+ * driving it are theirs, and refusing them would leave it running with nobody
+ * able to finish, continue or stop it from the machine that has it.
  */
 export function ownsExecution(
   execution: { teamId: string; userId: string | null },
   principal: Principal,
 ): boolean {
+  if (execution.userId && principal.userId && execution.userId === principal.userId) return true;
   if (execution.teamId !== principal.teamId) return false;
   if (execution.userId && execution.userId !== principal.userId) return false;
   return true;
