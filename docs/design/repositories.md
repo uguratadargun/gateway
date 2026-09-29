@@ -160,6 +160,8 @@ question and by the record index.
 
 ## Decisions
 
+- [0056 — Forges that spell a repository two ways are one name](../decisions/0056-forges-that-spell-a-repository-twice-are-one-name.md)
+- [0055 — A remote is connected once](../decisions/0055-a-remote-is-connected-once.md)
 - [0048 — A question to another team is read on the asker's machine, from the commit the gate fixed](../decisions/0048-ask-is-read-on-the-askers-machine.md)
 - [0047 — A run is driven only from a person's own Claude Code session](../decisions/0047-a-run-is-driven-only-from-a-persons-session.md)
 - [0044 — A repository that does not publish is read from its origin](../decisions/0044-a-repository-that-does-not-publish-is-read-from-its-origin.md)

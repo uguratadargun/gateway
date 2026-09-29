@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- Security: a run's reported publication can no longer reach `git` as an option. The server takes a published ref only as a branch and a commit only as a full sha, re-checks them when a question reads them, and passes `--end-of-options` to every `git` call built from stored or user values. Before this, anyone with a key could make the gate's own `git fetch` run a command.
+
+- A cross-team objection the person confirms now reaches the other team. The planner's objection check was always told it was on visit 0, so the confirmation never matched the objection and waited for ever; every node and command template now reads the run's real visit counts.
+
+- A run picked up with `gate continue` is recorded when it finishes. Before, memory kept only the failed attempt, and a run still going could be recorded half-way.
+
+- The pipelines' give-up edges count failures, not visits. A verification that passed, a record check that passed, or a review the person sent back no longer uses up a run's rounds, so a long run no longer ends on `not-verified`, `no-spec` or `review-stuck` at its first real problem. Restore the shipped workflows (`npm run defaults:restore -- --refresh`) to get the new graphs.
+
+- A run never works outside its worktree: one whose worktree was never made fails instead of running its commands in your checkout, and the dashboard offers `gate continue` only for a run the server will continue.
+
+- A run no longer wedges: a routing or input error fails it at that node, a missing skill fails the node before the run is paused, and a `finish` that does not reach the gate keeps the worktree so the next `gate next` can settle it.
+
+- Only one `gate` command works on a run at a time; a second `gate next` while commands are running is refused instead of running them again.
+
+- `gate publish` works in repositories that ignore `node_modules`, a push counts as published only when the remote holds the commit that was pushed, `gate clean` keeps a worktree it cannot check with the gate, and `--input` values may contain spaces.
+
+- A question to another team is answered from the exact branch or tag it names, not from a branch that merely ends the same way, and a question about a run outside your family is refused without naming its repository. A short commit sha is resolved or refused.
+
+- A repository can be connected only once; the same remote under a second id is refused. GitHub's ssh over 443 and Azure DevOps's two spellings are one name.
+
+- Stop, finish and continue no longer undo one another: a Stop that lands while a finish uploads stands, a continued run's page streams live again, a paused run's duration cannot go negative, a run is not written off by the report that shows it is alive, and a person moved to another team can still finish their own runs.
+
+- An open client stream closes when its key is revoked, and a key with no owner sees only runs with no owner.
+
+- Memory: Record again keeps what other decisions and objections said about a run's decisions; more than 20 merges between two index passes are all recorded; an open merge request is not marked merged because it edited an older decision record; a superseding decision is not closed with the record it superseded; recall by meaning searches every decision in scope, not the newest 200; consolidation never closes a decision in another repository; a consolidation that keeps failing waits for a new decision; a recorder model on a missing or disabled provider leaves runs waiting instead of failing them.
+
+- Memory search finds words starting with a capital `İ`, `--as-of` a date includes that whole day, and a path with `_` or `%` in it matches only itself.
+
+- The workflow loader refuses a loop with no way to a terminal, a guard that reads a whole `visits` or `outputs`, and an input naming a node the workflow does not have. Saving from the dashboard keeps command arguments as written and an explicit `inputs: []`. Node ids may start with a digit in conditions and templates.
+
+- Importing a skill library rewrites its links to the ids the skills land under, and a `SKILL.md` that is a symlink is not imported.
+
 ## 0.49.0 — 2026-09-29
 
 - An agent's `effort` now reaches Claude Code. The subagent file gate writes for a `claude-code` agent carries `effort:` next to `model:`, so a planner set to `high` thinks at `high` instead of at whatever the session was set to. An agent with no effort, or `default`, still follows the session.

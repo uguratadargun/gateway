@@ -529,6 +529,9 @@ no agent, run or CLI can forget anything.
 
 ## Decisions
 
+- [0062 — `--as-of` a date means the end of that day](../decisions/0062-as-of-a-date-means-the-end-of-that-day.md)
+- [0061 — A consolidation that keeps failing waits for a new decision](../decisions/0061-a-consolidation-that-keeps-failing-waits-for-a-new-decision.md)
+- [0060 — Recording a run again keeps what other rows said about its decisions](../decisions/0060-recording-a-run-again-keeps-what-others-said-about-it.md)
 - [0041 — Merges made without gate are recorded only when the gate is set to](../decisions/0041-merges-made-without-gate-are-recorded-when-asked.md)
 - [0048 — A question to another team is read on the asker's machine, from the commit the gate fixed](../decisions/0048-ask-is-read-on-the-askers-machine.md)
 - [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)

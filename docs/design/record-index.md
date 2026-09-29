@@ -101,6 +101,8 @@ With `memory.recordMerges` on, the same pass turns each first-parent commit that
 
 ## Decisions
 
+- [0059 — A superseded record spares the decision that superseded it](../decisions/0059-a-superseded-record-spares-the-decision-that-superseded-it.md)
+- [0058 — A squash merge is known by a record added after the run began](../decisions/0058-a-squash-merge-is-known-by-a-record-added-after-the-run-began.md)
 - [0043 — Writing outside the convention is read as notes](../decisions/0043-writing-outside-the-convention-is-read-as-notes.md)
 - [0042 — /gate:init names features after the tree, and leaves reading them to the index](../decisions/0042-init-names-features-after-the-tree-and-leaves-reading-to-the-index.md)
 - [0038 — The repositories' record is read by code, and the base branch settles what landed](../decisions/0038-the-repositories-record-is-read-by-code.md)

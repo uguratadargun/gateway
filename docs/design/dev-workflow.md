@@ -470,6 +470,9 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Decisions
 
+- [0057 — A give-up edge counts failures, on a node only a failure reaches](../decisions/0057-a-give-up-edge-counts-failures.md)
+- [0054 — A run's skills are read from its pin, then from the team's mirror](../decisions/0054-a-runs-skills-are-read-from-its-pin-then-the-mirror.md)
+- [0053 — One gate command works on a run at a time](../decisions/0053-one-gate-command-works-on-a-run-at-a-time.md)
 - [0051 — A run warns at its start about what its end needs](../decisions/0051-a-run-warns-at-its-start-about-what-its-end-needs.md)
 - [0048 — A question to another team is read on the asker's machine, from the commit the gate fixed](../decisions/0048-ask-is-read-on-the-askers-machine.md)
 - [0047 — A run is driven only from a person's own Claude Code session](../decisions/0047-a-run-is-driven-only-from-a-persons-session.md)

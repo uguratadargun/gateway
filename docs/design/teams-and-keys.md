@@ -153,6 +153,7 @@ loading are named.
 
 ## Decisions
 
+- [0052 — A run's owner keeps it when they move to another team](../decisions/0052-a-runs-owner-keeps-it-when-they-move-team.md)
 - [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)
 - [0011 — Three auth surfaces, three rules](../decisions/0011-three-auth-surfaces-three-rules.md) (superseded by 0046: two surfaces remain, with the same rules)
 - [0026 — Connecting a machine never needs a model turn](../decisions/0026-connecting-never-needs-a-model-turn.md)

@@ -167,6 +167,7 @@ the step to read.
 
 ## Decisions
 
+- [0052 — A run's owner keeps it when they move to another team](../decisions/0052-a-runs-owner-keeps-it-when-they-move-team.md)
 - [0047 — A run is driven only from a person's own Claude Code session](../decisions/0047-a-run-is-driven-only-from-a-persons-session.md)
 - [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)
 - [0009 — A run is judged by the definitions it started with](../decisions/0009-a-run-is-judged-by-the-definitions-it-started-with.md)

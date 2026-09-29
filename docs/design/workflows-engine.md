@@ -218,11 +218,12 @@ and `next` (one unconditional edge) or `edges` (up to 20: `to`, optional
 - A branch may not be pointed at from outside its fan-out node, and may not contain a terminal. Adding `next: done` inside a branch is refused with the branch named.
 - Saving from the canvas discards YAML comments. Keep hand-written commentary in `description` or in the labels. It keeps a command's arguments as written, whitespace included, and a node's `inputs: []` (reads nothing) apart from no `inputs:` (reads what its agent declares).
 - A workflow saved without `workspace` has no worktree: its agent nodes are told to work from what the prompt gives them and the commands it names, and to touch no files on the person's machine.
-- `maxWorkflowSteps`, `maxVisits` and `maxCostUsd` are accepted and shown on the workflow's page, but no run a session drives reads them; a loop that must end needs a give-up edge.
+- `maxWorkflowSteps`, `maxVisits` and `maxCostUsd` are accepted so older files keep loading, and nothing reads them; a loop that must end needs a give-up edge.
 - A guard on a switched-off node contributes no optional input: the run takes `skipTo` and never evaluates that node's edges, so asking for a value nothing will read is noise.
 
 ## Decisions
 
+- [0057 — A give-up edge counts failures, on a node only a failure reaches](../decisions/0057-a-give-up-edge-counts-failures.md)
 - [0047 — A run is driven only from a person's own Claude Code session](../decisions/0047-a-run-is-driven-only-from-a-persons-session.md)
 - [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)
 - [0033 — An input only a guard reads is optional](../decisions/0033-an-input-only-a-guard-reads-is-optional.md)

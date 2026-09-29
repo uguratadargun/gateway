@@ -214,6 +214,13 @@ export default function ExecutionDetailPage() {
 
   const graphNodes = useMemo(() => (detail?.workflow ? toGraphNodes(detail.workflow.nodes) : []), [detail]);
   const ex = detail?.execution;
+  // The same rule the server's continue applies: a run that failed on a step,
+  // or was cut short, is picked up where it stopped. One that failed before
+  // any step — its worktree was never made — is started again instead.
+  const continuable =
+    ex?.status === "failed" &&
+    ex.driver === "session" &&
+    (ex.error?.code === "RUN_CANCELLED" || ex.error?.code === "RUN_ABANDONED" || steps.at(-1)?.status === "failed");
 
   return (
     <main className="mx-auto max-w-[1500px] space-y-4 px-6 py-8">
@@ -286,7 +293,7 @@ export default function ExecutionDetailPage() {
             >
               {ex.workflowId === TEACH_WORKFLOW_ID
                 ? `gate teach — ${ex.workspace?.branch ?? "its branch"}, on ${ex.client?.host ?? "that machine"}`
-                : ex.status === "failed" && ex.driver === "session"
+                : continuable
                   ? `gate continue ${ex.id} — on ${ex.client?.host ?? "that machine"}`
                   : `/gate:run ${ex.workflowId} — on ${ex.client?.host ?? "that machine"}`}
             </code>

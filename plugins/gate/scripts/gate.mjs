@@ -6682,7 +6682,7 @@ function isKnownTool(name) {
 // src/agents/template.ts
 var TemplateError = class extends Error {
 };
-var PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)\s*\}\}/g;
+var PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_][A-Za-z0-9_-]*)*)\s*\}\}/g;
 function templatePaths(tpl) {
   const out = /* @__PURE__ */ new Set();
   for (const m of tpl.matchAll(PLACEHOLDER)) out.add(m[1]);
@@ -6968,6 +6968,13 @@ function tokenize(src) {
       out.push({ t: "str", v: s });
       continue;
     }
+    const prev = out[out.length - 1];
+    if (/[A-Za-z0-9_]/.test(c) && prev?.t === "op" && prev.v === ".") {
+      let s = "";
+      while (i < src.length && /[A-Za-z0-9_-]/.test(src[i])) s += src[i++];
+      out.push({ t: "ident", v: s });
+      continue;
+    }
     if (/[0-9]/.test(c)) {
       let s = "";
       while (i < src.length && /[0-9._]/.test(src[i])) s += src[i++];
@@ -7158,7 +7165,7 @@ function requiredRunInputs(wf, loadAgent) {
       continue;
     }
     for (const path of templatePaths(agent.prompt)) add(path);
-    for (const declared of node.inputs ?? agent.inputs) add(declared.replace(/\?$/, ""));
+    for (const declared of node.inputs ?? agent.inputs) if (!declared.endsWith("?")) add(declared);
   }
   if (wf.workspace && !wf.workspace.repo) keys.add("repo");
   return [...keys].sort();
@@ -7167,6 +7174,20 @@ function optionalRunInputs(wf, loadAgent) {
   const keys = /* @__PURE__ */ new Set();
   for (const node of wf.nodes) {
     if ("disabled" in node && node.disabled) continue;
+    if (node.type === "agent") {
+      let declared = node.inputs ?? [];
+      if (!node.inputs) {
+        try {
+          declared = loadAgent(node.agent).inputs;
+        } catch {
+          declared = [];
+        }
+      }
+      for (const raw of declared) {
+        const m = /^input\.([^.?]+)[^?]*\?$/.exec(raw);
+        if (m) keys.add(m[1]);
+      }
+    }
     for (const edge of node.edges) {
       if (!edge.condition) continue;
       for (const path of conditionPaths(edge.condition)) {
@@ -7362,6 +7383,15 @@ function validateStructure(wf, opts) {
             `node "${n.id}" condition reads "${path[0]}"; only "outputs", "input" and "visits" are available`
           );
         }
+        if (path.length === 1) {
+          throw invalid(wf.id, `node "${n.id}" condition reads "${path[0]}" whole; name what in it, e.g. "${path[0]}.<name>"`);
+        }
+        if (path[0] === "outputs" && path[1]) {
+          const read = wf.nodes.find((x) => x.id === path[1]);
+          if (read && read.type !== "agent" && read.type !== "command") {
+            throw invalid(wf.id, `node "${n.id}" condition reads the output of ${read.type} node "${path[1]}", which has none`);
+          }
+        }
       }
     }
     if (n.type === "condition" && !n.edges.some((e) => e.condition)) {
@@ -7373,6 +7403,7 @@ function validateStructure(wf, opts) {
     if (n.type === "agent" && opts.agentExists && !opts.agentExists(n.agent)) {
       throw invalid(wf.id, `node "${n.id}" references unknown agent "${n.agent}"`);
     }
+    if (n.type === "agent" && n.inputs) validateNodeInputs(wf, n, ids);
     if (n.type === "agent" || n.type === "command") validateSkip(wf, n);
   }
   validateSkipChains(wf);
@@ -7390,6 +7421,36 @@ function validateStructure(wf, opts) {
   }
   const orphans = wf.nodes.filter((n) => !reachable.has(n.id)).map((n) => n.id);
   if (orphans.length) throw invalid(wf.id, `unreachable node${orphans.length > 1 ? "s" : ""}: ${orphans.join(", ")}`);
+  const predecessors = /* @__PURE__ */ new Map();
+  for (const n of wf.nodes) {
+    for (const to of successorsOf(n)) predecessors.set(to, [...predecessors.get(to) ?? [], n.id]);
+  }
+  const canFinish = new Set(wf.nodes.filter((n) => n.type === "terminal").map((n) => n.id));
+  const back = [...canFinish];
+  while (back.length) {
+    for (const from of predecessors.get(back.shift()) ?? []) {
+      if (!canFinish.has(from)) {
+        canFinish.add(from);
+        back.push(from);
+      }
+    }
+  }
+  const trapped = wf.nodes.filter((n) => !canFinish.has(n.id)).map((n) => n.id);
+  if (trapped.length) {
+    throw invalid(
+      wf.id,
+      `node${trapped.length > 1 ? "s" : ""} ${trapped.join(", ")} can never reach a terminal; a loop needs a give-up edge out of it`
+    );
+  }
+}
+function validateNodeInputs(wf, node, ids) {
+  for (const raw of node.inputs ?? []) {
+    const [root, second] = raw.replace(/\?$/, "").split(".");
+    const named = root === "visits" ? second : root === "input" ? null : root;
+    if (named && !ids.has(named) && (root === "visits" || !raw.endsWith("?"))) {
+      throw invalid(wf.id, `node "${node.id}" input "${raw}" reads node "${named}", which this workflow does not have`);
+    }
+  }
 }
 function validateSkip(wf, node) {
   if (node.skipTo && !node.edges.some((e) => e.to === node.skipTo)) {
@@ -7497,7 +7558,8 @@ function loadFile2(id, file, scope) {
   const stat = statSync3(file);
   const key = `${scope.teamId ?? scope.root}\0${file}`;
   const hit = cache3.get(key);
-  if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
+  const agentsStillThere = (def2) => def2.nodes.every((n) => n.type !== "agent" || agentExists(n.agent, scope));
+  if (hit && hit.mtimeMs === stat.mtimeMs && agentsStillThere(hit.def)) return hit.def;
   const def = parseWorkflow(id, readFileSync3(file, "utf8"), {
     sourcePath: file,
     updatedAt: stat.mtimeMs,
@@ -7752,6 +7814,7 @@ Decisions (${detail.decisions.length}):`);
 }
 
 // src/memory/since.ts
+var DAY_MS = 864e5;
 function parseSince(v, now = Date.now()) {
   if (typeof v !== "string" || !v.trim()) return null;
   const s = v.trim().toLowerCase();
@@ -7760,18 +7823,25 @@ function parseSince(v, now = Date.now()) {
     const n = Number(rel[1]);
     const unit = rel[2][0];
     const days = unit === "d" ? n : unit === "w" ? n * 7 : unit === "m" ? n * 30 : n * 365;
-    return now - days * 864e5;
+    return now - days * DAY_MS;
   }
+  const day2 = localDay(s);
+  if (day2 != null) return day2;
   const t = Date.parse(s);
   return Number.isFinite(t) ? t : null;
 }
-
-// src/repos/detect.ts
-import { existsSync as existsSync5 } from "node:fs";
-import { join as join5 } from "node:path";
-var LINKED_DIRECTORIES = ["node_modules", "vendor", ".venv"];
-function linkedDirectories(root) {
-  return LINKED_DIRECTORIES.filter((d) => existsSync5(join5(root, d)));
+function parseAsOf(v, now = Date.now()) {
+  if (typeof v === "string") {
+    const day2 = localDay(v.trim());
+    if (day2 != null) return day2 + DAY_MS - 1;
+  }
+  return parseSince(v, now);
+}
+function localDay(s) {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const t = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+  return Number.isFinite(t) ? t : null;
 }
 
 // src/repos/publish.ts
@@ -7780,7 +7850,9 @@ var PUSH_TIMEOUT_MS = 5 * 6e4;
 function branchAllowed(branch, policy) {
   const p = policy.trim() === "*" ? "**" : policy.trim();
   if (!p) return false;
-  const pattern = p.split(/(\*\*|\*)/).map((part) => part === "**" ? "[\\s\\S]*" : part === "*" ? "[^/]*" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("");
+  const pattern = p.split(/(\*\*\/|\*\*|\*)/).map(
+    (part) => part === "**/" ? "(?:[\\s\\S]*/)?" : part === "**" ? "[\\s\\S]*" : part === "*" ? "[^/]*" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  ).join("");
   return new RegExp(`^${pattern}$`).test(branch);
 }
 function git(cwd, args, timeout = 3e4) {
@@ -7802,19 +7874,28 @@ function publishBranch(root, branch, target) {
     };
   }
   const ref = `refs/heads/${branch}`;
+  let pushed;
   try {
-    git(root, ["push", target.remote, `HEAD:${ref}`], PUSH_TIMEOUT_MS);
+    pushed = git(root, ["rev-parse", "HEAD"]);
+    git(root, ["push", "--end-of-options", target.remote, `HEAD:${ref}`], PUSH_TIMEOUT_MS);
   } catch (e) {
     return { ok: false, code: "push-failed", note: `could not publish ${branch} to ${target.remote}: ${gitMessage(e)}` };
   }
   let remoteSha = "";
   try {
-    remoteSha = git(root, ["ls-remote", target.remote, ref]).split(/\s+/)[0] ?? "";
+    remoteSha = git(root, ["ls-remote", "--end-of-options", target.remote, ref]).split(/\s+/)[0] ?? "";
   } catch (e) {
     return { ok: false, code: "not-verified", note: `${branch} was pushed to ${target.remote} but could not be read back: ${gitMessage(e)}` };
   }
   if (!/^[0-9a-f]{7,40}$/.test(remoteSha)) {
     return { ok: false, code: "not-verified", note: `${target.remote} does not report holding ${ref} after the push` };
+  }
+  if (remoteSha !== pushed) {
+    return {
+      ok: false,
+      code: "not-verified",
+      note: `${target.remote} reports ${ref} at ${remoteSha.slice(0, 8)} after the push, not at the pushed ${pushed.slice(0, 8)}`
+    };
   }
   return {
     ok: true,
@@ -7841,6 +7922,16 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import { existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync5, rmSync as rmSync4, symlinkSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname, join as join6, resolve } from "node:path";
+
+// src/repos/detect.ts
+import { existsSync as existsSync5 } from "node:fs";
+import { join as join5 } from "node:path";
+var LINKED_DIRECTORIES = ["node_modules", "vendor", ".venv"];
+function linkedDirectories(root) {
+  return LINKED_DIRECTORIES.filter((d) => existsSync5(join5(root, d)));
+}
+
+// src/runtime/workspace.ts
 var MAX_LISTED_FILES = 200;
 function workspacesDir() {
   return join6(process.env.GATE_HOME || join6(homedir2(), ".gate"), "workspaces");
@@ -7923,9 +8014,12 @@ function isIgnored(root, path) {
     return false;
   }
 }
+function borrowedLinksToExclude(root) {
+  return LINKED_DIRECTORIES.filter((d) => isSymlink(join6(root, d)) && !isIgnored(root, d));
+}
 function commitLeftovers(ws, executionId) {
   if (!git2(ws.root, ["status", "--porcelain"]).length) return false;
-  const excluded = LINKED_DIRECTORIES.filter((d) => isSymlink(join6(ws.root, d)) && !isIgnored(ws.root, d)).map((d) => `:(exclude)${d}`);
+  const excluded = borrowedLinksToExclude(ws.root).map((d) => `:(exclude)${d}`);
   git2(ws.root, ["add", "-A", "--", ".", ...excluded]);
   if (!git2(ws.root, ["diff", "--cached", "--name-only"]).length) return false;
   let identity = [];
@@ -8045,7 +8139,7 @@ function removeRunWorkspace(ws, opts = {}) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.49.0";
+var GATE_VERSION = "0.50.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8717,6 +8811,12 @@ function syncSubagents(team, scope) {
   for (const agent of listAgents(scope).agents) {
     if (agent.executor === "claude-code") wanted.set(`${subagentName(team, agent.id)}.md`, subagentFile(team, agent));
   }
+  for (const pinned of pinnedScopes(team)) {
+    for (const agent of listAgents(pinned).agents) {
+      const file = `${subagentName(team, agent.id)}.md`;
+      if (agent.executor === "claude-code" && !wanted.has(file)) wanted.set(file, subagentFile(team, agent));
+    }
+  }
   const written = [];
   const removed = [];
   for (const entry of readdirSync5(dir)) {
@@ -8736,6 +8836,16 @@ function syncSubagents(team, scope) {
     written.push(file.slice(0, -3));
   }
   return { written, removed, created };
+}
+function pinnedScopes(team) {
+  const runs = join9(gateHome2(), "runs");
+  if (!existsSync8(runs)) return [];
+  const out = [];
+  for (const entry of readdirSync5(runs, { withFileTypes: true })) {
+    const dir = join9(runs, entry.name, "definitions");
+    if (entry.isDirectory() && existsSync8(join9(dir, "agents"))) out.push(scopeAt(dir, team));
+  }
+  return out;
 }
 
 // src/client/preflight.ts
@@ -8859,11 +8969,13 @@ function walk(workflow, steps, input, replay, from, stopAt) {
     }
     const step2 = steps[replay.cursor];
     if (!step2 || step2.nodeId !== node.id) {
+      const visit = (replay.visitCounts[node.id] ?? 0) + 1;
       return {
         kind: "node",
         node,
-        visit: (replay.visitCounts[node.id] ?? 0) + 1,
+        visit,
         outputs: { ...replay.outputs },
+        visitCounts: { ...replay.visitCounts, [node.id]: visit },
         stepIndex: replay.cursor
       };
     }
@@ -8910,6 +9022,44 @@ function writePending(pending) {
 }
 function clearPending(executionId) {
   rmSync7(pendingPath(executionId), { force: true });
+}
+var heldRuns = /* @__PURE__ */ new Set();
+async function withRunLock(executionId, work) {
+  if (heldRuns.has(executionId)) return work();
+  const file = join10(gateHome2(), "runs", `${executionId}.lock`);
+  mkdirSync9(join10(gateHome2(), "runs"), { recursive: true, mode: 448 });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      writeFileSync7(file, `${process.pid}
+`, { flag: "wx", mode: 384 });
+      break;
+    } catch (e) {
+      if (e.code !== "EEXIST" || attempt > 0) throw e;
+      const holder = Number.parseInt(readFileSync7(file, "utf8"), 10);
+      if (Number.isInteger(holder) && holder > 0 && holder !== process.pid && processAlive(holder)) {
+        throw new WorkflowError(
+          "WORKFLOW_ROUTING_ERROR",
+          `another gate command (pid ${holder}) is working on run ${executionId} right now \u2014 wait for it to finish, then run \`gate next ${executionId}\` to see where the run is`
+        );
+      }
+      rmSync7(file, { force: true });
+    }
+  }
+  heldRuns.add(executionId);
+  try {
+    return await work();
+  } finally {
+    heldRuns.delete(executionId);
+    rmSync7(file, { force: true });
+  }
+}
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
 }
 function currentSession() {
   return (process.env[SESSION_ID_ENV] ?? process.env.CLAUDE_CODE_SESSION_ID ?? "").trim() || void 0;
@@ -9045,6 +9195,9 @@ async function begin(ctx, workflowId, input, cwd, repos, opts = {}) {
   return next(ctx, executionId);
 }
 async function next(ctx, executionId, opts = {}) {
+  return withRunLock(executionId, () => walkOn(ctx, executionId, opts));
+}
+async function walkOn(ctx, executionId, opts) {
   for (; ; ) {
     const { execution, steps, publish } = await ctx.client.execution(executionId);
     const stopped = stoppedOutside(execution);
@@ -9055,8 +9208,20 @@ async function next(ctx, executionId, opts = {}) {
       return { do: "stopped", executionId, error: stopped };
     }
     const scope = runScope(ctx.team, executionId);
-    const workflow = getWorkflow(execution.workflowId, scope);
-    const position = nextInSession(workflow, steps, execution.input);
+    let workflow;
+    let position;
+    try {
+      workflow = getWorkflow(execution.workflowId, scope);
+      position = nextInSession(workflow, steps, execution.input);
+    } catch (e) {
+      if (!(e instanceof WorkflowError)) throw e;
+      const error = { code: e.code, message: e.message };
+      const nodeId2 = typeof e.detail?.nodeId === "string" ? e.detail.nodeId : "";
+      clearPending(executionId);
+      ctx.say(`\u2717 ${error.message}`);
+      await settle(ctx, executionId, execution, steps.length, "failed", error, publish);
+      return { do: "failed", executionId, nodeId: nodeId2, error };
+    }
     if (position.kind === "failed") {
       clearPending(executionId);
       await settle(ctx, executionId, execution, steps.length, "failed", position.error, publish);
@@ -9079,24 +9244,52 @@ async function next(ctx, executionId, opts = {}) {
       };
     }
     const node = position.node;
-    const state = stateFor(execution, position.outputs);
+    if (execution.status !== "running") {
+      const error = execution.error ?? { code: "EXECUTION_NOT_RESUMABLE", message: `this run is ${execution.status}` };
+      ctx.say(`this run is ${execution.status}; nothing more of it runs`);
+      return { do: "failed", executionId, nodeId: node.id, error };
+    }
+    if (workflow.workspace && !workspaceOf(execution)) {
+      const error = {
+        code: "WORKSPACE_ERROR",
+        message: "this run has no worktree \u2014 it ended before one was made \u2014 so none of it can run: start the workflow again"
+      };
+      clearPending(executionId);
+      await settle(ctx, executionId, execution, steps.length, "failed", error, publish);
+      return { do: "failed", executionId, nodeId: node.id, error };
+    }
+    const state = stateFor(execution, position.outputs, position.visitCounts);
     if (node.type === "agent") {
-      const prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
-      const held = readPending(executionId);
-      const again = held && held.nodeId === node.id && held.visit === position.visit ? held : null;
-      const startedAt = again?.startedAt ?? Date.now();
-      if (!again) {
-        writePending({
-          executionId,
+      let prepared;
+      let skills;
+      try {
+        prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
+        skills = resolveSkills(prepared.agent, node.id, scope, ctx.team, executionId);
+      } catch (e) {
+        if (!(e instanceof WorkflowError)) throw e;
+        const at = Date.now();
+        clearPending(executionId);
+        ctx.say(`\u2717 ${node.id}: ${e.message}`);
+        await record(ctx, executionId, {
           nodeId: node.id,
           stepIndex: position.stepIndex,
           visit: position.visit,
-          startedAt
+          status: "failed",
+          startedAt: at,
+          finishedAt: at,
+          input: null,
+          output: null,
+          error: { code: e.code, message: e.message }
         });
+        continue;
       }
+      const held = readPending(executionId);
+      const again = held && held.nodeId === node.id && held.visit === position.visit ? held : null;
+      const startedAt = again?.startedAt ?? Date.now();
       const workspace = workspaceOf(execution);
       const personsTurn = asksPerson(prepared.agent);
-      if (!again) {
+      if (!again || again.unannounced) {
+        let announced = true;
         await ctx.client.report(executionId, {
           events: [
             {
@@ -9110,6 +9303,15 @@ async function next(ctx, executionId, opts = {}) {
           ],
           steps: []
         }).catch(() => {
+          announced = false;
+        });
+        writePending({
+          executionId,
+          nodeId: node.id,
+          stepIndex: position.stepIndex,
+          visit: position.visit,
+          startedAt,
+          ...announced ? {} : { unannounced: true }
         });
       }
       ctx.say(
@@ -9117,19 +9319,6 @@ async function next(ctx, executionId, opts = {}) {
       );
       if (workspace) ctx.say(`  in ${workspace.root}`);
       if (personsTurn) ctx.say("  the user's turn \xB7 the run is paused until they answer");
-      const skills = prepared.agent.skills.map((id) => {
-        let description = "";
-        try {
-          description = getSkill(id, scope).description;
-        } catch {
-          throw new WorkflowError(
-            "AGENT_DEFINITION_INVALID",
-            `node "${node.id}": agent "${prepared.agent.id}" declares skill "${id}", which this machine did not pull \u2014 run \`gate pull\`, or check it is in your team's skill library`,
-            { nodeId: node.id, agentId: prepared.agent.id }
-          );
-        }
-        return { id, description, path: resolveSkillDir(id, scope) };
-      });
       if (prepared.agent.executor === "claude-code") {
         const shape2 = outputShape(prepared.agent.output);
         const subagent = subagentName(ctx.team, prepared.agent.id);
@@ -9137,10 +9326,14 @@ async function next(ctx, executionId, opts = {}) {
         const resume = position.visit > 1 ? recallSubagent(executionId, node.id) : null;
         let delta = null;
         if (resume && !opts.full) {
-          const before = outputsBeforePreviousVisit(workflow, steps, node.id, position.stepIndex);
+          const before = stateBeforePreviousVisit(workflow, steps, node.id, position.stepIndex);
           if (before) {
             try {
-              const earlier = prepareAgentNode(node, stateFor(execution, before), (id) => getAgent(id, scope));
+              const earlier = prepareAgentNode(
+                node,
+                stateFor(execution, before.outputs, before.visitCounts),
+                (id) => getAgent(id, scope)
+              );
               delta = resumePrompt(
                 node.id,
                 position.visit,
@@ -9232,20 +9425,24 @@ ${answerFileNotice(outputFile2, shape2)}`,
     await runControlNode(ctx, executionId, node, state, position, workspaceOf(execution));
   }
 }
-function outputsBeforePreviousVisit(workflow, steps, nodeId2, stepIndex) {
+function stateBeforePreviousVisit(workflow, steps, nodeId2, stepIndex) {
   let previous = -1;
   for (let i = 0; i < stepIndex && i < steps.length; i++) {
     if (steps[i].nodeId === nodeId2) previous = i;
   }
   if (previous < 0) return null;
   const outputs = {};
+  const visitCounts = {};
   for (let i = 0; i < previous; i++) {
+    visitCounts[steps[i].nodeId] = (visitCounts[steps[i].nodeId] ?? 0) + 1;
     const node = findNode(workflow, steps[i].nodeId);
     if (!node || node.type === "condition" || node.type === "parallel") continue;
     outputs[steps[i].nodeId] = steps[i].output;
   }
-  return outputs;
+  visitCounts[nodeId2] = (visitCounts[nodeId2] ?? 0) + 1;
+  return { outputs, visitCounts };
 }
+var CLEARED = /* @__PURE__ */ Symbol("cleared");
 function readResolved(root, path) {
   let cur = root;
   for (const segment of path.split(".").filter(Boolean)) {
@@ -9260,24 +9457,33 @@ function renderValue(v) {
   return JSON.stringify(v, null, 2);
 }
 function resumePrompt(nodeId2, visit, paths, current, previous) {
+  const isEmpty = (v) => v === void 0 || v === "" || v === null || Array.isArray(v) && !v.length;
   const changed = [];
   for (const raw of paths) {
     const path = raw.replace(/\?$/, "");
     const now = readResolved(current, path);
-    if (now === void 0 || now === "" || Array.isArray(now) && !now.length) continue;
-    if (JSON.stringify(now) === JSON.stringify(readResolved(previous, path))) continue;
+    const then = readResolved(previous, path);
+    if (isEmpty(now)) {
+      if (!isEmpty(then)) changed.push([path, CLEARED]);
+      continue;
+    }
+    if (JSON.stringify(now) === JSON.stringify(then)) continue;
     changed.push([path, now]);
   }
   if (!changed.length) return null;
   return `Pass ${visit} of the "${nodeId2}" node \u2014 the same node you worked on before, continued.
 
-Everything you were given last time still holds: the task, the brief, and what you read and decided while doing it. Do not start the node over and do not ask for any of it again; go on from where you left off.
+The task, the brief, and what you read and decided while doing it still hold. Do not start the node over and do not ask for any of it again; go on from where you left off. What follows is every input that moved since your last pass \u2014 one marked cleared was answered or withdrawn and no longer applies.
 
 What is new since your last pass:
 
-` + changed.map(([path, value]) => `## ${path}
+` + changed.map(
+    ([path, value]) => value === CLEARED ? `## ${path}
 
-${renderValue(value)}`).join("\n\n");
+(cleared \u2014 what you were given here last time no longer applies)` : `## ${path}
+
+${renderValue(value)}`
+  ).join("\n\n");
 }
 function outputShape(output) {
   if (output.type !== "json") return "the answer as plain text";
@@ -9299,14 +9505,33 @@ function stoppedOutside(execution) {
   if (execution.status === "running" || !execution.error) return null;
   return execution.error.code === "RUN_CANCELLED" || execution.error.code === "RUN_ABANDONED" ? execution.error : null;
 }
-function stateFor(execution, outputs) {
+function resolveSkills(agent, nodeId2, scope, team, executionId) {
+  return agent.skills.map((id) => {
+    for (const where of [scope, cacheScope(team)]) {
+      try {
+        return { id, description: getSkill(id, where).description, path: resolveSkillDir(id, where) };
+      } catch {
+      }
+    }
+    throw new WorkflowError(
+      "AGENT_DEFINITION_INVALID",
+      `node "${nodeId2}": agent "${agent.id}" declares skill "${id}", which this machine did not pull \u2014 run \`gate pull\` (and check it is in your team's skill library), then \`gate continue ${executionId}\``,
+      { nodeId: nodeId2, agentId: agent.id }
+    );
+  });
+}
+function stateFor(execution, outputs, visitCounts) {
   return {
     executionId: "",
     workflowId: execution.workflowId,
     status: "running",
     input: execution.input,
     outputs,
-    visitCounts: {},
+    // What `visits.<node>` reads, in an agent's inputs and a command's argv.
+    // Left empty, every one of them read 0: the conflict-review told the
+    // planner's objection came from visit 0 matched no objection the planner
+    // had raised, and the person's confirmation of it never landed.
+    visitCounts,
     stepCount: 0,
     history: [],
     error: null
@@ -9352,6 +9577,9 @@ async function runControlNode(ctx, executionId, node, state, position, workspace
   });
 }
 async function step(ctx, executionId, nodeId2, answer, opts = {}) {
+  return withRunLock(executionId, () => takeAnswer(ctx, executionId, nodeId2, answer, opts));
+}
+async function takeAnswer(ctx, executionId, nodeId2, answer, opts) {
   const pending = readPending(executionId);
   if (!pending || pending.executionId !== executionId) {
     throw new WorkflowError("WORKFLOW_ROUTING_ERROR", `nothing is waiting on an answer for run ${executionId}`);
@@ -9447,18 +9675,26 @@ async function record(ctx, executionId, step2, announceStart = true, also = []) 
   }
 }
 async function settle(ctx, executionId, execution, stepCount, status, error, publish) {
-  if (execution.status !== "running") return;
   const workspace = workspaceOf(execution);
-  let diff = null;
-  let summary = null;
-  if (workspace && existsSync9(workspace.root)) {
-    summary = summarizeWorkspace(workspace);
+  if (execution.status === "running") {
+    let diff = null;
+    let summary = null;
+    if (workspace && existsSync9(workspace.root)) {
+      summary = summarizeWorkspace(workspace);
+      try {
+        diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
+      } catch {
+      }
+    }
     try {
-      diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
-    } catch {
+      await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary, diff });
+    } catch (e) {
+      throw new WorkflowError(
+        "WORKSPACE_ERROR",
+        `could not report the run's outcome to the gate (${e.message}); its worktree and definitions are kept \u2014 run \`gate next ${executionId}\` again once the gate answers`
+      );
     }
   }
-  await ctx.client.finish(executionId, { status, error, stepCount, workspace: summary, diff }).catch((e) => ctx.say(`could not report the run's outcome: ${e.message}`));
   if (workspace) await releaseAndPublish(ctx.client, workspace, executionId, publish, ctx.say);
   if (status === "completed") forgetRun(executionId);
 }
@@ -9467,6 +9703,9 @@ async function releaseStopped(ctx, executionId, execution, publish) {
   if (workspace) await releaseAndPublish(ctx.client, workspace, executionId, publish, ctx.say);
 }
 async function continueRun(ctx, executionId) {
+  return withRunLock(executionId, () => reopen(ctx, executionId));
+}
+async function reopen(ctx, executionId) {
   const { execution } = await ctx.client.execution(executionId);
   if (execution.driver !== "session") {
     throw new WorkflowError(
@@ -9479,6 +9718,12 @@ async function continueRun(ctx, executionId) {
     throw new WorkflowError("EXECUTION_NOT_RESUMABLE", `this run ${execution.status}; there is nothing to continue`);
   }
   const workspace = workspaceOf(execution);
+  if (!workspace && getWorkflow(execution.workflowId, runScope(ctx.team, executionId)).workspace) {
+    throw new WorkflowError(
+      "EXECUTION_NOT_RESUMABLE",
+      "this run ended before its worktree was made, so there is nothing to continue: start the workflow again"
+    );
+  }
   let restored = false;
   if (workspace && !existsSync9(workspace.root)) {
     try {
@@ -9542,9 +9787,10 @@ async function listWorkspaces(client) {
       baseCommit = execution.workspace?.baseCommit ?? null;
       branch = execution.workspace?.branch ?? branch;
       repo = execution.workspace?.repo ?? repo;
-    } catch {
+    } catch (e) {
+      if (!(e instanceof GateApiError && e.status === 404)) status = "unreachable";
     }
-    const verdict = status === "running" ? "running" : judgeWorkspace(root, baseCommit);
+    const verdict = status === "running" || status === "unreachable" ? "running" : judgeWorkspace(root, baseCommit);
     out.push({ executionId: entry.name, root, repo, branch, baseCommit, status, verdict });
   }
   return out;
@@ -10405,7 +10651,7 @@ async function confirmTrust(workflowId, sha2, team, assumeYes) {
 function parseInputs(flags, trailing) {
   const input = {};
   if (typeof flags.input === "string") {
-    for (const pair of flags.input.split(/[\u0000 ]+/).filter(Boolean)) {
+    for (const pair of flags.input.split(/\u0000+|\s+(?=[A-Za-z_][\w.-]*=)/).map((p) => p.trim()).filter(Boolean)) {
       const [key, ...rest] = pair.split("=");
       if (!key || !rest.length) die(`--input must be key=value (got "${pair}")`);
       input[key] = rest.join("=");
@@ -10521,7 +10767,7 @@ async function cmdClean(args) {
   const notes = applyClean(plan);
   for (const note of notes) console.log(note);
   console.log(
-    `removed ${plan.removed.length - notes.length} worktree(s), kept ${plan.kept.length + notes.length}; every branch is still there`
+    `removed ${plan.removed.length - notes.length} worktree(s), kept ${plan.kept.length + notes.length}; every branch with work on it is still there, and a branch its run left no commit on went with its worktree`
   );
   return 0;
 }
@@ -10540,7 +10786,7 @@ async function cmdPublish(args) {
       `the repository this run works in does not publish anywhere \u2014 give it a publication remote on the Repos page first`
     );
   }
-  const committed = checkpointWork(ws.root, `work in progress on ${ws.branch}, published on request`, LINKED_DIRECTORIES);
+  const committed = checkpointWork(ws.root, `work in progress on ${ws.branch}, published on request`, borrowedLinksToExclude(ws.root));
   if (committed) console.log(`checkpointed what was uncommitted as ${committed.slice(0, 8)}`);
   const outcome = publishBranch(ws.root, ws.branch, publish);
   console.log(outcome.ok ? outcome.note : `not published: ${outcome.note}`);
@@ -10563,7 +10809,7 @@ async function cmdMemory(args) {
     const featureId = one(args.flags.feature);
     if (!query && !paths.length && !featureId) die("usage: gate memory search <words\u2026> [--path <prefix>]\u2026 [--feature <id>] [--since 30d] [--as-of <date>] [--limit n] [--json]");
     const since = parseSince(one(args.flags.since));
-    const asOf = parseSince(one(args.flags["as-of"]));
+    const asOf = parseAsOf(one(args.flags["as-of"]));
     if (one(args.flags.since) && since == null) die(`--since: not a time: ${args.flags.since}`);
     if (one(args.flags["as-of"]) && asOf == null) die(`--as-of: not a time: ${args.flags["as-of"]}`);
     const limit = args.flags.limit ? Number(args.flags.limit) : void 0;
