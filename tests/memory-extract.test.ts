@@ -5,6 +5,8 @@ import { createTeam, getTeam } from "@/lib/teams";
 import { docsInDiff, extractRun, outcomeOf, parseRecorderAnswer, pathsInDiff, readableSteps, recorderPrompt } from "@/memory/extract";
 import { SHIPPED_OUTCOMES, TEACH_WORKFLOW_ID } from "@/memory/types";
 import type { ExecutionRecord, ExecutionStepRecord } from "@/executions/types";
+import { createProvider } from "@/lib/providers";
+import { saveSettings } from "@/lib/settings";
 import { drainExtractions, recorderUnavailable } from "@/memory/queue";
 import {
   decisionsForExecution,
@@ -234,6 +236,28 @@ describe("the recorder", () => {
     // Handed a model, it records as ever.
     expect(await drainExtractions(new FakeModelProvider(() => JSON.stringify({ decisions: [], feature: null })))).toBeGreaterThanOrEqual(1);
     expect(getExtraction("rec-9")).toMatchObject({ status: "done" });
+  });
+
+  it("treats a provider that is not there, or is switched off, as no model: runs wait instead of failing for good", async () => {
+    team();
+    const settings = (model: string) => ({
+      plugin: { source: "x" },
+      memory: { enabled: true, model, embeddings: { provider: "", model: "" }, consolidateEvery: 5, indexEveryMinutes: 15, recordMerges: false },
+    });
+    expect(recorderUnavailable(settings("provider:nosuch/m"))).toMatch(/"nosuch" is not configured/);
+    createProvider({ name: "rec-off", baseUrl: "http://127.0.0.1:9", enabled: false, models: ["m"] });
+    expect(recorderUnavailable(settings("provider:rec-off/m"))).toMatch(/switched off/);
+    createProvider({ name: "rec-on", baseUrl: "http://127.0.0.1:9", enabled: true, models: ["m"] });
+    expect(recorderUnavailable(settings("provider:rec-on/m"))).toBeNull();
+
+    saveSettings({ memory: { model: "provider:nosuch/m" } });
+    try {
+      aRun("rec-10", "acme-desktop");
+      for (let i = 0; i < 4; i++) await drainExtractions();
+      expect(getExtraction("rec-10")).toMatchObject({ status: "pending", attempts: 0 });
+    } finally {
+      saveSettings({ memory: { model: "" } });
+    }
   });
 });
 

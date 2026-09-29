@@ -4,7 +4,7 @@ import { createTeam, getTeam } from "@/lib/teams";
 import { LocalMemoryAccess, describeSearch } from "@/memory/access";
 import { describeFeature } from "@/memory/cards";
 import { replaceDecisions, upsertFeature, upsertImplementation } from "@/memory/store";
-import { parseSince } from "@/memory/since";
+import { parseAsOf, parseSince } from "@/memory/since";
 
 /**
  * What the recall node reads: the memory tools as `gate memory search` and
@@ -69,7 +69,12 @@ describe("the recall node", () => {
     const now = Date.UTC(2026, 8, 10);
     expect(parseSince("30d", now)).toBe(now - 30 * 86_400_000);
     expect(parseSince("6 months", now)).toBe(now - 180 * 86_400_000);
-    expect(parseSince("2026-05-01", now)).toBe(Date.UTC(2026, 4, 1));
+    // A bare date is that day where the command runs, not UTC's: in Istanbul
+    // UTC midnight is three in the morning.
+    expect(parseSince("2026-05-01", now)).toBe(new Date(2026, 4, 1).getTime());
+    // --as-of a day means the whole of it: a decision from that afternoon held on that date.
+    expect(parseAsOf("2026-05-01", now)).toBe(new Date(2026, 4, 2).getTime() - 1);
+    expect(parseAsOf("30d", now)).toBe(now - 30 * 86_400_000);
     expect(parseSince("soon", now)).toBeNull();
   });
 

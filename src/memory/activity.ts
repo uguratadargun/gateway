@@ -39,7 +39,8 @@ const STOPWORDS = new Set([
  */
 export function taskTerms(text: string): Set<string> {
   const out = new Set<string>();
-  for (const raw of text.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []) {
+  // "İ" lowercases to "i" plus a combining dot, which would split the word.
+  for (const raw of text.replace(/İ/g, "i").toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []) {
     if (raw.length < 3 || STOPWORDS.has(raw) || /^\d+$/.test(raw)) continue;
     out.add(raw.slice(0, 6));
   }

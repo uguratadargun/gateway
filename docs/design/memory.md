@@ -179,6 +179,11 @@ sequenceDiagram
    for a provider model), on the run's page; on an error it becomes `failed` and is retried up to three
    times; **Record again** on the run's page asks once more, and **Record
    earlier runs** on `/memory` queues every finished run with no ledger row.
+   Recording a run again replaces its decisions without losing what other
+   rows said about them: a new decision with an old one's title is the same
+   decision read again, and inherits the later decision that closed it, the
+   objections against it, and what it closed. An old decision with no such
+   heir reopens what it closed, as forgetting it would.
 
 The recorder is a server-side job, not a node: a node at the end of the
 graph never runs for a run that was stopped or failed on its last step —
@@ -189,16 +194,20 @@ Updating a summary one run at a time drifts, so after every
 button on `/memory`) a consolidation pass reads every decision under the
 feature for that team, rewrites the summary and the pitfalls whole, and
 closes the decisions a later one replaced — `valid_to` set, `supersedes`
-filled, nothing deleted; a likely duplicate entry is proposed to a person,
-never folded. Every pass is on the feature's page with its cost.
+filled, nothing deleted, and never across two repositories; a likely
+duplicate entry is proposed to a person, never folded. Every pass is on the
+feature's page with its cost. After three failed passes over the same
+decisions the feature waits for a new decision before it is tried again:
+the same input fails the same way, and each try is a model call.
 
 gate holds no Claude login, so the recorder and consolidation run on a
 provider the server calls itself (`ProviderModelProvider`,
 [providers](providers.md)): `memory.model` is a `provider:<name>/<model>`
 and nothing else, empty by default. On the live gate that is a Qwen3.8-27B
-on the gate's own vLLM. Until one is set, `recorderUnavailable()` says why,
-every drain leaves the ledger's rows `pending` rather than failing them, and
-the consolidate button answers 409 with the same reason. Saving a model
+on the gate's own vLLM. Until one is set, and while the provider it names
+does not exist or is switched off, `recorderUnavailable()` says why, every
+drain leaves the ledger's rows `pending` rather than failing them, and the
+consolidate button answers 409 with the same reason. Saving a model
 starts nothing by itself: the next run that ends, or **Record again** on a
 run, starts a drain, and each drain takes ten waiting runs.
 
@@ -312,9 +321,11 @@ stray `-` or `:` is not FTS syntax. The same search runs over
 "notifications": an embedding model on an OpenAI-compatible provider
 (Settings → Memory, `memory.embeddings`) gives every feature and decision
 a vector, and a search then fuses word and vector rankings by reciprocal
-rank fusion, own team first — over the ids the scope already allowed, so a
-vector never widens what a team may read; without a provider the words
-answer alone.
+rank fusion, own team first — over every id the scope and the search's
+other filters allow, uncapped, so a vector never widens what a team may
+read and never misses a sibling's decision behind the caller's own; without
+a provider the words answer alone. A capital `İ` is read as `i`, so
+"İptal" finds what "iptal" finds.
 
 **Step 3: search by path.** `gate memory search --path src/storage`:
 
@@ -329,8 +340,10 @@ ORDER BY team_id = 'desktop' DESC, valid_from DESC   -- own team first, then new
 ```
 
 (Really an index range over `memory_touches(ref, repo_id)`.) `--since 30d`,
-`--as-of <date>` and `--feature <id>` narrow by time recorded, time held,
-and feature.
+`--as-of <date>` and `--feature <id>` narrow by when a decision started
+holding, what held at that moment, and feature. A bare date is that day
+where the command runs: `--since 2026-05-01` from its start, `--as-of
+2026-05-01` at its end.
 
 A long word also asks for its first part as a prefix, which reaches a root
 through a suffix in any language ("bildirimleri" finds "bildirim"). Porter
@@ -462,7 +475,8 @@ a taught branch was two tasks, a catalogue entry was a mistake — is deleted
 from `/memory`, and the delete takes everything that pointed at it: the
 full-text row, the touched paths, the vector, the team's decision count,
 another decision's `supersedes` pointer, and the `valid_to` it had closed,
-so the decision it replaced holds again. Three units: one decision, one
+so the decision it replaced holds again — including one a consolidation
+pass closed by it without writing the pair down. Three units: one decision, one
 run's record (**Forget** on a run's page), and a feature with every team's
 page, its consolidation history and its decisions. The run is never
 touched; its ledger row is left saying `skipped — forgotten on request`,
@@ -505,6 +519,8 @@ no agent, run or CLI can forget anything.
 - Decisions recorded before verdicts existed have none, and read as unfinished rather than refused; recording the run again gives them one. Decisions recorded before ownership followed the repository keep the team that ran them.
 - The in-flight list is words counted, not understood: a task written as "fix it" overlaps with nothing, and two tasks that share a product's vocabulary can look closer than they are. The planner reads the line and judges it.
 - Retracting and forgetting differ: a retracted decision still answers "what held on date D"; a forgotten one is gone and its ledger row says so.
+- A feature's id is its design doc's file name, and ids are unique across the gate. A second tree whose repository has a design doc of a name another tree already owns opens no feature for it; the doc is still indexed and searchable. A feature lists only teams of its own tree as having built it.
+- An objection's `decision_id` is a link that can go stale: forgetting the decision leaves it pointing at nothing, and the objection is still found by its paths and feature.
 
 ## Decisions
 

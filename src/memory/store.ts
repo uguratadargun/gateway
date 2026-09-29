@@ -70,7 +70,9 @@ const STOPWORDS = new Set([
  */
 export function toMatchQuery(text: string): string | null {
   const terms = new Set<string>();
-  for (const raw of text.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []) {
+  // "İ".toLowerCase() is "i" plus a combining dot, which no letter class
+  // matches: "İptal" would split into "i" and "ptal" and find nothing.
+  for (const raw of text.replace(/İ/g, "i").toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []) {
     if (raw.length < 2 || STOPWORDS.has(raw)) continue;
     if (/^\d+$/.test(raw)) continue;
     terms.add(raw.length >= 4 ? `"${raw}"*` : `"${raw}"`);
@@ -168,8 +170,15 @@ export function upsertFeature(input: {
   return created;
 }
 
-/** Which teams have built a feature: a page of their own on it, or a design doc for it in their repository. */
-function teamsOfFeature(featureId: string): string[] {
+/**
+ * Which teams of the feature's own tree have built it: a page of their own on
+ * it, or a design doc for it in their repository. A design doc is matched by
+ * its file name and file names are chosen per tree, so another tree's
+ * `offline-sync.md` names the same slug without being the same feature — its
+ * team is not one of ours, and naming it would tell this tree about a team it
+ * cannot otherwise see.
+ */
+function teamsOfFeature(featureId: string, orgId: string): string[] {
   return (
     getDb()
       .prepare(
@@ -178,14 +187,16 @@ function teamsOfFeature(featureId: string): string[] {
          ORDER BY team_id`,
       )
       .all(featureId, featureId) as Array<{ team_id: string }>
-  ).map((r) => r.team_id);
+  )
+    .map((r) => r.team_id)
+    .filter((t) => teamRoot(t) === orgId);
 }
 
 export function listFeatures(scope: MemoryScope, limit = 500): FeatureHit[] {
   const rows = getDb()
     .prepare("SELECT * FROM memory_features WHERE org_id = ? ORDER BY updated_at DESC LIMIT ?")
     .all(scope.orgId, limit) as any[];
-  return rows.map((r) => ({ ...rowToFeature(r), score: 0, teams: teamsOfFeature(r.id) }));
+  return rows.map((r) => ({ ...rowToFeature(r), score: 0, teams: teamsOfFeature(r.id, r.org_id) }));
 }
 
 /** Catalogue entries matching free text, best first. */
@@ -202,7 +213,7 @@ export function searchFeatures(scope: MemoryScope, query: string, limit = 10): F
         LIMIT ?`,
     )
     .all(match, scope.orgId, limit) as any[];
-  return rows.map((r) => ({ ...rowToFeature(r), score: -Number(r.rank), teams: teamsOfFeature(r.id) }));
+  return rows.map((r) => ({ ...rowToFeature(r), score: -Number(r.rank), teams: teamsOfFeature(r.id, r.org_id) }));
 }
 
 function rowToImplementation(r: any): FeatureImplementation {
@@ -353,8 +364,46 @@ function supersedableBy(run: { teamId: string; repoId: string | null }, id: stri
 }
 
 /**
+ * Reopens what a decision closed, as it goes: the decision it named in
+ * `supersedes`, and any a consolidation pass closed at its start without
+ * naming — a pass records the pair only when the newer decision had no
+ * `supersedes` yet. `valid_to = valid_from` is how both closed them, and a
+ * decision some other one still points at, or that another decision of the
+ * team starting at that same moment could have closed, stays closed. Called
+ * with the decision already out of the table, or inside the caller's
+ * transaction just before it goes.
+ */
+export function reopenWhatItClosed(d: { id: string; teamId: string; featureId: string | null; validFrom: number; supersedes?: string | null }): void {
+  const db = getDb();
+  if (d.supersedes) {
+    db.prepare("UPDATE memory_decisions SET valid_to = NULL WHERE id = ? AND retracted_at IS NULL AND valid_to = ?").run(d.supersedes, d.validFrom);
+  }
+  if (d.featureId) {
+    db.prepare(
+      `UPDATE memory_decisions SET valid_to = NULL
+        WHERE team_id = ? AND feature_id = ? AND valid_to = ? AND retracted_at IS NULL AND id != ?
+          AND NOT EXISTS (SELECT 1 FROM memory_decisions x WHERE x.supersedes = memory_decisions.id AND x.id != ?)
+          AND NOT EXISTS (SELECT 1 FROM memory_decisions y
+                           WHERE y.team_id = memory_decisions.team_id AND y.valid_from = memory_decisions.valid_to AND y.id != ?)`,
+    ).run(d.teamId, d.featureId, d.validFrom, d.id, d.id, d.id);
+  }
+}
+
+const sameTitle = (t: string) => t.trim().toLowerCase();
+
+/**
  * Writes a run's decisions, replacing what an earlier extraction of the same
  * run wrote. One transaction: a run's record is whole or absent, never half.
+ *
+ * Replacing is not only deleting. An old decision may have closed another,
+ * and other rows may point at it: a later decision's `supersedes`, the
+ * `valid_to` that later decision gave it, an objection's `decision_id`. What
+ * it closed is reopened — the new record closes it again if it still says
+ * so. What points at it moves to the new decision with the same title, which
+ * is the same decision read again, and takes its closing with it; with no
+ * such decision the pointer goes, as it does when a decision is forgotten,
+ * and an objection keeps its snapshot and paths. An old decision that has
+ * such an heir keeps what it closed closed, and the heir names it.
  */
 export function replaceDecisions(
   run: {
@@ -378,12 +427,17 @@ export function replaceDecisions(
   const db = getDb();
   db.exec("BEGIN");
   try {
-    for (const old of decisionsForExecution(run.executionId)) {
+    const olds = decisionsForExecution(run.executionId);
+    for (const old of olds) {
       db.prepare("DELETE FROM memory_decisions_fts WHERE id = ?").run(old.id);
       db.prepare("DELETE FROM memory_touches WHERE decision_id = ?").run(old.id);
       db.prepare("DELETE FROM memory_decisions WHERE id = ?").run(old.id);
       deleteEmbedding("decision", old.id);
     }
+    // All of them gone first: decisions of one run share a start, and a
+    // sibling still in the table would read as another closer of the same row.
+    const titles = new Set(drafts.map((d) => sameTitle(d.title)));
+    for (const old of olds) if (!titles.has(sameTitle(old.title))) reopenWhatItClosed(old);
     const written: Decision[] = [];
     drafts.forEach((draft, n) => {
       // Readable — the run's prefix and the decision's place in it — and
@@ -440,6 +494,34 @@ export function replaceDecisions(
       }
       written.push(d);
     });
+    const heirs = new Map<string, Decision>();
+    for (const d of written) if (!heirs.has(sameTitle(d.title))) heirs.set(sameTitle(d.title), d);
+    for (const old of olds) {
+      const heir = heirs.get(sameTitle(old.title));
+      if (!heir) {
+        db.prepare("UPDATE memory_decisions SET supersedes = NULL WHERE supersedes = ?").run(old.id);
+        continue;
+      }
+      db.prepare("UPDATE memory_decisions SET supersedes = ? WHERE supersedes = ?").run(heir.id, old.id);
+      db.prepare("UPDATE decision_issues SET decision_id = ? WHERE decision_id = ?").run(heir.id, old.id);
+      // What the old decision closed stayed closed; the heir names it, so a
+      // later forget can still undo it.
+      let supersedes = heir.supersedes;
+      if (!supersedes && old.supersedes && getDecision(old.supersedes)) {
+        supersedes = old.supersedes;
+        db.prepare("UPDATE memory_decisions SET supersedes = ? WHERE id = ?").run(supersedes, heir.id);
+      }
+      if (supersedes !== heir.supersedes) written[written.indexOf(heir)] = { ...heir, supersedes };
+      if (old.validTo != null || old.retractedAt != null) {
+        db.prepare("UPDATE memory_decisions SET valid_to = COALESCE(valid_to, ?), retracted_at = COALESCE(retracted_at, ?) WHERE id = ?").run(
+          old.validTo,
+          old.retractedAt,
+          heir.id,
+        );
+        const i = written.findIndex((w) => w.id === heir.id);
+        written[i] = { ...written[i], validTo: heir.validTo ?? old.validTo, retractedAt: heir.retractedAt ?? old.retractedAt };
+      }
+    }
     db.exec("COMMIT");
     return written;
   } catch (e) {
@@ -524,17 +606,22 @@ export function renameTouch(repoId: string, from: string, to: string): number {
  * The decision record a decision was written from is superseded on the base
  * branch: the decision stops holding then. Only the repository's own record
  * can say so, and it is the repository owner's record, so this is not one
- * team closing another's decision behind its back.
+ * team closing another's decision behind its back. A decision that also
+ * touches one of `exceptTouching` — the record that did the superseding — is
+ * the new decision, not the old one, and stays open.
  */
-export function closeByRecord(repoId: string, recordPath: string, at: number): number {
+export function closeByRecord(repoId: string, recordPath: string, at: number, exceptTouching: string[] = []): number {
+  const except = exceptTouching.length
+    ? ` AND id NOT IN (SELECT decision_id FROM memory_touches WHERE repo_id = ? AND ref IN (${placeholders(exceptTouching.length)}))`
+    : "";
   return Number(
     getDb()
       .prepare(
         `UPDATE memory_decisions SET valid_to = ?
           WHERE valid_to IS NULL AND retracted_at IS NULL AND repo_id = ?
-            AND id IN (SELECT decision_id FROM memory_touches WHERE ref = ? AND repo_id = ?)`,
+            AND id IN (SELECT decision_id FROM memory_touches WHERE ref = ? AND repo_id = ?)${except}`,
       )
-      .run(at, repoId, recordPath, repoId).changes,
+      .run(at, repoId, recordPath, repoId, ...(exceptTouching.length ? [repoId, ...exceptTouching] : [])).changes,
   );
 }
 
@@ -554,6 +641,50 @@ export function retractDecision(id: string, at = Date.now()): boolean {
 export function searchDecisions(scope: MemoryScope, search: DecisionSearch): DecisionHit[] {
   if (!scope.teams.length) return [];
   const limit = Math.min(Math.max(search.limit ?? 20, 1), 200);
+  const { where, params } = decisionFilter(scope, search);
+
+  const match = search.query ? toMatchQuery(search.query) : null;
+  if (match) {
+    const rows = getDb()
+      .prepare(
+        `SELECT d.*, bm25(memory_decisions_fts, 0, 10, 2, 5, 3, 3, 1, 4) AS rank
+           FROM memory_decisions_fts fts
+           JOIN memory_decisions d ON d.id = fts.id
+          WHERE memory_decisions_fts MATCH ? AND ${where.join(" AND ")}
+          ORDER BY (d.team_id = ?) DESC, (d.repo_id IS NOT NULL AND d.repo_id = ?) DESC, rank
+          LIMIT ?`,
+      )
+      .all(match, ...params, scope.own, search.repoId ?? "", limit) as any[];
+    return rows.map((r) => ({ ...rowToDecision(r), score: -Number(r.rank) }));
+  }
+  const rows = getDb()
+    .prepare(
+      `SELECT d.* FROM memory_decisions d
+        WHERE ${where.join(" AND ")}
+        ORDER BY (d.team_id = ?) DESC, d.valid_from DESC
+        LIMIT ?`,
+    )
+    .all(...params, scope.own, limit) as any[];
+  return rows.map((r) => ({ ...rowToDecision(r), score: 0 }));
+}
+
+/**
+ * Every decision id the scope and the search's non-text filters allow, with
+ * no cap: the set a vector search may rank. Capped like a search, it would be
+ * the newest 200 with the caller's own team first, and a sibling's decision
+ * could never be found by meaning once the caller's team had 200 of its own —
+ * the case vectors exist for.
+ */
+export function decisionIdsInScope(scope: MemoryScope, search: DecisionSearch): string[] {
+  if (!scope.teams.length) return [];
+  const { where, params } = decisionFilter(scope, { ...search, query: undefined });
+  return (getDb().prepare(`SELECT d.id FROM memory_decisions d WHERE ${where.join(" AND ")}`).all(...params) as Array<{ id: string }>).map(
+    (r) => r.id,
+  );
+}
+
+/** The WHERE of a decision search: scope, retraction, repository, feature, time and paths — everything but the words. */
+function decisionFilter(scope: MemoryScope, search: DecisionSearch): { where: string[]; params: unknown[] } {
   const where: string[] = [`d.team_id IN (${placeholders(scope.teams.length)})`];
   const params: unknown[] = [...scope.teams];
   if (!search.includeRetracted) where.push("d.retracted_at IS NULL");
@@ -602,30 +733,7 @@ export function searchDecisions(scope: MemoryScope, search: DecisionSearch): Dec
       if (search.repoId) params.push(search.repoId);
     }
   }
-
-  const match = search.query ? toMatchQuery(search.query) : null;
-  if (match) {
-    const rows = getDb()
-      .prepare(
-        `SELECT d.*, bm25(memory_decisions_fts, 0, 10, 2, 5, 3, 3, 1, 4) AS rank
-           FROM memory_decisions_fts fts
-           JOIN memory_decisions d ON d.id = fts.id
-          WHERE memory_decisions_fts MATCH ? AND ${where.join(" AND ")}
-          ORDER BY (d.team_id = ?) DESC, (d.repo_id IS NOT NULL AND d.repo_id = ?) DESC, rank
-          LIMIT ?`,
-      )
-      .all(match, ...params, scope.own, search.repoId ?? "", limit) as any[];
-    return rows.map((r) => ({ ...rowToDecision(r), score: -Number(r.rank) }));
-  }
-  const rows = getDb()
-    .prepare(
-      `SELECT d.* FROM memory_decisions d
-        WHERE ${where.join(" AND ")}
-        ORDER BY (d.team_id = ?) DESC, d.valid_from DESC
-        LIMIT ?`,
-    )
-    .all(...params, scope.own, limit) as any[];
-  return rows.map((r) => ({ ...rowToDecision(r), score: 0 }));
+  return { where, params };
 }
 
 // ── Extractions ──────────────────────────────────────────────────────────────

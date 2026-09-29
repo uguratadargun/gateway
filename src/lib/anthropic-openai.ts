@@ -109,7 +109,12 @@ export function openAIToAnthropicResponse(resp: AnyObj, model: string): AnyObj {
   }
 
   const usage = asObj(resp.usage);
-  const cached = Number(asObj(usage.prompt_tokens_details).cached_tokens ?? 0);
+  const cachedRaw = Number(asObj(usage.prompt_tokens_details).cached_tokens ?? 0);
+  const cached = Number.isFinite(cachedRaw) && cachedRaw > 0 ? cachedRaw : 0;
+  // OpenAI's prompt_tokens counts the cached part too; Anthropic's
+  // input_tokens does not, and every reader adds cache reads back on top. So
+  // the cached part comes out here, or a cached prompt is counted twice.
+  const prompt = Number(usage.prompt_tokens ?? 0);
   return {
     id: typeof resp.id === "string" ? resp.id : `msg_${Date.now()}`,
     type: "message",
@@ -119,9 +124,9 @@ export function openAIToAnthropicResponse(resp: AnyObj, model: string): AnyObj {
     stop_reason: stopReason(choice.finish_reason),
     stop_sequence: null,
     usage: {
-      input_tokens: Number(usage.prompt_tokens ?? 0),
+      input_tokens: Math.max(0, prompt - cached),
       output_tokens: Number(usage.completion_tokens ?? 0),
-      cache_read_input_tokens: Number.isFinite(cached) ? cached : 0,
+      cache_read_input_tokens: cached,
       cache_creation_input_tokens: 0,
     },
   };

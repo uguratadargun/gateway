@@ -179,10 +179,18 @@ function draft(d: { title: string; touches: string[] }) {
 /** A run of android's that recorded one decision about this repository. */
 function recordRun(
   repo: RepoRecord,
-  o: { outcome: "pr-open" | "abandoned" | "merged" | "completed"; base?: string | null; head?: string | null; touches: string[]; verdict?: "rejected" },
+  o: {
+    outcome: "pr-open" | "abandoned" | "merged" | "completed";
+    base?: string | null;
+    head?: string | null;
+    touches: string[];
+    verdict?: "rejected";
+    /** When the run began; by default an hour ago, before anything a test commits. */
+    startedAt?: number;
+  },
 ): string {
   const executionId = `ri-run-${++n}`;
-  createExecution(executionId, "dev", { task: "sync" }, Date.now(), null, { teamId: "ri-android", repoId: repo.repoId });
+  createExecution(executionId, "dev", { task: "sync" }, o.startedAt ?? Date.now() - 3_600_000, null, { teamId: "ri-android", repoId: repo.repoId });
   const [d] = replaceDecisions(
     {
       executionId,
@@ -399,6 +407,40 @@ describe("the record index", () => {
     const detail = await new LocalMemoryAccess("ri-desktop").feature("offline-sync");
     expect(detail?.documents?.some((d) => d.repo === repo.id)).toBe(true);
     expect(detail?.feature.teams).toContain("ri-android");
+  });
+
+  it("does not take an existing record the run only edited for a squash merge of the run", async () => {
+    // makeRepo's first commit already holds 0001.
+    const { repo } = makeRepo();
+    // A run that began after 0001 was on the base branch, still open, which
+    // superseded 0001 and so edited its Status line: 0001 is among its
+    // touches, and 0001 being there says nothing about this run.
+    const open = recordRun(repo, {
+      outcome: "pr-open",
+      base: "1".repeat(40),
+      head: "2".repeat(40),
+      touches: ["docs/decisions/0001-server-version-wins.md", "src/new-endpoint.ts"],
+      startedAt: Date.now() + 2_000,
+    });
+    await indexRepo(repo);
+    expect(getDecision(open)!.outcome).toBe("pr-open");
+  });
+
+  it("closes the decision written from a superseded record, and not the one that superseded it", async () => {
+    const { work, repo } = makeRepo();
+    write(work, "docs/decisions/0001-server-version-wins.md", decisionRecord("0001", "Server version wins a conflict", "superseded by 0002"));
+    write(work, "docs/decisions/0002-client-version-wins.md", decisionRecord("0002", "Client version wins a conflict"));
+    commit(work, "0002 supersedes 0001");
+    push(work);
+    const old = recordRun(repo, { outcome: "merged", touches: ["docs/decisions/0001-server-version-wins.md"] });
+    // The run that wrote 0002 edited 0001's Status line, so it touches both.
+    const superseding = recordRun(repo, {
+      outcome: "merged",
+      touches: ["docs/decisions/0002-client-version-wins.md", "docs/decisions/0001-server-version-wins.md"],
+    });
+    await indexRepo(repo);
+    expect(getDecision(old)!.validTo).not.toBeNull();
+    expect(getDecision(superseding)!.validTo).toBeNull();
   });
 
   it("reads a repository's writing from before the convention, as notes a sibling finds", async () => {

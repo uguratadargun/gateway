@@ -242,3 +242,22 @@ describe("the boundary a forget may not cross", () => {
     expect(getDecision(decision.id)).toBeNull();
   });
 });
+
+describe("forgetting the decision a consolidation closed another by", () => {
+  it("reopens it even when the pair was never written down", () => {
+    tree();
+    const feature = upsertFeature({ orgId: "forgetco", name: "Consolidated retries" });
+    const base = { teamId: "forget-android", userId: null, featureId: feature.id, repoId: null, baseCommit: null, headCommit: null, outcome: "shipped" as const };
+    const [older] = replaceDecisions({ ...base, executionId: aRun("forget-cons-1"), validFrom: 100 }, [draft("Retry twice")]);
+    const [other] = replaceDecisions({ ...base, executionId: aRun("forget-cons-0"), validFrom: 50 }, [draft("Retry on a timer")]);
+    const [newer] = replaceDecisions({ ...base, executionId: aRun("forget-cons-2"), validFrom: 200 }, [{ ...draft("Retry five times"), supersedes: other.id }]);
+    // A consolidation pass closed `older` by `newer` too; `newer` already
+    // named `other`, so that pair has no pointer.
+    getDb().prepare("UPDATE memory_decisions SET valid_to = ? WHERE id = ?").run(200, older.id);
+    expect(getDecision(other.id)!.validTo).toBe(200);
+
+    forgetDecision(newer.id);
+    expect(getDecision(other.id)!.validTo).toBeNull();
+    expect(getDecision(older.id)!.validTo).toBeNull();
+  });
+});

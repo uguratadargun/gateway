@@ -428,6 +428,23 @@ function commitsOfDecision(executionId: string, head: string | null, base: strin
   return [head, row?.published_commit ?? null].filter((c): c is string => !!c && SHA.test(c) && c !== base);
 }
 
+/** When a run began, which bounds what it can have written. */
+function runStartedAt(executionId: string): number | null {
+  const row = getDb().prepare("SELECT started_at FROM workflow_executions WHERE id = ?").get(executionId) as { started_at: number | null } | undefined;
+  return row?.started_at == null ? null : Number(row.started_at);
+}
+
+/** When a path first appeared on the base branch, by the commit that added it; null when git cannot say. */
+async function addedAt(root: string, commit: string, path: string): Promise<number | null> {
+  try {
+    const lines = (await git(root, ["log", commit, "--diff-filter=A", "--format=%ct", "--", path])).split("\n").filter(Boolean);
+    const first = lines[lines.length - 1];
+    return first ? Number(first) * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 async function reconcile(repo: RepoRecord, commit: string, committedAt: number): Promise<{ merged: number; renamed: number; stale: number }> {
   if (!repo.repoId) return { merged: 0, renamed: 0, stale: 0 };
   const db = getDb();
@@ -452,12 +469,19 @@ async function reconcile(repo: RepoRecord, commit: string, committedAt: number):
   }
 
   // Records superseded on the base branch close the decisions written from them.
+  // Not the decision that superseded it: the run that wrote record M also
+  // edited record N's Status line to say "superseded by M", so its decision
+  // touches N too — and it is the one decision that must stay open.
   for (const d of decisionDocs) {
-    if (d.status && /^superseded/i.test(d.status)) closeByRecord(repo.repoId, d.path, committedAt);
+    if (!d.status || !/^superseded/i.test(d.status)) continue;
+    const by = d.status.match(/superseded by\s+(\d+)/i);
+    const byPaths = by ? decisionDocs.filter((x) => recordKindOf(x.path)?.number === Number(by[1])).map((x) => x.path) : [];
+    closeByRecord(repo.repoId, d.path, committedAt, byPaths);
   }
 
   // Work that landed.
   const merged: string[] = [];
+  const addedOnBase = new Map<string, number | null>();
   for (const d of decisionsAwaitingMerge(repo.repoId)) {
     let landed = false;
     for (const c of commitsOfDecision(d.executionId, d.headCommit, d.baseCommit)) {
@@ -467,12 +491,22 @@ async function reconcile(repo: RepoRecord, commit: string, committedAt: number):
       }
     }
     // A squash merge leaves no commit of the branch in the base's history,
-    // but it does leave the decision record the run wrote.
+    // but it does leave the decision record the run wrote. Wrote, not touched:
+    // a run that supersedes record 0001 edits 0001's Status line, and 0001
+    // being on the base branch says nothing about whether this run landed.
+    // A record the run wrote reached the base branch after the run began.
     if (!landed) {
-      landed = d.touches.some((t) => {
+      const startedAt = runStartedAt(d.executionId);
+      for (const t of d.touches) {
         const kind = t.kind === "file" ? recordKindOf(t.ref) : null;
-        return kind?.kind === "decision" && (bySlug.get(kind.slug)?.length ?? 0) > 0;
-      });
+        if (kind?.kind !== "decision" || startedAt == null) continue;
+        for (const path of bySlug.get(kind.slug) ?? []) {
+          if (!addedOnBase.has(path)) addedOnBase.set(path, await addedAt(repo.root, commit, path));
+          const at = addedOnBase.get(path);
+          if (at != null && at >= startedAt) landed = true;
+        }
+        if (landed) break;
+      }
     }
     if (landed) merged.push(d.id);
   }
@@ -538,9 +572,12 @@ export async function indexRepo(repo: RepoRecord, opts: { now?: number } = {}): 
       // repository's whole history is `/gate:teach`, done on purpose.
       if (mergesSeen) {
         const { recordMergesSince } = await import("./merges");
-        mergesRecorded = await recordMergesSince(repo, mergesSeen, base.commit);
+        const pass = await recordMergesSince(repo, mergesSeen, base.commit);
+        mergesRecorded = pass.recorded;
+        mergesSeen = pass.seen;
+      } else {
+        mergesSeen = base.commit;
       }
-      mergesSeen = base.commit;
     }
     writeRepoState(repo, { ref: base.ref, commit: base.commit, committedAt, error: null, mergesSeen }, now);
     return { repo: repo.id, ok: true, commit: base.commit, ref: base.ref, read, removed, merged, renamed, stale, mergesRecorded };

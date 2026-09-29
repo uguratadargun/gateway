@@ -93,3 +93,41 @@ describe("the consolidation pass", () => {
     expect(parseConsolidatorAnswer('```json\n{"summary":"s"}\n```')).toMatchObject({ summary: "s", superseded: [] });
   });
 });
+
+describe("what a consolidation pass may close, and how often it tries", () => {
+  function team() {
+    if (!getTeam("co2-org")) createTeam("Consolidate two", "co2-org");
+  }
+
+  it("never closes a decision of the team's other repository", async () => {
+    team();
+    const f = upsertFeature({ orgId: "co2-org", name: "Retries across repos" });
+    const base = { teamId: "co2-org", userId: null, featureId: f.id, baseCommit: null, headCommit: null, outcome: "merged" as const };
+    const [server] = replaceDecisions({ ...base, executionId: "co2-server", repoId: "github.com/x/server", validFrom: 100 }, [{ context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", title: "Server: retries 3", touches: [] }]);
+    const [app] = replaceDecisions({ ...base, executionId: "co2-app", repoId: "github.com/x/app", validFrom: 200 }, [{ context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", title: "App: retries 5", touches: [] }]);
+    upsertImplementation({ featureId: f.id, teamId: "co2-org", summary: "" });
+    const provider = new FakeModelProvider(() => JSON.stringify({ summary: "s", pitfalls: "", superseded: [{ id: server.id, by: app.id, reason: "later" }], duplicateOf: null }));
+    expect(await consolidateImplementation(memoryScopeFor("co2-org"), f.id, "co2-org", provider)).toMatchObject({ status: "done", superseded: 0 });
+    expect(getDecision(server.id)!.validTo).toBeNull();
+  });
+
+  it("stops trying the same decisions after three failed passes, and tries again when a new one lands", async () => {
+    team();
+    const f = upsertFeature({ orgId: "co2-org", name: "Always failing page" });
+    const base = { teamId: "co2-org", userId: null, featureId: f.id, repoId: null, baseCommit: null, headCommit: null, outcome: "merged" as const };
+    replaceDecisions({ ...base, executionId: "co2-fail-1", validFrom: 1 }, [{ context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", title: "one", touches: [] }, { context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", title: "two", touches: [] }]);
+    upsertImplementation({ featureId: f.id, teamId: "co2-org", summary: "" });
+    const due = () => dueConsolidations(1, 100).some((x) => x.featureId === f.id);
+    const provider = new FakeModelProvider(() => "not json");
+    for (let i = 0; i < 3; i++) {
+      expect(due()).toBe(true);
+      expect(await consolidateImplementation(memoryScopeFor("co2-org"), f.id, "co2-org", provider)).toMatchObject({ status: "failed" });
+    }
+    expect(due()).toBe(false);
+    // The failures are on the ledger, where a person reads them.
+    expect(consolidationsOf(f.id).filter((c) => c.status === "failed")).toHaveLength(3);
+    replaceDecisions({ ...base, executionId: "co2-fail-2", validFrom: 2 }, [{ context: "", decision: "", rationale: "", alternatives: "", how: "", consequences: "", title: "three", touches: [] }]);
+    upsertImplementation({ featureId: f.id, teamId: "co2-org", summary: "" });
+    expect(due()).toBe(true);
+  });
+});

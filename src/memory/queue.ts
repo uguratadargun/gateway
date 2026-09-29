@@ -1,5 +1,5 @@
 import { loadSettings } from "@/lib/settings";
-import { parseProviderRef } from "@/lib/providers";
+import { getProviderByName, parseProviderRef } from "@/lib/providers";
 import { ProviderModelProvider } from "@/providers/direct-provider";
 import type { ModelProvider } from "@/providers/types";
 
@@ -32,12 +32,23 @@ export function setExtractionProvider(factory: (() => ModelProvider) | null): vo
 /**
  * Why the recorder cannot run right now, or null when it can. The server holds
  * no Claude account, so it records on a provider model; until Settings names
- * one, finished runs wait in the ledger rather than failing there.
+ * one that exists and is switched on, finished runs wait in the ledger rather
+ * than failing there. A name that points at nothing is the same as no name:
+ * every run tried on it would fail for good, and a failed row stays failed
+ * until somebody asks for it again.
  */
 export function recorderUnavailable(settings = loadSettings()): string | null {
   if (!settings.memory.enabled) return "memory is switched off in Settings";
-  if (!parseProviderRef(settings.memory.model)) {
+  const ref = parseProviderRef(settings.memory.model);
+  if (!ref) {
     return "the recorder has no model: set a provider model (provider:<name>/<model>) under Settings → Memory — finished runs wait until then";
+  }
+  const provider = getProviderByName(ref.provider);
+  if (!provider) {
+    return `the recorder's provider "${ref.provider}" is not configured: add it under Providers — finished runs wait until then`;
+  }
+  if (!provider.enabled) {
+    return `the recorder's provider "${ref.provider}" is switched off under Providers — finished runs wait until it is on`;
   }
   return null;
 }

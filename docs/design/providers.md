@@ -61,6 +61,10 @@ message, text blocks cross over, images become data URLs, and thinking
 blocks — whose signatures only Anthropic can verify — are dropped. The
 answer's text is rebuilt into an Anthropic message with its usage, and its
 finish reason becomes `max_tokens` for `length` and `end_turn` otherwise.
+OpenAI's `prompt_tokens` counts the cached part of the prompt and
+Anthropic's `input_tokens` does not, so the cached tokens are taken out of
+`input_tokens` and reported as cache reads, and a cached prompt is not
+counted twice.
 
 An `anthropic-compat` provider skips all of that. The body is forwarded with
 the model id swapped, the provider's key attached and `ANTHROPIC_VERSION`

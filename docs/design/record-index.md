@@ -55,11 +55,11 @@ After the documents, the index reconciles the decisions recorded from runs in th
 
 - **Work that landed.** A decision that was not refused, not retracted, and is `pr-open`, `completed`, `unshipped` or `abandoned` becomes `merged` when one of these holds:
   - its run's head commit, or the commit its run published, is in the base branch's history, and differs from the run's base commit (a run that changed nothing has its base as its head);
-  - the decision record the run wrote is on the base branch, which catches a squash merge.
+  - a decision record the run wrote is on the base branch, which catches a squash merge. Wrote, not touched: the record counts only when the commit that added it to the base branch is from after the run began. A run that supersedes record 0001 edits 0001's Status line and so touches it, and 0001 being there says nothing about that run.
 
   What the run reported when it ended does not matter: a failed run merged by hand is `merged`.
 - **Records that moved.** A decision touch under `docs/decisions/` that is not on the base branch follows the record's slug to its path there, when exactly one record has that slug. The decision's touch, its JSON and its full-text row all move, so a path search for the record's real name finds it.
-- **Records superseded on the branch.** A decision record whose Status says `superseded` closes the decisions written from it (`valid_to`).
+- **Records superseded on the branch.** A decision record whose Status says `superseded by N` closes the decisions written from it (`valid_to`). A decision that also touches record N is the one that did the superseding, and stays open.
 - **Code that is gone.** A decision whose work landed (`merged`, `shipped`, `deployed`) has its file touches checked against the branch's tree. A directory counts as present when any file is under it. The decision keeps the commit it was checked at and how many of its files were missing. One whose every file is gone is shown as describing code that no longer exists.
 
 ### History
@@ -75,7 +75,7 @@ One pass runs at a time per process. After a pass, anything without a vector get
 
 ### Merges without gate
 
-With `memory.recordMerges` on, the same pass turns each first-parent commit that reached the base branch since the last pass into a finished run of `gate:merge` for the recorder. Gate's own work is skipped. See [memory](memory.md).
+With `memory.recordMerges` on, the same pass turns each first-parent commit that reached the base branch since the last pass into a finished run of `gate:merge` for the recorder, the oldest first and at most twenty a pass. The watermark moves only past the commits looked at, so the rest of a larger burst are the next pass's. Gate's own work is skipped. See [memory](memory.md).
 
 ## Key files
 
@@ -92,7 +92,7 @@ With `memory.recordMerges` on, the same pass turns each first-parent commit that
 
 - A repository needs a checkout on the server to be read. A team whose repository is only on laptops is invisible to the index until the repository is connected on the Repos page.
 - The index reads the base branch only. An open branch's documents are not in it. That is what the in-flight list and `ask` at a published branch are for.
-- The squash-merge rule trusts a decision record's slug: a different record with the same slug on the base branch would promote a decision that never landed.
+- The squash-merge rule trusts a decision record's slug and the date of the commit that added it: a different record with the same slug, added after the run began, would promote a decision that never landed. A committer clock far behind the gate's can hide a squash merge the other way.
 - A repository with no team is readable by every team on the gate, the same rule `ask` keeps. Give it a team on the Repos page to scope it.
 - The fetch is `git fetch` against the repository's publication remote, or `origin`. A checkout whose credentials have lapsed keeps answering from the last commit it fetched, and says so on the Memory page.
 - A note can be out of date: nothing reconciles it against the code. Move it into the convention when its feature is next changed.
