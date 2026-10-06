@@ -153,6 +153,26 @@ describe("what the shipped agents declare", () => {
     expect(DEFAULT_AGENTS["quick-implementer"]).toContain("docs/specs/");
     expect(DEFAULT_AGENTS["quick-implementer"]).not.toContain("docs/decisions/");
     expect(DEFAULT_AGENTS["quick-reviewer"]).toContain("docs/design/");
+    // Every agent that writes the record reads the same six rules for how,
+    // word for word; the reviewers rule on none of them but the one that
+    // breaks search, one thing under two names.
+    const flat = (source: string) => source.replace(/\s+/g, " ");
+    const rules = flat(DEFAULT_AGENTS.implementer).match(/\*\*How to write the record\.\*\*.*?"eventually"\./)?.[0];
+    expect(rules).toBeDefined();
+    for (const phrase of ["One fact per sentence", "about 25 words", "Active voice, present tense, the actor named",
+      "One name per thing", "docs/GLOSSARY.md", "No idioms or metaphors", "Code names exactly as written, in backticks",
+      "never \"a few\" or \"eventually\""]) {
+      expect(rules).toContain(phrase);
+    }
+    for (const id of ["quick-implementer", "record-fix"]) expect(flat(DEFAULT_AGENTS[id])).toContain(rules);
+    for (const id of ["planner", "verifier", "reviewer", "quick-reviewer"]) {
+      expect(DEFAULT_AGENTS[id]).not.toContain("How to write the record");
+    }
+    for (const id of ["reviewer", "quick-reviewer"]) {
+      expect(flat(DEFAULT_AGENTS[id])).toContain("How a document is written is never a finding");
+      expect(flat(DEFAULT_AGENTS[id])).toContain("lists under *Not:*");
+    }
+    expect(flat(DEFAULT_AGENTS.reviewer)).toContain("one thing under two names, or a name `docs/GLOSSARY.md` lists under *Not:*, is a Record finding");
     // The spec check is a command node, and the implementers read what it
     // printed when it sends them back.
     for (const id of ["implementer", "quick-implementer"]) {
