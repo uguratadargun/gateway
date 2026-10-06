@@ -4,7 +4,7 @@ Decisions: docs/decisions/0027-a-record-only-rejection-does-not-cost-a-pipeline.
 docs/decisions/0028-a-subagent-is-addressed-by-its-agent-id.md,
 docs/decisions/0029-dev-auto-is-a-literal-kept-in-step-by-a-test.md
 Design: docs/design/dev-workflow.md (the record round, the three give-up
-forms, `dev-auto`, the subagent address), docs/design/agents-and-skills.md
+forms, `dev-auto`, the subagent address), docs/design/agents.md (agents-and-skills.md until docs/decisions/0063-agents-follow-no-skills.md)
 (the three notices and the two sites that issue them)
 
 # What made a 3h31m run end failed with three sentences left

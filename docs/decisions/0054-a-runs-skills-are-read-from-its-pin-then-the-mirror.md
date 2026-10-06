@@ -1,6 +1,6 @@
 # 0054. A run's skills are read from its pin, then from the team's mirror
 
-Status: accepted
+Status: superseded by 0063
 Date: 2026-09-29
 Run: manual
 

@@ -1,7 +1,7 @@
 # gate
 
 Your team's development pipeline, run from Claude Code. A team keeps its
-agents, workflows and skills on one gate; each person runs those pipelines
+agents and workflows on one gate; each person runs those pipelines
 against their own repositories from their own Claude Code session, on their
 own Claude login; and gate records what each run decided so the next run, in
 any team of the tree, reads it before planning. Dashboard built with Next.js +
@@ -94,7 +94,7 @@ The features, by design doc:
 
 | The server | The team layer |
 | --- | --- |
-| [Teams and keys](docs/design/teams-and-keys.md) — a key is a person on a team | [Agents and skills](docs/design/agents-and-skills.md) — the two file formats a team writes |
+| [Teams and keys](docs/design/teams-and-keys.md) — a key is a person on a team | [Agents](docs/design/agents.md) — the file a team writes for each role |
 | [Providers](docs/design/providers.md) — the model the recorder runs on | [Workflows and the engine](docs/design/workflows-engine.md) — the YAML graph, and the walk that follows it |
 | [Repositories](docs/design/repositories.md) — one name every clone agrees on | [Workspaces](docs/design/workspaces.md) — a run's own worktree |
 | [The dashboard](docs/design/dashboard.md) | [Executions](docs/design/executions.md) — every run recorded, as the path it took |

@@ -202,7 +202,7 @@ and `next` (one unconditional edge) or `edges` (up to 20: `to`, optional
 - `src/workflows/registry.ts` — the file store per scope, validated against that scope's agents
 - `src/workflows/serialize.ts`, `graph-view.ts`, `routing.ts` — graph → canonical YAML for **Save graph**; what the canvas draws, which links loop back, what a transition was
 - `src/workflows/inputs.ts`, `src/workflows/snapshot.ts`, `src/workflows/usage.ts` — required and optional run inputs, the definitions a run is frozen to, which workflows name each agent
-- `src/workflows/defaults.ts` — the shipped `dev`, `dev-super`, `dev-quick` and `dev-auto` pipelines
+- `src/workflows/defaults.ts` — the shipped `dev`, `dev-quick` and `dev-auto` pipelines
 - `src/client/walk.ts` — `nextInSession`: the run's position, replayed from its steps; parallel branches one after another
 - `src/client/step.ts` — `begin` / `next` / `step` / `continue`: command and control nodes run on the way, agent nodes handed to the session
 - `src/runtime/executors/condition.ts` — `selectEdge`, the one place the next node is chosen; `command.ts` beside it runs a command node's argv, `agent.ts` renders an agent node's prompt and checks its answer

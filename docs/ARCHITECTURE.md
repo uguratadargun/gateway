@@ -1,7 +1,7 @@
 # gate — the map
 
 gate is a team's development pipeline, run from Claude Code. A team keeps its
-agents, workflows and skills on the gate; each person runs those pipelines
+agents and workflows on the gate; each person runs those pipelines
 against their own repositories from their own Claude Code session, on their
 own Claude login; and the gate records what each run decided so the next run
 reads it before planning — across every team of the tree it belongs to.
@@ -46,9 +46,8 @@ its own. → `decisions/0046-every-person-runs-on-their-own-claude-login.md`
 - **Teams and people.** A key is an identity: it names a person and a team,
   and a team's definitions live in a directory of their own.
   → `design/teams-and-keys.md`
-- **Agents and skills.** An agent is a Markdown file with YAML frontmatter
-  and a prompt; a skill is a `SKILL.md` directory, pulled from a library or
-  written by hand. → `design/agents-and-skills.md`
+- **Agents.** An agent is a Markdown file with YAML frontmatter and a
+  prompt that carries its whole method. → `design/agents.md`
 - **Workflows.** A workflow is a YAML graph of nodes and edges; the walk
   (`nextInSession`) replays a run's recorded steps to find the next node.
   → `design/workflows-engine.md`
@@ -117,20 +116,17 @@ the record is checked by code inside `npm test`; its truth by the reviewer.
 
 Runs, API keys, teams and people, providers, repositories, asks and memory live
 in SQLite (`~/.gate/gate.db`, WAL) through Node's built-in `node:sqlite`; no
-native build. Definitions do not: `~/.gate/teams/<team>/agents/*.md`,
-`.../workflows/*.yaml` and `.../skills/<id>/SKILL.md` stay hand-editable,
-diffable files, and a client mirrors its own team's copy under
-`~/.gate/cache/<team>/`. Skill libraries are rows in the database, their
-clones ordinary checkouts under `~/.gate/skill-sources/`. `settings.json`
+native build. Definitions do not: `~/.gate/teams/<team>/agents/*.md` and
+`.../workflows/*.yaml` stay hand-editable, diffable files, and a client
+mirrors its own team's copy under `~/.gate/cache/<team>/`. `settings.json`
 stays a file. Migrations are idempotent on open; a database from before drops
-what only the gateway used on its first open.
+what only the gateway and the skill libraries used on its first open.
 
 ## Files
 
 - `src/lib/providers.ts` / `provider-exec.ts` / `anthropic-openai.ts` — the endpoints the server calls itself, in both dialects · `src/providers/direct-provider.ts` — the recorder's way to one
 - `src/lib/seal.ts` — AES-256-GCM sealing
 - `src/agents/` — agent file format: parse, validate, render, and the tool vocabulary · `src/workflows/` — workflow YAML + condition language
-- `src/skills/` — the skill library: the `SKILL.md` directory format, the team-scoped registry, git-backed sources with import provenance (`sources.ts`), and the notices a subagent carries (`inject.ts`)
 - `src/runtime/` — preparing an agent node and checking its answer, command nodes, edge selection, run state, and per-run worktrees (`workspace.ts`)
 - `src/executions/` — run history (SQLite) · `src/events/` — the live execution event bus
 - `src/memory/` — what a run decided: the recorder, the store, recall, consolidation, teaching, forgetting, and cross-team objections
@@ -138,7 +134,7 @@ what only the gateway used on its first open.
 - `src/repos/` — a repository's identity, setup and publishing
 - `src/lib/teams.ts` / `apikeys.ts` / `tenancy.ts` / `def-root.ts` — people, teams, keys-as-identities, and which directory a team's definitions live in
 - `src/app/api/v1/` — the client API: identity, the definition bundle, run registration, progress and stop, memory, teach, and ask
-- `src/client/` — the CLI a developer's session drives a run with: the mirror, the walk (`walk.ts`), the instructions (`step.ts`), the subagent files, and the settings clean-up · `scripts/build-cli.mjs` bundles it into the plugin
+- `src/client/` — the CLI a developer's session drives a run with: the mirror, the walk (`walk.ts`), the instructions (`step.ts`), the subagent files and the notices they carry (`notices.ts`), and the settings clean-up · `scripts/build-cli.mjs` bundles it into the plugin
 - `plugins/gate/` — the Claude Code plugin: `/gate:init`, `/gate:run`, `/gate:design`, `/gate:teach`, `/gate:ask`, the authoring and documentation references, the SessionStart hook, and the bundled `gate` CLI behind them · `.claude-plugin/marketplace.json` — this repo as a marketplace
 - `docs/` — this map, `design/`, `decisions/`, `specs/`; `plans/` is the pipeline's gitignored working directory
 - `scripts/check-docs.mjs` — the record's form, checked; `tests/docs-record.test.ts` runs it in the suite

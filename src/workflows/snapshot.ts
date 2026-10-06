@@ -28,10 +28,6 @@ import type { WorkflowDefinition, WorkflowNode } from "./types";
  * token can send whatever it likes under a node's name; the snapshot only
  * fixes *what that name meant*. The narrow powers of the objection protocol
  * are what make that acceptable, and they do not depend on this.
- *
- * Skills are deliberately left out of the hash. A skill changes how well an
- * agent does its work, never what its output means or what it may read, and
- * including them would mismatch a run over a typo fixed in unrelated prose.
  */
 
 export const DEFINITION_SNAPSHOT_VERSION = 1;

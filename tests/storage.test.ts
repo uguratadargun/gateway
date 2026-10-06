@@ -1,7 +1,10 @@
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { createKey, deleteKey, listKeys, resolveKey, revokeKey } from "@/lib/apikeys";
-import { forgetTheGateway, getDb } from "@/lib/db";
+import { forgetSkillSources, forgetTheGateway, getDb } from "@/lib/db";
 import { apiEquivalentCost, tierOf } from "@/lib/pricing";
 import { loadSettings, saveSettings } from "@/lib/settings";
 
@@ -65,6 +68,23 @@ describe("what gate kept while it served models", () => {
     expect(kvGet("memory.index.last")).toBe("keep");
     // Twice is the same as once.
     forgetTheGateway(d);
+  });
+});
+
+describe("what gate kept while agents followed skills", () => {
+  it("drops the skill libraries and gate's clones of them on open", () => {
+    const d = getDb();
+    d.exec("CREATE TABLE IF NOT EXISTS skill_sources (id TEXT PRIMARY KEY)");
+    const clones = join(process.env.GATE_HOME!, "skill-sources", "superpowers");
+    mkdirSync(clones, { recursive: true });
+
+    forgetSkillSources(d);
+
+    const tables = (d.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((r) => r.name);
+    expect(tables).not.toContain("skill_sources");
+    expect(existsSync(join(process.env.GATE_HOME!, "skill-sources"))).toBe(false);
+    // Twice is the same as once.
+    forgetSkillSources(d);
   });
 });
 

@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { syncSubagents } from "@/client/subagents";
-import { backgroundSubagentNotice, fileReadingNotice, unattendedNotice } from "@/skills/inject";
+import { backgroundSubagentNotice, fileReadingNotice, unattendedNotice } from "@/client/notices";
 
 /**
  * The notices are issued in exactly two places, and both get all of them.
  *
- * Until now that was a doc-comment in `src/skills/inject.ts` and nothing else,
+ * Until now that was a doc-comment in `src/client/notices.ts` and nothing else,
  * so the way it broke was always the same: a notice added where it was needed
  * — the executor, because that is the site somebody was looking at — and not
  * at the other, which leaves a subagent of the person's own session without

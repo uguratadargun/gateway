@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bot, BookOpen, FolderGit2, GitBranch, History, LayoutDashboard, ListChecks, LogOut, MessageSquareWarning, Sparkles, Users } from "lucide-react";
+import { Bot, BookOpen, FolderGit2, GitBranch, History, LayoutDashboard, ListChecks, LogOut, MessageSquareWarning, Users } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/skills", label: "Skills", icon: Sparkles },
   { href: "/repos", label: "Repos", icon: FolderGit2 },
   { href: "/workflows", label: "Workflows", icon: GitBranch },
   { href: "/executions", label: "Executions", icon: History },

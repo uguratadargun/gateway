@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -105,27 +105,6 @@ CREATE TABLE IF NOT EXISTS asks (
   question TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS skill_sources (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  -- The git URL skills are pulled from; the clone below is gate's own.
-  url TEXT NOT NULL,
-  -- Branch or tag to track; NULL follows whatever the remote's default is.
-  ref TEXT,
-  -- Where skill directories live inside that repository.
-  subdir TEXT NOT NULL DEFAULT 'skills',
-  -- Prepended to a skill's id on import, so two libraries can both ship
-  -- "brainstorming" without one silently replacing the other.
-  prefix TEXT NOT NULL DEFAULT '',
-  root TEXT NOT NULL,
-  -- The commit the clone is on, which is what an imported skill is stamped with.
-  head_sha TEXT,
-  status TEXT NOT NULL DEFAULT 'new',
-  last_sync_at INTEGER,
-  last_sync_log TEXT,
-  created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS providers (
@@ -565,10 +544,6 @@ const COLUMN_MIGRATIONS: Array<[table: string, column: string, ddl: string]> = [
   // older runs carry.
   ["workflow_execution_steps", "cost_usd", "cost_usd REAL"],
   ["workflow_execution_steps", "usage_source", "usage_source TEXT"],
-  // A library held at one commit: sync fetches, but checks this out rather
-  // than the remote's head, so the prompts written against a skill's text
-  // keep meeting that text until somebody moves the pin.
-  ["skill_sources", "pinned_sha", "pinned_sha TEXT"],
   // Teams nest: android and desktop under ulak. The tree is the boundary of
   // what a team's runs may read from memory — a sibling's feature record is
   // visible, another company's is not. NULL is a root.
@@ -685,6 +660,7 @@ export function getDb(): SqlDatabase {
   );
   ensureFtsTokenizer(d);
   forgetTheGateway(d);
+  forgetSkillSources(d);
   db = d;
   importLegacyFiles(d);
   return d;
@@ -710,6 +686,17 @@ export function forgetTheGateway(d: SqlDatabase): void {
     d.exec(`DROP TABLE IF EXISTS ${t}`);
   }
   d.exec("DELETE FROM kv WHERE key = 'ratelimit' OR key LIKE 'telegram.%' OR key LIKE 'sessions_retitled_%'");
+}
+
+/**
+ * What gate kept while agents could be bound to skills: the registered skill
+ * libraries and gate's own clones of them under `skill-sources/`. Nothing
+ * reads either now. A team's imported copies under `teams/<team>/skills/` are
+ * the team's files and stay where they are. Idempotent.
+ */
+export function forgetSkillSources(d: SqlDatabase): void {
+  d.exec("DROP TABLE IF EXISTS skill_sources");
+  rmSync(join(GATE_DIR, "skill-sources"), { recursive: true, force: true });
 }
 
 /** One-time import of the pre-SQLite JSON/JSONL files, then rename them. */

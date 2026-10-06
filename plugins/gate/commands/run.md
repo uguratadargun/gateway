@@ -87,12 +87,12 @@ the long road with that report as its brief. A task that both describes a breaka
 for it to be fixed goes down the long road directly; the planner reads memory first anyway.
 
 **The long road is the team's own pipeline for this repository, when it has one**: a workflow
-in the list above that is not one of the shipped five (`dev`, `dev-super`, `dev-quick`, `dev-auto`,
-`blame`), takes a `task`, and works in a git worktree — `/gate:design` builds those around this
+in the list above that is not one of the shipped five (`dev`, `dev-quick`, `dev-auto`, `blame`,
+`ask`), takes a `task`, and works in a git worktree — `/gate:design` builds those around this
 project's own codegen, test command and merge-request host, and that is what a real change here
 should run through. If there is more than one such workflow, ask which, once. If there is none,
-the long road is `dev`. `dev-super` and `dev-auto` are never picked on your own: they run when
-the user names them. `dev-auto` is `dev` with nobody in the loop — the planner's questions are
+the long road is `dev`. `dev-auto` is never picked on your own: it runs when
+the user names it. `dev-auto` is `dev` with nobody in the loop — the planner's questions are
 answered by the run, the plan is not shown, and the reviewer's approval opens the merge request —
 so when the user names it, settle the brief with particular care: what is left open is decided
 by the run, not by them, and shows up in the plan's assumptions and the merge request.
@@ -151,12 +151,6 @@ Each call prints one JSON instruction:
   restates the rules that matter for this node, including the exact `gate step` line that ends
   it — read it each time rather than working from memory of this message, which will be a long
   way back by the fifth node.
-  - **Follow the skills the node names.** `skills` lists what this agent's definition says it
-    works by, with the directory each one was pulled into; open its `SKILL.md` and do what it
-    says. A skill named by an agent is part of the node, not something to reach for if it
-    seems handy — and a skill that wants to talk to the user (a brainstorming pass asking what
-    they actually want, say) should talk to them. That conversation is the reason this runs in
-    their session at all; do not compress it into an assumption to get to the answer faster.
   - **Say what you are doing first.** One line before you start — which node, which agent,
     and in a sentence what you are about to do — then keep the user posted as you go. They
     are watching this happen and the workflow's shape is not on their screen; a silent five
@@ -223,7 +217,7 @@ Each call prints one JSON instruction:
   user watches it live: every read, every edit as a diff, every command, in this terminal.
   Start the subagent `subagent` names with the Agent tool, in the foreground, and give it
   `prompt` as its task — whole and unchanged — followed by what `remember` says to tell it:
-  the worktree, the skill files to read first, the shape of its answer. Do not do the node
+  the worktree and the shape of its answer. Do not do the node
   yourself, and do not choose a model for it: the subagent's file carries the agent's own
   model, which is the point. It cannot ask the user, and you do not answer for it.
   - **It writes its own answer file.** The prompt already tells it to write its final JSON to
@@ -273,8 +267,8 @@ So when a `begin`, `step` or `next` came back with lines above its JSON — a `$
 a test suite's tail, a `✓ commit` — relay them to the user in a fenced code block before you
 go on. You never run those commands yourself and never see them as an instruction.
 
-**The run's definitions are pinned when it starts.** `begin` copies the team's agents,
-workflows and skills as they are at that moment, and every later `next` and `step` of that
+**The run's definitions are pinned when it starts.** `begin` copies the team's agents
+and workflows as they are at that moment, and every later `next` and `step` of that
 run reads the copy — so an edit in the dashboard, or a `gate pull`, changes the next
 run and never the graph under a run that is already walking it.
 

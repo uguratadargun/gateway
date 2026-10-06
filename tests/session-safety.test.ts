@@ -319,7 +319,7 @@ nodes:
   });
 });
 
-describe("a skill a node needs", () => {
+describe("an agent file that still names skills", () => {
   const ASKER = GATE_AGENT("Asker", "    answer: string", "Ask.", "asks: question\nskills: [try-it]\n");
   const WORKFLOW = `name: K
 entry: ask
@@ -333,26 +333,15 @@ nodes:
     status: completed
 `;
 
-  it("fails the node before the run is paused on the person, when this machine has none", async () => {
+  it("runs, and the node is told nothing about them", async () => {
     mirror({ "agents/asker.md": ASKER, "workflows/skill.yaml": WORKFLOW });
     pinDefinitions("t", "k1");
     const server = fakeServer("k1", { workflowId: "skill" });
     const out = await next(context(server.client), "k1");
-    expect(out).toMatchObject({ do: "failed", nodeId: "ask", error: { code: "AGENT_DEFINITION_INVALID" } });
-    // Before: paused, then thrown — and a paused run is never written off.
-    expect(server.events.map((e) => e.type)).not.toContain("run.paused");
-  });
-
-  it("is found in the mirror when the run's pin never had it", async () => {
-    mirror({ "agents/asker.md": ASKER, "workflows/skill.yaml": WORKFLOW });
-    pinDefinitions("t", "k2");
-    mirror({ "skills/try-it/SKILL.md": "---\nname: try-it\ndescription: Try it first.\n---\nTry it.\n" });
-    const server = fakeServer("k2", { workflowId: "skill" });
-    const out = await next(context(server.client), "k2");
     expect(out.do).toBe("agent");
     if (out.do !== "agent") return;
-    expect(out.skills).toMatchObject([{ id: "try-it", path: join(cacheScope("t").root, "skills", "try-it") }]);
-    rmSync(join(home, "cache", "t", "skills"), { recursive: true, force: true });
+    expect(out).not.toHaveProperty("skills");
+    expect(out.remember.join("\n")).not.toContain("SKILL.md");
   });
 });
 

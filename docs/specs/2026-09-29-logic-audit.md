@@ -1,7 +1,7 @@
 Status: done
 Branch: main
 Decisions: docs/decisions/0052-a-runs-owner-keeps-it-when-they-move-team.md, docs/decisions/0053-one-gate-command-works-on-a-run-at-a-time.md, docs/decisions/0054-a-runs-skills-are-read-from-its-pin-then-the-mirror.md, docs/decisions/0055-a-remote-is-connected-once.md, docs/decisions/0056-forges-that-spell-a-repository-twice-are-one-name.md, docs/decisions/0057-a-give-up-edge-counts-failures.md, docs/decisions/0058-a-squash-merge-is-known-by-a-record-added-after-the-run-began.md, docs/decisions/0059-a-superseded-record-spares-the-decision-that-superseded-it.md, docs/decisions/0060-recording-a-run-again-keeps-what-others-said-about-it.md, docs/decisions/0061-a-consolidation-that-keeps-failing-waits-for-a-new-decision.md, docs/decisions/0062-as-of-a-date-means-the-end-of-that-day.md
-Design: docs/design/executions.md, docs/design/teams-and-keys.md, docs/design/dev-workflow.md, docs/design/workspaces.md, docs/design/workflows-engine.md, docs/design/repositories.md, docs/design/cross-team.md, docs/design/agents-and-skills.md, docs/design/memory.md, docs/design/record-index.md, docs/design/providers.md
+Design: docs/design/executions.md, docs/design/teams-and-keys.md, docs/design/dev-workflow.md, docs/design/workspaces.md, docs/design/workflows-engine.md, docs/design/repositories.md, docs/design/cross-team.md, docs/design/agents.md (agents-and-skills.md until docs/decisions/0063-agents-follow-no-skills.md), docs/design/memory.md, docs/design/record-index.md, docs/design/providers.md
 
 # The logic audit
 

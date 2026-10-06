@@ -92,7 +92,7 @@ describe("restoring the shipped definitions", () => {
 });
 
 describe("what the shipped agents declare", () => {
-  it("is a planner, an implementer, a verifier and a reviewer, their super-* twins following skills, and four gates to the person", () => {
+  it("is a planner, an implementer, a verifier and a reviewer, and four gates to the person", () => {
     ensureDefaultAgents();
     const byId = new Map(listAgents().agents.map((a) => [a.id, a]));
     expect([...byId.keys()].sort()).toEqual([
@@ -110,33 +110,14 @@ describe("what the shipped agents declare", () => {
       "record-fix",
       "reviewer",
       "source-review",
-      "super-implementer",
-      "super-planner",
-      "super-reviewer",
-      "super-verifier",
       "verifier",
     ]);
-    // The dev four follow no skill: their method is in the prompt, and a
-    // fresh install runs dev without importing anything. The super four are
-    // the same roles bound to superpowers, with the same inputs and outputs,
-    // so dev-super can be dev's graph with the agent names swapped.
+    // No shipped agent follows a skill: each one's method is in its prompt,
+    // and nothing in gate reads a skill any more.
+    for (const agent of byId.values()) expect(agent.skills).toBeUndefined();
     for (const id of ["planner", "implementer", "verifier", "reviewer"]) {
-      const plain = byId.get(id)!;
-      const sup = byId.get(`super-${id}`)!;
-      expect(plain.skills).toEqual([]);
-      expect(sup.skills.length).toBeGreaterThan(0);
-      expect(plain.executor).toBe("claude-code");
-      expect(sup.executor).toBe("claude-code");
-      expect(sup.inputs).toEqual(plain.inputs);
-      expect(sup.output).toEqual(plain.output);
-      expect(sup.tools).toEqual(plain.tools);
+      expect(byId.get(id)!.executor).toBe("claude-code");
     }
-    // The record fix has no super-* twin on purpose. The superpowers pipeline
-    // differs in how it reviews and implements, not in how a paragraph is
-    // rewritten, and a second copy of this prompt is a second copy to keep
-    // true: shipped agents are named, never copied. dev-super reaches this
-    // one by name, which is why the derivation leaves it alone.
-    expect(byId.has("super-record-fix")).toBe(false);
     const recordFix = byId.get("record-fix")!;
     // Cheap and bounded, because the judgement was made upstream: the
     // reviewer already said which sentence is wrong and why.
@@ -148,15 +129,15 @@ describe("what the shipped agents declare", () => {
     // else — a finding it cannot meet without source goes back, not applied.
     expect(DEFAULT_AGENTS["record-fix"]).toContain("CHANGELOG.md");
     expect(DEFAULT_AGENTS["record-fix"]).toContain("You may not change a line of source");
-    // And both reviewers say when to take that edge at all.
-    for (const id of ["reviewer", "super-reviewer"]) {
+    // And the reviewer says when to take that edge at all.
+    for (const id of ["reviewer"]) {
       const out = byId.get(id)!.output;
       expect(out.type).toBe("json");
       if (out.type === "json") expect(out.schema).toMatchObject({ recordOnly: "boolean" });
       expect(byId.get(id)!.inputs).toContain("record-fix.summary?");
       expect(DEFAULT_AGENTS[id]).toContain("every** finding you are sending it back for is a\nRecord finding");
     }
-    // The skill-free planner keeps the rule that matters most: a plan, and
+    // The planner keeps the rule that matters most: a plan, and
     // nothing else, in a place of its own.
     expect(DEFAULT_AGENTS.planner).toContain("You write a plan, and nothing else.");
     expect(DEFAULT_AGENTS.planner).toContain("docs/plans/");
@@ -165,11 +146,8 @@ describe("what the shipped agents declare", () => {
     // verifier hold the change against them, and the quick pair keeps the
     // design doc true without ever writing a decision record.
     expect(DEFAULT_AGENTS.planner).toContain("## Documentation");
-    expect(DEFAULT_AGENTS["super-planner"]).toContain("## Documentation");
     expect(DEFAULT_AGENTS.implementer).toContain("docs/specs/");
-    expect(DEFAULT_AGENTS["super-implementer"]).toContain("docs/specs/");
     expect(DEFAULT_AGENTS.reviewer).toContain("docs/design/");
-    expect(DEFAULT_AGENTS["super-reviewer"]).toContain("docs/design/");
     expect(DEFAULT_AGENTS.verifier).toContain("## Documentation");
     expect(DEFAULT_AGENTS["quick-implementer"]).toContain("docs/design/");
     expect(DEFAULT_AGENTS["quick-implementer"]).toContain("docs/specs/");
@@ -177,21 +155,16 @@ describe("what the shipped agents declare", () => {
     expect(DEFAULT_AGENTS["quick-reviewer"]).toContain("docs/design/");
     // The spec check is a command node, and the implementers read what it
     // printed when it sends them back.
-    for (const id of ["implementer", "super-implementer", "quick-implementer"]) {
+    for (const id of ["implementer", "quick-implementer"]) {
       expect(parseAgent(id, DEFAULT_AGENTS[id], { sourcePath: id, updatedAt: 0 }).inputs).toContain("record.stdout?");
     }
     expect(DEFAULT_AGENTS.recall).toContain("docs/decisions/");
     expect(DEFAULT_AGENTS.investigator).toContain("docs/decisions/");
-    expect(DEFAULT_AGENTS.planner).not.toContain("superpowers");
-    expect(DEFAULT_AGENTS.implementer).not.toContain("superpowers");
-    expect(DEFAULT_AGENTS.reviewer).not.toContain("superpowers");
-    expect(DEFAULT_AGENTS.verifier).not.toContain("superpowers");
-    // The quick pair follows no skill: it is the point of them. They run as
+    for (const source of Object.values(DEFAULT_AGENTS)) expect(source).not.toContain("superpowers");
+    // The quick pair follows no plan: it is the point of them. They run as
     // a spawned Claude Code like the rest of the working agents; the
     // implementer edits, the reviewer reads, and both read the base commit
     // or the summary by the node id dev-quick gives those nodes.
-    expect(byId.get("quick-implementer")!.skills).toEqual([]);
-    expect(byId.get("quick-reviewer")!.skills).toEqual([]);
     expect(byId.get("quick-implementer")!.executor).toBe("claude-code");
     expect(byId.get("quick-reviewer")!.executor).toBe("claude-code");
     expect(byId.get("quick-implementer")!.tools).toContain("edit_file");
@@ -202,11 +175,10 @@ describe("what the shipped agents declare", () => {
     expect(byId.get("quick-reviewer")!.inputs).toContain("base.stdout");
     expect(byId.get("quick-reviewer")!.inputs).toContain("implementer.summary");
     expect(byId.get("quick-implementer")!.timeoutMs).toBeLessThan(byId.get("implementer")!.timeoutMs!);
-    // The gates follow no skill and decide nothing; they ask, and read. They
+    // The gates decide nothing; they ask, and read. They
     // run on the loop driving the run — the session — never as a spawned
     // Claude Code, which could not ask anyone.
     for (const id of ["clarify", "plan-review", "acceptance"]) {
-      expect(byId.get(id)!.skills).toEqual([]);
       expect(byId.get(id)!.tools).not.toContain("write_file");
       expect(byId.get(id)!.executor).toBe("gate");
     }
@@ -217,7 +189,6 @@ describe("what the shipped agents declare", () => {
     const decide = byId.get("decide")!;
     expect(decide.executor).toBe("gate");
     expect(decide.asks).toBeUndefined();
-    expect(decide.skills).toEqual([]);
     expect(decide.inputs).toContain("planner.questions");
     expect(decide.inputs).toContain("planner.notes?");
     expect(decide.inputs).toContain("recall.brief?");
@@ -235,30 +206,18 @@ describe("what the shipped agents declare", () => {
     const plannerOutput = byId.get("planner")!.output;
     expect(plannerOutput.type === "json" ? Object.keys(plannerOutput.schema) : []).toContain("notes");
 
-    // The skills are the point of the super four: without them these are
-    // the dev four, and the processes somebody chose deliberately are gone.
-    expect(byId.get("super-planner")!.skills).toEqual([
-      "superpowers-brainstorming",
-      "superpowers-using-git-worktrees",
-      "superpowers-writing-plans",
-    ]);
-    expect(byId.get("super-implementer")!.skills).toContain("superpowers-test-driven-development");
-    expect(byId.get("super-implementer")!.skills).toContain("superpowers-subagent-driven-development");
-    expect(byId.get("super-reviewer")!.skills).toEqual(["superpowers-requesting-code-review"]);
-
-    // The planner writes the plan file its skills produce and runs the
-    // worktree setup; only the implementer edits code; the reviewer reads.
+    // The planner writes the plan file; only the implementer edits code; the
+    // reviewer reads.
     expect(byId.get("planner")!.tools).toContain("write_file");
     expect(byId.get("planner")!.tools).not.toContain("edit_file");
     expect(byId.get("implementer")!.tools).toContain("edit_file");
     expect(byId.get("reviewer")!.tools).not.toContain("write_file");
     expect(byId.get("reviewer")!.tools).not.toContain("edit_file");
 
-    // The reviewer is handed the run's base, because its skill reviews a git
-    // range and the implementer's skills commit as they go — a reviewer left
-    // to run a bare `git diff` would see nothing. Not the diff itself: its
-    // skill says the diff belongs in the dispatched reviewer's context, not
-    // in the coordinator's. It gets the plan file, to hold the diff against
+    // The reviewer is handed the run's base, because the implementer commits
+    // as it goes — a reviewer left to run a bare `git diff` would see
+    // nothing. Not the diff itself: it reads the diff file by file, stat
+    // first. It gets the plan file, to hold the diff against
     // the files each task named, and the verifier's evidence.
     expect(byId.get("reviewer")!.inputs).toContain("base.stdout");
     expect(byId.get("reviewer")!.inputs).not.toContain("diff.stdout");
@@ -274,11 +233,10 @@ describe("what the shipped agents declare", () => {
     expect(acceptanceOutput.type === "json" ? Object.keys(acceptanceOutput.schema) : []).toContain("replan");
     expect(byId.get("implementer")!.inputs).toContain("acceptance.requests?");
     // The verifier runs checks and reads; it never edits.
-    expect(byId.get("super-verifier")!.skills).toEqual(["superpowers-verification-before-completion"]);
     expect(byId.get("verifier")!.tools).toContain("run_command");
     expect(byId.get("verifier")!.tools).not.toContain("edit_file");
     expect(byId.get("verifier")!.executor).toBe("claude-code");
-    // The implementer takes the plan file, which is what its skills execute.
+    // The implementer takes the plan file, which is what it carries out.
     expect(byId.get("implementer")!.inputs).toContain("planner.planFile");
 
     // The recall node reads memory and nothing else: it runs on gate's own
@@ -286,13 +244,12 @@ describe("what the shipped agents declare", () => {
     // two memory tools and no write, and every planner reads its brief.
     const recall = byId.get("recall")!;
     expect(recall.executor).toBe("gate");
-    expect(recall.skills).toEqual([]);
     expect(recall.tools).toContain("memory_search");
     expect(recall.tools).toContain("memory_feature");
     expect(recall.tools).not.toContain("write_file");
     expect(recall.tools).not.toContain("edit_file");
     expect(recall.output.type === "json" ? Object.keys(recall.output.schema) : []).toEqual(["brief", "sources", "objections"]);
-    for (const id of ["planner", "super-planner", "quick-implementer"]) {
+    for (const id of ["planner", "quick-implementer"]) {
       expect(byId.get(id)!.inputs).toContain("recall.brief?");
       expect(DEFAULT_AGENTS[id]).toContain("{{inputs.recall.brief}}");
     }
@@ -315,27 +272,21 @@ describe("what the shipped agents declare", () => {
   });
 });
 
-describe.each([
-  { workflowId: "dev", prefix: "" },
-  { workflowId: "dev-super", prefix: "super-" },
-])("the shipped pipeline: $workflowId", ({ workflowId, prefix }) => {
+describe("the shipped pipeline: dev", () => {
   /**
    * The graph, exercised with stand-ins.
    *
    * The shipped agents run as a spawned Claude Code, which a test cannot
    * spawn, so agents of the same names and output shapes stand in for them.
    * What is under test is the workflow: where a rejection goes, what reaches
-   * the commit, and how the task travels into the merge request. dev-super
-   * is dev's graph on the super-* agents, so the same tests run over both,
-   * with the stand-ins saved under whichever names the pipeline uses.
+   * the commit, and how the task travels into the merge request.
    */
-  const WORKING = new Set(["planner", "implementer", "verifier", "reviewer"]);
 
   /** The workflow under test, its agents replaced by the stand-ins. */
   function standIn() {
     ensureDefaultWorkflows();
-    for (const [id, source] of Object.entries(STANDINS)) saveAgent(WORKING.has(id) ? `${prefix}${id}` : id, source);
-    return getWorkflow(workflowId);
+    for (const [id, source] of Object.entries(STANDINS)) saveAgent(id, source);
+    return getWorkflow("dev");
   }
 
   const STANDINS: Record<string, string> = {
@@ -761,7 +712,7 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
     expect(ran.find((c) => c.includes("gate-open-mr"))).toBeUndefined();
   });
 
-  it("skips the commit when the implementer's skills already committed everything", async () => {
+  it("skips the commit when the implementer already committed everything", async () => {
     const workflow = standIn();
 
     const provider = fakeTeam(APPROVED);
@@ -884,7 +835,7 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
    */
   it("sends a record-only rejection to the record fix and back, without rebuilding or re-verifying", async () => {
     const workflow = standIn();
-    saveAgent(`${prefix}reviewer`, REVIEWER_WITH_RECORD_ONLY);
+    saveAgent("reviewer", REVIEWER_WITH_RECORD_ONLY);
 
     // First review: only the record is wrong. Second: it ships.
     const provider = fakeTeam((visit) => (visit === 1 ? RECORD_ONLY() : APPROVED_WITH_RECORD_ONLY()));
@@ -897,8 +848,8 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
     expect(state.visitCounts["record-fix"]).toBe(1);
     expect(state.visitCounts.reviewer).toBe(2);
     // The point of the edge: neither of these ran a second time.
-    expect(state.visitCounts[`${prefix}implementer`] ?? state.visitCounts.implementer).toBe(1);
-    expect(state.visitCounts[`${prefix}verifier`] ?? state.visitCounts.verifier).toBe(1);
+    expect(state.visitCounts.implementer).toBe(1);
+    expect(state.visitCounts.verifier).toBe(1);
     expect(state.visitCounts.planner).toBe(1);
     // It is given the reviewer's feedback, which is the whole of its brief.
     expect(provider.callsFor("record-fix")[0].messages[0].content).toContain("docs/design/x.md says the old thing");
@@ -909,7 +860,7 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
 
   it("gives up on a record that is still wrong after two passes, on a terminal of its own", async () => {
     const workflow = standIn();
-    saveAgent(`${prefix}reviewer`, REVIEWER_WITH_RECORD_ONLY);
+    saveAgent("reviewer", REVIEWER_WITH_RECORD_ONLY);
 
     const provider = fakeTeam(RECORD_ONLY);
     const events: WorkflowEvent[] = [];
@@ -940,7 +891,7 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
    */
   it("does not spend a review on a record round: four rejections still reach review-stuck after two", async () => {
     const workflow = standIn();
-    saveAgent(`${prefix}reviewer`, REVIEWER_WITH_RECORD_ONLY);
+    saveAgent("reviewer", REVIEWER_WITH_RECORD_ONLY);
 
     // Two record rounds first, then nothing but ordinary rejections.
     const provider = fakeTeam((visit) =>
@@ -1113,41 +1064,42 @@ Review {{inputs.planner.planFile}} from {{inputs.base.stdout}} given {{inputs.ve
   });
 });
 
-describe("the shipped super pipeline", () => {
-  it("is dev's graph on the super-* agents, and nothing else differs", () => {
-    ensureDefaultWorkflows();
-    const dev = getWorkflow("dev");
-    const sup = getWorkflow("dev-super");
-    const agentsOf = (w: typeof dev) => w.nodes.filter((n) => n.type === "agent").map((n) => [n.id, (n as { agent: string }).agent]);
-    expect(agentsOf(sup)).toEqual([
-      ["recall", "recall"],
-      ["planner", "super-planner"],
-      ["conflict-review", "conflict-review"],
-      ["clarify", "clarify"],
-      ["plan-review", "plan-review"],
-      ["implementer", "super-implementer"],
-      ["verifier", "super-verifier"],
-      ["reviewer", "super-reviewer"],
-      // Not swapped, and there is no super-record-fix to swap it for: the
-      // derivation renames the four working agents, and fixing a paragraph
-      // is the same job whichever method built the change.
-      ["record-fix", "record-fix"],
-      ["acceptance", "acceptance"],
-    ]);
-    // Everything but the agent names is byte-for-byte dev's: same nodes,
-    // same edges, same commands, same terminals.
-    const shape = (w: typeof dev) =>
-      w.nodes.map((n) => {
-        const { agent: _agent, ...rest } = n as { agent?: string } & Record<string, unknown>;
-        return rest;
-      });
-    expect(shape(sup)).toEqual(shape(dev));
-    expect(sup.entry).toBe(dev.entry);
-    // The only shipped pipeline that needs a skill imported.
-    const source = DEFAULT_WORKFLOWS["dev-super"];
-    expect(source).toContain("agent: super-planner");
-    expect(DEFAULT_WORKFLOWS.dev).not.toContain("super-");
-    expect(DEFAULT_WORKFLOWS["dev-quick"]).not.toContain("super-");
+describe("what gate no longer ships", () => {
+  it("is put aside by a refresh — dev-super and the super-* agents — and the rest still loads", async () => {
+    const { RETIRED_AGENTS, retireDefaultAgents } = await import("@/agents/defaults");
+    const { RETIRED_WORKFLOWS, retireDefaultWorkflows } = await import("@/workflows/defaults");
+    expect(Object.keys(DEFAULT_WORKFLOWS)).not.toContain("dev-super");
+    for (const source of Object.values(DEFAULT_WORKFLOWS)) expect(source).not.toContain("super-");
+    for (const id of RETIRED_AGENTS) expect(Object.keys(DEFAULT_AGENTS)).not.toContain(id);
+
+    const home = process.env.GATE_HOME;
+    process.env.GATE_HOME = mkdtempSync(join(tmpdir(), "gate-retire-"));
+    try {
+      ensureDefaultWorkflows();
+      const scope = teamScope();
+      // What an older gate seeded: dev-super, on the super-* agents.
+      for (const id of RETIRED_AGENTS) {
+        writeFileSync(join(scope.root, "agents", `${id}.md`), DEFAULT_AGENTS.planner.replace(/^name: .*$/m, `name: ${id}`));
+      }
+      writeFileSync(join(scope.root, "workflows", "dev-super.yaml"), DEFAULT_WORKFLOWS.dev.replace(/^name: Dev$/m, "name: Dev super"));
+
+      expect(retireDefaultWorkflows(scope, "T1")).toEqual(RETIRED_WORKFLOWS);
+      expect(retireDefaultAgents(scope, "T1")).toEqual(RETIRED_AGENTS);
+      expect(existsSync(join(scope.root, "workflows", "dev-super.yaml"))).toBe(false);
+      expect(existsSync(join(scope.root, "backups", "T1", "workflows", "dev-super.yaml"))).toBe(true);
+      for (const id of RETIRED_AGENTS) {
+        expect(existsSync(join(scope.root, "agents", `${id}.md`))).toBe(false);
+        expect(existsSync(join(scope.root, "backups", "T1", "agents", `${id}.md`))).toBe(true);
+      }
+      expect(listAgents().errors).toEqual([]);
+      expect(listWorkflows().errors).toEqual([]);
+      expect(listWorkflows().workflows.map((w) => w.id).sort()).toEqual(Object.keys(DEFAULT_WORKFLOWS).sort());
+      // Twice is the same as once.
+      expect(retireDefaultWorkflows(scope, "T2")).toEqual([]);
+      expect(retireDefaultAgents(scope, "T2")).toEqual([]);
+    } finally {
+      process.env.GATE_HOME = home;
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 Status: done
 Branch: feat/own-claude-login
 Decisions: docs/decisions/0046-every-person-runs-on-their-own-claude-login.md, docs/decisions/0047-a-run-is-driven-only-from-a-persons-session.md, docs/decisions/0048-ask-is-read-on-the-askers-machine.md, docs/decisions/0051-a-run-warns-at-its-start-about-what-its-end-needs.md
-Design: docs/ARCHITECTURE.md, docs/design/providers.md, docs/design/memory.md, docs/design/teams-and-keys.md, docs/design/dashboard.md, docs/design/dev-workflow.md, docs/design/executions.md, docs/design/workflows-engine.md, docs/design/workspaces.md, docs/design/cross-team.md, docs/design/repositories.md, docs/design/agents-and-skills.md, docs/design/the-record.md; removed: account-pool, gateway-pipeline, routing, remote-sessions and telegram
+Design: docs/ARCHITECTURE.md, docs/design/providers.md, docs/design/memory.md, docs/design/teams-and-keys.md, docs/design/dashboard.md, docs/design/dev-workflow.md, docs/design/executions.md, docs/design/workflows-engine.md, docs/design/workspaces.md, docs/design/cross-team.md, docs/design/repositories.md, docs/design/agents.md (agents-and-skills.md until docs/decisions/0063-agents-follow-no-skills.md), docs/design/the-record.md; removed: account-pool, gateway-pipeline, routing, remote-sessions and telegram
 
 # Every person on their own Claude login
 

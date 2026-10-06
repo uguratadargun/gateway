@@ -24,12 +24,10 @@ import {
   summarizeWorkspace,
   type RunWorkspace,
 } from "@/runtime/workspace";
-import { unattendedNotice } from "@/skills/inject";
-import { getSkill, resolveSkillDir } from "@/skills/registry";
+import { unattendedNotice } from "@/client/notices";
 import { getWorkflow } from "@/workflows/registry";
 import { definitionsHash } from "@/workflows/snapshot";
 import { findNode, type WorkflowDefinition } from "@/workflows/types";
-import type { AgentDefinition } from "@/agents/types";
 
 import type { GateClient } from "./api";
 import { CLI_VERSION } from "./api";
@@ -72,9 +70,6 @@ export const SESSION_ID_ENV = "GATE_CLAUDE_SESSION";
  * person's own Claude login; gate holds none.
  */
 
-/** A skill an agent declares, as this machine has it. */
-type SkillRef = { id: string; description: string; path: string | null };
-
 /** What the session is told to do next, as JSON on stdout. */
 export type Instruction =
   | {
@@ -97,18 +92,6 @@ export type Instruction =
       asks: "question" | "approval" | null;
       /** What the agent file says it needs; a session has its own tools. */
       tools: string[];
-      /**
-       * The skills this agent declares, unpacked on this machine.
-       *
-       * An agent that names a skill is an agent that follows it — that is what
-       * declaring one means, as opposed to a model deciding to reach for one.
-       * The headless executors hand them over their own way (a throwaway
-       * plugin for a spawned Claude Code, the prose folded into the system
-       * prompt for gate's own loop); a session gets the directory, because it
-       * already knows what a skill is and can read the files the skill points
-       * at.
-       */
-      skills: SkillRef[];
       timeoutMs: number | null;
       /**
        * The contract, restated with this node.
@@ -149,7 +132,6 @@ export type Instruction =
       outputFile: string;
       output: { type: "json" | "text"; schema?: Record<string, string> };
       workspace: string | null;
-      skills: SkillRef[];
       timeoutMs: number | null;
       remember: string[];
     }
@@ -591,15 +573,13 @@ async function walkOn(ctx: SessionRunContext, executionId: string, opts: { full?
 
     if (node.type === "agent") {
       // Everything the node needs is settled before it is announced: an input
-      // nobody produced or a skill this machine does not have fails the node
+      // nobody produced fails the node
       // as a recorded step, which ends the run and leaves `gate continue` a
       // step to drop. Announced first, a person's node paused the run and then
       // threw, and a paused run is never written off.
       let prepared: ReturnType<typeof prepareAgentNode>;
-      let skills: SkillRef[];
       try {
         prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
-        skills = resolveSkills(prepared.agent, node.id, scope, ctx.team, executionId);
       } catch (e) {
         if (!(e instanceof WorkflowError)) throw e;
         const at = Date.now();
@@ -732,7 +712,6 @@ async function walkOn(ctx: SessionRunContext, executionId: string, opts: { full?
               ? { type: "json", schema: prepared.agent.output.schema }
               : { type: "text" },
           workspace: workspace?.root ?? null,
-          skills,
           timeoutMs: prepared.agent.timeoutMs ?? null,
           remember: [
             resume
@@ -751,13 +730,6 @@ async function walkOn(ctx: SessionRunContext, executionId: string, opts: { full?
             workspace
               ? `Tell it: work in ${workspace.root} — the run's worktree, not the user's checkout — with absolute paths under it, and nowhere else.`
               : "Tell it: this node has no workspace; reason over the task, touch no files.",
-            ...(skills.length
-              ? [
-                  `Tell it: read and follow, before starting, ${skills.length === 1 ? "this skill" : "these skills"}: ` +
-                    skills.map((s) => `${s.id} (${s.path ?? "not pulled"})`).join(", ") +
-                    ". They are part of the node.",
-                ]
-              : []),
             `Tell it: end the final message with ${shape}, and nothing after it.`,
             "It cannot ask the user anything. Do not answer for it either; what it needs settled goes into its answer the way the prompt says.",
             `The prompt tells it to write that answer to ${outputFile} itself. The moment it returns, hand that file back ` +
@@ -782,16 +754,7 @@ async function walkOn(ctx: SessionRunContext, executionId: string, opts: { full?
         prompt: prepared.prompt,
         outputFile,
         asks: personsTurn ? askKind(prepared.agent) : null,
-        skills,
         remember: [
-          ...(skills.length
-            ? [
-                `This agent follows ${skills.length === 1 ? "a skill" : "skills"}: ` +
-                  `${skills.map((s) => s.id).join(", ")}. Open each one's SKILL.md and follow it — ` +
-                  "it is part of the node, not a suggestion. If a skill asks you to talk to the user, do that; " +
-                  "you are in their session and that is why the node runs here.",
-              ]
-            : []),
           workspace
             ? `Work in ${workspace.root} — the run's worktree, not the user's checkout.`
             : "This node has no workspace: work from what the prompt gives you and the commands it names, and touch no files on this machine.",
@@ -1019,38 +982,6 @@ function stoppedOutside(execution: { status: string; error: { code: string; mess
 } | null {
   if (execution.status === "running" || !execution.error) return null;
   return execution.error.code === "RUN_CANCELLED" || execution.error.code === "RUN_ABANDONED" ? execution.error : null;
-}
-
-/**
- * The skills an agent declares, found on this machine.
- *
- * The run's pin is read first, and the team's mirror after it: a skill is the
- * process an agent follows, not part of the graph the pin keeps still, and a
- * skill the pin never got — imported after the run began, or missing when it
- * did — is otherwise one no `gate pull` could ever supply to this run.
- */
-function resolveSkills(
-  agent: AgentDefinition,
-  nodeId: string,
-  scope: DefinitionScope,
-  team: string,
-  executionId: string,
-): SkillRef[] {
-  return agent.skills.map((id) => {
-    for (const where of [scope, cacheScope(team)]) {
-      try {
-        return { id, description: getSkill(id, where).description, path: resolveSkillDir(id, where) };
-      } catch {
-        // Not here; the mirror next.
-      }
-    }
-    throw new WorkflowError(
-      "AGENT_DEFINITION_INVALID",
-      `node "${nodeId}": agent "${agent.id}" declares skill "${id}", which this machine did not pull — ` +
-        `run \`gate pull\` (and check it is in your team's skill library), then \`gate continue ${executionId}\``,
-      { nodeId, agentId: agent.id },
-    );
-  });
 }
 
 /** A state the condition language and the input resolver can read. */

@@ -1,10 +1,14 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { DEFAULT_AGENT_SKILLS, backupStamp, refreshDefaultAgents, staleDefaultAgents, writeMissingDefaultAgents } from "@/agents/defaults";
+import { backupStamp, refreshDefaultAgents, retireDefaultAgents, staleDefaultAgents, writeMissingDefaultAgents } from "@/agents/defaults";
 import { DEFAULT_TEAM, gateHome, teamScope } from "@/lib/def-root";
-import { inheritedSkills, listSkills } from "@/skills/registry";
-import { refreshDefaultWorkflows, staleDefaultWorkflows, writeMissingDefaultWorkflows } from "@/workflows/defaults";
+import {
+  refreshDefaultWorkflows,
+  retireDefaultWorkflows,
+  staleDefaultWorkflows,
+  writeMissingDefaultWorkflows,
+} from "@/workflows/defaults";
 
 /**
  * Puts the shipped agents and pipeline back, from the command line.
@@ -21,7 +25,8 @@ import { refreshDefaultWorkflows, staleDefaultWorkflows, writeMissingDefaultWork
  * whose implementer asks for an output the new planner no longer produces
  * fails at that node with nothing else to say. `--refresh` rewrites those to
  * the shipped text, keeping the model and effort set on them, with the old
- * text under <team>/backups/<stamp>/. "Has" includes what a team inherits
+ * text under <team>/backups/<stamp>/, and puts aside the definitions gate no
+ * longer ships (`dev-super` and the `super-*` agents) the same way. "Has" includes what a team inherits
  * from the default team, so restoring the default team is usually the whole
  * of it — every other team reaches those files through it, and gets no copy
  * of its own.
@@ -83,6 +88,11 @@ for (const team of teams) {
     if (refreshed.length) {
       console.log(`${team}: rewrote ${refreshed.join(", ")} to what ships; the old text is under ${join(scope.root, "backups", stamp)}`);
     }
+    // Workflows first: a pipeline naming an agent that is gone does not load.
+    const retired = [...retireDefaultWorkflows(scope, stamp), ...retireDefaultAgents(scope, stamp)];
+    if (retired.length) {
+      console.log(`${team}: put aside ${retired.join(", ")}, which gate no longer ships, under ${join(scope.root, "backups", stamp)}`);
+    }
   } else {
     const stale = [...staleDefaultAgents(scope), ...staleDefaultWorkflows(scope)];
     if (stale.length) {
@@ -92,17 +102,9 @@ for (const team of teams) {
       );
     }
   }
-  const have = new Set([...listSkills(scope).skills, ...inheritedSkills(scope)].map((s) => s.id));
-  const missingSkills = DEFAULT_AGENT_SKILLS.filter((s) => !have.has(s.id)).map((s) => s.id);
   console.log(
     added.length
       ? `${team}: wrote ${added.join(", ")} to ${scope.root}`
       : `${team}: nothing missing — every shipped definition is there or inherited`,
   );
-  if (missingSkills.length) {
-    console.log(
-      `${team}: the shipped super-* agents (dev-super) name skills this team has not imported — ${missingSkills.join(", ")}.` +
-        ` Import them on the dashboard's Skills page, or a dev-super run stops at its first node; dev, dev-quick and dev-auto need none.`,
-    );
-  }
 }

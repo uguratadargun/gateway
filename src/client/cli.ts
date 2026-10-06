@@ -466,9 +466,7 @@ async function cmdPull(): Promise<number> {
   const config = readConfig()!;
   const manifest = await sync(client, await teamOf(client, config), true);
   console.log(
-    `pulled ${manifest.workflows.length} workflow(s)` +
-      (manifest.skills?.length ? ` and ${manifest.skills.length} skill(s)` : "") +
-      ` for team ${manifest.team} from ${manifest.from}`,
+    `pulled ${manifest.workflows.length} workflow(s) for team ${manifest.team} from ${manifest.from}`,
   );
   return 0;
 }

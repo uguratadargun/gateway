@@ -1,25 +1,22 @@
 /**
- * What a node is told about the harness it runs in, which no skill says.
- *
- * An agent's declared skills reach it as files: the session, or the subagent
- * it starts, is handed each `SKILL.md` path on this machine and told to read
- * and follow it before starting. What is here is the rest — the notices every
- * `claude-code` node gets, because they are about Claude Code and the person's
- * absence rather than about any one agent's method.
+ * What a node is told about the harness it runs in, which no agent's prompt
+ * says: the notices every `claude-code` node gets, because they are about
+ * Claude Code and the person's absence rather than about any one agent's
+ * method.
  */
 
 /**
  * What a node is told when nothing it does can be answered.
  *
- * The skills an agent follows were written for a session with a person in it:
- * brainstorming stops at an approval gate, executing plans raises concerns
- * "before starting". A subagent's question has no one to reach — so the node
- * is told so, and told what to do instead.
+ * Models are trained in sessions with a person in them: they stop at an
+ * approval, ask a clarifying question, raise a concern "before starting". A
+ * subagent's question has no one to reach — so the node is told so, and told
+ * what to do instead.
  *
  * Who gets it follows the executor. Every `claude-code` node does, because a
  * subagent of the person's session cannot ask the person. An `executor: gate`
  * node run by the session itself never does: there the person is right
- * there, and a skill that asks should ask. Deciding this from the prompt's
+ * there, and a node that needs to ask should ask. Deciding this from the prompt's
  * wording was tried; the model guessed "unattended" with a user watching,
  * and approved its own plan.
  *
@@ -38,20 +35,20 @@
 export function unattendedNotice(): string {
   return (
     "This node is running unattended: there is no person in this session, and a question you ask here reaches " +
-    "nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern " +
+    "nobody. Where you would stop for approval, ask a clarifying question, or raise a concern " +
     "before starting, do not wait for a reply here. If the prompt below gives such questions a way out — an " +
     "output field they go into, so that the run can put them to the person elsewhere — put them there, all of " +
     "them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where " +
     "the prompt gives no such way out, or tells you the person has already been asked and was not there, take the " +
-    "reading a careful colleague would take, act on it, and record the ruling where the skill's process would " +
-    "have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone."
+    "reading a careful colleague would take, act on it, and record the ruling where the answer would have been " +
+    "recorded (the plan file, your summary), so that a wrong one can be seen and undone."
   );
 }
 
 /**
- * How subagents behave in a Claude Code that gate drives, which the skills
- * do not know: subagent-driven development was written for a harness whose
- * dispatch blocks until the subagent answers, and in this one it does not.
+ * How subagents behave in a Claude Code that gate drives, which a model does
+ * not assume: it writes as if dispatch blocks until the subagent answers, and
+ * in this harness it does not.
  * Measured here: an implementer that dispatched a review and then slept in a
  * shell loop for eight minutes waiting for a report file — eighty sleeps in
  * one reviewer — with the result already delivered as a notification. And,
@@ -110,8 +107,8 @@ export function backgroundSubagentNotice(): string {
 }
 
 /**
- * How reading a file costs what it costs here, which no skill says because it
- * is a fact about this harness rather than a method.
+ * How reading a file costs what it costs here, which no agent's prompt says
+ * because it is a fact about this harness rather than a method.
  *
  * Measured in one implementer node: Read was called 43 times for 1.0 second
  * in total; Bash was called 107 times for 224.6 seconds, of which roughly 143

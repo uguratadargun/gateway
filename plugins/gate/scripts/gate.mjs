@@ -6,14 +6,14 @@ var __export = (target, all) => {
 };
 
 // src/client/cli.ts
-import { existsSync as existsSync12, mkdirSync as mkdirSync10, readFileSync as readFileSync10, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync9, readFileSync as readFileSync9, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir6, hostname as hostname3 } from "node:os";
-import { basename, join as join13, resolve as resolve4 } from "node:path";
+import { basename, join as join12, resolve as resolve4 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 // src/agents/registry.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, readdirSync as readdirSync2, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join as join2 } from "node:path";
 
 // src/lib/def-root.ts
 import { existsSync, mkdirSync, renameSync } from "node:fs";
@@ -49,10 +49,6 @@ function migrateLegacyDefinitions() {
     }
   }
 }
-
-// src/skills/registry.ts
-import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join as join2, relative } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -2511,6 +2507,61 @@ var COLLECTION_STYLE_FLOW = COLLECTION_STYLE.FLOW;
 var CHOMPING_CLIP = CHOMPING_MODE.CLIP;
 var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
+
+// src/agents/tools.ts
+var TOOLS = [
+  "read_file",
+  "list_files",
+  "search_files",
+  "write_file",
+  "edit_file",
+  "run_command",
+  "memory_search",
+  "memory_feature",
+  "memory_history"
+];
+function knownToolNames() {
+  return [...TOOLS].sort();
+}
+function isKnownTool(name) {
+  return TOOLS.includes(name);
+}
+
+// src/agents/template.ts
+var TemplateError = class extends Error {
+};
+var PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_][A-Za-z0-9_-]*)*)\s*\}\}/g;
+function templatePaths(tpl) {
+  const out = /* @__PURE__ */ new Set();
+  for (const m of tpl.matchAll(PLACEHOLDER)) out.add(m[1]);
+  return [...out];
+}
+function lookup(path, ctx) {
+  let cur = ctx;
+  for (const seg of path.split(".")) {
+    if (cur == null || typeof cur !== "object") return void 0;
+    cur = cur[seg];
+  }
+  return cur;
+}
+function stringify(v) {
+  if (typeof v === "string") return v;
+  if (v === null || typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v, null, 2);
+}
+function renderTemplate(tpl, ctx) {
+  const missing = [];
+  const out = tpl.replace(PLACEHOLDER, (_m, path) => {
+    const v = lookup(path, ctx);
+    if (v === void 0) {
+      missing.push(path);
+      return "";
+    }
+    return stringify(v);
+  });
+  if (missing.length) throw new TemplateError(`unresolved template ${missing.length > 1 ? "values" : "value"}: ${missing.join(", ")}`);
+  return out;
+}
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -6553,168 +6604,6 @@ var coerce = {
 };
 var NEVER = INVALID;
 
-// src/skills/types.ts
-var SKILL_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
-var skillFrontmatterSchema = external_exports.object({
-  name: external_exports.string().min(1).max(100),
-  /**
-   * What this skill is for, in one line. It is not decoration: it is the
-   * whole of how a model decides to reach for the skill, so a description
-   * that says "helps with planning" is a skill that never fires.
-   */
-  description: external_exports.string().min(1).max(2e3)
-}).passthrough();
-
-// src/skills/loader.ts
-var SkillDefinitionError = class extends Error {
-  constructor(message, skillId) {
-    super(message);
-    this.skillId = skillId;
-  }
-  skillId;
-};
-var FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
-function parseSkill(id, raw, meta) {
-  const m = FRONTMATTER.exec(raw.replace(/^﻿/, ""));
-  if (!m) throw new SkillDefinitionError("missing YAML frontmatter (SKILL.md must start with a --- block)", id);
-  let front;
-  try {
-    front = load(m[1]) ?? {};
-  } catch (e) {
-    throw new SkillDefinitionError(`invalid YAML frontmatter: ${e.message}`, id);
-  }
-  const parsed = skillFrontmatterSchema.safeParse(front);
-  if (!parsed.success) {
-    const detail = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
-    throw new SkillDefinitionError(`invalid frontmatter: ${detail}`, id);
-  }
-  const body = m[2].trim();
-  if (!body) throw new SkillDefinitionError("SKILL.md has frontmatter but no body", id);
-  return {
-    ...parsed.data,
-    id,
-    body,
-    resources: meta.resources ?? [],
-    dir: meta.dir,
-    sourcePath: meta.sourcePath,
-    updatedAt: meta.updatedAt,
-    origin: meta.origin ?? null
-  };
-}
-
-// src/skills/registry.ts
-var ORIGIN_FILE = ".gate-source.json";
-var MAX_RESOURCE_DEPTH = 4;
-function skillsDir(scope = teamScope()) {
-  return join2(scope.root, "skills");
-}
-function dirFor(id, scope) {
-  if (!SKILL_ID_RE.test(id)) throw new SkillDefinitionError("invalid skill id (use lowercase letters, digits and dashes)", id);
-  return join2(skillsDir(scope), id);
-}
-var cache = /* @__PURE__ */ new Map();
-function resourcesIn(dir, depth = 0) {
-  if (depth > MAX_RESOURCE_DEPTH) return [];
-  const out = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-    if (entry.name === ORIGIN_FILE) continue;
-    const full = join2(dir, entry.name);
-    if (entry.isDirectory()) out.push(...resourcesIn(full, depth + 1));
-    else if (!(depth === 0 && entry.name === "SKILL.md")) out.push(full);
-  }
-  return out;
-}
-function readOrigin(dir) {
-  try {
-    return JSON.parse(readFileSync(join2(dir, ORIGIN_FILE), "utf8"));
-  } catch {
-    return null;
-  }
-}
-function loadDir(id, dir) {
-  const file = join2(dir, "SKILL.md");
-  if (!existsSync2(file)) throw new SkillDefinitionError("no SKILL.md in this directory", id);
-  const stat = statSync(file);
-  const resources = resourcesIn(dir).map((f) => relative(dir, f));
-  const hit = cache.get(file);
-  if (hit && hit.mtimeMs === stat.mtimeMs) return { ...hit.def, resources, origin: readOrigin(dir) };
-  const def = parseSkill(id, readFileSync(file, "utf8"), {
-    dir,
-    sourcePath: file,
-    updatedAt: stat.mtimeMs,
-    resources,
-    origin: readOrigin(dir)
-  });
-  cache.set(file, { mtimeMs: stat.mtimeMs, def });
-  return def;
-}
-function resolveSkillDir(id, scope) {
-  const own = dirFor(id, scope);
-  if (existsSync2(join2(own, "SKILL.md"))) return own;
-  if (scope.fallback) return resolveSkillDir(id, scope.fallback);
-  return null;
-}
-function getSkill(id, scope = teamScope()) {
-  const dir = resolveSkillDir(id, scope);
-  if (!dir) throw new SkillDefinitionError("skill not found", id);
-  return loadDir(id, dir);
-}
-
-// src/agents/tools.ts
-var TOOLS = [
-  "read_file",
-  "list_files",
-  "search_files",
-  "write_file",
-  "edit_file",
-  "run_command",
-  "memory_search",
-  "memory_feature",
-  "memory_history"
-];
-function knownToolNames() {
-  return [...TOOLS].sort();
-}
-function isKnownTool(name) {
-  return TOOLS.includes(name);
-}
-
-// src/agents/template.ts
-var TemplateError = class extends Error {
-};
-var PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_][A-Za-z0-9_-]*)*)\s*\}\}/g;
-function templatePaths(tpl) {
-  const out = /* @__PURE__ */ new Set();
-  for (const m of tpl.matchAll(PLACEHOLDER)) out.add(m[1]);
-  return [...out];
-}
-function lookup(path, ctx) {
-  let cur = ctx;
-  for (const seg of path.split(".")) {
-    if (cur == null || typeof cur !== "object") return void 0;
-    cur = cur[seg];
-  }
-  return cur;
-}
-function stringify(v) {
-  if (typeof v === "string") return v;
-  if (v === null || typeof v === "number" || typeof v === "boolean") return String(v);
-  return JSON.stringify(v, null, 2);
-}
-function renderTemplate(tpl, ctx) {
-  const missing = [];
-  const out = tpl.replace(PLACEHOLDER, (_m, path) => {
-    const v = lookup(path, ctx);
-    if (v === void 0) {
-      missing.push(path);
-      return "";
-    }
-    return stringify(v);
-  });
-  if (missing.length) throw new TemplateError(`unresolved template ${missing.length > 1 ? "values" : "value"}: ${missing.join(", ")}`);
-  return out;
-}
-
 // src/lib/reasoning.ts
 var EFFORTS = ["default", "low", "medium", "high", "xhigh", "max"];
 
@@ -6776,15 +6665,6 @@ var agentFrontmatterSchema = external_exports.object({
    */
   tools: external_exports.array(external_exports.string().min(1).max(64)).max(50).default([]),
   /**
-   * Skills this agent works by, named as ids from the team's skill library.
-   *
-   * Not a hint: an agent that declares one is told to read and follow it,
-   * every run, from the copy this machine pulled with the team's
-   * definitions. That is what makes "the planner brainstorms" a property of
-   * the definition rather than of how the prompt happened to be worded.
-   */
-  skills: external_exports.array(external_exports.string().regex(SKILL_ID_RE, "use lowercase letters, digits and dashes")).max(20).default([]),
-  /**
    * How long one visit to this agent's node is expected to take. Past it the
    * person is told the node is overrunning; stopping it is theirs. Left out,
    * it is an hour; 0 turns the notice off. There is no upper bound.
@@ -6795,7 +6675,12 @@ var agentFrontmatterSchema = external_exports.object({
    * accepted, so an agent file written before that keeps loading.
    */
   maxTokens: external_exports.number().int().min(1024).max(2e5).optional(),
-  maxToolIterations: external_exports.number().int().min(0).optional()
+  maxToolIterations: external_exports.number().int().min(0).optional(),
+  /**
+   * Read by nothing since gate stopped binding agents to skills; still
+   * accepted, so an agent file that names some keeps loading.
+   */
+  skills: external_exports.array(external_exports.string()).optional()
 }).strict();
 function buildOutputSchema(spec) {
   if (spec.type === "text") return external_exports.string();
@@ -6843,9 +6728,9 @@ var AgentDefinitionError = class extends Error {
   }
   agentId;
 };
-var FRONTMATTER2 = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+var FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 function parseAgent(id, raw, meta) {
-  const m = FRONTMATTER2.exec(raw.replace(/^﻿/, ""));
+  const m = FRONTMATTER.exec(raw.replace(/^﻿/, ""));
   if (!m) throw new AgentDefinitionError("missing YAML frontmatter (a file must start with a --- block)", id);
   let front;
   try {
@@ -6887,31 +6772,31 @@ function assertTemplateInputsDeclared(def) {
 // src/agents/registry.ts
 var ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 function agentsDir(scope = teamScope()) {
-  return join3(scope.root, "agents");
+  return join2(scope.root, "agents");
 }
 function pathFor(id, scope) {
   if (!ID_RE.test(id)) throw new AgentDefinitionError("invalid agent id (use lowercase letters, digits and dashes)", id);
-  return join3(agentsDir(scope), `${id}.md`);
+  return join2(agentsDir(scope), `${id}.md`);
 }
-var cache2 = /* @__PURE__ */ new Map();
+var cache = /* @__PURE__ */ new Map();
 function loadFile(id, file) {
-  const stat = statSync2(file);
-  const hit = cache2.get(file);
+  const stat = statSync(file);
+  const hit = cache.get(file);
   if (hit && hit.mtimeMs === stat.mtimeMs) return hit.def;
-  const def = parseAgent(id, readFileSync2(file, "utf8"), { sourcePath: file, updatedAt: stat.mtimeMs });
-  cache2.set(file, { mtimeMs: stat.mtimeMs, def });
+  const def = parseAgent(id, readFileSync(file, "utf8"), { sourcePath: file, updatedAt: stat.mtimeMs });
+  cache.set(file, { mtimeMs: stat.mtimeMs, def });
   return def;
 }
 function listAgents(scope = teamScope()) {
   const dir = agentsDir(scope);
-  if (!existsSync3(dir)) return { agents: [], errors: [] };
+  if (!existsSync2(dir)) return { agents: [], errors: [] };
   const agents = [];
   const errors = [];
-  for (const entry of readdirSync2(dir).sort()) {
+  for (const entry of readdirSync(dir).sort()) {
     if (!entry.endsWith(".md")) continue;
     const id = entry.slice(0, -3);
     try {
-      agents.push(loadFile(id, join3(dir, entry)));
+      agents.push(loadFile(id, join2(dir, entry)));
     } catch (e) {
       errors.push({ id, message: e.message });
     }
@@ -6920,7 +6805,7 @@ function listAgents(scope = teamScope()) {
 }
 function resolveFile(id, scope) {
   const own = pathFor(id, scope);
-  if (existsSync3(own)) return own;
+  if (existsSync2(own)) return own;
   if (scope.fallback) return resolveFile(id, scope.fallback);
   return null;
 }
@@ -6935,7 +6820,7 @@ function agentExists(id, scope = teamScope()) {
 function readAgentSource(id, scope = teamScope()) {
   const file = resolveFile(id, scope);
   if (!file) throw new AgentDefinitionError("agent not found", id);
-  return readFileSync2(file, "utf8");
+  return readFileSync(file, "utf8");
 }
 
 // src/workflows/condition.ts
@@ -7201,8 +7086,8 @@ function optionalRunInputs(wf, loadAgent) {
 }
 
 // src/workflows/registry.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync4, readFileSync as readFileSync3, readdirSync as readdirSync3, rmSync as rmSync3, statSync as statSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, readdirSync as readdirSync2, rmSync as rmSync2, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
 
 // src/runtime/errors.ts
 var WorkflowError = class extends Error {
@@ -7541,36 +7426,36 @@ function regionOf(wf, start, stop) {
 // src/workflows/registry.ts
 var ID_RE2 = /^[a-z0-9][a-z0-9-]{0,63}$/;
 function workflowsDir(scope = teamScope()) {
-  return join4(scope.root, "workflows");
+  return join3(scope.root, "workflows");
 }
 function invalid2(id, message) {
   return new WorkflowError("WORKFLOW_DEFINITION_INVALID", message, { workflowId: id });
 }
 function pathFor2(id, scope) {
   if (!ID_RE2.test(id)) throw invalid2(id, "invalid workflow id (use lowercase letters, digits and dashes)");
-  const yaml = join4(workflowsDir(scope), `${id}.yaml`);
-  if (existsSync4(yaml)) return yaml;
-  const yml = join4(workflowsDir(scope), `${id}.yml`);
-  return existsSync4(yml) ? yml : yaml;
+  const yaml = join3(workflowsDir(scope), `${id}.yaml`);
+  if (existsSync3(yaml)) return yaml;
+  const yml = join3(workflowsDir(scope), `${id}.yml`);
+  return existsSync3(yml) ? yml : yaml;
 }
-var cache3 = /* @__PURE__ */ new Map();
+var cache2 = /* @__PURE__ */ new Map();
 function loadFile2(id, file, scope) {
-  const stat = statSync3(file);
+  const stat = statSync2(file);
   const key = `${scope.teamId ?? scope.root}\0${file}`;
-  const hit = cache3.get(key);
+  const hit = cache2.get(key);
   const agentsStillThere = (def2) => def2.nodes.every((n) => n.type !== "agent" || agentExists(n.agent, scope));
   if (hit && hit.mtimeMs === stat.mtimeMs && agentsStillThere(hit.def)) return hit.def;
-  const def = parseWorkflow(id, readFileSync3(file, "utf8"), {
+  const def = parseWorkflow(id, readFileSync2(file, "utf8"), {
     sourcePath: file,
     updatedAt: stat.mtimeMs,
     agentExists: (agentId) => agentExists(agentId, scope)
   });
-  cache3.set(key, { mtimeMs: stat.mtimeMs, def });
+  cache2.set(key, { mtimeMs: stat.mtimeMs, def });
   return def;
 }
 function resolveFile2(id, scope) {
   const own = pathFor2(id, scope);
-  if (existsSync4(own)) return own;
+  if (existsSync3(own)) return own;
   if (scope.fallback) return resolveFile2(id, scope.fallback);
   return null;
 }
@@ -7582,7 +7467,7 @@ function getWorkflow(id, scope = teamScope()) {
 function readWorkflowSource(id, scope = teamScope()) {
   const file = resolveFile2(id, scope);
   if (!file) throw invalid2(id, "workflow not found");
-  return readFileSync3(file, "utf8");
+  return readFileSync2(file, "utf8");
 }
 
 // src/lib/connect-token.ts
@@ -7919,22 +7804,22 @@ function checkpointWork(root, note, exclude = []) {
 
 // src/runtime/workspace.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync5, rmSync as rmSync4, symlinkSync } from "node:fs";
+import { existsSync as existsSync5, lstatSync, mkdirSync as mkdirSync4, rmSync as rmSync3, symlinkSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { dirname, join as join6, resolve } from "node:path";
+import { dirname, join as join5, resolve } from "node:path";
 
 // src/repos/detect.ts
-import { existsSync as existsSync5 } from "node:fs";
-import { join as join5 } from "node:path";
+import { existsSync as existsSync4 } from "node:fs";
+import { join as join4 } from "node:path";
 var LINKED_DIRECTORIES = ["node_modules", "vendor", ".venv"];
 function linkedDirectories(root) {
-  return LINKED_DIRECTORIES.filter((d) => existsSync5(join5(root, d)));
+  return LINKED_DIRECTORIES.filter((d) => existsSync4(join4(root, d)));
 }
 
 // src/runtime/workspace.ts
 var MAX_LISTED_FILES = 200;
 function workspacesDir() {
-  return join6(process.env.GATE_HOME || join6(homedir2(), ".gate"), "workspaces");
+  return join5(process.env.GATE_HOME || join5(homedir2(), ".gate"), "workspaces");
 }
 function git2(cwd, args) {
   try {
@@ -7959,7 +7844,7 @@ function readRemoteUrl(root) {
 }
 function createRunWorkspace(spec, executionId) {
   const repo = resolve(spec.repo.replace(/^~(?=\/|$)/, homedir2()));
-  if (!existsSync6(repo)) {
+  if (!existsSync5(repo)) {
     throw new WorkflowError("WORKSPACE_ERROR", `workspace repo "${spec.repo}" does not exist`);
   }
   try {
@@ -7969,9 +7854,9 @@ function createRunWorkspace(spec, executionId) {
   }
   const baseRef = spec.baseRef ?? "HEAD";
   const branch = `${spec.branchPrefix ?? "gate/run"}-${executionId.slice(0, 8)}`;
-  const root = join6(workspacesDir(), executionId);
-  mkdirSync5(workspacesDir(), { recursive: true, mode: 448 });
-  if (existsSync6(root)) rmSync4(root, { recursive: true, force: true });
+  const root = join5(workspacesDir(), executionId);
+  mkdirSync4(workspacesDir(), { recursive: true, mode: 448 });
+  if (existsSync5(root)) rmSync3(root, { recursive: true, force: true });
   git2(repo, ["worktree", "add", "-b", branch, root, baseRef]);
   const baseCommit = git2(root, ["rev-parse", "HEAD"]);
   return { root, repo, branch, baseRef, baseCommit };
@@ -7979,10 +7864,10 @@ function createRunWorkspace(spec, executionId) {
 function borrowDependencies(ws) {
   const linked = [];
   for (const dir of linkedDirectories(ws.repo)) {
-    const target = join6(ws.root, dir);
-    if (existsSync6(target)) continue;
+    const target = join5(ws.root, dir);
+    if (existsSync5(target)) continue;
     try {
-      symlinkSync(join6(ws.repo, dir), target, "dir");
+      symlinkSync(join5(ws.repo, dir), target, "dir");
       linked.push(dir);
     } catch (e) {
       throw new WorkflowError("WORKSPACE_ERROR", `could not link ${dir} into the worktree: ${e.message}`);
@@ -8015,7 +7900,7 @@ function isIgnored(root, path) {
   }
 }
 function borrowedLinksToExclude(root) {
-  return LINKED_DIRECTORIES.filter((d) => isSymlink(join6(root, d)) && !isIgnored(root, d));
+  return LINKED_DIRECTORIES.filter((d) => isSymlink(join5(root, d)) && !isIgnored(root, d));
 }
 function commitLeftovers(ws, executionId) {
   if (!git2(ws.root, ["status", "--porcelain"]).length) return false;
@@ -8032,7 +7917,7 @@ function commitLeftovers(ws, executionId) {
   return true;
 }
 function releaseRunWorkspace(ws, executionId, opts = {}) {
-  if (!existsSync6(ws.root)) return null;
+  if (!existsSync5(ws.root)) return null;
   try {
     if (git2(ws.root, ["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
   } catch {
@@ -8067,11 +7952,11 @@ function releaseRunWorkspace(ws, executionId, opts = {}) {
   return `worktree ${ws.root} removed; branch ${ws.branch} keeps the work${committed ? " (what was uncommitted is its last commit)" : ""}${publishNote}`;
 }
 function restoreRunWorkspace(ws) {
-  if (existsSync6(ws.root)) return false;
-  if (!existsSync6(ws.repo)) {
+  if (existsSync5(ws.root)) return false;
+  if (!existsSync5(ws.repo)) {
     throw new WorkflowError("WORKSPACE_ERROR", `the repository this run worked in (${ws.repo}) is gone`);
   }
-  mkdirSync5(dirname(ws.root), { recursive: true, mode: 448 });
+  mkdirSync4(dirname(ws.root), { recursive: true, mode: 448 });
   try {
     git2(ws.repo, ["worktree", "prune"]);
   } catch {
@@ -8104,10 +7989,10 @@ function summarizeWorkspace(ws) {
 var MAX_DIFF_BYTES = 4e6;
 function readRunDiff(root, baseCommit, ended) {
   let diff;
-  if (existsSync6(root)) {
+  if (existsSync5(root)) {
     git2(root, ["add", "-N", "."]);
     diff = git2(root, baseCommit ? ["diff", baseCommit] : ["diff"]);
-  } else if (ended && baseCommit && existsSync6(ended.repo)) {
+  } else if (ended && baseCommit && existsSync5(ended.repo)) {
     try {
       diff = git2(ended.repo, ["diff", baseCommit, `refs/heads/${ended.branch}`]);
     } catch {
@@ -8122,7 +8007,7 @@ function removeRunWorkspace(ws, opts = {}) {
   try {
     git2(ws.repo, ["worktree", "remove", "--force", ws.root]);
   } catch {
-    rmSync4(ws.root, { recursive: true, force: true });
+    rmSync3(ws.root, { recursive: true, force: true });
     try {
       git2(ws.repo, ["worktree", "prune"]);
     } catch {
@@ -8139,7 +8024,7 @@ function removeRunWorkspace(ws, opts = {}) {
 import { hostname } from "node:os";
 
 // src/lib/protocol.ts
-var GATE_VERSION = "0.50.0";
+var GATE_VERSION = "0.51.0";
 var VERSION_HEADERS = {
   /** Client → server: the CLI's own version. */
   client: "x-gate-cli",
@@ -8394,25 +8279,25 @@ var GateClient = class {
 };
 
 // src/client/cache.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync7, readFileSync as readFileSync5, readdirSync as readdirSync4, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname3, isAbsolute, join as join8, normalize, relative as relative2, sep } from "node:path";
+import { existsSync as existsSync6, mkdirSync as mkdirSync6, readFileSync as readFileSync4, readdirSync as readdirSync3, rmSync as rmSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join7 } from "node:path";
 
 // src/client/config.ts
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { mkdirSync as mkdirSync5, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname2, join as join7 } from "node:path";
+import { dirname as dirname2, join as join6 } from "node:path";
 function gateHome2() {
-  return process.env.GATE_HOME || join7(homedir3(), ".gate");
+  return process.env.GATE_HOME || join6(homedir3(), ".gate");
 }
 function configPath() {
-  return join7(gateHome2(), "client.json");
+  return join6(gateHome2(), "client.json");
 }
 function readConfig() {
   const url = process.env.GATE_URL;
   const key = process.env.GATE_KEY;
   if (url && key) return { url: url.replace(/\/+$/, ""), key, fromEnv: true };
   try {
-    const raw = JSON.parse(readFileSync4(configPath(), "utf8"));
+    const raw = JSON.parse(readFileSync3(configPath(), "utf8"));
     if (!raw?.url || !raw?.key) return null;
     return { ...raw, url: raw.url.replace(/\/+$/, "") };
   } catch {
@@ -8421,8 +8306,8 @@ function readConfig() {
 }
 function writeConfig(config) {
   const file = configPath();
-  mkdirSync6(dirname2(file), { recursive: true, mode: 448 });
-  writeFileSync4(file, `${JSON.stringify(config, null, 2)}
+  mkdirSync5(dirname2(file), { recursive: true, mode: 448 });
+  writeFileSync3(file, `${JSON.stringify(config, null, 2)}
 `, { mode: 384 });
 }
 function writeLogin(login) {
@@ -8433,7 +8318,7 @@ function writeLogin(login) {
 }
 function readConfigFile() {
   try {
-    return JSON.parse(readFileSync4(configPath(), "utf8"));
+    return JSON.parse(readFileSync3(configPath(), "utf8"));
   } catch {
     return null;
   }
@@ -8461,84 +8346,68 @@ function repoPaths() {
 
 // src/client/cache.ts
 function cacheDir(team) {
-  return join8(gateHome2(), "cache", team);
+  return join7(gateHome2(), "cache", team);
 }
 function cacheScope(team) {
   return scopeAt(cacheDir(team), team);
 }
 function manifestPath(team) {
-  return join8(cacheDir(team), "manifest.json");
+  return join7(cacheDir(team), "manifest.json");
 }
 function readManifest(team) {
   try {
-    return JSON.parse(readFileSync5(manifestPath(team), "utf8"));
+    return JSON.parse(readFileSync4(manifestPath(team), "utf8"));
   } catch {
     return null;
   }
 }
-function writeSkill(dir, skill) {
-  rmSync5(dir, { recursive: true, force: true });
-  for (const file of skill.files) {
-    const full = join8(dir, normalize(file.path));
-    const rel = relative2(dir, full);
-    if (!rel || rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("..")) continue;
-    mkdirSync7(dirname3(full), { recursive: true, mode: 448 });
-    writeFileSync5(full, Buffer.from(file.base64, "base64"), { mode: 384 });
-  }
-}
 function writeBundle(bundle, from) {
   const root = cacheDir(bundle.team);
-  const agents = join8(root, "agents");
-  const workflows = join8(root, "workflows");
-  const skills = join8(root, "skills");
-  mkdirSync7(agents, { recursive: true, mode: 448 });
-  mkdirSync7(workflows, { recursive: true, mode: 448 });
-  mkdirSync7(skills, { recursive: true, mode: 448 });
+  const agents = join7(root, "agents");
+  const workflows = join7(root, "workflows");
+  mkdirSync6(agents, { recursive: true, mode: 448 });
+  mkdirSync6(workflows, { recursive: true, mode: 448 });
+  rmSync4(join7(root, "skills"), { recursive: true, force: true });
   for (const agent of bundle.agents) {
-    writeFileSync5(join8(agents, `${agent.id}.md`), agent.source, { mode: 384 });
+    writeFileSync4(join7(agents, `${agent.id}.md`), agent.source, { mode: 384 });
   }
   for (const workflow of bundle.workflows) {
-    writeFileSync5(join8(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
-  }
-  for (const skill of bundle.skills ?? []) {
-    writeSkill(join8(skills, skill.id), skill);
+    writeFileSync4(join7(workflows, `${workflow.id}.yaml`), workflow.source, { mode: 384 });
   }
   prune(agents, new Set(bundle.agents.map((a) => `${a.id}.md`)));
   prune(workflows, new Set(bundle.workflows.map((w) => `${w.id}.yaml`)));
-  prune(skills, new Set((bundle.skills ?? []).map((s) => s.id)));
   const manifest = {
     team: bundle.team,
     hash: bundle.hash,
     pulledAt: Date.now(),
     from,
-    workflows: bundle.workflows.map(({ source: _source, ...rest }) => rest),
-    skills: (bundle.skills ?? []).map((s) => s.id)
+    workflows: bundle.workflows.map(({ source: _source, ...rest }) => rest)
   };
-  writeFileSync5(manifestPath(bundle.team), `${JSON.stringify(manifest, null, 2)}
+  writeFileSync4(manifestPath(bundle.team), `${JSON.stringify(manifest, null, 2)}
 `, { mode: 384 });
   return manifest;
 }
 function prune(dir, keep) {
-  if (!existsSync7(dir)) return;
-  for (const entry of readdirSync4(dir)) {
-    if (!keep.has(entry)) rmSync5(join8(dir, entry), { recursive: true, force: true });
+  if (!existsSync6(dir)) return;
+  for (const entry of readdirSync3(dir)) {
+    if (!keep.has(entry)) rmSync4(join7(dir, entry), { recursive: true, force: true });
   }
 }
 function clearLocalState() {
   const removed = [];
-  const cache4 = join8(gateHome2(), "cache");
-  if (existsSync7(cache4)) {
-    rmSync5(cache4, { recursive: true, force: true });
-    removed.push(`removed the mirrored definitions (${cache4})`);
+  const cache3 = join7(gateHome2(), "cache");
+  if (existsSync6(cache3)) {
+    rmSync4(cache3, { recursive: true, force: true });
+    removed.push(`removed the mirrored definitions (${cache3})`);
   }
-  const config = join8(gateHome2(), "client.json");
-  if (existsSync7(config)) {
-    rmSync5(config, { force: true });
+  const config = join7(gateHome2(), "client.json");
+  if (existsSync6(config)) {
+    rmSync4(config, { force: true });
     removed.push(`removed the login and its approvals (${config})`);
   }
-  const workspaces = join8(gateHome2(), "workspaces");
-  if (existsSync7(workspaces)) {
-    const kept = readdirSync4(workspaces).length;
+  const workspaces = join7(gateHome2(), "workspaces");
+  if (existsSync6(workspaces)) {
+    const kept = readdirSync3(workspaces).length;
     if (kept) removed.push(`kept ${kept} run worktree(s) in ${workspaces} \u2014 they are branches, not cache`);
   }
   return removed.length ? removed : ["nothing to remove \u2014 this machine was not connected"];
@@ -8546,13 +8415,13 @@ function clearLocalState() {
 
 // src/client/clean.ts
 import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync10, readdirSync as readdirSync7 } from "node:fs";
-import { join as join11 } from "node:path";
+import { existsSync as existsSync9, readdirSync as readdirSync6 } from "node:fs";
+import { join as join10 } from "node:path";
 
 // src/client/step.ts
-import { cpSync, existsSync as existsSync9, mkdirSync as mkdirSync9, readdirSync as readdirSync6, readFileSync as readFileSync7, rmSync as rmSync7, writeFileSync as writeFileSync7 } from "node:fs";
+import { cpSync, existsSync as existsSync8, mkdirSync as mkdirSync8, readdirSync as readdirSync5, readFileSync as readFileSync6, rmSync as rmSync6, writeFileSync as writeFileSync6 } from "node:fs";
 import { hostname as hostname2 } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join9 } from "node:path";
 
 // src/runtime/state.ts
 function conditionContext(state) {
@@ -8652,12 +8521,12 @@ function parseOutput(agent, text, nodeId2) {
 
 // src/runtime/executors/command.ts
 import { execFile } from "node:child_process";
-import { isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
+import { isAbsolute, resolve as resolve2 } from "node:path";
 var DEFAULT_TIMEOUT_MS = 60 * 6e4;
 var MAX_OUTPUT_BYTES = 2e7;
 function cwdFor(node, options) {
   if (!node.cwd) return options?.defaultCwd;
-  if (isAbsolute2(node.cwd)) return node.cwd;
+  if (isAbsolute(node.cwd)) return node.cwd;
   return options?.defaultCwd ? resolve2(options.defaultCwd, node.cwd) : node.cwd;
 }
 var runCommand = (node, options) => new Promise((resolvePromise, reject) => {
@@ -8692,9 +8561,9 @@ var runCommand = (node, options) => new Promise((resolvePromise, reject) => {
   );
 });
 
-// src/skills/inject.ts
+// src/client/notices.ts
 function unattendedNotice() {
-  return "This node is running unattended: there is no person in this session, and a question you ask here reaches nobody. Where a skill you follow would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait for a reply here. If the prompt below gives such questions a way out \u2014 an output field they go into, so that the run can put them to the person elsewhere \u2014 put them there, all of them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where the prompt gives no such way out, or tells you the person has already been asked and was not there, take the reading a careful colleague would take, act on it, and record the ruling where the skill's process would have recorded the answer (the plan file, the ledger, your summary), so that a wrong one can be seen and undone.";
+  return "This node is running unattended: there is no person in this session, and a question you ask here reaches nobody. Where you would stop for approval, ask a clarifying question, or raise a concern before starting, do not wait for a reply here. If the prompt below gives such questions a way out \u2014 an output field they go into, so that the run can put them to the person elsewhere \u2014 put them there, all of them, and stop; the person decides, not you, and a decision you take in their place is a defect. Only where the prompt gives no such way out, or tells you the person has already been asked and was not there, take the reading a careful colleague would take, act on it, and record the ruling where the answer would have been recorded (the plan file, your summary), so that a wrong one can be seen and undone.";
 }
 function backgroundSubagentNotice() {
   return "Subagents you dispatch with the Agent tool run in the background: the call returns as soon as the subagent is launched, and its result reaches you as a notification. Ending your turn while one of yours is still running does not finish this node \u2014 you are resumed with the result when it completes. So after dispatching, do whatever work does not depend on the result, then say what you are waiting on and stop; never poll for its commits or a report file, and never run a command whose only purpose is to let time pass \u2014 no `sleep`, no `true`, no `echo`, no `date`, and no loop around any of them \u2014 because the result was on its way and a turn spent passing time is one in which it cannot arrive.\n\nNever dispatch a subagent type that copies your own context. Your context contains your instruction to dispatch, so the copy dispatches too, and its copies do, and a copy cannot tell that it is one. Measured here: four such dispatches became sixteen, and one branch's tail was 40% of the node. Dispatch a named agent with a task written out in the prompt, so that what it was asked is something you decided and can read back.\n\nDispatch only when the work is bigger than the dispatch. A subagent starts cold: it reads what you have already read before it can begin, and a check you could run yourself in a minute costs more dispatched than done. Reading a handful of files, running this project's test command, answering a question you already know where to look for \u2014 do those yourself.\n\nBefore you give your final answer, name every subagent you dispatched and what it returned. If any of them has not returned, you have no final answer yet: say which one you are waiting on and stop. A verdict written without a result you asked for is wrong even when it happens to be right, because you did not know that when you wrote it.";
@@ -8753,11 +8622,11 @@ function definitionsHash(workflowId, scope) {
 }
 
 // src/client/subagents.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync8, readdirSync as readdirSync5, readFileSync as readFileSync6, rmSync as rmSync6, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync7, readdirSync as readdirSync4, readFileSync as readFileSync5, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join8 } from "node:path";
 function claudeConfigDir() {
-  return process.env.CLAUDE_CONFIG_DIR || join9(homedir4(), ".claude");
+  return process.env.CLAUDE_CONFIG_DIR || join8(homedir4(), ".claude");
 }
 function subagentName(team, agentId) {
   return `gate-${team}-${agentId}`;
@@ -8773,9 +8642,8 @@ model: ${agent.model}${effort}
 ---
 
 You are the \`${agent.id}\` agent of a gate run, started by the session driving the run. The
-task you are given is the whole brief: what to do, the worktree to do it in, the skill files
-to read and follow first, the shape of the answer to end with, and \u2014 at its end \u2014 the terms
-under which you run unattended. Work only in the worktree the task names, with absolute paths
+task you are given is the whole brief: what to do, the worktree to do it in, the shape of the
+answer to end with, and \u2014 at its end \u2014 the terms under which you run unattended. Work only in the worktree the task names, with absolute paths
 under it, and nowhere else. End your final message with the answer in exactly the shape the
 task asks for, and nothing after it; where the task names a file for that answer, write it
 there too, exactly the answer, before you end. A commit you make carries no trailer and no
@@ -8790,22 +8658,22 @@ ${fileReadingNotice()}
 `;
 }
 function removeSubagents() {
-  const dir = join9(claudeConfigDir(), "agents");
-  if (!existsSync8(dir)) return [];
+  const dir = join8(claudeConfigDir(), "agents");
+  if (!existsSync7(dir)) return [];
   const removed = [];
-  for (const entry of readdirSync5(dir)) {
+  for (const entry of readdirSync4(dir)) {
     if (!/^gate-[a-z0-9-]+\.md$/.test(entry)) continue;
-    const text = readFileSync6(join9(dir, entry), "utf8");
+    const text = readFileSync5(join8(dir, entry), "utf8");
     if (!text.includes("Only /gate:run starts it")) continue;
-    rmSync6(join9(dir, entry));
+    rmSync5(join8(dir, entry));
     removed.push(entry.slice(0, -3));
   }
   return removed;
 }
 function syncSubagents(team, scope) {
-  const dir = join9(claudeConfigDir(), "agents");
-  const created = !existsSync8(dir);
-  if (created) mkdirSync8(dir, { recursive: true, mode: 448 });
+  const dir = join8(claudeConfigDir(), "agents");
+  const created = !existsSync7(dir);
+  if (created) mkdirSync7(dir, { recursive: true, mode: 448 });
   const prefix = `gate-${team}-`;
   const wanted = /* @__PURE__ */ new Map();
   for (const agent of listAgents(scope).agents) {
@@ -8819,31 +8687,31 @@ function syncSubagents(team, scope) {
   }
   const written = [];
   const removed = [];
-  for (const entry of readdirSync5(dir)) {
+  for (const entry of readdirSync4(dir)) {
     if (!entry.startsWith(prefix) || !entry.endsWith(".md") || wanted.has(entry)) continue;
-    rmSync6(join9(dir, entry));
+    rmSync5(join8(dir, entry));
     removed.push(entry.slice(0, -3));
   }
   for (const [file, content] of wanted) {
-    const path = join9(dir, file);
+    const path = join8(dir, file);
     let current = "";
     try {
-      current = readFileSync6(path, "utf8");
+      current = readFileSync5(path, "utf8");
     } catch {
     }
     if (current === content) continue;
-    writeFileSync6(path, content, { mode: 384 });
+    writeFileSync5(path, content, { mode: 384 });
     written.push(file.slice(0, -3));
   }
   return { written, removed, created };
 }
 function pinnedScopes(team) {
-  const runs = join9(gateHome2(), "runs");
-  if (!existsSync8(runs)) return [];
+  const runs = join8(gateHome2(), "runs");
+  if (!existsSync7(runs)) return [];
   const out = [];
-  for (const entry of readdirSync5(runs, { withFileTypes: true })) {
-    const dir = join9(runs, entry.name, "definitions");
-    if (entry.isDirectory() && existsSync8(join9(dir, "agents"))) out.push(scopeAt(dir, team));
+  for (const entry of readdirSync4(runs, { withFileTypes: true })) {
+    const dir = join8(runs, entry.name, "definitions");
+    if (entry.isDirectory() && existsSync7(join8(dir, "agents"))) out.push(scopeAt(dir, team));
   }
   return out;
 }
@@ -9005,44 +8873,44 @@ function walk(workflow, steps, input, replay, from, stopAt) {
 // src/client/step.ts
 var SESSION_ID_ENV = "GATE_CLAUDE_SESSION";
 function pendingPath(executionId) {
-  return join10(gateHome2(), "runs", `${executionId}.json`);
+  return join9(gateHome2(), "runs", `${executionId}.json`);
 }
 function readPending(executionId) {
   try {
-    return JSON.parse(readFileSync7(pendingPath(executionId), "utf8"));
+    return JSON.parse(readFileSync6(pendingPath(executionId), "utf8"));
   } catch {
     return null;
   }
 }
 function writePending(pending) {
   const file = pendingPath(pending.executionId);
-  mkdirSync9(join10(gateHome2(), "runs"), { recursive: true, mode: 448 });
-  writeFileSync7(file, `${JSON.stringify(pending)}
+  mkdirSync8(join9(gateHome2(), "runs"), { recursive: true, mode: 448 });
+  writeFileSync6(file, `${JSON.stringify(pending)}
 `, { mode: 384 });
 }
 function clearPending(executionId) {
-  rmSync7(pendingPath(executionId), { force: true });
+  rmSync6(pendingPath(executionId), { force: true });
 }
 var heldRuns = /* @__PURE__ */ new Set();
 async function withRunLock(executionId, work) {
   if (heldRuns.has(executionId)) return work();
-  const file = join10(gateHome2(), "runs", `${executionId}.lock`);
-  mkdirSync9(join10(gateHome2(), "runs"), { recursive: true, mode: 448 });
+  const file = join9(gateHome2(), "runs", `${executionId}.lock`);
+  mkdirSync8(join9(gateHome2(), "runs"), { recursive: true, mode: 448 });
   for (let attempt = 0; ; attempt++) {
     try {
-      writeFileSync7(file, `${process.pid}
+      writeFileSync6(file, `${process.pid}
 `, { flag: "wx", mode: 384 });
       break;
     } catch (e) {
       if (e.code !== "EEXIST" || attempt > 0) throw e;
-      const holder = Number.parseInt(readFileSync7(file, "utf8"), 10);
+      const holder = Number.parseInt(readFileSync6(file, "utf8"), 10);
       if (Number.isInteger(holder) && holder > 0 && holder !== process.pid && processAlive(holder)) {
         throw new WorkflowError(
           "WORKFLOW_ROUTING_ERROR",
           `another gate command (pid ${holder}) is working on run ${executionId} right now \u2014 wait for it to finish, then run \`gate next ${executionId}\` to see where the run is`
         );
       }
-      rmSync7(file, { force: true });
+      rmSync6(file, { force: true });
     }
   }
   heldRuns.add(executionId);
@@ -9050,7 +8918,7 @@ async function withRunLock(executionId, work) {
     return await work();
   } finally {
     heldRuns.delete(executionId);
-    rmSync7(file, { force: true });
+    rmSync6(file, { force: true });
   }
 }
 function processAlive(pid) {
@@ -9065,7 +8933,7 @@ function currentSession() {
   return (process.env[SESSION_ID_ENV] ?? process.env.CLAUDE_CODE_SESSION_ID ?? "").trim() || void 0;
 }
 function sessionStatePath(session) {
-  return join10(gateHome2(), "sessions", `${session}.json`);
+  return join9(gateHome2(), "sessions", `${session}.json`);
 }
 function noteSession(instruction, at = Date.now()) {
   const session = currentSession();
@@ -9080,50 +8948,50 @@ function noteSession(instruction, at = Date.now()) {
     at
   };
   try {
-    mkdirSync9(join10(gateHome2(), "sessions"), { recursive: true, mode: 448 });
-    writeFileSync7(sessionStatePath(session), `${JSON.stringify(state)}
+    mkdirSync8(join9(gateHome2(), "sessions"), { recursive: true, mode: 448 });
+    writeFileSync6(sessionStatePath(session), `${JSON.stringify(state)}
 `, { mode: 384 });
   } catch {
   }
   return state;
 }
 function runDir(executionId) {
-  return join10(gateHome2(), "runs", executionId);
+  return join9(gateHome2(), "runs", executionId);
 }
 function runDefinitionsDir(executionId) {
-  return join10(runDir(executionId), "definitions");
+  return join9(runDir(executionId), "definitions");
 }
 function pinDefinitions(team, executionId) {
   const dir = runDefinitionsDir(executionId);
-  rmSync7(dir, { recursive: true, force: true });
-  mkdirSync9(dir, { recursive: true, mode: 448 });
+  rmSync6(dir, { recursive: true, force: true });
+  mkdirSync8(dir, { recursive: true, mode: 448 });
   cpSync(cacheDir(team), dir, { recursive: true });
   return dir;
 }
 function runScope(team, executionId) {
   const dir = runDefinitionsDir(executionId);
-  return existsSync9(join10(dir, "workflows")) ? scopeAt(dir, team) : cacheScope(team);
+  return existsSync8(join9(dir, "workflows")) ? scopeAt(dir, team) : cacheScope(team);
 }
 function forgetRun(executionId) {
-  rmSync7(runDir(executionId), { recursive: true, force: true });
+  rmSync6(runDir(executionId), { recursive: true, force: true });
   clearPending(executionId);
-  const runs = join10(gateHome2(), "runs");
-  if (!existsSync9(runs)) return;
-  for (const entry of readdirSync6(runs)) {
-    if (entry.startsWith(`${executionId}-`) && entry.endsWith(".log")) rmSync7(join10(runs, entry), { force: true });
+  const runs = join9(gateHome2(), "runs");
+  if (!existsSync8(runs)) return;
+  for (const entry of readdirSync5(runs)) {
+    if (entry.startsWith(`${executionId}-`) && entry.endsWith(".log")) rmSync6(join9(runs, entry), { force: true });
   }
 }
 function outputFileFor(executionId, nodeId2, visit) {
-  const dir = join10(runDir(executionId), "out");
-  mkdirSync9(dir, { recursive: true, mode: 448 });
-  return join10(dir, `${nodeId2}-${visit}.json`);
+  const dir = join9(runDir(executionId), "out");
+  mkdirSync8(dir, { recursive: true, mode: 448 });
+  return join9(dir, `${nodeId2}-${visit}.json`);
 }
 function subagentsPath(executionId) {
-  return join10(runDir(executionId), "subagents.json");
+  return join9(runDir(executionId), "subagents.json");
 }
 function recallSubagent(executionId, nodeId2) {
   try {
-    const all = JSON.parse(readFileSync7(subagentsPath(executionId), "utf8"));
+    const all = JSON.parse(readFileSync6(subagentsPath(executionId), "utf8"));
     return all[nodeId2] ?? null;
   } catch {
     return null;
@@ -9132,19 +9000,19 @@ function recallSubagent(executionId, nodeId2) {
 function rememberSubagent(executionId, nodeId2, subagentId) {
   let all = {};
   try {
-    all = JSON.parse(readFileSync7(subagentsPath(executionId), "utf8"));
+    all = JSON.parse(readFileSync6(subagentsPath(executionId), "utf8"));
   } catch {
   }
   all[nodeId2] = subagentId;
-  mkdirSync9(runDir(executionId), { recursive: true, mode: 448 });
-  writeFileSync7(subagentsPath(executionId), `${JSON.stringify(all)}
+  mkdirSync8(runDir(executionId), { recursive: true, mode: 448 });
+  writeFileSync6(subagentsPath(executionId), `${JSON.stringify(all)}
 `, { mode: 384 });
 }
 function workspaceOf(execution) {
   return execution.workspace ?? null;
 }
 function reviewCommand(ws) {
-  if (existsSync9(ws.root)) return `git -C ${ws.root} diff${ws.baseCommit ? ` ${ws.baseCommit}` : ""}`;
+  if (existsSync8(ws.root)) return `git -C ${ws.root} diff${ws.baseCommit ? ` ${ws.baseCommit}` : ""}`;
   return `git -C ${ws.repo} diff ${ws.baseCommit ?? ws.baseRef}...${ws.branch}`;
 }
 async function begin(ctx, workflowId, input, cwd, repos, opts = {}) {
@@ -9239,7 +9107,7 @@ async function walkOn(ctx, executionId, opts) {
         executionId,
         status: position.status,
         branch: workspace?.branch ?? null,
-        workspace: workspace && existsSync9(workspace.root) ? workspace.root : null,
+        workspace: workspace && existsSync8(workspace.root) ? workspace.root : null,
         review: workspace ? reviewCommand(workspace) : null
       };
     }
@@ -9261,10 +9129,8 @@ async function walkOn(ctx, executionId, opts) {
     const state = stateFor(execution, position.outputs, position.visitCounts);
     if (node.type === "agent") {
       let prepared;
-      let skills;
       try {
         prepared = prepareAgentNode(node, state, (id) => getAgent(id, scope));
-        skills = resolveSkills(prepared.agent, node.id, scope, ctx.team, executionId);
       } catch (e) {
         if (!(e instanceof WorkflowError)) throw e;
         const at = Date.now();
@@ -9367,14 +9233,10 @@ ${answerFileNotice(outputFile2, shape2)}`,
           outputFile: outputFile2,
           output: prepared.agent.output.type === "json" ? { type: "json", schema: prepared.agent.output.schema } : { type: "text" },
           workspace: workspace?.root ?? null,
-          skills,
           timeoutMs: prepared.agent.timeoutMs ?? null,
           remember: [
             resume ? `This node ran earlier in this run as subagent ${resume}. Continue that same agent with SendMessage (to: "${resume}"), giving it \`prompt\` whole and unchanged as the message: it keeps everything it ` + (delta ? `read and decided last time, and the prompt is only what has changed since \u2014 the answers, the feedback, the gaps. It is deliberately not the whole brief again, so it is no use to a fresh agent. If the send fails because that agent is gone, run \`gate next ${executionId} --full\` for the whole brief and start the node over with that.` : `read and decided last time. If the send fails because that agent is gone, start "${subagent}" fresh with the Agent tool and this same prompt instead.`) : `Start the subagent named "${subagent}" with the Agent tool, in the foreground, and give it \`prompt\` as its task, whole and unchanged, followed by the lines below. Do not do the node yourself, and do not pick a model for it: its file sets the agent's own model.`,
             workspace ? `Tell it: work in ${workspace.root} \u2014 the run's worktree, not the user's checkout \u2014 with absolute paths under it, and nowhere else.` : "Tell it: this node has no workspace; reason over the task, touch no files.",
-            ...skills.length ? [
-              `Tell it: read and follow, before starting, ${skills.length === 1 ? "this skill" : "these skills"}: ` + skills.map((s) => `${s.id} (${s.path ?? "not pulled"})`).join(", ") + ". They are part of the node."
-            ] : [],
             `Tell it: end the final message with ${shape2}, and nothing after it.`,
             "It cannot ask the user anything. Do not answer for it either; what it needs settled goes into its answer the way the prompt says.",
             `The prompt tells it to write that answer to ${outputFile2} itself. The moment it returns, hand that file back as it is \u2014 before telling the user anything, and without retyping it \u2014 naming the subagent so the next pass of this node can continue it:`,
@@ -9394,11 +9256,7 @@ ${answerFileNotice(outputFile2, shape2)}`,
         prompt: prepared.prompt,
         outputFile,
         asks: personsTurn ? askKind(prepared.agent) : null,
-        skills,
         remember: [
-          ...skills.length ? [
-            `This agent follows ${skills.length === 1 ? "a skill" : "skills"}: ${skills.map((s) => s.id).join(", ")}. Open each one's SKILL.md and follow it \u2014 it is part of the node, not a suggestion. If a skill asks you to talk to the user, do that; you are in their session and that is why the node runs here.`
-          ] : [],
           workspace ? `Work in ${workspace.root} \u2014 the run's worktree, not the user's checkout.` : "This node has no workspace: work from what the prompt gives you and the commands it names, and touch no files on this machine.",
           "Say what you are doing as you go; the user is watching this happen.",
           "What gate printed above this JSON \u2014 the command nodes it ran on the way here and their output \u2014 the user has not seen: relay those lines to them before you start, as they are.",
@@ -9504,21 +9362,6 @@ function askKind(agent) {
 function stoppedOutside(execution) {
   if (execution.status === "running" || !execution.error) return null;
   return execution.error.code === "RUN_CANCELLED" || execution.error.code === "RUN_ABANDONED" ? execution.error : null;
-}
-function resolveSkills(agent, nodeId2, scope, team, executionId) {
-  return agent.skills.map((id) => {
-    for (const where of [scope, cacheScope(team)]) {
-      try {
-        return { id, description: getSkill(id, where).description, path: resolveSkillDir(id, where) };
-      } catch {
-      }
-    }
-    throw new WorkflowError(
-      "AGENT_DEFINITION_INVALID",
-      `node "${nodeId2}": agent "${agent.id}" declares skill "${id}", which this machine did not pull \u2014 run \`gate pull\` (and check it is in your team's skill library), then \`gate continue ${executionId}\``,
-      { nodeId: nodeId2, agentId: agent.id }
-    );
-  });
 }
 function stateFor(execution, outputs, visitCounts) {
   return {
@@ -9679,7 +9522,7 @@ async function settle(ctx, executionId, execution, stepCount, status, error, pub
   if (execution.status === "running") {
     let diff = null;
     let summary = null;
-    if (workspace && existsSync9(workspace.root)) {
+    if (workspace && existsSync8(workspace.root)) {
       summary = summarizeWorkspace(workspace);
       try {
         diff = readRunDiff(workspace.root, workspace.baseCommit).diff;
@@ -9725,7 +9568,7 @@ async function reopen(ctx, executionId) {
     );
   }
   let restored = false;
-  if (workspace && !existsSync9(workspace.root)) {
+  if (workspace && !existsSync8(workspace.root)) {
     try {
       restored = restoreRunWorkspace(workspace);
       borrowDependencies(workspace);
@@ -9771,12 +9614,12 @@ function judgeWorkspace(root, baseCommit) {
   return "unpushed";
 }
 async function listWorkspaces(client) {
-  const dir = join11(gateHome2(), "workspaces");
-  if (!existsSync10(dir)) return [];
+  const dir = join10(gateHome2(), "workspaces");
+  if (!existsSync9(dir)) return [];
   const out = [];
-  for (const entry of readdirSync7(dir, { withFileTypes: true })) {
+  for (const entry of readdirSync6(dir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const root = join11(dir, entry.name);
+    const root = join10(dir, entry.name);
     let status = "unknown";
     let baseCommit = null;
     let branch = git3(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -9811,11 +9654,11 @@ function applyClean(plan) {
     if (e.repo && e.branch) {
       const ws = { repo: e.repo, root: e.root, branch: e.branch, baseRef: "", baseCommit: e.baseCommit ?? void 0 };
       const released = releaseRunWorkspace(ws, e.executionId);
-      if (released === null && existsSync10(e.root)) removeRunWorkspace(ws, { keepBranch: true });
+      if (released === null && existsSync9(e.root)) removeRunWorkspace(ws, { keepBranch: true });
     } else {
       removeRunWorkspace({ repo: e.root, root: e.root, branch: "" }, { keepBranch: true });
     }
-    if (existsSync10(e.root)) {
+    if (existsSync9(e.root)) {
       notes.push(`kept ${e.executionId.slice(0, 8)}: its worktree could not be removed, or what it left uncommitted could not be committed`);
       continue;
     }
@@ -9841,14 +9684,14 @@ function describeVerdict(v) {
 }
 
 // src/client/claude-settings.ts
-import { existsSync as existsSync11, readFileSync as readFileSync8, writeFileSync as writeFileSync8 } from "node:fs";
-import { join as join12 } from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync7, writeFileSync as writeFileSync7 } from "node:fs";
+import { join as join11 } from "node:path";
 var GATEWAY_PATH = /\/api\/gateway\/?$/;
 var GATE_KEY = /^gate_/;
 var GATE_ONLY_ENV = ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"];
 var PICKER_PREFIXES = ["provider:", "local:"];
 function settingsPath(global, cwd = process.cwd()) {
-  return global ? join12(claudeConfigDir(), "settings.json") : join12(cwd, ".claude", "settings.local.json");
+  return global ? join11(claudeConfigDir(), "settings.json") : join11(cwd, ".claude", "settings.local.json");
 }
 function withoutGatewayWiring(settings) {
   const before = JSON.stringify(settings);
@@ -9879,10 +9722,10 @@ function withoutGatewayWiring(settings) {
   return JSON.stringify(settings) !== before;
 }
 function unsetGatewayWiring(path) {
-  if (!existsSync11(path)) return false;
+  if (!existsSync10(path)) return false;
   let settings;
   try {
-    const text = readFileSync8(path, "utf8");
+    const text = readFileSync7(path, "utf8");
     if (!text.trim()) return false;
     settings = JSON.parse(text);
   } catch {
@@ -9890,7 +9733,7 @@ function unsetGatewayWiring(path) {
   }
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) return false;
   if (!withoutGatewayWiring(settings)) return false;
-  writeFileSync8(path, `${JSON.stringify(settings, null, 2)}
+  writeFileSync7(path, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384 });
   return true;
 }
@@ -9909,7 +9752,7 @@ function cleanGatewayWiring(cwd = process.cwd()) {
 
 // src/client/teach.ts
 import { execFileSync as execFileSync6 } from "node:child_process";
-import { readFileSync as readFileSync9 } from "node:fs";
+import { readFileSync as readFileSync8 } from "node:fs";
 
 // src/lib/client-api-schemas.ts
 var clientInfo = external_exports.object({
@@ -10264,7 +10107,7 @@ function describeBranch(r) {
 function readAccount(file) {
   let raw;
   try {
-    raw = JSON.parse(readFileSync9(file, "utf8"));
+    raw = JSON.parse(readFileSync8(file, "utf8"));
   } catch (e) {
     throw new TeachError(`cannot read ${file} as JSON: ${e.message}`);
   }
@@ -10456,12 +10299,12 @@ async function cmdLogin(args) {
   return 0;
 }
 function cmdInstall(args) {
-  const target = typeof args.flags.dir === "string" ? args.flags.dir : join13(homedir6(), ".local", "bin");
+  const target = typeof args.flags.dir === "string" ? args.flags.dir : join12(homedir6(), ".local", "bin");
   const script = process.argv[1];
-  const shim = join13(target, "gate");
+  const shim = join12(target, "gate");
   try {
-    mkdirSync10(target, { recursive: true });
-    writeFileSync9(shim, `#!/bin/sh
+    mkdirSync9(target, { recursive: true });
+    writeFileSync8(shim, `#!/bin/sh
 exec node "${script}" "$@"
 `, { mode: 493 });
   } catch (e) {
@@ -10578,7 +10421,7 @@ async function cmdPush(args) {
   for (const item of items) {
     let source;
     try {
-      source = readFileSync10(item.file, "utf8");
+      source = readFileSync9(item.file, "utf8");
     } catch (e) {
       console.error(`${item.file}: ${e.message}`);
       failed++;
@@ -10605,7 +10448,7 @@ async function cmdPull() {
   const config = readConfig();
   const manifest = await sync(client, await teamOf(client, config), true);
   console.log(
-    `pulled ${manifest.workflows.length} workflow(s)` + (manifest.skills?.length ? ` and ${manifest.skills.length} skill(s)` : "") + ` for team ${manifest.team} from ${manifest.from}`
+    `pulled ${manifest.workflows.length} workflow(s) for team ${manifest.team} from ${manifest.from}`
   );
   return 0;
 }
@@ -10731,7 +10574,7 @@ async function cmdStep(args) {
   if (!file) die("gate step needs --output-file <file>: the node's answer, as the agent declared it");
   let answer;
   try {
-    answer = readFileSync10(file, "utf8");
+    answer = readFileSync9(file, "utf8");
   } catch (e) {
     die(`cannot read ${file}: ${e.message}`);
   }
@@ -10778,7 +10621,7 @@ async function cmdPublish(args) {
   const { execution, publish } = await client.execution(executionId);
   const ws = execution.workspace;
   if (!ws?.root || !ws.branch) return die(`run ${executionId.slice(0, 8)} has no worktree on any machine`);
-  if (!existsSync12(ws.root)) {
+  if (!existsSync11(ws.root)) {
     return die(`this run's worktree (${ws.root}) is not on this machine \u2014 publish from the machine that ran it`);
   }
   if (!publish) {

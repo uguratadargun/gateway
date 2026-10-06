@@ -5,7 +5,7 @@
 The dashboard is the one place a person runs their gate from. Name the
 provider the server's own model calls go to and set memory, issue a key to
 each person who may connect, follow a run step by step and stop it, read what
-the team remembers and forget what it should not, and edit the agents, skills
+the team remembers and forget what it should not, and edit the agents
 and pipelines the runs use. A run is started and continued in a person's own
 Claude Code session, on their own login; the dashboard says which command does
 it. Everything the product does that is not a run on someone's machine is done
@@ -30,7 +30,7 @@ definitions are shown, never what may be done.
 
 ### The shape
 
-A left rail is the whole map — ten destinations (Dashboard, Agents, Skills,
+A left rail is the whole map — nine destinations (Dashboard, Agents,
 Repos, Workflows, Executions, Memory, Tasks, Objections, Team), no top bar, and
 a theme control fixed in the corner so it does not move between pages. Light,
 dark and follow-the-system are three buttons, and the choice is applied before
@@ -62,8 +62,8 @@ its own.
 A panel here is a view onto a feature, and the rules belong to the feature, not
 to this page. The home page is the server's own model and its settings
 (`providers.md`, `memory.md`); executions are runs and their steps
-(`executions.md`, `dev-workflow.md`); workflows, agents and skills are the
-definitions a run uses (`workflows-engine.md`, `agents-and-skills.md`); and
+(`executions.md`, `dev-workflow.md`); workflows and agents are the
+definitions a run uses (`workflows-engine.md`, `agents.md`); and
 repos, team, memory, tasks and objections are the rest (`workspaces.md`,
 `teams-and-keys.md`, `memory.md`, `cross-team.md`).
 

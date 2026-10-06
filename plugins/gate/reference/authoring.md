@@ -16,7 +16,6 @@ model: sonnet                       # haiku, sonnet, opus, fable, or a claude-* 
 effort: high                        # default | low | medium | high | xhigh | max
 inputs: [planner.plan, tests.stdout?]   # upstream node outputs this agent may read
 tools: [read_file, list_files]      # see Tools
-skills: [superpowers-brainstorming] # optional; processes this agent follows — see Skills
 output:
   type: json                        # or: type: text
   schema:
@@ -49,9 +48,6 @@ Rules that reject a save:
 - `inputs:` entries are `<nodeId>.<field>` — the *node* id in the workflow, which
   is not always the agent id.
 - The file name is the agent id: lowercase letters, digits and dashes.
-- Every entry in `skills:` must be a skill the team's library can resolve — its
-  own or one it inherits. A name that does not resolve is refused on save, with
-  the list of the ones that do.
 
 ## Workflow — YAML
 
@@ -283,79 +279,37 @@ A node the session does itself, or runs as its subagent, is recorded with the
 answer it handed back; what it cost is on the person's own Claude plan, not in
 gate.
 
-## Skills — the process an agent follows
+## What a `claude-code` node is told besides its prompt
 
-`tools:` says what an agent may touch. `skills:` says how it works: each entry
-names a `SKILL.md` in the team's library, and an agent that declares one is told
-to follow it on every run rather than being left to notice it might apply.
+An agent's method is its prompt; nothing outside it tells the agent how to
+work. What gate adds is about where the node runs, and a prompt can rely on
+it rather than repeat it.
 
-Either executor gets the skill the same way: the path of its `SKILL.md` on this
-machine, pulled with the team's definitions, with the instruction to read and
-follow it before starting. The files a skill ships sit beside it, as written.
-
-Import skills on the dashboard's Skills page — `superpowers` ships registered,
-one Sync away, under the `superpowers-` prefix. Assign them in the agent editor,
-or write the `skills:` line by hand.
-
-Use one when the node has a *method* worth naming, not as decoration: a planner
-that should interrogate the request before designing takes
-`superpowers-brainstorming`; an implementer that must write the test first takes
-`superpowers-test-driven-development`. An agent carrying five skills is an agent
-whose prompt no longer decides anything.
-
-Read the skill before binding it, because a skill was written for a session
-with a person in it and a pipeline node often has none. Three things the
-`superpowers` skills do that a prompt has to answer for:
-
-- **They stop for a human.** Brainstorming will not proceed past its approval
-  gate; executing plans raises concerns "before starting". A node that cannot
-  ask is told that it is running unattended and should rule and record
-  instead. Who gets the notice follows the executor: every `claude-code` node
-  does, because a subagent cannot ask the person; an `executor: gate` node the
-  session does itself never does, because there the person is right there. So a claude-code agent's prompt may take
+- **It runs unattended.** A subagent cannot reach the person, so every
+  `claude-code` node is told so, and told to rule and record instead of
+  waiting. An `executor: gate` node the session does itself never is, because
+  there the person is right there. So a claude-code agent's prompt may take
   "unattended" as given — a prompt that hedges "when there is a person" is
   hedging against a case that does not happen — and must give the questions
-  a skill would ask a way out (an output field the pipeline carries to the
+  it would ask a way out (an output field the pipeline carries to the
   person). Never leave the agent to guess whether anyone is listening; it
   guesses "nobody", and approves its own plan.
+- **Subagents and files.** A node that can dispatch **subagents** is told what
+  one costs: never a command whose only purpose is to let time pass, never a
+  subagent type that copies its own context — measured here, four dispatches
+  became sixteen that way, because the copy carried the instruction to fan
+  out — and every subagent it started named and accounted for before it gives
+  a final answer. A node that reads **files** is told to use Read, Glob and
+  Grep rather than the shell: each Bash call opens a shell, and a file read
+  through one does not count as read, so the next Edit to it is refused;
+  measured in the same run, thirteen rejected edits and five minutes of `cat`
+  before the first change. Both are harness facts rather than method, which
+  is why they live in gate rather than in any agent you write.
 
-  That notice is one of three a `claude-code` node is given, and the other two
-  are about the machine rather than the skill, so no prompt has to repeat
-  them. A node that can dispatch **subagents** is told what one costs: never a
-  command whose only purpose is to let time pass, never a subagent type that
-  copies its own context — measured here, four dispatches became sixteen that
-  way, because the copy carried the instruction to fan out — and every
-  subagent it started named and accounted for before it gives a final answer.
-  A node that reads **files** is told to use Read, Glob and Grep rather than
-  the shell: each Bash call opens a shell, and a file read through one does
-  not count as read, so the next Edit to it is refused; measured in the same
-  run, thirteen rejected edits and five minutes of `cat` before the first
-  change. Both of those are harness facts rather than method, which is why
-  they live in gate rather than in any agent you write.
-- **They commit as they go.** Writing plans puts a commit step in every task;
-  subagent-driven development commits after each one. A pipeline that then
-  runs a plain `git diff` sees nothing. Diff against the run's base commit
-  (see the shape below), and let the commit node find nothing to commit.
-- **They hand off to skills the team may not hold.** Executing plans and
-  subagent-driven development end in `finishing-a-development-branch`, which
-  asks what to do with the branch. The pipeline already knows; tell the agent
-  where its skill's process stops.
-- **They keep state keyed on file names.** Subagent-driven development keeps
-  a ledger under `.superpowers/sdd/<plan file name>/` and resumes from it:
-  a plan file rewritten under its old name reads as work already done, and
-  the reddened tasks are skipped. A revision is a new file (`…-rev2.md`), and
-  a bounded fix on the same plan is a new task appended to it.
-
-A prompt written against a skill's text is only right for that text. Three
-things keep them together: an imported skill's references to its siblings —
-`../requesting-code-review/code-reviewer.md`, `superpowers:writing-plans` —
-are rewritten to the prefixed ids the team knows them by, so the link the
-prose follows exists (a team that imported before this re-imports with
-replace to get it); a library can be **pinned** to a commit on the Skills
-page, so a sync fetches but does not move it until somebody moves the pin; and
-`npm run skills:check` reads the phrases the shipped prompts rely on (the
-step numbers, the paths, the section names) out of the imported skills and
-names the prompt an upstream change has broken, before a run finds out.
+One thing about the work itself a pipeline has to answer for: an implementer
+that commits as it goes, as the shipped one does task by task, leaves a plain
+`git diff` with nothing to show. Diff against the run's base commit (see the
+shape below), and let the commit node find nothing to commit.
 
 ## Shape that works
 
@@ -385,7 +339,7 @@ base ─▶ plan-dir ─▶ planner ─▶ plan-check ─┬─ questions ─▶
 And `dev-quick`, the short road: the same base, diff, commit, acceptance and
 merge request, with `quick-implementer` and `quick-reviewer` in place of the
 planner, the gates before the build, the implementer, the verifier and the
-reviewer. Neither follows a skill; the brief is settled before the run
+reviewer. The brief is settled before the run
 starts, and a task that turns out not to be small ends the run rather than
 being half-built.
 
@@ -453,15 +407,6 @@ wording, a name, a translation, a small fix in what the branch already has
 is one more task for the implementer — which continues where it stopped —
 while a change to what was planned goes to the planner first.
 
-`dev-super` is the same graph to the byte, with the four working agents
-swapped for `super-planner`, `super-implementer`, `super-verifier` and
-`super-reviewer` — the same roles bound to the superpowers skills. It is
-derived from `dev` in code rather than copied, so the two cannot drift; what
-differs is inside the agents (a spec document, a ledger under
-`.superpowers/sdd/`, a fresh subagent and a review per task, a dispatched
-code reviewer), and it is the only shipped pipeline that needs skills
-imported.
-
 `dev-auto` is `dev` with the three gates taken out: the planner's questions
 go to `decide`, an agent that reads the repository and rules on them instead
 of asking; the plan is not shown to anyone; and the reviewer's approval opens
@@ -477,13 +422,13 @@ picked for a task on anyone's behalf — a run with nobody in it is the
 person's choice to make, and the merge request is where they read what it
 decided.
 
-The person is in the graph three times — in `dev`, `dev-super` and
+The person is in the graph three times — in `dev` and
 `dev-quick`; `dev-auto` is the one shipped pipeline with none of them. Every
 one of those nodes runs
 on the loop driving the run — the session — and decides nothing itself.
 `clarify` carries the planner's questions to them and their answers back:
 the planner runs in its own model and its own process and cannot ask from
-there, so brainstorming's questions travel out as an output (`questions`,
+there, so its questions travel out as an output (`questions`,
 one per line, all of them at once) and the answers travel back as an input.
 `plan-review` shows them the plan, and nothing is built until they say so —
 feedback revises the plan, and the revised plan is shown again until they
@@ -515,14 +460,9 @@ command as a deterministic node between the verifier and `stage`, and a
 merge-request node that matches its host. `/gate:design` writes those, reading
 them out of the repository rather than guessing.
 
-The shipped agents follow no skill: each prompt carries its own method, and
-what makes them a team is that each one's prompt says where it stops and
-what the next one reads. Their `super-*` twins follow skills (brainstorming,
-using git worktrees and writing plans for the planner; executing plans,
-test-driven development, subagent-driven development, receiving code review
-and systematic debugging for the implementer; verification before completion
-for the verifier; requesting code review for the reviewer). Name them; do
-not copy them into project-specific variants.
+Each shipped agent's prompt carries its own method, and what makes them a
+team is that each one's prompt says where it stops and what the next one
+reads. Name them; do not copy them into project-specific variants.
 
 Three things in that picture are easy to get wrong, and each one is a rule.
 
@@ -858,12 +798,9 @@ accept it. The server validates shape, not sense.
       make deliberately, not by omission.
 - [ ] **No absolute interpreter paths** in any `command` — `PATH` resolves them.
 - [ ] **No orphan output fields** — every one is read somewhere.
-- [ ] **Every skill in `skills:` is in the team's library** — a name that does
-      not resolve is refused on save, and a skill leaning on its own files
-      belongs on a `claude-code` agent, where those files exist.
-- [ ] **Every skill's prompt answers for what the skill does unattended** —
-      where it would wait for a person, where it commits, and which skill it
-      hands off to that the team does not hold. See Skills above.
+- [ ] **Every `claude-code` agent's prompt answers for running unattended** —
+      what it does where it would wait for a person, and where its questions
+      go instead. See what a `claude-code` node is told, above.
 - [ ] **`tools:` on a `claude-code` agent is the role's shape, not a fence** —
       the node stays inside it, but nothing enforces it. Reads for a reviewer,
       writes for an implementer, and nothing that relies on it.

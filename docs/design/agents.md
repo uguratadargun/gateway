@@ -1,15 +1,13 @@
-# Agents and skills
+# Agents
 
 ## Summary
 
 An agent is one role in a pipeline — planner, implementer, reviewer — written
 as a Markdown file a person can read and edit: a few lines of frontmatter say
-how it runs, and the body is its prompt. A skill is a process an agent is told
-to follow, in the same `SKILL.md` layout Claude Code and the published skill
-libraries already use, so a library written elsewhere can be pulled in and
-assigned without rewriting it. Both belong to a team and are validated when
-saved, so a broken definition fails in the editor rather than an hour into a
-run.
+how it runs, and the body is its prompt. The prompt carries the agent's whole
+method; nothing outside it tells the agent how to work. Agents belong to a
+team and are validated when saved, so a broken definition fails in the editor
+rather than an hour into a run.
 
 ## How it works
 
@@ -78,28 +76,10 @@ start, so it is never pre-filled and can never refuse a run. `gate list`,
 `gate show` and `/workflows/<id>` all name it beside the required keys, each
 time saying it is optional.
 
-**Skills** live at `~/.gate/teams/<team>/skills/<id>/SKILL.md`, a directory
-per skill with whatever files the process points at beside it. `name` and
-`description` are the two frontmatter fields gate reads; every other key an
-upstream file carries is kept, so an imported library that gains a field does
-not stop parsing. `skills` on an agent names entries from the team's library
-and is how the agent works, not what it may touch: an agent that declares one
-is told to follow it every run, and a skill the team cannot resolve is refused
-at save time. It reaches both executors the same way. The skill's directory
-comes down with the team's definitions, which every `gate` command pulls, and
-a run pins its copy when it begins; the node's instruction names each skill's
-path in that copy. The session doing an `executor: gate` node is told to open
-each `SKILL.md` and follow it, and to talk to the person where the skill says
-to. The subagent of an `executor:
-claude-code` node is told, in its task, to read and follow each one before
-starting. Either reads the files a skill points at beside it, because they
-are on disk. A skill this machine did not pull stops the node before it is
-handed out, with `gate pull` named as the way back.
-
 A `claude-code` node is also told three things about where it runs, beside
-whatever its own prompt says. Skills were written for a session with a person
-in it, and a subagent cannot reach the person, so the node is told it runs
-**unattended**: nothing it asks can be answered, and what to do instead. It
+whatever its own prompt says. A subagent cannot reach the person, so the node
+is told it runs **unattended**: nothing it asks can be answered, and what to
+do instead. It
 is told what dispatching **subagents** costs: never a command whose only
 purpose is to let time pass, never a subagent type that copies its own
 context — measured here, four dispatches became sixteen that way, because the
@@ -114,56 +94,21 @@ with the prompt `gate next` hands a `claude-code` node
 (`src/client/step.ts`), because it is true of the node. The other two are
 baked into the subagent file `src/client/subagents.ts` writes, because they
 are true of every subagent whatever the node is. An `executor: gate` node
-gets none of them: the person is right there, and a skill that asks should
-ask. The invariant is about the sites, not the count: a notice added to one
-agent's prompt instead reaches only that agent, and `tests/inject.test.ts` is
+gets none of them: the person is right there, and a node that needs to ask
+should ask. The invariant is about the sites, not the count: a notice added to one
+agent's prompt instead reaches only that agent, and `tests/notices.test.ts` is
 what says the subagent file carries its two.
 
-Team scoping is the same for agents and skills: a team's own copy of a name
-wins, anything it has not written it inherits from the default team's
-library, and nothing can write into the fallback — so a team can replace
-`brainstorming` with its own without asking anyone and without affecting
-anyone. The default team's directories are seeded with the shipped agents the
+Team scoping: a team's own copy of a name wins, anything it has not written
+it inherits from the default team's library, and nothing can write into the
+fallback — so a team can replace `planner` with its own without asking anyone
+and without affecting anyone. The default team's directories are seeded with the shipped agents the
 first time `/agents` or `/workflows` is opened, only when the directory does
 not exist yet, so deleting a shipped agent sticks; a team you create starts
 empty. A refresh writes back the shipped text of any agent that has drifted,
 keeps the `model` and `effort` set on it, and puts the old text under
-`<team>/backups/<stamp>/agents/`.
-
-### Pulling a library — the Skills page
-
-The skills worth having are mostly written elsewhere, so gate clones a library
-and imports from it as two separate acts. **Sync** fetches into gate's own
-clone under `~/.gate/skill-sources/` and changes nothing a team runs;
-**Import** copies named skills into the team's library and stamps each with
-the commit it came from (`.gate-source.json` beside `SKILL.md`). Nothing an
-agent does changes until somebody asks for it. Because the stamp is kept,
-every skill on the page says where it stands: *not imported*, *up to date*,
-*update available*, or *edited here* — the last being the one an update would
-overwrite, said before you press the button, and outranking *update
-available* for that reason.
-
-[`superpowers`](https://github.com/obra/superpowers) ships registered and
-unpulled, under the `superpowers-` prefix so a second library shipping its own
-`brainstorming` does not collide. One Sync, then import what you want:
-
-```
-Skills → Superpowers → Sync → browse → pick brainstorming → Import
-Agents → planner → Skills → ☑ superpowers-brainstorming → Save
-```
-
-A library's skills refer to each other by relative path and by the harness's
-namespace (`superpowers:writing-plans`); on import those references are
-rewritten to the ids the siblings are imported under — the prefix, lowercased,
-dashes for anything else — in prose files only, so the copies still find
-their siblings. A name is matched whole: `superpowers:writing-plans-extended`
-is not a reference to `writing-plans`. Add your own library with a git URL, a
-ref, the subdirectory its skills live in and an id prefix; the subdirectory is
-inside the clone or refused. A library is somebody else's repository, so its
-links are not followed: a skill whose `SKILL.md` is a link is listed with that
-reason and not imported, and links elsewhere in a skill are not copied.
-Forgetting a source deletes gate's clone; the skills already imported are the
-team's copies and stay.
+`<team>/backups/<stamp>/agents/`. It moves an agent gate no longer ships (the
+`super-*` four) to the same place, after the pipelines that named it.
 
 ## File format
 
@@ -172,7 +117,6 @@ team's copies and stay.
 name: Tester
 model: sonnet          # haiku | sonnet | opus | fable, or a concrete claude-* id
 effort: medium         # optional: low | medium | high | xhigh | max
-skills: [superpowers-test-driven-development]   # optional; see Skills above
 inputs: [implementation.diff, reviewer.feedback?]
 output:
   type: json           # or: text
@@ -189,25 +133,16 @@ Test this change:
 
 The full frontmatter: `name`, `description`, `model` (default `sonnet`),
 `effort`, `inputs`, `output`, `executor` (`gate` | `claude-code`), `asks`
-(`question` | `approval`; `person` is read as `question`), `tools`, `skills`,
+(`question` | `approval`; `person` is read as `question`), `tools`,
 `timeoutMs` (how long one visit to the node is expected to take; past it the
 person is told the node is overrunning, and stopping it is theirs; default one
-hour, `0` for no notice), `maxTokens` and `maxToolIterations` (accepted, so an
-older agent file keeps loading, and read by nothing). Output field types are
+hour, `0` for no notice), and `maxTokens`, `maxToolIterations` and `skills`
+(accepted, so an older agent file keeps loading, and read by nothing; a save
+from the editor drops `skills`). Output field types are
 `string`, `number`, `boolean`, `string[]`, `number[]`, `object`, `object[]`,
 `any`, each with an optional trailing `?`. A `?` field may be left out of the answer or written as
 `null`, and both read as absent; a field without one must be present and must
 not be null. Unknown keys are rejected.
-
-```markdown
----
-name: superpowers-brainstorming
-description: Use before any creative work — explores intent and design before implementation.
----
-
-Ask clarifying questions one at a time. Propose 2–3 approaches with trade-offs.
-Present the design and get approval before writing code.
-```
 
 ## Key files
 
@@ -217,11 +152,8 @@ Present the design and get approval before writing code.
 - `src/agents/registry.ts` — the file store per scope, with fallback to the default team
 - `src/agents/defaults.ts` — the shipped agents, seeding, refresh with tuning kept
 - `src/agents/form.ts`, `src/agents/new-agent-template.ts` — the editor's form model and the starting file
-- `src/skills/types.ts`, `src/skills/loader.ts` — the open `SKILL.md` frontmatter, content hashing
-- `src/skills/registry.ts` — the skill store per scope, `.gate-source.json` origin stamps
-- `src/skills/sources.ts` — libraries: sync, import states, prefixing, sibling-reference rewriting
-- `src/skills/inject.ts` — the three notices: unattended, background subagents, file reading
-- `src/client/step.ts` — the instruction each executor's node is handed: the prompt, the skill paths, whether it may ask, the memory commands
+- `src/client/notices.ts` — the three notices: unattended, background subagents, file reading
+- `src/client/step.ts` — the instruction each executor's node is handed: the prompt, whether it may ask, the memory commands
 - `src/client/subagents.ts` — the `claude-code` agents as subagent files under `~/.claude/agents/`, in their own model
 - `src/runtime/executors/agent.ts` — the prompt rendered from the node's inputs, and the answer checked against the declared output
 - `src/agents/tools.ts` — the tool vocabulary a `gate` agent may name
@@ -229,15 +161,14 @@ Present the design and get approval before writing code.
 ## Pitfalls
 
 - `tools` is only validated for `executor: gate`, and never enforced. `Read` on a `gate` agent is a save-time error; `read_file` on a `claude-code` agent saves fine and means nothing. A reviewer whose list holds no write tool can still write: the session and the subagent have their own tools.
-- A skill declared by an agent must exist in the team's library (own or inherited) or the agent will not save. The shipped `super-*` agents name `superpowers-*` skills; until those are imported, saving one from the editor fails and a run that needs one stops at that node with the reason.
-- A skill reaches a node as a path in the copy of the definitions the run pinned when it began. A skill edited on the gate mid-run reaches the next run, not this one.
+- An agent file that still names `skills` loads and runs, and nothing tells its node about them. A prompt written to lean on a skill ("follow your brainstorming skill") now leans on nothing; the method has to be in the prompt.
 - An optional input (`?`) renders as an empty string, not as an absent placeholder. A prompt that says "the tester found: {{inputs.tester.failures?}}" reads oddly on the first pass; write the prompt for both cases.
 - `model` on an `executor: gate` agent is not the model its node runs on: the session does it in whatever model the person started. Only a `claude-code` agent runs in its own.
 - Saving from the dashboard rewrites the file through the form model; a frontmatter key the form does not carry would be lost, which is why the form is data with tests rather than JSX.
-- An imported skill edited by hand is marked *edited here* and will be overwritten by a re-import; the only protection is the label.
 
 ## Decisions
 
+- [0063 — Agents follow no skills, and dev-super is gone](../decisions/0063-agents-follow-no-skills.md)
 - [0047 — A run is driven only from a person's own Claude Code session](../decisions/0047-a-run-is-driven-only-from-a-persons-session.md)
 - [0046 — Every person runs on their own Claude login; gate holds no model credentials and serves no models](../decisions/0046-every-person-runs-on-their-own-claude-login.md)
 - [0030 — An optional field may be written as null](../decisions/0030-an-optional-field-may-be-written-as-null.md)

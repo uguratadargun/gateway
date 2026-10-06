@@ -117,8 +117,8 @@ export function createRunWorkspace(spec: ResolvedWorkspaceSpec, executionId: str
  * Lends the checkout's installed dependencies to a fresh worktree.
  *
  * A worktree carries what git tracks and nothing else, so `node_modules`,
- * `.venv` and `vendor` are not in it — and the first thing a planner following
- * its worktree skill then does is a full install, on the developer's own
+ * `.venv` and `vendor` are not in it — and the first thing a planner setting
+ * one up then does is a full install, on the developer's own
  * machine, per run (measured here: 1.6 GB and a quarter of an hour, for a
  * result identical to the directory next door). A symlink is what the server's
  * own worktree preparation does too; a directory already present is left as
@@ -344,8 +344,8 @@ const MAX_DIFF_BYTES = 4_000_000;
  * intent-to-add only — no content is staged — and it is the same thing the
  * pipeline's own `stage` node does.
  *
- * Against the base commit when the run recorded one: the shipped agents'
- * skills commit task by task, and a diff against the index would show a
+ * Against the base commit when the run recorded one: the shipped
+ * implementer commits task by task, and a diff against the index would show a
  * finished run as empty. That is also what the pipeline's own `diff` node
  * does, so a diff read here matches the diff the reviewers were given.
  *

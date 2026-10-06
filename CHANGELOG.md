@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Skills are gone: the dashboard's Skills page, skill libraries and the `skills:` line on an agent. Each agent's method is in its own prompt. An agent file that still names skills keeps loading, and saving it from the editor drops the line.
+
+- The `dev-super` pipeline and its `super-planner`, `super-implementer`, `super-verifier` and `super-reviewer` agents are no longer shipped. `npm run defaults:restore -- --refresh` moves a gate's copies under `backups/`; use `dev`.
+
 ## 0.50.0 — 2026-09-29
 
 - Security: a run's reported publication can no longer reach `git` as an option. The server takes a published ref only as a branch and a commit only as a full sha, re-checks them when a question reads them, and passes `--end-of-options` to every `git` call built from stored or user values. Before this, anyone with a key could make the gate's own `git fetch` run a command.

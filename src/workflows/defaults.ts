@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { backupStamp, ensureDefaultAgents } from "@/agents/defaults";
@@ -33,11 +33,6 @@ import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
  * compares the working tree to it, and the reviewer is handed both. For the
  * same reason the commit at the end is allowed to find nothing left to
  * commit.
- *
- * The four working agents follow no skill; see src/agents/defaults.ts for
- * what each carries instead. `dev-super` below is this same graph on the
- * `super-*` agents, which follow the superpowers skills — derived from this
- * text rather than copied, so the two pipelines cannot drift apart.
  *
  * The person is in the graph three times. `clarify` carries the planner's
  * questions to them and their answers back — the planner runs in its own
@@ -74,7 +69,7 @@ import { readWorkflowSource, workflowExists, workflowsDir } from "./registry";
  * parallel node joining at `verdict`, and widen the verdict's condition.
  */
 const DEV = `name: Dev
-description: Plan a change with the person, build it in a worktree once they approve the plan, verify and review it, let them try it, and open a merge request. The agents follow no skill; dev-super is the same road with the superpowers method.
+description: Plan a change with the person, build it in a worktree once they approve the plan, verify and review it, let them try it, and open a merge request.
 entry: base
 workspace: {}
 # No engine ceilings: rounds and revisits cannot be counted in advance, and
@@ -616,26 +611,6 @@ nodes:
 `;
 
 /**
- * The same road with the superpowers method.
- *
- * Derived from `dev`, not copied: the graph is `dev`'s to the byte, with
- * the four working agents swapped for their `super-*` counterparts, so a
- * change to one pipeline's shape is a change to both and there is nothing
- * to keep in step by hand. What differs is entirely inside the agents — the
- * skills they follow, the spec document, the ledger, the subagent per task,
- * the dispatched reviewer — and that is where the time goes: measured here,
- * eighty minutes for a seven-task change against the same graph. It is
- * here for the team that wants the method's full weight, and it is the
- * only shipped pipeline that needs skills imported.
- */
-const DEV_SUPER = DEV.replace(/^name: Dev$/m, "name: Dev super")
-  .replace(
-    /^description: .*$/m,
-    "description: Dev's road with the superpowers method — the same plan, gates, verifier and review, on the super-* agents, which follow the skills. Slower; for a change worth the method's full weight.",
-  )
-  .replace(/^(\s+agent: )(planner|implementer|verifier|reviewer)$/gm, "$1super-$2");
-
-/**
  * The short road, for a change that does not need a plan.
  *
  * `dev` earns its length on a change worth planning: a design settled with
@@ -648,9 +623,8 @@ const DEV_SUPER = DEV.replace(/^name: Dev$/m, "name: Dev super")
  *
  * It has no planner. The brief is settled where the run is started — the
  * run command already asks what is unsettled before it begins — and the
- * quick implementer reads the repository and makes the change, following no
- * skill, recording in its summary any reading it had to take on the
- * person's behalf. It has no verifier: the implementer runs the project's
+ * quick implementer reads the repository and makes the change, recording in
+ * its summary any reading it had to take on the person's behalf. It has no verifier: the implementer runs the project's
  * own check for the files it touched, and the reviewer, which reads the
  * diff itself rather than dispatching for it, holds the summary's claim
  * about that check against what it can see and run. Both are told what
@@ -671,7 +645,7 @@ const DEV_SUPER = DEV.replace(/^name: Dev$/m, "name: Dev super")
  * been sent back twice is not converging on anything a third pass will fix.
  */
 const DEV_QUICK = `name: Dev quick
-description: Make a small change to something that already exists — no plan, no skills — review it, let the person try it, and open a merge request. For a colour, a label, a default, a small fix; anything that needs a plan goes through Dev.
+description: Make a small change to something that already exists — no plan — review it, let the person try it, and open a merge request. For a colour, a label, a default, a small fix; anything that needs a plan goes through Dev.
 entry: base
 workspace: {}
 # No engine ceilings, as in dev: the loops end themselves, on the verdict
@@ -1430,7 +1404,6 @@ nodes:
 
 export const DEFAULT_WORKFLOWS: Record<string, string> = {
   dev: DEV,
-  "dev-super": DEV_SUPER,
   "dev-quick": DEV_QUICK,
   "dev-auto": DEV_AUTO,
   blame: BLAME,
@@ -1474,6 +1447,30 @@ export function refreshDefaultWorkflows(scope?: DefinitionScope, stamp = backupS
     written.push(id);
   }
   return written;
+}
+
+/**
+ * Pipelines gate once shipped and no longer does: `dev-super`, `dev` on the
+ * agents bound to the superpowers skills, which went when agents stopped
+ * following skills. Retired before the agents it names (see
+ * `retireDefaultAgents`), since a pipeline naming an agent that is not there
+ * does not load.
+ */
+export const RETIRED_WORKFLOWS = ["dev-super"];
+
+/** Puts this scope's own copies of the retired pipelines aside, under backups/<stamp>/workflows/. */
+export function retireDefaultWorkflows(scope?: DefinitionScope, stamp = backupStamp()): string[] {
+  const dir = workflowsDir(scope && ownScope(scope));
+  const moved: string[] = [];
+  for (const id of RETIRED_WORKFLOWS) {
+    const file = join(dir, `${id}.yaml`);
+    if (!existsSync(file)) continue;
+    const backup = join(dir, "..", "backups", stamp, "workflows");
+    mkdirSync(backup, { recursive: true, mode: 0o700 });
+    renameSync(file, join(backup, `${id}.yaml`));
+    moved.push(id);
+  }
+  return moved;
 }
 
 /**

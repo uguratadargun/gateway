@@ -5,7 +5,7 @@ docs/decisions/0031-a-prompt-carries-what-is-new-not-what-was-already-read.md,
 docs/decisions/0032-the-autonomous-road-can-stop-at-the-commit.md
 Design: docs/design/dev-workflow.md (the `--stat` diff, the `delivery` gate
 and the `committed` terminal, the delta a continued pass is sent and
-`--full`, the node count `dev-auto` differs by), docs/design/agents-and-skills.md
+`--full`, the node count `dev-auto` differs by), docs/design/agents.md (agents-and-skills.md until docs/decisions/0063-agents-follow-no-skills.md)
 (what a `?` field accepts)
 
 # What the second dev-auto run showed, and what was fixed

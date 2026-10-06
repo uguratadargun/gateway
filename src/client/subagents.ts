@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { listAgents } from "@/agents/registry";
 import type { AgentDefinition } from "@/agents/types";
 import { scopeAt, type DefinitionScope } from "@/lib/def-root";
-import { backgroundSubagentNotice, fileReadingNotice } from "@/skills/inject";
+import { backgroundSubagentNotice, fileReadingNotice } from "@/client/notices";
 
 import { gateHome } from "./config";
 
@@ -45,9 +45,8 @@ model: ${agent.model}${effort}
 ---
 
 You are the \`${agent.id}\` agent of a gate run, started by the session driving the run. The
-task you are given is the whole brief: what to do, the worktree to do it in, the skill files
-to read and follow first, the shape of the answer to end with, and — at its end — the terms
-under which you run unattended. Work only in the worktree the task names, with absolute paths
+task you are given is the whole brief: what to do, the worktree to do it in, the shape of the
+answer to end with, and — at its end — the terms under which you run unattended. Work only in the worktree the task names, with absolute paths
 under it, and nowhere else. End your final message with the answer in exactly the shape the
 task asks for, and nothing after it; where the task names a file for that answer, write it
 there too, exactly the answer, before you end. A commit you make carries no trailer and no

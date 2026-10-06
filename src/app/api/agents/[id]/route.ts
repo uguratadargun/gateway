@@ -4,12 +4,11 @@ import { z } from "zod";
 import { ensureDefaultAgents } from "@/agents/defaults";
 import { AgentDefinitionError, serializeAgent } from "@/agents/loader";
 import { deleteAgent, getAgent, readAgentSource, saveAgent } from "@/agents/registry";
-import { scopeFromRequest, type DefinitionScope } from "@/lib/def-root";
+import { scopeFromRequest } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
 import { FIELD_TYPES } from "@/agents/types";
 import { EFFORTS } from "@/lib/reasoning";
 import { knownToolNames } from "@/agents/tools";
-import { inheritedSkills, listSkills } from "@/skills/registry";
 
 export const runtime = "nodejs";
 
@@ -29,13 +28,7 @@ const CLAUDE_MODELS = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5
  * chain. A hard-coded copy in a React component is a copy that drifts the
  * first time a tool is added and nobody remembers the second list exists.
  */
-async function editorOptions(scope: DefinitionScope) {
-  // The team's own skills and the ones it inherits, in one list: an agent
-  // naming either resolves, and which library a skill lives in is not a
-  // distinction the person assigning it has to hold in their head.
-  const skills = [...listSkills(scope).skills, ...inheritedSkills(scope)]
-    .map((s) => ({ id: s.id, name: s.name, description: s.description }))
-    .sort((a, b) => a.id.localeCompare(b.id));
+async function editorOptions() {
   return {
     // Aliases first: this is what an agent file normally says, and Claude
     // Code resolves it to the newest model of that name.
@@ -45,7 +38,6 @@ async function editorOptions(scope: DefinitionScope) {
     executors: ["gate", "claude-code"],
     fieldTypes: FIELD_TYPES,
     gateTools: knownToolNames(),
-    skills,
   };
 }
 
@@ -84,7 +76,7 @@ export async function GET(req: Request, { params }: Params) {
   try {
     const agent = getAgent(id, scope);
     const source = readAgentSource(id, scope);
-    return NextResponse.json({ agent, source, options: await editorOptions(scope) });
+    return NextResponse.json({ agent, source, options: await editorOptions() });
   } catch (e) {
     return fail(e) ?? NextResponse.json({ error: (e as Error).message }, { status: 400 });
   }

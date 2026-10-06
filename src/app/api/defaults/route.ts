@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { DEFAULT_AGENTS, DEFAULT_AGENT_SKILLS, writeMissingDefaultAgents } from "@/agents/defaults";
+import { DEFAULT_AGENTS, writeMissingDefaultAgents } from "@/agents/defaults";
 import { agentExists } from "@/agents/registry";
-import { inheritedSkills, listSkills } from "@/skills/registry";
 import { scopeFromRequest } from "@/lib/def-root";
 import { getTeam } from "@/lib/teams";
 import { DEFAULT_WORKFLOWS, writeMissingDefaultWorkflows } from "@/workflows/defaults";
@@ -44,12 +43,5 @@ export async function POST(req: Request) {
   const scope = scopeOf(req);
   // Agents first: a workflow naming one that is not there yet would not load.
   const added = [...writeMissingDefaultAgents(scope), ...writeMissingDefaultWorkflows(scope)];
-  const have = new Set([...listSkills(scope).skills, ...inheritedSkills(scope)].map((s) => s.id));
-  return NextResponse.json({
-    added,
-    // Restored definitions name skills; a team that has not imported them has
-    // agents that will stop at their first node. Said here, where the person
-    // is looking, rather than discovered during a run.
-    missingSkills: DEFAULT_AGENT_SKILLS.filter((s) => !have.has(s.id)).map((s) => s.id),
-  });
+  return NextResponse.json({ added });
 }

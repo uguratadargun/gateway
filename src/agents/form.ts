@@ -14,8 +14,6 @@ export interface AgentEditorOptions {
   executors: string[];
   fieldTypes: readonly string[];
   gateTools: string[];
-  /** The team's skill library, own and inherited, for the assignment control. */
-  skills: Array<{ id: string; name: string; description: string }>;
 }
 
 export interface OutputField {
@@ -36,7 +34,6 @@ export interface AgentForm {
   outputType: "text" | "json";
   outputFields: OutputField[];
   tools: string[];
-  skills: string[];
   timeoutMs: string;
   maxTokens: string;
   maxToolIterations: string;
@@ -51,7 +48,6 @@ interface LoadedAgent {
   inputs: string[];
   output: { type: string; schema?: Record<string, string> };
   tools: string[];
-  skills?: string[];
   timeoutMs?: number;
   maxTokens?: number;
   maxToolIterations?: number;
@@ -73,7 +69,6 @@ export function formFromAgent(a: LoadedAgent): AgentForm {
       optional: raw.endsWith("?"),
     })),
     tools: [...a.tools],
-    skills: [...(a.skills ?? [])],
     timeoutMs: a.timeoutMs === undefined ? "" : String(a.timeoutMs),
     maxTokens: a.maxTokens === undefined ? "" : String(a.maxTokens),
     maxToolIterations: a.maxToolIterations === undefined ? "" : String(a.maxToolIterations),
@@ -115,9 +110,6 @@ export function frontmatterFrom(form: AgentForm): Record<string, unknown> {
     // Claude Code brings its own tools, so a list here would be written and
     // then ignored — the control is disabled in that mode and the key goes too.
     tools: form.executor === "gate" && tools.length ? tools : undefined,
-    // Written for both executors, unlike `tools`: a skill means the same thing
-    // whichever loop is running the node, only the delivery differs.
-    skills: form.skills.length ? form.skills : undefined,
     timeoutMs: num(form.timeoutMs),
     maxTokens: num(form.maxTokens),
     maxToolIterations: num(form.maxToolIterations),

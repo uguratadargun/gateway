@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { EFFORTS, type Effort } from "@/lib/reasoning";
-import { SKILL_ID_RE } from "@/skills/types";
 
 /**
  * Agent definitions are Markdown files: YAML frontmatter describes how the
@@ -85,15 +84,6 @@ export const agentFrontmatterSchema = z
      */
     tools: z.array(z.string().min(1).max(64)).max(50).default([]),
     /**
-     * Skills this agent works by, named as ids from the team's skill library.
-     *
-     * Not a hint: an agent that declares one is told to read and follow it,
-     * every run, from the copy this machine pulled with the team's
-     * definitions. That is what makes "the planner brainstorms" a property of
-     * the definition rather than of how the prompt happened to be worded.
-     */
-    skills: z.array(z.string().regex(SKILL_ID_RE, "use lowercase letters, digits and dashes")).max(20).default([]),
-    /**
      * How long one visit to this agent's node is expected to take. Past it the
      * person is told the node is overrunning; stopping it is theirs. Left out,
      * it is an hour; 0 turns the notice off. There is no upper bound.
@@ -105,6 +95,11 @@ export const agentFrontmatterSchema = z
      */
     maxTokens: z.number().int().min(1024).max(200_000).optional(),
     maxToolIterations: z.number().int().min(0).optional(),
+    /**
+     * Read by nothing since gate stopped binding agents to skills; still
+     * accepted, so an agent file that names some keeps loading.
+     */
+    skills: z.array(z.string()).optional(),
   })
   .strict();
 

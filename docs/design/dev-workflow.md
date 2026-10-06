@@ -110,14 +110,10 @@ those are facts about one project, for `/gate:design` to add.
 
 ### The shipped pipelines
 
-**`dev`** is the road above; its four working agents follow no skill.
-**`dev-super`** is the same graph to the byte — derived from `dev`'s text,
-not copied, so the two cannot drift — with the four working agents swapped
-for their `super-*` counterparts, which follow the superpowers skills (a
-spec document, a ledger, a subagent per task, a dispatched reviewer); it is
-the only shipped pipeline that needs skills imported. **`dev-quick`** is the
+**`dev`** is the road above; each of its four working agents carries its
+method in its own prompt. **`dev-quick`** is the
 short road for a change that needs no plan — a colour, a label, a default,
-a small fix: no planner, no verifier, no skills. The quick implementer
+a small fix: no planner, no verifier. The quick implementer
 makes the change, runs the project's own check for the files it touched,
 keeps the design doc's sentence true when the behaviour it describes
 changed, and writes a short spec under `docs/specs/` — the task as given
@@ -309,8 +305,7 @@ over. Visit counts reach a node as the walk has them, its own pass included:
 number the edges read. A walk that cannot go on ends the run as failed
 rather than wedging it — an edge whose condition cannot be evaluated against
 what a node answered, a pinned definition that no longer loads — and an input
-nobody produced, or a skill this machine has neither in the run's pin nor in
-the team's mirror, fails the node as a recorded step before the node is
+nobody produced fails the node as a recorded step before the node is
 announced, so a person's turn is never paused on a node that cannot run. A
 run the gate has closed is not walked forward, and a run whose workflow
 works in a worktree but that has none on the record — it ended before one
@@ -374,7 +369,7 @@ the definition's hash, so an edited workflow asks again; `--yes` skips it,
 
 `/gate:run` alone offers the list; `/gate:run dev fix the flaky test` starts
 that one and follows it to the end, `/gate:run dev-quick …` takes the short
-road, `/gate:run dev-super …` is `dev` with the superpowers method. With no
+road. With no
 workflow named, `/gate:run make the save button blue` picks the road
 itself: `dev-quick` when the task adjusts something that exists in a file
 or two and needs no design, otherwise the team's own pipeline for the
@@ -447,8 +442,8 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Key files
 
-- `src/workflows/defaults.ts` — the shipped pipelines: `dev`, `dev-super` derived from it, `dev-auto` written out and held to `dev`'s shape by a test, `dev-quick`, `blame`, `ask`, with the reasoning for each edge
-- `src/agents/defaults.ts` — the shipped agents and their `super-*` and `quick-*` counterparts, the three gates to the person and `decide` in their place on the autonomous road, `record-fix`, the investigator, source-review
+- `src/workflows/defaults.ts` — the shipped pipelines: `dev`, `dev-auto` written out and held to `dev`'s shape by a test, `dev-quick`, `blame`, `ask`, with the reasoning for each edge
+- `src/agents/defaults.ts` — the shipped agents and their `quick-*` counterparts, the three gates to the person and `decide` in their place on the autonomous road, `record-fix`, the investigator, source-review
 - `src/client/cli.ts`, `step.ts` — the `gate` command (login, the mirror, the first-run approval, every subcommand) and the session-driven loop: `begin` / `next` / `step` / `continue`, the instructions, the definition pin, the session pointer
 - `src/client/walk.ts`, `subagents.ts`, `cache.ts` — the replay (`nextInSession`), the team's claude-code agents written as subagents under `~/.claude/agents/`, the mirror
 - `src/client/preflight.ts` — what a run's end will need that this machine lacks (`gh` signed in for a GitHub pull request), said at `begin`
@@ -470,6 +465,7 @@ undeclared input: nobody.field` or `node "check" references unknown agent
 
 ## Decisions
 
+- [0063 — Agents follow no skills, and dev-super is gone](../decisions/0063-agents-follow-no-skills.md)
 - [0057 — A give-up edge counts failures, on a node only a failure reaches](../decisions/0057-a-give-up-edge-counts-failures.md)
 - [0054 — A run's skills are read from its pin, then from the team's mirror](../decisions/0054-a-runs-skills-are-read-from-its-pin-then-the-mirror.md)
 - [0053 — One gate command works on a run at a time](../decisions/0053-one-gate-command-works-on-a-run-at-a-time.md)

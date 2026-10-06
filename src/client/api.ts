@@ -73,19 +73,10 @@ export interface BundleWorkflow {
   sha: string;
 }
 
-/** A skill travels as its whole directory: prose plus whatever it points at. */
-export interface BundleSkill {
-  id: string;
-  name: string;
-  files: Array<{ path: string; base64: string }>;
-  sha: string;
-}
-
 export interface Bundle {
   team: string;
   hash: string;
   agents: Array<{ id: string; name: string; source: string; sha: string }>;
-  skills?: BundleSkill[];
   workflows: BundleWorkflow[];
   errors: Array<{ id: string; message: string }>;
 }

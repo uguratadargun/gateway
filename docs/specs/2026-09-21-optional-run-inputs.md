@@ -1,7 +1,7 @@
 Status: done
 Branch: gate/run-30b9988f
 Decisions: docs/decisions/0033-an-input-only-a-guard-reads-is-optional.md
-Design: docs/design/agents-and-skills.md, docs/design/workflows-engine.md
+Design: docs/design/agents.md (agents-and-skills.md until docs/decisions/0063-agents-follow-no-skills.md), docs/design/workflows-engine.md
 
 # Optional run inputs are discoverable
 

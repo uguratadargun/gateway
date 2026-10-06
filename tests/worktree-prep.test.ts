@@ -19,8 +19,8 @@ import {
  * What a run's worktree starts with, and what happens to it when the run is
  * over.
  *
- * A worktree carries only what git tracks, so a planner following its skill
- * ran a full dependency install per run; the checkout's `node_modules` is
+ * A worktree carries only what git tracks, so a planner setting one up ran a
+ * full dependency install per run; the checkout's `node_modules` is
  * lent instead. And a worktree that outlives its run was gigabytes of disk
  * nobody reclaimed, so a run that ends gives it back — its uncommitted work
  * committed onto the branch first, the branch kept, and the worktree checked

@@ -5,7 +5,7 @@
 A gate serves a small group of people, each on their own machine and their
 own Claude login. Each of them holds a key that names them and the team they
 are on; the team owns a set of
-agents, workflows and skills, and a key can only ever read its own team's.
+agents and workflows, and a key can only ever read its own team's.
 Revoking a key, disabling a person, or moving them to another team takes
 effect on the next request. A gate with one person and no teams keeps working
 exactly as before, on the `default` team.
@@ -43,8 +43,8 @@ means nothing to a gate that never resolved it.
 Only the SHA-256 hash of the key is stored; the plaintext is not recoverable
 afterwards. A **team** is a slug (`[a-z0-9-]`, up to 64 characters), not a
 UUID, because it is a directory name a person reads and edits: the team's
-definitions live in `~/.gate/teams/<team>/agents/*.md`, `.../workflows/*.yaml`
-and `.../skills/<id>/SKILL.md`, hand-editable files. Teams, people and keys
+definitions live in `~/.gate/teams/<team>/agents/*.md` and
+`.../workflows/*.yaml`, hand-editable files. Teams, people and keys
 themselves live in SQLite. A team may sit under another team; the tree is
 what memory search is scoped to, and a team with teams under it cannot be
 deleted until they are moved or deleted.
@@ -103,7 +103,7 @@ into it.
 
 ### Which team a definition belongs to
 
-Every agent, workflow and skill belongs to exactly one team — that is what
+Every agent and workflow belongs to exactly one team — that is what
 makes "this team's workflows" a set anyone can reason about, and what a key
 resolves to when a client pulls. `/agents` and `/workflows` carry a team
 switcher when there is more than one team, and the choice rides in the URL
@@ -131,7 +131,7 @@ loading are named.
 - `src/lib/apikeys.ts` — key issue and hashing, scopes and their defaults, the scopes read past, `resolveKey` (lookup, liveness, disabled-owner check, last-used touch)
 - `src/lib/tenancy.ts` — `requireClient` for `/api/v1/*` with its error codes and the bearer token, `scopeForPrincipal`, `ownsExecution`
 - `src/lib/def-root.ts` — `DefinitionScope`: a team's root, its fallback to the default team, `ownScope`, the one-time legacy rename, `scopeFromRequest` for `?team=`
-- `src/agents/registry.ts`, `src/workflows/registry.ts`, `src/skills/registry.ts` — the file stores, each taking a scope rather than knowing a path
+- `src/agents/registry.ts`, `src/workflows/registry.ts` — the file stores, each taking a scope rather than knowing a path
 - `src/middleware.ts` — the admin cookie that guards the dashboard and `/api/*` management routes, a separate concern from keys
 - `src/lib/protocol.ts` — the lines a key is handed out as: `installLines` for Claude Code, `terminalLoginLine` and `bundleLoginLine` for a terminal
 - `plugins/gate/scripts/session-start.mjs` — the SessionStart hook: writes `~/.local/bin/gate` pointing at the bundle beside it, and only when it would change; removes an older login's wiring from Claude Code's settings
