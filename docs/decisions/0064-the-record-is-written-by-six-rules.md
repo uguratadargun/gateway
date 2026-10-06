@@ -28,7 +28,7 @@ Make every style rule a review finding. Each run would carry findings about word
 
 ## How it works
 
-`docs.md` has a "How to write it" section with the six rules and the glossary's form: alphabetical, `**term** — definition. *Not:* other, names.` `/gate:init` writes by the rules and writes a glossary only where it found one thing under two names. Where the code and the UI disagree, it asks which name to use. The shipped implementer, quick implementer and `record-fix` carry the rules in their prompts. The reviewer and the quick reviewer never raise style. They raise a document that gives one thing two names, or uses a name the glossary lists under *Not*, as a record finding, so it can take the `record-fix` edge. This repository's own `docs/GLOSSARY.md` lists its names, and the open choices wait for the person.
+`docs.md` has a "How to write it" section with the six rules and the glossary's form: alphabetical, `**term** — definition. *Not:* other, names.` `/gate:init` writes by the rules and writes a glossary only where it found one thing under two names. Where the code and the UI disagree, it asks which name to use. The shipped implementer, quick implementer and `record-fix` carry the rules in their prompts. The reviewer and the quick reviewer never raise style. Both raise a document that gives one thing two names, or uses a name the glossary lists under *Not*. The reviewer raises it as a record finding, so it takes the `record-fix` edge. `dev-quick` has no `record-fix`, so the quick reviewer sends it back to the quick implementer. This repository's own `docs/GLOSSARY.md` lists its names, and the open choices wait for the person.
 
 ## Consequences
 

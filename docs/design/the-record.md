@@ -29,9 +29,11 @@ the actor named, one name per thing, no idioms, code names in backticks, and
 numbers stated. They serve a reader months later, the reviewer deciding which
 sentence is untrue, and search, which matches words as written. The shipped
 implementers and `record-fix` carry the rules in their prompts. Nothing
-checks them. The reviewers raise one of them as a record finding: a document
-that gives one thing two names, or a name the glossary lists as one not to
-use.
+checks them, and no reviewer raises style. One exception is a finding: a
+document that gives one thing two names, or a name the glossary lists as one
+not to use. The reviewer raises it as a record finding, which takes the
+`record-fix` edge. The quick reviewer sends it back to the quick
+implementer.
 
 The check reads the whole record and reports every problem it finds, each
 line naming the file:

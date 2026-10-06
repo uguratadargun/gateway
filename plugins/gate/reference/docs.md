@@ -227,8 +227,10 @@ when its feature is next changed, not in a pass over every file.
 
 The rules are for writing. Nothing checks them, and the reviewer does not
 raise style as a finding, with one exception: a document that gives one
-thing two names, or a name the glossary lists under *Not*, is a record
-finding, because it breaks search.
+thing two names, or a name the glossary lists under *Not*, is a finding,
+because it breaks search. In `dev` and `dev-auto` it is a record finding,
+which the `record-fix` node handles; `dev-quick` sends it back to the quick
+implementer.
 
 ## What the pipeline does with these
 
