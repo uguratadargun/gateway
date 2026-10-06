@@ -50,7 +50,7 @@ this page say "run", "person", "server" and "worktree".
 
 **design doc** — A file `docs/design/<feature>.md` that says how one feature works today. Its file name is the feature's id across the team tree. *Not:* design document, feature's page.
 
-**dev workflow** — The shipped workflow `dev`: recall, plan, approve, implement, verify, review, try, merge request. `dev-quick` and `dev-auto` are other shipped workflows. *Not:* the pipeline, road.
+**dev workflow** — The shipped workflow `dev`: recall, plan, approve, implement, verify, review, try, merge request. `dev-quick` and `dev-auto` are other shipped workflows. *Not:* road.
 
 **edge** — A link from one node to the next in a workflow, with an optional `when` condition. *Not:* transition, link.
 
@@ -118,7 +118,7 @@ this page say "run", "person", "server" and "worktree".
 
 **walk** — The code that replays a run's steps to find the run's next node (`nextInSession`). The walk takes the first edge whose condition holds.
 
-**workflow** — A YAML graph of nodes and edges. A team writes it once and runs it on any task. *Not:* pipeline, road.
+**workflow** — A YAML graph of nodes and edges. A team writes it once and runs it on any task. *Not:* road.
 
 **`workspace`** — The workflow block that gives each run its own worktree: `repo`, `baseRef` and `branchPrefix`.
 
@@ -136,3 +136,4 @@ decision. A name goes into the list above only after that decision.
 - **team tree or family.** The dashboard says tree eight times and family once ("Elsewhere in the family"). In the code, `teamFamily` returns the whole tree, but `teamTree` returns only the teams under one team. The code calls the root team `teamRoot` and also `org_id`. The record uses "sibling" for any other team in the tree, and "company" for another tree.
 - **task.** The word names three things. The dashboard's Tasks page and `--task-id` name the work several teams share, which the code calls `ChangeTask` in `change_tasks`. `gate begin <workflow> [task…]` names the sentence a run is given. A plan's "Task N" names one step of the plan.
 - **mirror or cache.** The code keeps a client's copy of its team's definitions in `~/.gate/cache/<team>/` through `cacheDir`. The record and the header of `src/client/cache.ts` call it the mirror.
+- **workflow or pipeline.** The code and the dashboard say workflow: `workflows/*.yaml`, the Workflows page. The record, the plugin's reference and the shipped agents' prompts say pipeline as often, for the same graph and for a run walking it. "A team's development pipeline" also describes the product.
