@@ -144,7 +144,8 @@ writing before they answer.
 
 ## 4. Write the documents
 
-The forms are in the reference above. Follow them section for section.
+The forms are in the reference above. Follow them section for section, and
+write every sentence by its "How to write it" rules.
 
 - **`docs/ARCHITECTURE.md`** — the map: the parts, the boundaries between
   them, the invariants that hold everywhere, a pointer to each design doc,
@@ -180,6 +181,12 @@ The forms are in the reference above. Follow them section for section.
     are worth more than forty invented ones.
   `Run:` is the commit the decision came from, or `manual` where the history
   does not say.
+- **`docs/GLOSSARY.md`** — only where step 2 found one thing under two
+  names: the code and the UI disagreeing, two modules spelling it apart, or
+  the team tree using another name. One entry per thing, in the reference's
+  form, with the name the code uses first. Where the code and the UI
+  disagree, ask which name the record uses rather than picking one. The
+  documents above use the listed names.
 - **`CLAUDE.md`** — where there is none, write one: the record table from the
   reference, this repository's real commands from step 2, its commit
   conventions, and the rules that hold everywhere in it. Where there is one,

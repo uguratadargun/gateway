@@ -15,6 +15,9 @@ Four questions come up, and each has one place:
 And a map: `docs/ARCHITECTURE.md` — the modules, their boundaries, and the
 invariants that hold everywhere. One or two pages, rewritten in place.
 
+And, where the repository has one, a list of names: `docs/GLOSSARY.md` — one
+name for each thing the record talks about, and the other names not to use.
+
 Other Markdown under `docs/` — a write-up from before the convention, a
 test plan — is read by gate too, as a note: found by search, never taken for
 a feature's page or a decision. It is worth moving into the convention when
@@ -28,6 +31,7 @@ record.
 ```
 docs/
   ARCHITECTURE.md
+  GLOSSARY.md              # optional
   design/<feature>.md
   decisions/NNNN-<slug>.md
   specs/YYYY-MM-DD-<topic>.md
@@ -191,6 +195,41 @@ does that from `GATE_VERSION`, and the CLI build warns when the version
 being built has no entry. The line says what changed for the person using
 the product, not which file moved.
 
+## How to write it
+
+The record has three readers: a person months later, often not a native
+English speaker; the reviewer, who decides which sentence is no longer true;
+and search, which matches words as written and does not know that two words
+mean the same thing. Six rules serve all three. They are the useful part of
+ASD-STE100 (Simplified Technical English), without its dictionary.
+
+1. **One fact per sentence.** In How it works and Pitfalls, a sentence stays
+   near 25 words. Rationale and Alternatives argue and may run longer, but
+   each sentence still makes one point. A changed fact is then one sentence
+   to rewrite.
+2. **Active voice, present tense, and the actor named.** "The recorder reads
+   the diff", not "the diff is read".
+3. **One name per thing.** Use the name the code and the UI use. Where the
+   repository has `docs/GLOSSARY.md`, use the name it lists. Define a new
+   term where it first appears. Two names for one thing split every search
+   for it.
+4. **No idioms or metaphors.** "Not in the room", "one click away", "rides
+   along" each say something plainer.
+5. **Code names exactly as written, in backticks.** Paths, commands,
+   endpoints and fields are what a search for them matches.
+6. **Numbers and conditions stated.** "Three times", "after the third
+   failure"; never "a few" or "eventually".
+
+`docs/GLOSSARY.md`, when a repository keeps one, is alphabetical, one entry
+per thing: `**term** — definition. *Not:* other, names.` It lists the names
+the record uses; it renames nothing. A document moves to the listed name
+when its feature is next changed, not in a pass over every file.
+
+The rules are for writing. Nothing checks them, and the reviewer does not
+raise style as a finding, with one exception: a document that gives one
+thing two names, or a name the glossary lists under *Not*, is a record
+finding, because it breaks search.
+
 ## What the pipeline does with these
 
 - The **planner** reads `docs/ARCHITECTURE.md` and `docs/design/` before it
@@ -208,7 +247,8 @@ the product, not which file moved.
   what to write or renumber when either is wrong.
 - The **reviewer** holds the change against the documents: behaviour that
   changed while the design doc describing it did not is a finding, and so is
-  a decision record with an empty section or code pasted into it.
+  a decision record with an empty section or code pasted into it, and a
+  document that gives one thing two names. Writing style is not a finding.
 - The **recorder** reads the decision records and design docs from the run's
   diff and records them as the run's decisions and the feature's summary, with
   the files' paths among the touches.
@@ -226,7 +266,8 @@ the product, not which file moved.
   has none. It reads the code and the writing already there, and names each
   design doc after the feature the rest of the team tree already has, where
   one does. It writes the map, a design doc per key part and the decisions
-  the code and the history show, adds `CLAUDE.md` and the skeleton, and,
+  the code and the history show, a glossary where it found one thing under
+  two names, adds `CLAUDE.md` and the skeleton, and,
   with the person's word, commits each feature on a branch of its own. Once
   that branch is merged and the repository is connected on the gate, the
   record index reads it. Nothing is taught unless the repository cannot be

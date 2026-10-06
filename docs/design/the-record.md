@@ -19,7 +19,19 @@ every repository gate works in. This repository follows it like any other:
 `docs/design/<feature>.md` for the present tense, `docs/decisions/NNNN-<slug>.md`
 for a choice made once and never edited, `docs/specs/YYYY-MM-DD-<topic>.md`
 for what a task asked and what counted as done, `CHANGELOG.md` for releases,
-`docs/ARCHITECTURE.md` as the map. `docs/plans/` is gitignored scratch.
+`docs/ARCHITECTURE.md` as the map, and `docs/GLOSSARY.md`, where a
+repository keeps one, for the one name of each thing. `docs/plans/` is
+gitignored scratch.
+
+The same reference says how to write a record, in six rules taken from
+ASD-STE100 without its dictionary: one fact per sentence, active voice with
+the actor named, one name per thing, no idioms, code names in backticks, and
+numbers stated. They serve a reader months later, the reviewer deciding which
+sentence is untrue, and search, which matches words as written. The shipped
+implementers and `record-fix` carry the rules in their prompts. Nothing
+checks them. The reviewers raise one of them as a record finding: a document
+that gives one thing two names, or a name the glossary lists as one not to
+use.
 
 The check reads the whole record and reports every problem it finds, each
 line naming the file:
@@ -79,7 +91,8 @@ slug.
 
 - `scripts/check-docs.mjs` — the checker: `checkRecord(root)` returns the problems; run directly, it prints them and exits 1
 - `tests/docs-record.test.ts` — the repository's own record has its form; the checker catches each mistake on a fixture tree
-- `plugins/gate/reference/docs.md` — the convention the check enforces the form of
+- `plugins/gate/reference/docs.md` — the convention the check enforces the form of, and the rules for writing it
+- `docs/GLOSSARY.md` — this repository's names, one per thing
 - `CLAUDE.md` — the table that tells a session what the record requires of a change
 
 ## Pitfalls
@@ -96,9 +109,13 @@ slug.
   node narrows this by checking against the remote before the branch is
   offered. Two branches that pass that check at the same moment can still
   collide.
+- The glossary renames nothing. A document written before it keeps its old
+  names until its feature is next changed, so a search for the listed name
+  still misses those documents until then.
 
 ## Decisions
 
+- [0064 — The record is written by six rules, and one name per thing](../decisions/0064-the-record-is-written-by-six-rules.md)
 - [0040 — A decision number is checked against the remote before the branch is offered](../decisions/0040-a-decision-number-is-checked-against-the-remote.md)
 - [0038 — The repositories' record is read by code, and the base branch settles what landed](../decisions/0038-the-repositories-record-is-read-by-code.md)
 - [0021 — The record's form is checked by code, its truth by a reviewer](../decisions/0021-the-records-form-is-checked-by-code.md)
