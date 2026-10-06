@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.51.0 — 2026-10-06
+
 - Skills are gone: the dashboard's Skills page, skill libraries and the `skills:` line on an agent. Each agent's method is in its own prompt. An agent file that still names skills keeps loading, and saving it from the editor drops the line.
 
 - The `dev-super` pipeline and its `super-planner`, `super-implementer`, `super-verifier` and `super-reviewer` agents are no longer shipped. `npm run defaults:restore -- --refresh` moves a gate's copies under `backups/`; use `dev`.
