@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.52.0 — 2026-10-06
+
 - The record has writing rules: one fact per sentence, active voice, one name per thing, no idioms, code names in backticks, numbers stated. The shipped implementers follow them. A repository may keep `docs/GLOSSARY.md`, and `/gate:init` writes one where it finds one thing under two names. The reviewer flags a document that gives one thing two names. Run `npm run defaults:restore -- --refresh` to get the new prompts.
 
 ## 0.51.0 — 2026-10-06
