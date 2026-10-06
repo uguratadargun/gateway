@@ -1,12 +1,11 @@
 # Glossary
 
 This page lists one name for each thing gate has. The name is the one the
-code and the dashboard use. *Not* lists the other names the record uses for
-the same thing; do not write them. An entry without *Not* has no other name
-in use. This page renames nothing. A document moves to these names when its
-feature is next changed. Where the code and the dashboard disagree, the
-thing is under `## Open` until it is decided. Until then, the definitions on
-this page say "run", "person", "server" and "worktree".
+record uses; where the code names the thing otherwise, the entry says so.
+*Not* lists the other names the record has used for the same thing; do not
+write them. An entry without *Not* has no other name in use. This page
+renames nothing in the code. A document moves to these names when its
+feature is next changed.
 
 **admin secret** — The secret in `GATE_ADMIN_SECRET` that opens the dashboard.
 
@@ -38,6 +37,8 @@ this page say "run", "person", "server" and "worktree".
 
 **consolidation** — A pass over every decision under one feature for one team. It rewrites the feature implementation whole and closes the decisions a later one replaced. It runs on the recorder's provider model after every `memory.consolidateEvery` new decisions.
 
+**cross-team task** — Work that several teams in a team tree share. A person opens it with an owning team and a title, and every run that serves it carries its `--task-id`. The Tasks page lists them, and the code keeps them as `ChangeTask` in `change_tasks`. *Not:* change task.
+
 **dashboard** — The web interface of the server, behind the admin session. Its first page is also titled "Dashboard". *Not:* the UI.
 
 **decision** — One choice a run made, as the recorder writes it into memory: what was decided, why, how, and the files it touched. It is a row of `memory_decisions`. *Not:* memory record, memory entry, record.
@@ -50,7 +51,7 @@ this page say "run", "person", "server" and "worktree".
 
 **design doc** — A file `docs/design/<feature>.md` that says how one feature works today. Its file name is the feature's id across the team tree. *Not:* design document, feature's page.
 
-**dev workflow** — The shipped workflow `dev`: recall, plan, approve, implement, verify, review, try, merge request. `dev-quick` and `dev-auto` are other shipped workflows. *Not:* road.
+**dev workflow** — The shipped workflow `dev`: recall, plan, approve, implement, verify, review, try, merge request. `dev-quick` and `dev-auto` are other shipped workflows. *Not:* the pipeline, road.
 
 **edge** — A link from one node to the next in a workflow, with an optional `when` condition. *Not:* transition, link.
 
@@ -74,11 +75,19 @@ this page say "run", "person", "server" and "worktree".
 
 **merge request** — The request to merge a run's branch into its base branch. The `merge-request` node opens it. *Not:* pull request, PR, MR.
 
+**mirror** — A machine's copy of its team's definitions, under `~/.gate/cache/<team>/`. `gate pull` makes it match the server. The code's names for it are `cacheDir` and `cacheScope`. *Not:* cache.
+
 **node** — One vertex of a workflow: `agent`, `command`, `condition`, `parallel` or `terminal`. *Not:* step.
+
+**objection** — A run's statement that a decision another team recorded conflicts with its work. The planner's `conflicts` output carries it, and the `conflict-review` node puts it to the person. The team it stands against resolves it, and the team that raised it withdraws it. The code keeps it in `decision_issues` and serves it at `/api/issues`. *Not:* issue, conflict.
+
+**person** — Someone who uses gate. A person holds one key and is on one team. The code keeps people in the `users` table and serves them at `/api/users`. *Not:* user.
 
 **pin** — The copy of the definitions a run takes when it begins. A later edit to a definition does not change a run that has its pin. The code keeps it as `PinnedDefinitions` in `definitions_json`. *Not:* snapshot.
 
 **plan** — The planner's working file under `docs/plans/`. A spec is the final plan, copied when the run's last task is committed.
+
+**plan task** — One `### Task N:` section of a plan: the files, what to do, the test and when it is done. The implementer commits each plan task on its own. *Not:* task.
 
 **plugin** — The Claude Code plugin under `plugins/gate/`: the `/gate:*` commands, the SessionStart hook and the bundled `gate` CLI.
 
@@ -100,6 +109,10 @@ this page say "run", "person", "server" and "worktree".
 
 **repository** — A git project connected to the server once: its one name, the server's checkout, and the remote finished branches go to. The `repos` table keeps it, and the dashboard lists it on the Repos page. *Not:* repo, project.
 
+**run** — One walk of a workflow for one task, driven from one person's session. The code, its routes and the Executions page call it an execution: `workflow_executions`, `<execution-id>`. *Not:* execution.
+
+**server** — One running gate: the dashboard, the client API and the database, on one host. "gate" is the product's name, and `gate` is an `executor` value. *Not:* the gate, this gate, gateway.
+
 **session** — A person's Claude Code session. A run happens only in one. The dashboard's cookie is the admin session, not a session. *Not:* conversation.
 
 **spec** — A file `docs/specs/YYYY-MM-DD-<topic>.md` that says what one item set out to do and what counted as done.
@@ -108,9 +121,13 @@ this page say "run", "person", "server" and "worktree".
 
 **subagent** — The Claude Code subagent that an `executor: claude-code` node runs as, of type `gate-<team>-<agent>`. An agent is the definition, and a subagent is one running instance of it.
 
+**task** — The sentence a run is given: `gate begin <workflow> [task…]`, read by agents as `input.task`. A cross-team task and a plan task are other things.
+
 **teach** — To record a branch that was finished before gate recorded runs. `gate teach` and `/gate:teach` do it through a `gate:teach` run and the recorder.
 
 **team** — A group of people that owns one set of definitions. Every key belongs to one team.
+
+**team tree** — A root team and every team under it. Memory search, asks and objections stay inside one team tree. In the code, `teamFamily` returns the whole team tree, `teamTree` returns the teams under one team, and the root is `teamRoot` or `org_id`. *Not:* family, org.
 
 **terminal** — A node with `type: terminal`. It ends a run with `status: completed` or `status: failed`.
 
@@ -118,22 +135,8 @@ this page say "run", "person", "server" and "worktree".
 
 **walk** — The code that replays a run's steps to find the run's next node (`nextInSession`). The walk takes the first edge whose condition holds.
 
-**workflow** — A YAML graph of nodes and edges. A team writes it once and runs it on any task. *Not:* road.
+**workflow** — A YAML graph of nodes and edges. A team writes it once and runs it on any task. "A team's development pipeline" describes the product, not a workflow. *Not:* pipeline, road.
 
 **`workspace`** — The workflow block that gives each run its own worktree: `repo`, `baseRef` and `branchPrefix`.
 
-## Open
-
-The code and the dashboard name these things in different ways, or one of
-them names a thing in two ways. Each one waits for the repository owner's
-decision. A name goes into the list above only after that decision.
-
-- **run or execution.** Every identifier says execution: `workflow_executions`, `ExecutionRecord`, `/api/v1/executions`, `<execution-id>`, the Executions page and its heading. Every other dashboard label, the CLI's output and the record say run. The event names mix both: `workflow.completed` and `run.paused`.
-- **worktree or workspace, for a run's directory.** The code says workspace: `RunWorkspace`, `ExecutionWorkspace`, `~/.gate/workspaces/`. The dashboard (ten labels) and `gate clean` say worktree, and the dashboard says workspace once. The `workspace` block of a workflow is not in question.
-- **person or user.** The code says user: `users`, `User`, `/api/users`, `/api/v1/me`. The dashboard says person and people, and never says user. The plugin's commands say user, and the design docs and decision records say person.
-- **objection, issue or conflict.** The dashboard and the record say objection. The code says issue (`decision_issues`, `DecisionIssue`, `/api/issues`) and conflict (`conflicts`, `ReportedConflict`, the `conflict-review` agent).
-- **server or gate, for one running instance.** The dashboard says "this server" six times and "this gate" three times. The code says `server` in `origin`. The record says "the gate" 133 times and "the server" 122 times. "gate" is also the product's name and an `executor` value. "Gateway" is a retired model proxy and the repository's name.
-- **team tree or family.** The dashboard says tree eight times and family once ("Elsewhere in the family"). In the code, `teamFamily` returns the whole tree, but `teamTree` returns only the teams under one team. The code calls the root team `teamRoot` and also `org_id`. The record uses "sibling" for any other team in the tree, and "company" for another tree.
-- **task.** The word names three things. The dashboard's Tasks page and `--task-id` name the work several teams share, which the code calls `ChangeTask` in `change_tasks`. `gate begin <workflow> [task…]` names the sentence a run is given. A plan's "Task N" names one step of the plan.
-- **mirror or cache.** The code keeps a client's copy of its team's definitions in `~/.gate/cache/<team>/` through `cacheDir`. The record and the header of `src/client/cache.ts` call it the mirror.
-- **workflow or pipeline.** The code and the dashboard say workflow: `workflows/*.yaml`, the Workflows page. The record, the plugin's reference and the shipped agents' prompts say pipeline as often, for the same graph and for a run walking it. "A team's development pipeline" also describes the product.
+**worktree** — The git worktree a run works in, on the run's own branch, on the person's machine. `gate clean` removes the ones finished runs left. The code calls it a workspace: `RunWorkspace`, `~/.gate/workspaces/`. *Not:* workspace, for the directory; a workflow's `workspace` block is its own entry.
