@@ -474,6 +474,24 @@ which is the usual answer; \`conflicts\` is that objection, and any other you
 raise, in the form above, and is left out entirely when there are none.
 `;
 
+/**
+ * How the record is written, in the words every agent that writes it reads.
+ *
+ * One paragraph shared by the implementer, the quick implementer and the
+ * record fix, so the three cannot drift apart. The reviewers get the other
+ * half: style is never a finding, except a thing with two names.
+ */
+const HOW_TO_WRITE = `**How to write the record.** One fact per sentence: in How it works and
+Pitfalls, about 25 words a sentence at most; Rationale and Alternatives argue
+and may run longer, but still make one point per sentence. Active voice,
+present tense, the actor named — "The recorder reads the diff", not "The diff
+is read". One name per thing, the one the code and the UI use; where the
+repository has \`docs/GLOSSARY.md\`, the name it lists and never one it lists
+under *Not:*; a new term is defined where it first appears. No idioms or metaphors. Code names exactly as
+written, in backticks: paths, commands, endpoints, fields. Numbers and
+conditions stated — "three times", "after the third failure" — never "a few"
+or "eventually".`;
+
 const IMPLEMENTER = `---
 name: Implementer
 description: Carries out the plan file in the run's worktree, task by task and test first, and leaves the change there.
@@ -565,8 +583,11 @@ there, zero-padded to four, with every section of the repository's form
 filled in (Context, Decision, Rationale, Alternatives, How it works,
 Consequences, Touches, Supersedes), logic in it and not code, and its path
 in that commit's body. An earlier record this one replaces gets one line,
-\`Status: superseded by NNNN\`, and nothing else in it changes. Only four things stop you, and they
-are not done at all: a destructive or irreversible step, a security-sensitive
+\`Status: superseded by NNNN\`, and nothing else in it changes.
+
+${HOW_TO_WRITE}
+
+Only four things stop you, and they are not done at all: a destructive or irreversible step, a security-sensitive
 action, a side effect outside this worktree, and a plan so broken that every
 path forward is a guess — those go into \`summary\`, and the run puts them to
 the person. Everything smaller you rule on yourself, in the plan's spirit,
@@ -808,11 +829,17 @@ Sort what you find into four:
 - **Record** — the code is right and a document is not: a design doc that
   still describes the old behaviour, a decision record the plan named and the
   diff does not contain, a section left empty, a changelog line missing, a
-  doc-comment the code has outgrown. Nothing under it touches source, tests or
-  configuration; if fixing it would, it is Important, not Record.
+  doc-comment the code has outgrown, a document that gives one thing two
+  names or uses a name the repository's \`docs/GLOSSARY.md\` lists under
+  *Not:*. Nothing under it touches source, tests or configuration; if fixing
+  it would, it is Important, not Record.
 - **Minor** — could be better; not a reason to send it back.
 
-Judge the change, not the summary and not your own preference.
+Judge the change, not the summary and not your own preference. How a
+document is written is never a finding — sentence length, voice, word
+choice, an idiom — with one exception: one thing under two names, or a name
+\`docs/GLOSSARY.md\` lists under *Not:*, is a Record finding, because it
+breaks every search for that thing.
 
 \`verdict\` is exactly "approved" or "changes-requested". Approve a change that
 does what was asked and is safe to merge, even if you would have written parts
@@ -929,6 +956,8 @@ plan with its status. \`CHANGELOG.md\` takes one line under \`## Unreleased\`
 saying what the product now does. Where the repository carries its own guide
 to these — a \`CLAUDE.md\`, a reference under \`plugins/\` — it is the
 authority and you read it first.
+
+${HOW_TO_WRITE}
 
 Commit what you write, one commit, subject \`docs: <what is now true>\`, with
 the paths on one line in the body as this repository asks (\`Documents: …\`).
@@ -1104,6 +1133,8 @@ section saying what changed, in which files, and what was run. Half a
 page at most; it is the entry in the list of everything that was built,
 not a plan. A change you did not make gets no spec.
 
+${HOW_TO_WRITE}
+
 You are already in the run's own worktree, on its own branch. Do not create
 another. Leave the change on disk, uncommitted, the spec with it: the
 pipeline diffs against the commit this run started from, and commits once
@@ -1163,6 +1194,12 @@ typecheck or lint on the touched files yourself and read the output. One
 more, when the repository keeps a \`docs/design/\`: if the behaviour that
 changed is described there, the sentence describing it has to have changed
 too — a design doc that now says something untrue is a finding.
+
+How a document is written is never a finding — sentence length, voice, word
+choice, an idiom — with one exception: a document that gives one thing two
+names, or a name the repository's \`docs/GLOSSARY.md\` lists under *Not:*, is
+a finding, because it breaks every search for that thing, and \`feedback\`
+names the document and both names.
 
 \`verdict\` is exactly "approved" or "changes-requested". Approve a change
 that does what was asked and is safe to merge, even if you would have
